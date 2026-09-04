@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="SurvivalConfig" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/survival_config.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"survival_default"
+max_hunger = 100.0
+max_thirst = 100.0
+hunger_drain_per_second = 0.12
+thirst_drain_per_second = 0.18
+warning_threshold = 0.5
+critical_threshold = 0.2
+starvation_damage_per_second = 1.0
+critical_stamina_multiplier = 0.6

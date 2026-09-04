@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="RegionDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/region_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"sewer_region"
+display_name = "Old Drainage Route"
+description = "A damp first expedition with scrap, beetles, and two escape routes."
+scene_path = "res://world/adventure/sewer_region.tscn"
+danger_level = 1
+entry_point_ids = Array[StringName]([&"sewer_entrance"])
+escape_point_ids = Array[StringName]([&"sewer_entrance", &"sewer_ladder"])
+major_resource_ids = Array[StringName]([&"rusty_scrap", &"moss_fiber"])
+enemy_ids = Array[StringName]([&"sewer_beetle"])
+recommended_gear = "Sharpened Twig, berries, clean water"

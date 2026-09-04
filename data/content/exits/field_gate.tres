@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="SettlementExitDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/settlement_exit_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"field_gate"
+display_name = "Field Gate"
+connected_region_ids = Array[StringName]([&"sewer_region"])
+required_flags = Array[StringName]([&"field_route_unlocked"])
+prompt = "Locked route"
+entry_point_id = &"field_edge"

@@ -1,0 +1,53 @@
+[gd_scene load_steps=13 format=3]
+
+[ext_resource path="res://gameplay/actors/enemies/enemy_agent.gd" type="Script" id="1"]
+[ext_resource path="res://gameplay/components/health_component.gd" type="Script" id="2"]
+[ext_resource path="res://gameplay/components/hurtbox_component.gd" type="Script" id="3"]
+[ext_resource path="res://gameplay/actors/enemies/idle_state.gd" type="Script" id="4"]
+[ext_resource path="res://gameplay/actors/enemies/patrol_state.gd" type="Script" id="5"]
+[ext_resource path="res://gameplay/actors/enemies/chase_state.gd" type="Script" id="6"]
+[ext_resource path="res://gameplay/actors/enemies/attack_state.gd" type="Script" id="7"]
+[ext_resource path="res://gameplay/actors/enemies/hurt_state.gd" type="Script" id="8"]
+[ext_resource path="res://gameplay/actors/enemies/dead_state.gd" type="Script" id="9"]
+
+[sub_resource type="RectangleShape2D" id="BodyShape"]
+size = Vector2(34, 22)
+[sub_resource type="RectangleShape2D" id="HurtShape"]
+size = Vector2(40, 28)
+
+[node name="SewerBeetle" type="CharacterBody2D"]
+collision_layer = 1
+collision_mask = 1
+script = ExtResource("1")
+[node name="Visual" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-20, -10, 13, -13, 21, 0, 13, 13, -20, 10)
+color = Color(0.32, 0.14, 0.38, 1)
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("BodyShape")
+[node name="Health" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("2")
+max_health = 24.0
+[node name="Hurtbox" type="Area2D" parent="."]
+unique_name_in_owner = true
+collision_layer = 2
+collision_mask = 4
+script = ExtResource("3")
+faction = &"hostile"
+health_path = NodePath("../Health")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Hurtbox"]
+shape = SubResource("HurtShape")
+[node name="States" type="Node" parent="."]
+unique_name_in_owner = true
+[node name="Idle" type="Node" parent="States"]
+script = ExtResource("4")
+[node name="Patrol" type="Node" parent="States"]
+script = ExtResource("5")
+[node name="Chase" type="Node" parent="States"]
+script = ExtResource("6")
+[node name="Attack" type="Node" parent="States"]
+script = ExtResource("7")
+[node name="Hurt" type="Node" parent="States"]
+script = ExtResource("8")
+[node name="Dead" type="Node" parent="States"]
+script = ExtResource("9")

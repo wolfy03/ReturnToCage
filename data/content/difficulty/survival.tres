@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="DifficultyDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/difficulty_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"survival"
+display_name = "Survival"
+enemy_health_multiplier = 1.35
+enemy_damage_multiplier = 1.5
+survival_drain_multiplier = 1.65
+loot_multiplier = 0.9
+inventory_loss = 2
+equipment_loss = 1
+recovery_policy = 0
+escape_display = 2

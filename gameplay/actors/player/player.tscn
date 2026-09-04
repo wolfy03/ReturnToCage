@@ -1,0 +1,95 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource path="res://gameplay/actors/player/player.gd" type="Script" id="1"]
+[ext_resource path="res://gameplay/components/player_input_component.gd" type="Script" id="2"]
+[ext_resource path="res://gameplay/components/movement_component.gd" type="Script" id="3"]
+[ext_resource path="res://gameplay/components/health_component.gd" type="Script" id="4"]
+[ext_resource path="res://gameplay/components/survival_component.gd" type="Script" id="5"]
+[ext_resource path="res://gameplay/components/combat_component.gd" type="Script" id="6"]
+[ext_resource path="res://gameplay/components/hitbox_component.gd" type="Script" id="7"]
+[ext_resource path="res://gameplay/components/hurtbox_component.gd" type="Script" id="8"]
+[ext_resource path="res://gameplay/components/interaction_component.gd" type="Script" id="9"]
+[ext_resource path="res://gameplay/components/effect_controller.gd" type="Script" id="10"]
+
+[sub_resource type="CapsuleShape2D" id="Capsule"]
+radius = 14.0
+height = 34.0
+
+[sub_resource type="RectangleShape2D" id="AttackShape"]
+size = Vector2(42, 30)
+
+[sub_resource type="CircleShape2D" id="InteractShape"]
+radius = 58.0
+
+[node name="Player" type="CharacterBody2D"]
+unique_name_in_owner = true
+collision_layer = 1
+collision_mask = 1
+script = ExtResource("1")
+
+[node name="Body" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-17, -15, 17, -15, 19, 10, 10, 18, -10, 18, -19, 10)
+color = Color(0.94, 0.68, 0.38, 1)
+
+[node name="Ear" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-12, -15, -7, -25, 0, -15)
+color = Color(0.96, 0.5, 0.5, 1)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("Capsule")
+
+[node name="Input" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("2")
+
+[node name="Movement" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("3")
+
+[node name="Health" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("4")
+
+[node name="Survival" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("5")
+
+[node name="Effects" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("10")
+
+[node name="Combat" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("6")
+hitbox_path = NodePath("../Hitbox")
+
+[node name="Hitbox" type="Area2D" parent="."]
+position = Vector2(34, 0)
+collision_layer = 4
+collision_mask = 2
+monitoring = false
+script = ExtResource("7")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Hitbox"]
+shape = SubResource("AttackShape")
+
+[node name="Hurtbox" type="Area2D" parent="."]
+collision_layer = 2
+collision_mask = 4
+script = ExtResource("8")
+faction = &"player"
+health_path = NodePath("../Health")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Hurtbox"]
+shape = SubResource("Capsule")
+
+[node name="Interaction" type="Area2D" parent="."]
+unique_name_in_owner = true
+collision_layer = 0
+collision_mask = 8
+script = ExtResource("9")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Interaction"]
+shape = SubResource("InteractShape")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(0, -80)
+position_smoothing_enabled = true
+position_smoothing_speed = 6.0

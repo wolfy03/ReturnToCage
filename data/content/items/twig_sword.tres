@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="WeaponDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/weapon_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"twig_sword"
+display_name = "Sharpened Twig"
+description = "A balanced first melee weapon."
+category = 4
+max_stack = 1
+weight = 0.8
+base_value = 15
+equipment_slot = 0
+max_durability = 60
+attack_mode = 0
+base_damage = 8.0
+attack_cooldown = 0.55
+attack_range = 52.0
+stamina_cost = 8.0
+target_factions = Array[StringName]([&"hostile"])

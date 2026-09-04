@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="EffectDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/effect_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"quick_paws"
+display_name = "Quick Paws"
+description = "Temporarily increases movement speed."
+target_stat = &"move_speed"
+operation = 1
+magnitude = 1.15
+duration_seconds = 60.0
+stack_policy = 1
+max_stacks = 1

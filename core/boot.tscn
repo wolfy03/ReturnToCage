@@ -1,0 +1,79 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource path="res://core/app_root.gd" type="Script" id="1"]
+[ext_resource path="res://ui/game_hud.gd" type="Script" id="2"]
+[ext_resource path="res://devtools/debug_panel.gd" type="Script" id="3"]
+
+[node name="Boot" type="Node"]
+script = ExtResource("1")
+
+[node name="WorldLayer" type="Node" parent="."]
+unique_name_in_owner = true
+
+[node name="UILayer" type="Node" parent="."]
+[node name="GameHUD" type="CanvasLayer" parent="UILayer"]
+script = ExtResource("2")
+
+[node name="TransitionLayer" type="CanvasLayer" parent="."]
+layer = 50
+
+[node name="DebugLayer" type="Node" parent="."]
+[node name="DebugPanel" type="CanvasLayer" parent="DebugLayer"]
+layer = 80
+script = ExtResource("3")
+
+[node name="MainMenu" type="Control" parent="."]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ColorRect" type="ColorRect" parent="MainMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.055, 0.09, 0.12, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="MainMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+[node name="VBoxContainer" type="VBoxContainer" parent="MainMenu/CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 14
+[node name="Title" type="Label" parent="MainMenu/CenterContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 42
+text = "RETURN TO CAGE"
+horizontal_alignment = 1
+[node name="Subtitle" type="Label" parent="MainMenu/CenterContainer/VBoxContainer"]
+layout_mode = 2
+text = "A hamster's survival journey"
+horizontal_alignment = 1
+[node name="NewGameButton" type="Button" parent="MainMenu/CenterContainer/VBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "New Game"
+[node name="LoadGameButton" type="Button" parent="MainMenu/CenterContainer/VBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Load Game"
+[node name="Controls" type="Label" parent="MainMenu/CenterContainer/VBoxContainer"]
+layout_mode = 2
+text = "A/D move | Space jump | E interact | J attack | Q quick item | I inventory | F10 debug"
+horizontal_alignment = 1
+[node name="ErrorLabel" type="Label" parent="MainMenu/CenterContainer/VBoxContainer"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+modulate = Color(1, 0.4, 0.4, 1)
+horizontal_alignment = 1

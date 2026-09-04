@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="QuestDefinition" load_steps=5 format=3]
+[ext_resource path="res://data/definitions/quest_definition.gd" type="Script" id="1"]
+[ext_resource path="res://data/definitions/quest_objective_definition.gd" type="Script" id="2"]
+[sub_resource type="Resource" id="Collect"]
+script = ExtResource("2")
+type = 0
+target_id = &"rusty_scrap"
+required_amount = 3
+description = "Secure rusty scrap from the sewer"
+[sub_resource type="Resource" id="Upgrade"]
+script = ExtResource("2")
+type = 3
+target_id = &"workbench"
+required_amount = 1
+description = "Upgrade the Tinker Bench"
+[resource]
+script = ExtResource("1")
+id = &"sewer_supplies"
+title = "A Bench Worth Using"
+description = "Milo needs sewer scrap to rebuild the settlement workbench."
+objectives = Array[QuestObjectiveDefinition]([SubResource("Collect"), SubResource("Upgrade")])
+reward_item_ids = Array[StringName]([&"mushroom_stew"])
+reward_amounts = Array[int]([1])

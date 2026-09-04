@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=3 format=3]
+[ext_resource path="res://data/definitions/item_definition.gd" type="Script" id="1"]
+[ext_resource path="res://data/content/effects/hydrated.tres" type="Resource" id="2"]
+[resource]
+script = ExtResource("1")
+id = &"water_drop"
+display_name = "Clean Water Drop"
+description = "Safe water carried in a curled leaf."
+category = 2
+max_stack = 8
+weight = 0.2
+base_value = 6
+thirst_restore = 38.0
+food_slot = 2
+effects = Array[EffectDefinition]([ExtResource("2")])
+tags = Array[StringName]([&"drink"])

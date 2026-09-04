@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=3 format=3]
+[ext_resource path="res://data/definitions/item_definition.gd" type="Script" id="1"]
+[ext_resource path="res://data/content/effects/fortified.tres" type="Resource" id="2"]
+[resource]
+script = ExtResource("1")
+id = &"mushroom_stew"
+display_name = "Mushroom Stew"
+description = "A filling staple with a defensive buff."
+category = 1
+max_stack = 5
+weight = 0.35
+base_value = 14
+hunger_restore = 45.0
+thirst_restore = 8.0
+food_slot = 1
+effects = Array[EffectDefinition]([ExtResource("2")])
+tags = Array[StringName]([&"food", &"staple"])

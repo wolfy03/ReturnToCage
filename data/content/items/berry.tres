@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=3 format=3]
+[ext_resource path="res://data/definitions/item_definition.gd" type="Script" id="1"]
+[ext_resource path="res://data/content/effects/quick_paws.tres" type="Resource" id="2"]
+[resource]
+script = ExtResource("1")
+id = &"berry"
+display_name = "Wild Berry"
+description = "A tart snack that restores hunger and quickens the paws."
+category = 1
+max_stack = 10
+weight = 0.1
+base_value = 5
+hunger_restore = 18.0
+food_slot = 3
+effects = Array[EffectDefinition]([ExtResource("2")])
+tags = Array[StringName]([&"food", &"snack"])

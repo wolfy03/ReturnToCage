@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="SettlementExitDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/settlement_exit_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"sewer_gate"
+display_name = "Sewer Gate"
+connected_region_ids = Array[StringName]([&"sewer_region"])
+prompt = "Prepare and enter"
+entry_point_id = &"sewer_entrance"
+transition_key = &"fade"

@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="FacilityDefinition" load_steps=4 format=3]
+[ext_resource path="res://data/definitions/facility_definition.gd" type="Script" id="1"]
+[ext_resource path="res://data/definitions/facility_level_definition.gd" type="Script" id="2"]
+[sub_resource type="Resource" id="Level0"]
+script = ExtResource("2")
+level = 0
+appearance_color = Color(0.40, 0.25, 0.16, 1)
+interaction_points = Array[StringName]([&"inspect"])
+[sub_resource type="Resource" id="Level1"]
+script = ExtResource("2")
+level = 1
+cost_item_ids = Array[StringName]([&"rusty_scrap"])
+cost_amounts = Array[int]([3])
+unlock_flags = Array[StringName]([&"basic_crafting"])
+appearance_color = Color(0.72, 0.48, 0.20, 1)
+interaction_points = Array[StringName]([&"craft", &"resident_work"])
+[resource]
+script = ExtResource("1")
+id = &"workbench"
+display_name = "Tinker Bench"
+description = "Turns expedition salvage into basic survival gear."
+max_level = 1
+levels = Array[FacilityLevelDefinition]([SubResource("Level0"), SubResource("Level1")])

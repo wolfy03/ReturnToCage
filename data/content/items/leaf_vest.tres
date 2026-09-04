@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="EquipmentDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/equipment_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"leaf_vest"
+display_name = "Woven Leaf Vest"
+description = "Light protection woven from moss fiber."
+category = 5
+max_stack = 1
+weight = 0.6
+base_value = 12
+equipment_slot = 1
+stat_modifiers = {&"defense": 2.0}
+max_durability = 45

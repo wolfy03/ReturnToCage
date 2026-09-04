@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="LootTableDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/loot_table_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"sewer_beetle_loot"
+item_ids = Array[StringName]([&"moss_fiber", &"clean_pebble"])
+weights = Array[float]([3.0, 1.0])
+min_amounts = Array[int]([1, 1])
+max_amounts = Array[int]([2, 1])
+apply_difficulty_multiplier = true

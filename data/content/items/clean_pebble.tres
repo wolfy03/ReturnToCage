@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/item_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"clean_pebble"
+display_name = "Clean Pebble"
+description = "A smooth stone suited to tools and trade."
+category = 0
+max_stack = 30
+weight = 0.35
+base_value = 4
+tags = Array[StringName]([&"resource", &"stone"])

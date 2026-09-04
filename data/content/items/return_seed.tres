@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/item_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"return_seed"
+display_name = "Homeward Seed"
+description = "Hold still for three seconds to return. Movement or damage cancels it without consuming the seed."
+category = 3
+max_stack = 3
+weight = 0.05
+base_value = 25
+discardable = false
+quest_protected = true
+tags = Array[StringName]([&"return_item"])
