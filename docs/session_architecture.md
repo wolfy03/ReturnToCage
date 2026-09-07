@@ -56,7 +56,7 @@ pending_loot를 추가한다. v1 → v2 → v3 단계별 migration을 거치며 
 ## 호환 API와 시그널
 
 기존 `player_inventory`, `player_stats`, `equipment`, `settlement_storage`, `quest_states`,
-`active_adventure` 등의 속성은 deprecated getter/setter다. State 외에 별도 객체를 저장하지 않는다.
+`active_adventure` 등의 객체·컬렉션 속성은 deprecated getter 전용이다. State 외에 별도 객체를 저장하지 않는다.
 production의 gameplay/world/UI/devtools는 새 도메인 접근을 사용한다. 테스트의 기존 접근은
 호환 검증을 위해 의도적으로 유지한다.
 
@@ -66,7 +66,7 @@ production의 gameplay/world/UI/devtools는 새 도메인 접근을 사용한다
 저장 JSON에는 이 타입 전환이 드러나지 않는다.
 
 새 게임은 모델 내용을 초기화한다. restore는 독립 SessionSnapshot을 검증한 뒤 모델을 교체한다. `_create_models()`와
-relay 연결은 반복 호출에 안전하다. 기존 호환 setter로 모델을 교체하면 이전 relay를 해제한다.
+relay 연결은 반복 호출에 안전하다. 외부 객체 교체용 compatibility setter는 제거했다.
 새 코드는 모델 객체를 교체하지 말고 InventoryModel API로 내용을 변경한다.
 기존 여덟 GameSession 시그널은 유지한다.
 
@@ -80,3 +80,21 @@ AdventureSession.rules는 원정 시작 때 확정한 AdventureRulesSnapshot이�
 
 Quest event decoupling, 귀환 아이템 효과 데이터화, 제작 대기열은 후속 확장 대상이다.
 Inventory 슬롯/ItemInstance 구조와 기존 컴포넌트의 플레이 책임은 유지했다.
+
+## 안정화 기준점
+
+객체/컬렉션 compatibility setter와 미사용 difficulty_id, active_adventure,
+last_safe_position setter를 제거했다. 실제 사용 중인 player_health setter는
+PlayerState.set_health()를 거치고 survival_state setter는 범위 검증 restore를 거친다.
+컬렉션 getter는 canonical 객체를 반환하므로 불변 스냅샷은 아니다.
+
+PlayerState는 reset/restore 시 이전 EffectRuntimeModel의 periodic과 이전 StatBlock의
+stat_changed 연결을 명시적으로 해제한다. 외부에서 이전 RefCounted를 보관해도 현재
+PlayerState에 콜백하지 않는다. 이전 효과 모델은 paused 상태로 폐기된다.
+
+Actor마다 생명 세대 번호를 부여한다. 사망·체력 콜백은 현재 세대인지 검사한다.
+새 게임과 로드도 세대를 무효화한다. complete_respawn은 효과 pause를 해제하고,
+새 Actor의 arm_player_life가 사망 결과 캐시를 지운다. 잘못된 전이는 false를 반환한다.
+신규 세션 생성은 기존 플레이 전이와 구분하여 상태를 재설정한다.
+
+자세한 복원 순서와 한계는 [안정화 보고](stability_baseline.md)를 참고한다.

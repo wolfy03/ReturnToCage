@@ -2,6 +2,7 @@ class_name SettlementState
 extends RefCounted
 
 var pending_loot: Array[ItemStack] = []
+var _claim_in_progress: bool = false
 var storage: InventoryModel
 var facility_levels: Dictionary[StringName, int] = {}
 var resident_states: Dictionary[StringName, ResidentState] = {}
@@ -33,15 +34,15 @@ func to_save_dict() -> Dictionary:
 		pending.append(stack.to_dict())
 	return {"pending_loot": pending, "settlement_storage": storage.to_array(), "facility_levels": facilities, "resident_states": residents}
 
-func restore(data: Dictionary, start: GameStartDefinition, registry: Node) -> PackedStringArray:
+func restore(data: Dictionary, start: GameStartDefinition, registry: Node, instances: Dictionary[String, String] = {}) -> PackedStringArray:
 	var errors := PackedStringArray()
 	storage.capacity = start.storage_capacity
-	errors.append_array(storage.restore(SaveData.array(data, "settlement_storage", errors)))
+	errors.append_array(storage.restore(SaveData.array(data, "settlement_storage", errors), instances, "settlement_storage"))
 	facility_levels.clear()
 	var facilities: Dictionary = SaveData.dictionary(data, "facility_levels", errors)
 	for key in facilities:
 		var definition := registry.get_definition(StringName(str(key))) as FacilityDefinition
-		if not SaveData.is_text(key) or definition == null or not SaveData.is_number(facilities[key]):
+		if not SaveData.is_text(key) or definition == null or not SaveData.is_integer(facilities[key]):
 			errors.append("unknown or invalid facility in save: %s" % key)
 			continue
 		facility_levels[StringName(key)] = clampi(int(facilities[key]), 0, definition.max_level)
@@ -57,14 +58,14 @@ func restore(data: Dictionary, start: GameStartDefinition, registry: Node) -> Pa
 		errors.append_array(resident.restore(residents[key]))
 		resident_states[resident.resident_id] = resident
 	pending_loot.clear()
-	for raw in SaveData.array(data, "pending_loot", errors):
-		if raw is Dictionary and SaveData.valid_stack(raw, errors):
-			var stack := ItemStack.from_dict(raw)
-			if stack.quantity > 0:
-				pending_loot.append(stack)
-		else:
-			errors.append("invalid pending loot record")
-	pending_loot.append_array(storage.restore_overflow)
+	var pending: Array = SaveData.array(data, "pending_loot", errors)
+	for index in pending.size():
+		var context: String = "pending_loot[%d]" % index
+		var stack: ItemStack = StackValidation.from_record(pending[index], storage.definition_resolver, errors, context)
+		if stack != null and StackValidation.accept_instance(stack, instances, errors, context):
+			pending_loot.append(stack)
+	# Overflow is already validated and reserved in instances; transfer it once.
+	pending_loot.append_array(storage.take_restore_overflow())
 	return errors
 
 func secure_loot(items: Array[ItemStack]) -> CommandResult:
@@ -75,7 +76,11 @@ func secure_loot(items: Array[ItemStack]) -> CommandResult:
 	return result
 
 func claim_pending_loot() -> CommandResult:
+	if _claim_in_progress:
+		return CommandResult.make(false, "Pending loot claim already in progress")
+	_claim_in_progress = true
 	var result: CommandResult = storage.exchange([], pending_loot)
 	if result.success:
 		pending_loot.clear()
+	_claim_in_progress = false
 	return result

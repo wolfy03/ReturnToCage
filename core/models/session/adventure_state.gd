@@ -13,7 +13,7 @@ func to_save_dict() -> Dictionary:
 		drops.append(record.to_dict())
 	return {"death_drops": drops}
 
-func restore(data: Dictionary) -> PackedStringArray:
+func restore(data: Dictionary, instances: Dictionary[String, String] = {}) -> PackedStringArray:
 	reset()
 	var errors := PackedStringArray()
 	var ids: Array[String] = []
@@ -21,8 +21,11 @@ func restore(data: Dictionary) -> PackedStringArray:
 		if not raw is Dictionary:
 			errors.append("invalid death drop record")
 			continue
+		if SaveData.is_text(raw.get("id")) and ids.has(String(raw["id"])):
+			errors.append("duplicate death drop id ignored: %s" % raw["id"])
+			continue
 		var record := DeathDropRecord.new()
-		errors.append_array(record.restore(raw, ContentRegistry))
+		errors.append_array(record.restore(raw, ContentRegistry, instances))
 		if record.id.is_empty() or ids.has(record.id):
 			errors.append("empty or duplicate death drop id")
 			continue

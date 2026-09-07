@@ -83,7 +83,7 @@ func load_game(path: String = SAVE_PATH) -> bool:
 
 func migrate(envelope: Dictionary) -> Dictionary:
 	var raw_version: Variant = envelope.get("format_version", 1)
-	if not SaveData.is_number(raw_version) or float(raw_version) != int(raw_version):
+	if not SaveData.is_integer(raw_version):
 		return {}
 	if not envelope.has("game_state") or not envelope["game_state"] is Dictionary:
 		return {}

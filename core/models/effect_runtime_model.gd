@@ -100,7 +100,9 @@ func to_array() -> Array[Dictionary]:
 	return result
 
 func restore(data: Array, resolver: Callable) -> PackedStringArray:
+	paused = false
 	var errors := PackedStringArray()
+	var seen: Array[StringName] = []
 	for key in active_effects.keys():
 		remove_effect(key)
 	for raw in data:
@@ -114,15 +116,23 @@ func restore(data: Array, resolver: Callable) -> PackedStringArray:
 			continue
 		var remaining: float = SaveData.number(raw, "remaining", definition.duration_seconds, errors)
 		if definition.duration_seconds > 0.0 and remaining <= 0.0:
+			if remaining < 0.0:
+				errors.append("negative effect remaining time ignored: %s" % id)
 			continue
-		var slot: int = clampi(int(SaveData.number(raw, "food_slot", 0, errors)), 0, ItemDefinition.FoodSlot.INSTANT)
+		var slot: int = int(SaveData.clamped_number(raw, "food_slot", 0, 0, ItemDefinition.FoodSlot.INSTANT, errors))
 		var source := StringName(SaveData.text_value(raw, "source_id", "", errors))
-		apply_effect(definition, slot as ItemDefinition.FoodSlot, source)
 		var key: StringName = id if source.is_empty() else StringName("%s/%s" % [source, id])
+		if seen.has(key):
+			errors.append("duplicate active effect ignored: %s" % key)
+			continue
+		seen.append(key)
+		apply_effect(definition, slot as ItemDefinition.FoodSlot, source)
 		var active: ActiveEffect = active_effects[key]
 		active.applied_by = StringName(SaveData.text_value(raw, "applied_by", "effect", errors))
-		active.remaining = clampf(remaining, 0.0, definition.duration_seconds) if definition.duration_seconds > 0.0 else 0.0
-		active.stacks = clampi(int(SaveData.number(raw, "stacks", 1, errors)), 1, definition.max_stacks)
-		active.tick_elapsed = clampf(SaveData.number(raw, "tick_elapsed", 0.0, errors), 0.0, definition.tick_interval_seconds)
+		active.remaining = minf(remaining, definition.duration_seconds) if definition.duration_seconds > 0.0 else 0.0
+		if remaining != active.remaining:
+			errors.append("effect remaining time clamped: %s" % id)
+		active.stacks = int(SaveData.clamped_number(raw, "stacks", 1, 1, definition.max_stacks, errors))
+		active.tick_elapsed = SaveData.clamped_number(raw, "tick_elapsed", 0.0, 0.0, definition.tick_interval_seconds, errors)
 		_rebuild(active)
 	return errors

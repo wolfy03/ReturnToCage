@@ -29,14 +29,29 @@ func add_item(item_id: StringName, amount: int) -> InventoryResult:
 	return add_stack(ItemStack.new(item_id, amount))
 
 func add_stack(incoming: ItemStack) -> InventoryResult:
-	if incoming.quantity <= 0:
-		return InventoryResult.make(incoming.quantity, 0, "amount must be positive")
-	var definition: ItemDefinition = definition_resolver.call(incoming.item_id) as ItemDefinition if definition_resolver.is_valid() else null
-	if definition == null or definition.max_stack < 1:
-		return InventoryResult.make(incoming.quantity, 0, "unknown item: %s" % incoming.item_id)
+	var result: InventoryResult = _add_stack(incoming)
+	if result.changed > 0:
+		changed.emit()
+	return result
+
+func _add_stack(incoming: ItemStack) -> InventoryResult:
+	var definition: ItemDefinition = definition_resolver.call(incoming.item_id) as ItemDefinition if incoming != null and definition_resolver.is_valid() else null
+	var error: String = StackValidation.runtime_error(incoming, definition)
+	if not error.is_empty():
+		var rejected := InventoryResult.make(incoming.quantity if incoming != null else 0, 0, error)
+		rejected.success = false
+		return rejected
+	if not incoming.instance_id.is_empty():
+		for stack in _stacks:
+			if stack.instance_id == incoming.instance_id:
+				return InventoryResult.make(1, 0, "duplicate instance: %s" % incoming.instance_id)
+		if _stacks.size() >= capacity:
+			return InventoryResult.make(1, 0, "inventory full")
+		_stacks.append(incoming.duplicate_stack())
+		return InventoryResult.make(1, 1)
 	var remaining: int = incoming.quantity
 	for stack in _stacks:
-		if stack.item_id == incoming.item_id and stack.instance_id.is_empty() and incoming.instance_id.is_empty() and stack.durability == incoming.durability and stack.quantity < definition.max_stack:
+		if stack.item_id == incoming.item_id and stack.instance_id.is_empty() and stack.durability == incoming.durability and stack.quantity < definition.max_stack:
 			var moved: int = mini(remaining, definition.max_stack - stack.quantity)
 			stack.quantity += moved
 			remaining -= moved
@@ -47,35 +62,46 @@ func add_stack(incoming: ItemStack) -> InventoryResult:
 		stack.quantity = mini(remaining, definition.max_stack)
 		_stacks.append(stack)
 		remaining -= stack.quantity
-	var result := InventoryResult.make(incoming.quantity, incoming.quantity - remaining, "inventory full" if remaining > 0 else "")
-	if result.changed > 0:
-		changed.emit()
-	return result
+	return InventoryResult.make(incoming.quantity, incoming.quantity - remaining, "inventory full" if remaining > 0 else "")
 
 func preview_exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> CommandResult:
 	var preview := InventoryModel.new(capacity, definition_resolver)
-	preview.initialize(stacks())
-	for stack in inputs:
-		if stack.quantity <= 0 or not preview.remove_item(stack.item_id, stack.quantity).success:
-			return CommandResult.make(false, "Not enough resources", inputs)
-	for stack in outputs:
-		var added: InventoryResult = preview.add_stack(stack)
-		if not added.success:
-			return CommandResult.make(false, "Not enough storage space", outputs)
-	return CommandResult.make(true)
+	preview._stacks = stacks()
+	return preview._apply_exchange(inputs, outputs)
 
 func exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> CommandResult:
 	var result: CommandResult = preview_exchange(inputs, outputs)
 	if not result.success:
 		return result
 	var staged := InventoryModel.new(capacity, definition_resolver)
-	staged.initialize(stacks())
-	for stack in inputs:
-		staged.remove_item(stack.item_id, stack.quantity)
-	for stack in outputs:
-		staged.add_stack(stack)
-	initialize(staged.stacks())
+	staged._stacks = stacks()
+	result = staged._apply_exchange(inputs, outputs)
+	if result.success:
+		_stacks = staged._stacks
+		changed.emit()
 	return result
+
+func _apply_exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> CommandResult:
+	for stack in inputs:
+		if not StackValidation.basic_error(stack).is_empty():
+			return CommandResult.make(false, "Invalid input stack")
+		if stack.instance_id.is_empty():
+			if not remove_item(stack.item_id, stack.quantity).success:
+				return CommandResult.make(false, "Not enough resources", inputs)
+		else:
+			var found: int = -1
+			for index in _stacks.size():
+				if _stacks[index].instance_id == stack.instance_id and _stacks[index].item_id == stack.item_id:
+					found = index
+					break
+			if found < 0:
+				return CommandResult.make(false, "Required instance missing: %s" % stack.instance_id, inputs)
+			_stacks.remove_at(found)
+	for stack in outputs:
+		var added: InventoryResult = _add_stack(stack)
+		if not added.success:
+			return CommandResult.make(false, added.message, outputs if stack != null else [])
+	return CommandResult.make(true)
 
 func remove_item(item_id: StringName, amount: int) -> InventoryResult:
 	if amount <= 0:
@@ -125,11 +151,26 @@ func clear() -> void:
 	changed.emit()
 
 ## Bulk initialization from validated typed start content; keeps the stack model.
-func initialize(stacks_to_copy: Array[ItemStack]) -> void:
+func initialize(stacks_to_copy: Array[ItemStack]) -> CommandResult:
+	var seen: Dictionary[String, String] = {}
+	var errors := PackedStringArray()
+	if stacks_to_copy.size() > capacity:
+		return CommandResult.make(false, "Initial stacks exceed capacity")
+	for stack in stacks_to_copy:
+		var definition: ItemDefinition = definition_resolver.call(stack.item_id) as ItemDefinition if stack != null and definition_resolver.is_valid() else null
+		var error: String = StackValidation.runtime_error(stack, definition)
+		if not error.is_empty():
+			return CommandResult.make(false, error)
+		if stack.quantity > definition.max_stack:
+			return CommandResult.make(false, "Initial stack exceeds max_stack")
+		if not StackValidation.accept_instance(stack, seen, errors, "initialize"):
+			return CommandResult.make(false, errors[0])
 	_stacks.clear()
+	restore_overflow.clear()
 	for stack in stacks_to_copy:
 		_stacks.append(stack.duplicate_stack())
 	changed.emit()
+	return CommandResult.make(true)
 
 func to_array() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
@@ -137,29 +178,28 @@ func to_array() -> Array[Dictionary]:
 		result.append(stack.to_dict())
 	return result
 
-func restore(data: Array) -> PackedStringArray:
+func restore(data: Array, instances: Dictionary[String, String] = {}, context: String = "inventory") -> PackedStringArray:
 	var errors := PackedStringArray()
 	_stacks.clear()
 	restore_overflow.clear()
-	for raw in data:
-		if not raw is Dictionary or not SaveData.valid_stack(raw, errors):
-			errors.append("invalid inventory record")
+	for index in data.size():
+		var location: String = "%s[%d]" % [context, index]
+		var stack: ItemStack = StackValidation.from_record(data[index], definition_resolver, errors, location)
+		if stack == null or not StackValidation.accept_instance(stack, instances, errors, location):
 			continue
-		var stack := ItemStack.from_dict(raw)
-		var definition: ItemDefinition = definition_resolver.call(stack.item_id) as ItemDefinition if definition_resolver.is_valid() else null
-		if definition == null:
-			errors.append("unknown item id in save: %s" % stack.item_id)
-			continue
-		if stack.quantity <= 0:
-			errors.append("nonpositive item quantity in save: %s" % stack.item_id)
-			continue
+		var definition := definition_resolver.call(stack.item_id) as ItemDefinition
 		if stack.quantity > definition.max_stack:
-			errors.append("oversized stack split in save: %s" % stack.item_id)
-		var result: InventoryResult = add_stack(stack)
+			errors.append("oversized stack split in %s: %s" % [location, stack.item_id])
+		var result: InventoryResult = _add_stack(stack)
 		if result.remainder > 0:
 			var overflow := stack.duplicate_stack()
 			overflow.quantity = result.remainder
 			restore_overflow.append(overflow)
-			errors.append("inventory overflow retained for recovery: %s x%d" % [stack.item_id, result.remainder])
+			errors.append("inventory overflow retained in %s: %s x%d" % [location, stack.item_id, result.remainder])
 	changed.emit()
 	return errors
+
+func take_restore_overflow() -> Array[ItemStack]:
+	var result: Array[ItemStack] = restore_overflow
+	restore_overflow = []
+	return result

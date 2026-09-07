@@ -31,6 +31,11 @@ func run_all() -> void:
 	await test_world_scene_integration()
 	await get_tree().process_frame
 	await StabilityTests.new().run(self)
+	preload("res://tests/unit/test_inventory_stability.gd").new().run(self)
+	preload("res://tests/unit/test_player_state_restore.gd").new().run(self)
+	preload("res://tests/unit/test_settlement_state_restore.gd").new().run(self)
+	preload("res://tests/unit/test_save_migration.gd").new().run(self)
+	await preload("res://tests/integration/test_session_stability.gd").new().run(self)
 	_finish_tests()
 
 func _finish_tests() -> void:

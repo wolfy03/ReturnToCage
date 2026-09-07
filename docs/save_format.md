@@ -32,3 +32,29 @@ Migration은 원본을 깊게 복사한 뒤 단계별로 진행한다.
 2. v2 → v3: active_effects, death_drops, pending_loot가 없으면 빈 배열 추가.
 
 v1/v2에 기록되지 않은 과거 임시 버프는 복원할 수 없다. 기본 능력치에 효과를 덧붙이지 않는다. 미래 버전은 거부한다. v3 증가는 내부 리팩터링 때문이 아니라 실제 영속 데이터 세 종류를 추가했기 때문이다. tests/fixtures의 기존 v2 JSON은 수정하지 않고 호환 검증에 계속 사용한다.
+
+## 안정화 검증 정책 (v3 유지)
+
+StackValidation과 SaveData.valid_stack이 모든 스택 복원 경계를 공유한다.
+수량/내구도는 유한한 32비트 정수 범위이며 수량은 양수다. instance_id는 문자열이고,
+비어 있지 않으면 수량이 반드시 1이다. 일반 아이템만 최대 중첩으로 분할한다.
+잘못된 레코드는 구체적인 위치를 포함한 경고 한 개로 거부한다.
+
+내구도 -1은 기존 미지정 sentinel로 유지한다. -1 미만은 0으로, 장비의 최대 내구도
+초과는 해당 EquipmentDefinition.max_durability로 보정하고 경고한다. 런타임 add/equip은
+범위를 벗어난 입력을 거부한다. pending_loot의 unknown/mistyped ItemDefinition은 제외한다.
+기존 death_drops의 미등록 콘텐츠 보존 정책은 유지하되 수량·중복·내구도 규칙은 동일하다.
+
+non-empty instance_id는 Snapshot 전체에서 다음 순서로 첫 항목만 유지한다.
+player_inventory → equipment(슬롯 정렬) → protected_inventory → settlement_storage
+(overflow 포함) → pending_loot → death_drops(배열 순서).
+후속 중복은 제외하고 첫 위치/중복 위치를 경고한다. 일반 아이템의 동일 ID는 합법이다.
+검증된 overflow는 take_restore_overflow로 버퍼를 비우면서 pending으로 한 번만 이전한다.
+
+PlayerState.restore 자체는 체력을 0..max_health로 보정한다. SaveManager의 정착지 재개는
+기존 v3 정책에 따라 0을 1로 회복하고 별도 경고한다. 허기/갈증은 SurvivalConfig의 최대값,
+progression_reduction은 0..0.9로 제한한다. 위치는 Vector2 변환 후에도 유한한지 검사한다.
+JSON의 유한한 큰 숫자가 float32 좌표에서 무한대가 되는 경우도 거부한다.
+
+v1/v2/v3 Migration은 그대로다. 문자열 버전, 소수 버전, 음수/미래 버전과 비정상 숫자는
+거부한다. 재진입 잠금, Actor 생명 세대와 restore의 instance 검사 집합은 저장하지 않는다.

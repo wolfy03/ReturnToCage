@@ -40,13 +40,13 @@ static func is_valid_override(property_name: StringName, value: Variant) -> bool
 		return false
 	match property_name:
 		&"inventory_loss":
-			return float(value) == int(value) and int(value) in DifficultyDefinition.InventoryLoss.values()
+			return SaveData.is_integer(value) and int(value) in DifficultyDefinition.InventoryLoss.values()
 		&"equipment_loss":
-			return float(value) == int(value) and int(value) in DifficultyDefinition.EquipmentLoss.values()
+			return SaveData.is_integer(value) and int(value) in DifficultyDefinition.EquipmentLoss.values()
 		&"recovery_policy":
-			return float(value) == int(value) and int(value) in DifficultyDefinition.RecoveryPolicy.values()
+			return SaveData.is_integer(value) and int(value) in DifficultyDefinition.RecoveryPolicy.values()
 		&"escape_display":
-			return float(value) == int(value) and int(value) in DifficultyDefinition.EscapeDisplay.values()
+			return SaveData.is_integer(value) and int(value) in DifficultyDefinition.EscapeDisplay.values()
 	return float(value) >= (0.1 if property_name in [&"enemy_health_multiplier", &"enemy_damage_multiplier"] else 0.0) and float(value) <= 10.0
 
 func to_save_dict() -> Dictionary:

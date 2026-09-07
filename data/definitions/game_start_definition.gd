@@ -28,9 +28,14 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	var errors: PackedStringArray = super.validate_definition(registry)
 	if respawn_policy == null or survival_config == null:
 		errors.append("%s: respawn policy and survival config required" % id)
-	_validate_items(inventory_items, inventory_capacity, registry, errors)
-	_validate_items(storage_items, storage_capacity, registry, errors)
-	_validate_items(protected_items, protected_capacity, registry, errors)
+	else:
+		errors.append_array(respawn_policy.validate_definition(registry))
+		errors.append_array(survival_config.validate_definition(registry))
+	var instances: Dictionary[String, String] = {}
+	_validate_items(inventory_items, inventory_capacity, registry, errors, instances, "starting inventory")
+	_validate_items(equipment_items, EquipmentDefinition.EquipmentSlot.size(), registry, errors, instances, "starting equipment")
+	_validate_items(protected_items, protected_capacity, registry, errors, instances, "starting protected inventory")
+	_validate_items(storage_items, storage_capacity, registry, errors, instances, "starting storage")
 	var slots: Array[int] = []
 	for entry in equipment_items:
 		if entry == null:
@@ -70,11 +75,13 @@ func validate_definition(registry: Node) -> PackedStringArray:
 			errors.append("%s: missing starting stat %s" % [id, stat_id])
 	if player_stats.get(&"max_health", 0.0) <= 0.0 or player_health > player_stats.get(&"max_health", 0.0):
 		errors.append("%s: starting health must fit a positive max_health" % id)
-	if not is_finite(player_health) or player_health < 0.0 or not is_finite(hunger) or hunger < 0.0 or not is_finite(thirst) or thirst < 0.0 or not is_finite(progression_reduction) or progression_reduction < 0.0 or progression_reduction > 1.0 or not last_safe_position.is_finite():
+	if not is_finite(player_health) or player_health < 0.0 or not is_finite(hunger) or hunger < 0.0 or not is_finite(thirst) or thirst < 0.0 or not is_finite(progression_reduction) or progression_reduction < 0.0 or progression_reduction > 0.9 or not last_safe_position.is_finite():
 		errors.append("%s: invalid starting vitals or position" % id)
+	if survival_config != null and (hunger > survival_config.max_hunger or thirst > survival_config.max_thirst):
+		errors.append("%s: starting survival exceeds configured maxima" % id)
 	return errors
 
-func _validate_items(entries: Array[StartingItemDefinition], capacity: int, registry: Node, errors: PackedStringArray) -> void:
+func _validate_items(entries: Array[StartingItemDefinition], capacity: int, registry: Node, errors: PackedStringArray, instances: Dictionary[String, String], context: String) -> void:
 	var stacks_needed: int = 0
 	if capacity < 1:
 		errors.append("%s: starting inventory capacity must be positive" % id)
@@ -83,18 +90,28 @@ func _validate_items(entries: Array[StartingItemDefinition], capacity: int, regi
 			errors.append("%s: null starting item" % id)
 			continue
 		var item := registry.get_item(entry.item_id) as ItemDefinition
-		if item == null or item.max_stack < 1 or entry.quantity < 1 or entry.durability < -1:
-			errors.append("%s: unknown starting item or invalid quantity/durability: %s" % [id, entry.item_id])
-		else:
-			stacks_needed += ceili(float(entry.quantity) / item.max_stack)
+		var stack: ItemStack = entry.create_stack()
+		var error: String = StackValidation.runtime_error(stack, item)
+		if not error.is_empty():
+			errors.append("%s %s: %s (%s, quantity %d, instance %s)" % [id, context, error, entry.item_id, entry.quantity, entry.instance_id])
+			continue
+		StackValidation.accept_instance(stack, instances, errors, context)
+		stacks_needed += 1 if not entry.instance_id.is_empty() else ceili(float(entry.quantity) / item.max_stack)
 	if stacks_needed > capacity:
 		errors.append("%s: starting items exceed capacity" % id)
 
 func create_stacks(entries: Array[StartingItemDefinition], registry: Node) -> Array[ItemStack]:
 	var stacks: Array[ItemStack] = []
 	for entry in entries:
+		var item: ItemDefinition = registry.get_item(entry.item_id) as ItemDefinition if entry != null else null
+		var initial: ItemStack = entry.create_stack() if entry != null else null
+		if not StackValidation.runtime_error(initial, item).is_empty():
+			push_error("Cannot create invalid starting stacks")
+			return []
+		if not initial.instance_id.is_empty():
+			stacks.append(initial)
+			continue
 		var remaining: int = entry.quantity
-		var item := registry.get_item(entry.item_id) as ItemDefinition
 		while remaining > 0:
 			var stack: ItemStack = entry.create_stack()
 			stack.quantity = mini(remaining, item.max_stack)

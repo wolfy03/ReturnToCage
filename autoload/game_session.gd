@@ -12,7 +12,11 @@ signal difficulty_changed(id: StringName)
 signal phase_changed
 signal player_respawned(result: RespawnResult)
 enum Phase { MENU, SETTLEMENT, ADVENTURE, RESPAWNING }
-var phase: Phase = Phase.MENU
+var _phase: Phase = Phase.MENU
+var _life_id: int = 0
+var phase: Phase:
+	get:
+		return _phase
 var last_death_result: RespawnResult
 
 const DEFAULT_START_ID: StringName = &"default_game_start"
@@ -27,98 +31,61 @@ var adventure: AdventureState = AdventureState.new()
 var difficulty: DifficultyState = DifficultyState.new()
 
 # Deprecated compatibility facade. These properties never own separate state.
+# Object/collection properties are getter-only; replacement would break model wiring.
 # New callers should use the typed domain models directly.
 var player_stats: StatBlock:
 	get:
 		return player.stats
-	set(value):
-		player.stats = value
 var player_inventory: InventoryModel:
 	get:
 		return player.inventory
-	set(value):
-		if player.inventory != null and player.inventory.changed.is_connected(inventory_changed.emit):
-			player.inventory.changed.disconnect(inventory_changed.emit)
-		player.inventory = value
-		_connect_model_signals()
 var equipment: EquipmentModel:
 	get:
 		return player.equipment
-	set(value):
-		player.equipment = value
 var settlement_storage: InventoryModel:
 	get:
 		return settlement.storage
-	set(value):
-		if settlement.storage != null and settlement.storage.changed.is_connected(storage_changed.emit):
-			settlement.storage.changed.disconnect(storage_changed.emit)
-		settlement.storage = value
-		_connect_model_signals()
 var protected_inventory: InventoryModel:
 	get:
 		return player.protected_inventory
-	set(value):
-		player.protected_inventory = value
 var active_adventure: AdventureSession:
 	get:
 		return adventure.active_session
-	set(value):
-		adventure.active_session = value
 var facility_levels: Dictionary[StringName, int]:
 	get:
 		return settlement.facility_levels
-	set(value):
-		settlement.facility_levels = value
 var quest_states: Dictionary[StringName, QuestState]:
 	get:
 		return progression.quest_states
-	set(value):
-		progression.quest_states = value
 var unlocked_regions: Array[StringName]:
 	get:
 		return progression.unlocked_regions
-	set(value):
-		progression.unlocked_regions = value
 var unlocked_exits: Array[StringName]:
 	get:
 		return progression.unlocked_exits
-	set(value):
-		progression.unlocked_exits = value
 var unlocked_flags: Array[StringName]:
 	get:
 		return progression.unlocked_flags
-	set(value):
-		progression.unlocked_flags = value
 var discovered_escape_points: Array[StringName]:
 	get:
 		return progression.discovered_escape_points
-	set(value):
-		progression.discovered_escape_points = value
 var resident_states: Dictionary[StringName, ResidentState]:
 	get:
 		return settlement.resident_states
-	set(value):
-		settlement.resident_states = value
 var difficulty_id: StringName:
 	get:
 		return difficulty.id
-	set(value):
-		difficulty.id = value
 var difficulty_overrides: Dictionary[StringName, Variant]:
 	get:
 		return difficulty.overrides
-	set(value):
-		difficulty.overrides = value
 var player_health: float:
 	get:
 		return player.health
 	set(value):
-		player.health = value
+		player.set_health(value)
 var last_safe_position: Vector2:
 	get:
 		return player.last_safe_position
-	set(value):
-		player.last_safe_position = value
 
 # Deprecated serialization adapter: getter returns a snapshot. Use player.survival
 # for live typed mutations; assign a Dictionary only when adapting legacy callers.
@@ -137,7 +104,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not session_id.is_empty():
 		play_time_seconds += delta
-		if phase != Phase.RESPAWNING:
+		if phase in [Phase.SETTLEMENT, Phase.ADVENTURE]:
 			player.effects.tick(delta)
 	if adventure.active_session != null:
 		adventure.active_session.elapsed_seconds += delta
@@ -156,14 +123,16 @@ func _connect_model_signals() -> void:
 	if settlement != null and settlement.storage != null and not settlement.storage.changed.is_connected(storage_changed.emit):
 		settlement.storage.changed.connect(storage_changed.emit)
 
-func get_start_definition() -> GameStartDefinition:
+func get_start_definition(report_error: bool = true) -> GameStartDefinition:
 	var start := ContentRegistry.get_definition(DEFAULT_START_ID) as GameStartDefinition
 	if start == null:
-		push_error("Missing or invalid GameStartDefinition: %s" % DEFAULT_START_ID)
+		if report_error:
+			push_error("Missing or invalid GameStartDefinition: %s" % DEFAULT_START_ID)
 		return null
 	var errors: PackedStringArray = start.validate_definition(ContentRegistry)
 	if not errors.is_empty():
-		push_error("Invalid GameStartDefinition: %s" % "; ".join(errors))
+		if report_error:
+			push_error("Invalid GameStartDefinition: %s" % "; ".join(errors))
 		return null
 	return start
 
@@ -182,6 +151,8 @@ func start_new_game() -> bool:
 	session_id = "%s-%s" % [Time.get_unix_time_from_system(), randi()]
 	play_time_seconds = 0.0
 	_reset_states(start)
+	_life_id += 1
+	_phase = Phase.MENU # Explicit new-session reset, not an in-session transition.
 	last_death_result = null
 	set_phase(Phase.SETTLEMENT)
 	last_message = "New journey started"
@@ -193,10 +164,25 @@ func current_difficulty() -> DifficultyDefinition:
 		return adventure.active_session.rules.effective()
 	return difficulty.effective(ContentRegistry)
 
-func set_phase(value: Phase) -> void:
-	if phase != value:
-		phase = value
-		phase_changed.emit()
+func set_phase(value: Phase) -> bool:
+	if value == _phase:
+		return value != Phase.ADVENTURE
+	var allowed: bool = false
+	match _phase:
+		Phase.MENU:
+			allowed = value == Phase.SETTLEMENT and not session_id.is_empty()
+		Phase.SETTLEMENT:
+			allowed = value in [Phase.MENU, Phase.RESPAWNING] or (value == Phase.ADVENTURE and adventure.active_session != null)
+		Phase.ADVENTURE:
+			allowed = value == Phase.RESPAWNING or (value == Phase.SETTLEMENT and adventure.active_session == null)
+		Phase.RESPAWNING:
+			allowed = value == Phase.SETTLEMENT and adventure.active_session == null and last_death_result != null and last_death_result.success
+	if not allowed:
+		last_message = "Invalid session phase transition: %s -> %s" % [_phase, value]
+		return false
+	_phase = value
+	phase_changed.emit()
+	return true
 
 
 func set_difficulty(id: StringName) -> bool:
@@ -242,14 +228,14 @@ func claim_quest_reward(quest_id: StringName) -> bool:
 func claim_quest_reward_result(quest_id: StringName) -> CommandResult:
 	var state: QuestState = progression.quest_states.get(quest_id)
 	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
-	if state == null or definition == null or not state.completed or state.reward_claimed:
+	if state == null or definition == null or not state.begin_reward_claim():
 		last_message = "Quest reward is unavailable"
 		return CommandResult.make(false, last_message)
 	var reward: CommandResult = settlement.storage.exchange([], ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts))
+	state.finish_reward_claim(reward.success)
 	if not reward.success:
 		last_message = reward.message
 		return reward
-	state.reward_claimed = true
 	quest_changed.emit(quest_id)
 	for next_quest in definition.follow_up_quest_ids:
 		start_quest(next_quest)
@@ -306,13 +292,22 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	adventure_finished.emit(result, last_message)
 	return last_message
 
-func handle_player_death(death_position: Vector2) -> RespawnResult:
-	if phase == Phase.RESPAWNING or last_death_result != null:
+func handle_player_death(death_position: Vector2, life_id: int = -1) -> RespawnResult:
+	if life_id >= 0 and life_id != _life_id:
+		return RespawnResult.failure("Ignored death callback from a retired actor")
+	if last_death_result != null:
 		return last_death_result
-	set_phase(Phase.RESPAWNING)
+	if phase not in [Phase.SETTLEMENT, Phase.ADVENTURE]:
+		return RespawnResult.failure("Death unavailable in this session phase")
+	# Validate all dependencies before changing phase, pause flags or possessions.
+	var start: GameStartDefinition = get_start_definition(false)
+	var rules: DifficultyDefinition = current_difficulty()
+	if start == null or rules == null or not death_position.is_finite():
+		return RespawnResult.failure("Cannot resolve death: invalid start configuration, difficulty or position")
+	if not set_phase(Phase.RESPAWNING):
+		return RespawnResult.failure(last_message)
 	player.effects.paused = true
-	var start: GameStartDefinition = get_start_definition()
-	last_death_result = DeathResolutionService.resolve(player, settlement, adventure, current_difficulty(), death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"))
+	last_death_result = DeathResolutionService.resolve(player, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"))
 	adventure.active_session = null
 	last_message = last_death_result.summary()
 	adventure_finished.emit(AdventureSession.Result.DEATH, last_message)
@@ -320,15 +315,20 @@ func handle_player_death(death_position: Vector2) -> RespawnResult:
 	return last_death_result
 
 func complete_respawn() -> void:
-	if phase == Phase.RESPAWNING:
-		set_phase(Phase.SETTLEMENT)
+	if phase == Phase.RESPAWNING and set_phase(Phase.SETTLEMENT):
+		player.effects.paused = false
 
-func arm_player_life() -> void:
-	# Called only when the new actor is ready; duplicate notifications from the old
-	# actor are additionally blocked by the actor's death latch.
-	if phase != Phase.RESPAWNING:
+func arm_player_life() -> int:
+	# Each actor receives a transient generation token; late signals from a retired
+	# actor cannot affect a new life even after last_death_result is cleared.
+	if phase in [Phase.SETTLEMENT, Phase.ADVENTURE]:
+		_life_id += 1
 		last_death_result = null
 		player.effects.paused = false
+	return _life_id
+
+func is_current_life(life_id: int) -> bool:
+	return life_id == _life_id
 
 func can_use_exit(exit_id: StringName, region_id: StringName) -> CommandResult:
 	if phase != Phase.SETTLEMENT:
@@ -425,6 +425,7 @@ func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	session_id = snapshot.session_id
 	play_time_seconds = snapshot.play_time_seconds
 	last_death_result = null
+	_life_id += 1
 	_connect_model_signals()
 	set_phase(Phase.SETTLEMENT)
 	session_reset.emit()

@@ -43,3 +43,18 @@ PlayerInputComponent는 Input Map에서 수평·수직 축을 제공한다. Move
 각 State가 자신의 flat save 필드를 직렬화한다. SessionSnapshot에서 독립 복원·검증한 뒤 전체 State를 교체한다. 치명적 오류는 현재 세션을 유지한다. 교체 시 이전 inventory/storage relay를 끊고 새 모델에 연결한다. 기존 8개 시그널은 유지하며 phase_changed/player_respawned를 추가했다. [저장 형식](save_format.md)을 참고한다.
 
 전역 EventBus, 주민 AI, 슬롯형 인벤토리, 장비 Instance 전면 재작성은 도입하지 않았다. 기존 Component와 Enemy 상태 노드는 유지한다.
+
+## 안정화 경계
+
+StackValidation은 모델의 입력 규칙과 저장 레코드 보정을 공유한다. Snapshot의 일회성
+instance ID 검사 집합으로 전체 저장 상태의 중복을 제거하며 전역 ItemInstance 저장소는 없다.
+InventoryModel의 restore/initialize/exchange는 최종 changed를 한 번만 발행한다.
+정확한 instance 입력은 해당 ID만 제거한다. 모든 exchange 실패는 원본을 유지한다.
+
+QuestState와 SettlementState의 작은 수령 잠금은 storage_changed 콜백의 재진입을 막는다.
+reward_claimed는 지급 성공 후 확정한다. 후속 퀘스트 시작 실패는 이미 지급한 보상을
+rollback하지 않는다. 해당 퀘스트의 선행 조건이 충족되면 기존 start_quest 경로로 시작한다.
+
+사망은 설정과 좌표를 먼저 검증한다. 실패한 RespawnResult는 phase/pause/소지품을
+변경하지 않는다. 씬 로드 실패 시 respawn은 재시도 가능하게 남고 stale paused 플래그는
+해제한다. RESPAWNING에서는 tick을 유예해 새 월드가 준비될 때까지 추가 피해를 막는다.

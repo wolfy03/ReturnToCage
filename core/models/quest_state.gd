@@ -7,6 +7,7 @@ var quest_id: StringName
 var progress: PackedInt32Array = PackedInt32Array()
 var completed: bool = false
 var reward_claimed: bool = false
+var _reward_claiming: bool = false
 
 func _init(p_quest_id: StringName = &"") -> void:
 	quest_id = p_quest_id
@@ -42,3 +43,14 @@ static func from_dict(data: Dictionary) -> QuestState:
 	state.completed = bool(data.get("completed", false))
 	state.reward_claimed = bool(data.get("reward_claimed", false))
 	return state
+
+func begin_reward_claim() -> bool:
+	if not completed or reward_claimed or _reward_claiming:
+		return false
+	_reward_claiming = true
+	return true
+
+func finish_reward_claim(success: bool) -> void:
+	if success:
+		reward_claimed = true
+	_reward_claiming = false

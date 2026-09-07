@@ -56,3 +56,16 @@ godot --path . --rendering-method gl_compatibility res://tests/visual_smoke.tscn
 6. 창고를 채운 뒤 탈출하고 pending 표시 및 공간 확보 후 수령 확인. 퀘스트 보상도 공간 부족 뒤 재시도.
 7. 정착지에서 Save → 프로그램 종료 → Load. 난이도/Override, 효과, 드롭, 보관함 복원 확인.
 8. F10 개발 패널은 Debug 빌드 전용 우회 기능이며 일반 플레이 경로와 구분한다.
+
+## 안정화 경계 테스트
+
+기존 runner는 다음 다섯 파일을 dispatch한다. 외부 프레임워크를 추가하지 않는다.
+
+- unit/test_inventory_stability.gd: 인스턴스 수량·중복, 내구도, signal 횟수, 정확한 instance 입력과 거래 rollback.
+- unit/test_player_state_restore.gd: reset/restore 3회, 보관한 이전 객체의 콜백 차단, 체력·생존·좌표 보정, getter 및 시작 콘텐츠 검증.
+- unit/test_settlement_state_restore.gd: unknown pending, storage overflow 합병, 세션 전체 중복, 보상·pending 재진입/원자성.
+- unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
+- integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
+
+Resource.duplicate(true) 이후에도 외부 Resource는 공유될 수 있다. 테스트가 변경할
+SurvivalConfig 같은 외부 Resource는 명시적으로 복제해 원본 콘텐츠를 오염시키지 않는다.

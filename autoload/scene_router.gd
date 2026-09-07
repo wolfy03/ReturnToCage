@@ -12,28 +12,28 @@ func register_world_layer(layer: Node) -> void:
 
 func go_to_settlement() -> bool:
 	if GameSession.adventure.active_session != null:
-		transition_failed.emit("Use an escape point or return item to leave the expedition")
+		_report_failure("Use an escape point or return item to leave the expedition")
 		return false
 	return _replace_world(SETTLEMENT_SCENE, &"settlement", null)
 
 func go_to_adventure(context: AdventureContext) -> bool:
 	if context == null or GameSession.adventure.active_session == null or GameSession.adventure.active_session.context != context:
-		transition_failed.emit("No authorized expedition context")
+		_report_failure("No authorized expedition context")
 		return false
 	var definition := ContentRegistry.get_definition(context.region_id) as RegionDefinition
 	if definition == null:
-		transition_failed.emit("Unknown region: %s" % context.region_id)
+		_report_failure("Unknown region: %s" % context.region_id)
 		return false
 	return _replace_world(definition.scene_path, context.region_id, context)
 
 func _replace_world(scene_path: String, destination: StringName, context: AdventureContext) -> bool:
 	if not is_instance_valid(_world_layer):
-		transition_failed.emit("World layer is not registered")
+		_report_failure("World layer is not registered")
 		return false
 	transition_started.emit(destination)
 	var packed := ResourceLoader.load(scene_path) as PackedScene
 	if packed == null:
-		transition_failed.emit("Cannot load scene: %s" % scene_path)
+		_report_failure("Cannot load scene: %s" % scene_path)
 		return false
 	for child in _world_layer.get_children():
 		child.process_mode = Node.PROCESS_MODE_DISABLED
@@ -47,3 +47,10 @@ func _replace_world(scene_path: String, destination: StringName, context: Advent
 	_world_layer.add_child(instance)
 	transition_finished.emit(destination)
 	return true
+
+func _report_failure(message: String) -> void:
+	# Respawn remains retryable. GameSession gates ticks while waiting for a valid
+	# world, but no stale model pause survives a later successful retry.
+	if GameSession.phase == GameSession.Phase.RESPAWNING:
+		GameSession.player.effects.paused = false
+	transition_failed.emit(message)

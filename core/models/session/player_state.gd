@@ -45,7 +45,7 @@ func to_save_dict() -> Dictionary:
 		"last_safe_position": [last_safe_position.x, last_safe_position.y]
 	}
 
-func restore(data: Dictionary, start: GameStartDefinition) -> PackedStringArray:
+func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary[String, String] = {}) -> PackedStringArray:
 	var errors := PackedStringArray()
 	stats = StatBlock.new()
 	stats.base_values = start.player_stats.duplicate()
@@ -56,25 +56,27 @@ func restore(data: Dictionary, start: GameStartDefinition) -> PackedStringArray:
 		errors.append("invalid max_health restored to start value")
 	inventory.capacity = start.inventory_capacity
 	protected_inventory.capacity = start.protected_capacity
-	errors.append_array(inventory.restore(SaveData.array(data, "player_inventory", errors)))
-	errors.append_array(equipment.restore(SaveData.dictionary(data, "equipment", errors)))
-	errors.append_array(protected_inventory.restore(SaveData.array(data, "protected_inventory", errors)))
+	errors.append_array(inventory.restore(SaveData.array(data, "player_inventory", errors), instances, "player_inventory"))
+	errors.append_array(equipment.restore(SaveData.dictionary(data, "equipment", errors), instances))
+	errors.append_array(protected_inventory.restore(SaveData.array(data, "protected_inventory", errors), instances, "protected_inventory"))
 	survival = SurvivalState.new()
 	survival.reset(start)
 	errors.append_array(survival.restore(SaveData.dictionary(data, "survival_state", errors)))
-	health = SaveData.number(data, "player_health", stats.value(&"max_health"), errors)
-	last_safe_position = start.last_safe_position
-	if data.has("last_safe_position"):
-		var position: Variant = data["last_safe_position"]
-		if position is Array and position.size() == 2 and SaveData.is_number(position[0]) and SaveData.is_number(position[1]):
-			last_safe_position = Vector2(float(position[0]), float(position[1]))
-		else:
-			errors.append("invalid last_safe_position in save")
+	last_safe_position = SaveData.position(data, "last_safe_position", start.last_safe_position, errors)
 	errors.append_array(effects.restore(SaveData.array(data, "active_effects", errors), Callable(ContentRegistry, "get_definition")))
 	sync_equipment()
+	set_health(SaveData.clamped_number(data, "player_health", stats.value(&"max_health"), 0.0, maxf(1.0, stats.value(&"max_health")), errors))
 	return errors
 
 func _reset_effects() -> void:
+	# A scene/test may retain the retired model. Disconnect before dropping it;
+	# RefCounted lifetime alone does not protect this PlayerState from callbacks.
+	if effects != null:
+		effects.paused = true
+		if effects.periodic.is_connected(_on_periodic):
+			effects.periodic.disconnect(_on_periodic)
+		if effects.stats != null and effects.stats.stat_changed.is_connected(_on_persistent_stat_changed):
+			effects.stats.stat_changed.disconnect(_on_persistent_stat_changed)
 	effects = EffectRuntimeModel.new(stats)
 	effects.periodic.connect(_on_periodic)
 	_gear_sources.clear()
@@ -88,6 +90,8 @@ func _on_periodic(amount: float, damage: bool) -> void:
 	set_health(health - amount if damage else health + amount)
 
 func set_health(value: float) -> void:
+	if not is_finite(value):
+		return
 	var next: float = clampf(value, 0.0, maxf(1.0, stats.value(&"max_health")))
 	if not is_equal_approx(health, next):
 		health = next

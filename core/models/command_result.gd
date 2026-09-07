@@ -10,5 +10,6 @@ static func make(ok: bool, reason: String = "", items: Array[ItemStack] = []) ->
 	result.success = ok
 	result.message = reason
 	for stack in items:
-		result.remaining.append(stack.duplicate_stack())
+		if stack != null:
+			result.remaining.append(stack.duplicate_stack())
 	return result

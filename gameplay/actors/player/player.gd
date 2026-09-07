@@ -12,6 +12,7 @@ signal return_channel_changed(active: bool, progress: float)
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
 var _death_handled: bool = false
+var _life_id: int = -1
 var _bound_state: PlayerState
 var facing: float = 1.0
 var return_channel: float = 0.0
@@ -21,7 +22,7 @@ var return_channel_origin: Vector2
 func _ready() -> void:
 	add_to_group(&"player")
 	_bound_state = GameSession.player
-	GameSession.arm_player_life()
+	_life_id = GameSession.arm_player_life()
 	movement.configure(self, input, GameSession.player.stats)
 	combat.configure(self, GameSession.player.stats)
 	effects.configure(GameSession.player.stats, GameSession.player.effects)
@@ -116,7 +117,7 @@ func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirs
 		health.receive_damage(DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment"))
 
 func _on_died(_context: DamageContext) -> void:
-	if _death_handled:
+	if _death_handled or not GameSession.is_current_life(_life_id):
 		return
 	_death_handled = true
 	movement.exit_climb()
@@ -124,17 +125,23 @@ func _on_died(_context: DamageContext) -> void:
 	survival.drain_paused = true
 	_cancel_return_channel()
 	movement.enabled = false
-	GameSession.handle_player_death(global_position)
+	var result: RespawnResult = GameSession.handle_player_death(global_position, _life_id)
+	if not result.success:
+		GameSession.last_message = result.error_message
+		_death_handled = false
+		movement.enabled = true
+		survival.drain_paused = false
+		return
 	await get_tree().create_timer(1.0).timeout
 	if is_inside_tree():
 		SceneRouter.go_to_settlement()
 
 func _on_health_changed(current: float, _maximum: float) -> void:
-	if not _death_handled:
+	if not _death_handled and GameSession.is_current_life(_life_id):
 		_bound_state.set_health(current)
 
 func _sync_persistent_health() -> void:
-	if _death_handled:
+	if _death_handled or not GameSession.is_current_life(_life_id):
 		return
 	health.current_health = _bound_state.health
 	health.health_changed.emit(health.current_health, health.max_health)

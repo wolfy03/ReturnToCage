@@ -23,4 +23,6 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	var errors := super.validate_definition(registry)
 	if critical_threshold >= warning_threshold:
 		errors.append("%s: critical threshold must be below warning threshold" % id)
+	if not is_finite(max_hunger) or max_hunger <= 0.0 or not is_finite(max_thirst) or max_thirst <= 0.0:
+		errors.append("%s: survival maxima must be finite and positive" % id)
 	return errors
