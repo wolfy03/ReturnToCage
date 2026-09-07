@@ -54,3 +54,13 @@ Typed domain objects and collection getters remain mutable for compatibility; ca
 ## 10. Next architecture phase
 
 The automated stability baseline is ready for subsequent work. Preserve state ownership, shared input validation, staged restore, and atomic inventory operations. Full adventure resolution separation, quest event decoupling, and instance/slot redesign remain separate tasks.
+
+## Review follow-up: synchronous save boundaries
+
+A subsequent review reproduced duplicate reward persistence from synchronous
+storage observers and silent quest progress coercion. The follow-up patch holds
+inventory notifications until reward source/claim state commits, removes the
+extra pending-claim facade notification, and validates progress before casting.
+The new save/load/reclaim regression suite verifies both pending and quest
+rewards. Updated full check: 759 main + 26 restart assertions, 785 total; content
+validation remains 29 Resources. Save format remains v3.

@@ -58,3 +58,16 @@ JSON의 유한한 큰 숫자가 float32 좌표에서 무한대가 되는 경우�
 
 v1/v2/v3 Migration은 그대로다. 문자열 버전, 소수 버전, 음수/미래 버전과 비정상 숫자는
 거부한다. 재진입 잠금, Actor 생명 세대와 restore의 instance 검사 집합은 저장하지 않는다.
+
+### Reward notification and quest progress boundaries
+
+Reward inventory notifications are held until pending loot has been cleared or
+quest reward_claimed has been committed. A synchronous save from storage_changed
+therefore contains a consistent reward state. Failed exchanges still leave both
+owners unchanged. InventoryModel.begin_update/end_update batches notifications;
+it does not replace exchange's staged transaction or provide rollback itself.
+
+Quest progress accepts only finite, integral signed 32-bit values before integer
+conversion (JSON 2.0 is valid). Invalid values retain the initialized 0 and report
+one progress warning. Valid integers outside 0..required_amount are clamped with
+a warning. Completion reconciliation remains a separate validation step.

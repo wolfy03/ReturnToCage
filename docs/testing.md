@@ -69,3 +69,10 @@ godot --path . --rendering-method gl_compatibility res://tests/visual_smoke.tscn
 
 Resource.duplicate(true) 이후에도 외부 Resource는 공유될 수 있다. 테스트가 변경할
 SurvivalConfig 같은 외부 Resource는 명시적으로 복제해 원본 콘텐츠를 오염시키지 않는다.
+
+`tests/unit/test_reward_save_boundary.gd` saves synchronously from the storage
+notification during pending/quest reward claims, then loads and retries the claim
+to check quantity conservation. It also exercises fractional, oversized,
+non-finite, negative and mistyped quest progress. These regressions failed on the
+previous implementation. The updated full run passes 759 main assertions plus
+1 restart-write and 25 restart-read assertions (785 total).

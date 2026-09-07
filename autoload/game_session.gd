@@ -231,8 +231,11 @@ func claim_quest_reward_result(quest_id: StringName) -> CommandResult:
 	if state == null or definition == null or not state.begin_reward_claim():
 		last_message = "Quest reward is unavailable"
 		return CommandResult.make(false, last_message)
-	var reward: CommandResult = settlement.storage.exchange([], ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts))
+	var reward_storage: InventoryModel = settlement.storage
+	reward_storage.begin_update()
+	var reward: CommandResult = reward_storage.exchange([], ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts))
 	state.finish_reward_claim(reward.success)
+	reward_storage.end_update()
 	if not reward.success:
 		last_message = reward.message
 		return reward
@@ -344,7 +347,6 @@ func claim_pending_loot() -> CommandResult:
 		return CommandResult.make(false, "Pending loot is available in the settlement")
 	var result: CommandResult = settlement.claim_pending_loot()
 	last_message = "Pending loot claimed" if result.success else result.message
-	storage_changed.emit()
 	return result
 
 func craft(recipe_id: StringName) -> CommandResult:

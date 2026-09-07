@@ -79,8 +79,10 @@ func claim_pending_loot() -> CommandResult:
 	if _claim_in_progress:
 		return CommandResult.make(false, "Pending loot claim already in progress")
 	_claim_in_progress = true
+	storage.begin_update()
 	var result: CommandResult = storage.exchange([], pending_loot)
 	if result.success:
 		pending_loot.clear()
+	storage.end_update()
 	_claim_in_progress = false
 	return result

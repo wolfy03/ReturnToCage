@@ -42,10 +42,13 @@ func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 		if progress.size() != state.progress.size():
 			errors.append("quest progress length differs in save: %s" % quest_id)
 		for index in mini(progress.size(), state.progress.size()):
-			if SaveData.is_number(progress[index]):
-				state.progress[index] = clampi(int(progress[index]), 0, definition.objectives[index].required_amount)
-			else:
-				errors.append("invalid quest progress in save: %s" % quest_id)
+			if not SaveData.is_integer(progress[index]):
+				errors.append("invalid quest progress in save: %s[%d], expected bounded integer" % [quest_id, index])
+				continue
+			var raw_progress: int = int(progress[index])
+			state.progress[index] = clampi(raw_progress, 0, definition.objectives[index].required_amount)
+			if state.progress[index] != raw_progress:
+				errors.append("quest progress clamped in save: %s[%d] from %d to %d" % [quest_id, index, raw_progress, state.progress[index]])
 		state.completed = SaveData.boolean(raw, "completed", false, errors)
 		state.reward_claimed = SaveData.boolean(raw, "reward_claimed", false, errors)
 		if not state.reward_claimed:

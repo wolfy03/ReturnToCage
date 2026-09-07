@@ -6,6 +6,8 @@ signal changed
 var capacity: int = 16
 var restore_overflow: Array[ItemStack] = []
 var _stacks: Array[ItemStack] = []
+var _update_depth: int = 0
+var _change_pending: bool = false
 var definition_resolver: Callable
 
 func _init(p_capacity: int = 16, p_resolver: Callable = Callable()) -> void:
@@ -31,7 +33,7 @@ func add_item(item_id: StringName, amount: int) -> InventoryResult:
 func add_stack(incoming: ItemStack) -> InventoryResult:
 	var result: InventoryResult = _add_stack(incoming)
 	if result.changed > 0:
-		changed.emit()
+		_notify_changed()
 	return result
 
 func _add_stack(incoming: ItemStack) -> InventoryResult:
@@ -78,7 +80,7 @@ func exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> CommandRes
 	result = staged._apply_exchange(inputs, outputs)
 	if result.success:
 		_stacks = staged._stacks
-		changed.emit()
+		_notify_changed()
 	return result
 
 func _apply_exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> CommandResult:
@@ -120,7 +122,7 @@ func remove_item(item_id: StringName, amount: int) -> InventoryResult:
 			break
 	var result := InventoryResult.make(amount, amount - remaining, "not enough items" if remaining > 0 else "")
 	if result.changed > 0:
-		changed.emit()
+		_notify_changed()
 	return result
 
 func move_item(from_index: int, to_index: int) -> bool:
@@ -129,7 +131,7 @@ func move_item(from_index: int, to_index: int) -> bool:
 	var temporary := _stacks[from_index]
 	_stacks[from_index] = _stacks[to_index]
 	_stacks[to_index] = temporary
-	changed.emit()
+	_notify_changed()
 	return true
 
 func discard_item(item_id: StringName, amount: int) -> InventoryResult:
@@ -148,7 +150,7 @@ func total_weight() -> float:
 
 func clear() -> void:
 	_stacks.clear()
-	changed.emit()
+	_notify_changed()
 
 ## Bulk initialization from validated typed start content; keeps the stack model.
 func initialize(stacks_to_copy: Array[ItemStack]) -> CommandResult:
@@ -169,7 +171,7 @@ func initialize(stacks_to_copy: Array[ItemStack]) -> CommandResult:
 	restore_overflow.clear()
 	for stack in stacks_to_copy:
 		_stacks.append(stack.duplicate_stack())
-	changed.emit()
+	_notify_changed()
 	return CommandResult.make(true)
 
 func to_array() -> Array[Dictionary]:
@@ -196,10 +198,28 @@ func restore(data: Array, instances: Dictionary[String, String] = {}, context: S
 			overflow.quantity = result.remainder
 			restore_overflow.append(overflow)
 			errors.append("inventory overflow retained in %s: %s x%d" % [location, stack.item_id, result.remainder])
-	changed.emit()
+	_notify_changed()
 	return errors
 
 func take_restore_overflow() -> Array[ItemStack]:
 	var result: Array[ItemStack] = restore_overflow
 	restore_overflow = []
 	return result
+
+## Defer observers until all owners in a domain transaction have committed.
+func begin_update() -> void:
+	_update_depth += 1
+
+func end_update() -> void:
+	if _update_depth <= 0:
+		return
+	_update_depth -= 1
+	if _update_depth == 0 and _change_pending:
+		_change_pending = false
+		changed.emit()
+
+func _notify_changed() -> void:
+	if _update_depth > 0:
+		_change_pending = true
+	else:
+		changed.emit()
