@@ -9,7 +9,7 @@
 ## Autoload
 
 - `ContentRegistry`: 전체 게임 수명 동안 불변 콘텐츠 Resource를 안정적인 ID로 조회하고 검증한다.
-- `GameSession`: 새 게임부터 저장/종료까지 유지되는 런타임 상태만 소유한다.
+- `GameSession`: 다섯 도메인 State를 소유하고 세션 생명주기와 상위 명령을 조정하는 facade다. [세션 상태 구조](session_architecture.md)를 따른다.
 - `SaveManager`: GameSession 직렬화, 원자적 파일 교체, 버전 Migration을 담당한다.
 - `SceneRouter`: 지속 AppRoot의 WorldLayer 교체와 Context 전달을 한 경로로 통제한다.
 

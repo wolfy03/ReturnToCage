@@ -4,6 +4,11 @@ var failures: Array[String] = []
 var passed: int = 0
 
 func _ready() -> void:
+	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if arguments.has("--restart-write") or arguments.has("--restart-read"):
+		test_restart_persistence(arguments.has("--restart-write"))
+		_finish_tests()
+		return
 	run_all()
 
 func run_all() -> void:
@@ -17,7 +22,16 @@ func run_all() -> void:
 	test_quest_and_facility()
 	test_save_migration_and_round_trip()
 	test_integration_loop()
+	test_session_start_and_ownership()
+	test_start_resource_variation_and_validation()
+	test_session_signals()
+	test_legacy_save_compatibility()
+	test_partial_restore()
+	test_resident_and_survival_state()
 	await test_world_scene_integration()
+	_finish_tests()
+
+func _finish_tests() -> void:
 	if failures.is_empty():
 		print("TEST PASS: %d assertions" % passed)
 		get_tree().quit(0)
@@ -191,6 +205,26 @@ func test_world_scene_integration() -> void:
 	assert_true(SceneRouter.go_to_settlement(), "settlement scene loads through router")
 	await get_tree().process_frame
 	assert_true(get_tree().get_first_node_in_group(&"player") != null, "settlement spawns controllable player")
+	var actor := get_tree().get_first_node_in_group(&"player") as PlayerActor
+	assert_true(actor.survival.state == GameSession.player.survival, "world player binds persistent survival")
+	actor.survival.set_values(38.0, 49.0)
+	actor.survival.progression_reduction = 0.25
+	GameSession.player.stats.set_base(&"max_health", 140.0)
+	actor.health.heal(20.0)
+	var path: String = "user://return_to_cage_scene_restore_test.json"
+	assert_true(SaveManager.save_game(path), "world state saves")
+	GameSession.start_new_game()
+	assert_true(SaveManager.load_game(path), "world state loads")
+	assert_true(SceneRouter.go_to_settlement(), "restored settlement scene loads")
+	await get_tree().process_frame
+	actor = get_tree().get_first_node_in_group(&"player") as PlayerActor
+	assert_equal(actor.health.max_health, 140.0, "restored stats configure actor max health")
+	assert_equal(actor.health.current_health, 120.0, "restored current health reaches actor")
+	assert_true(actor.survival.state == GameSession.player.survival, "restored actor binds new survival state")
+	assert_true(absf(actor.survival.hunger - 38.0) < 1.0, "restored survival reaches actor with normal drain")
+	assert_equal(actor.survival.progression_reduction, 0.25, "restored survival reduction reaches actor")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))
 	var context := GameSession.begin_adventure(&"sewer_gate", &"sewer_region", &"sewer_entrance")
 	assert_true(SceneRouter.go_to_adventure(context), "adventure scene loads from region data")
 	await get_tree().process_frame
@@ -209,3 +243,283 @@ func assert_equal(actual: Variant, expected: Variant, message: String) -> void:
 		passed += 1
 	else:
 		failures.append("%s (expected %s, got %s)" % [message, expected, actual])
+
+# These fixtures were exported by the unmodified v2 implementation before refactoring.
+func _fixture(name: String) -> Dictionary:
+	return JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/" + name)) as Dictionary
+
+func _assert_saved_fields(actual: Dictionary, expected: Dictionary, label: String) -> void:
+	var normalized: Dictionary = JSON.parse_string(JSON.stringify(actual))
+	assert_equal(normalized.size(), expected.size(), label + " flat schema key count")
+	for key in expected:
+		assert_equal(normalized.get(key), expected[key], "%s: %s" % [label, key])
+
+func test_session_start_and_ownership() -> void:
+	assert_true(GameSession.start_new_game(), "validated start succeeds")
+	var expected: Dictionary = _fixture("legacy_v2_new_game.json")["game_state"]
+	expected["session_id"] = GameSession.session_id
+	_assert_saved_fields(GameSession.export_state(), expected, "unchanged new game")
+	assert_true(GameSession.player_inventory == GameSession.player.inventory, "inventory has one owner")
+	assert_true(GameSession.player_stats == GameSession.player.stats, "stats have one owner")
+	assert_true(GameSession.equipment == GameSession.player.equipment, "equipment has one owner")
+	assert_true(GameSession.protected_inventory == GameSession.player.protected_inventory, "protected inventory has one owner")
+	assert_true(GameSession.settlement_storage == GameSession.settlement.storage, "storage has one owner")
+	GameSession.facility_levels[&"workbench"] = 1
+	assert_equal(GameSession.settlement.facility_levels[&"workbench"], 1, "legacy facility mutation reaches owner")
+	GameSession.player_health = 67.0
+	assert_equal(GameSession.player.health, 67.0, "legacy health setter reaches owner")
+	GameSession.player.health = 89.0
+	assert_equal(GameSession.player_health, 89.0, "legacy health getter reads owner")
+	GameSession.survival_state = {"hunger": 37.0, "thirst": 48.0, "progression_reduction": 0.2}
+	assert_equal(GameSession.player.survival.hunger, 37.0, "legacy survival assignment reaches typed state")
+	var saved: Dictionary = GameSession.export_state()
+	saved["resident_states"]["milo"]["state"] = "snapshot-only"
+	assert_equal(GameSession.settlement.resident_states[&"milo"].current_state, &"idle", "exported resident data is detached")
+	GameSession.start_new_game()
+
+func test_start_resource_variation_and_validation() -> void:
+	var start: GameStartDefinition = GameSession.get_start_definition()
+	var original: GameStartDefinition = start.duplicate(true) as GameStartDefinition
+	# Temporarily edit the registered Resource to exercise start_new_game itself.
+	start.inventory_items[0].quantity = 5
+	var extra := StartingItemDefinition.new()
+	extra.item_id = &"rusty_scrap"
+	extra.quantity = 4
+	start.storage_items = [extra]
+	start.protected_items = [extra]
+	start.equipment_items[0].durability = 17
+	start.facility_levels[&"workbench"] = 1
+	start.residents[0].unlocked = false
+	start.residents[0].current_state = &"resting"
+	start.unlocked_regions = []
+	start.unlocked_exits = [&"field_gate"]
+	start.unlocked_flags = [&"test_flag"]
+	start.discovered_escape_points = [&"test_point"]
+	start.difficulty_id = &"story"
+	start.player_health = 61.0
+	start.player_stats[&"move_speed"] = 215.0
+	start.hunger = 32.0
+	start.thirst = 43.0
+	start.progression_reduction = 0.3
+	start.last_safe_position = Vector2(210, 490)
+	assert_true(GameSession.start_new_game(), "edited starting Resource starts game")
+	assert_equal(GameSession.player.inventory.count(&"berry"), 5, "Resource controls initial inventory")
+	assert_equal(GameSession.settlement.storage.count(extra.item_id), 4, "Resource controls initial storage")
+	assert_equal(GameSession.player.protected_inventory.count(extra.item_id), 4, "Resource controls protected inventory")
+	assert_equal(GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND).durability, 17, "Resource controls initial durability")
+	assert_equal(GameSession.settlement.facility_levels[&"workbench"], 1, "Resource controls initial facility")
+	assert_true(not GameSession.settlement.resident_states[&"milo"].unlocked, "Resource controls resident unlock")
+	assert_equal(GameSession.settlement.resident_states[&"milo"].current_state, &"resting", "Resource controls resident state")
+	assert_equal(GameSession.progression.unlocked_regions, start.unlocked_regions, "Resource controls regions")
+	assert_equal(GameSession.progression.unlocked_exits, start.unlocked_exits, "Resource controls exits")
+	assert_equal(GameSession.progression.unlocked_flags, start.unlocked_flags, "Resource controls flags")
+	assert_equal(GameSession.progression.discovered_escape_points, start.discovered_escape_points, "Resource controls discoveries")
+	assert_equal(GameSession.difficulty.id, start.difficulty_id, "Resource controls difficulty")
+	assert_equal(GameSession.player.health, 61.0, "Resource controls health")
+	assert_equal(GameSession.player.stats.value(&"move_speed"), 215.0, "Resource controls player stats")
+	assert_equal(GameSession.player.survival.hunger, 32.0, "Resource controls hunger")
+	assert_equal(GameSession.player.survival.thirst, 43.0, "Resource controls thirst")
+	assert_equal(GameSession.player.survival.progression_reduction, 0.3, "Resource controls progression reduction")
+	assert_equal(GameSession.player.last_safe_position, start.last_safe_position, "Resource controls safe position")
+	GameSession.progression.unlocked_exits.clear()
+	GameSession.settlement.facility_levels.clear()
+	assert_equal(start.unlocked_exits.size(), 1, "runtime unlocks do not mutate Resource")
+	assert_equal(start.facility_levels.size(), 1, "runtime facilities do not mutate Resource")
+	for property in start.get_property_list():
+		if int(property["usage"]) & PROPERTY_USAGE_STORAGE and property["name"] != "script":
+			start.set(property["name"], original.get(property["name"]))
+	GameSession.start_new_game()
+	var invalid: GameStartDefinition = start.duplicate(true) as GameStartDefinition
+	invalid.inventory_items[0].item_id = &"missing_item"
+	invalid.inventory_items[1].quantity = 0
+	invalid.equipment_items[0].item_id = &"berry"
+	invalid.facility_levels = {&"missing_facility": 0}
+	invalid.unlocked_regions = [&"missing_region"]
+	invalid.unlocked_exits = [&"missing_exit"]
+	invalid.difficulty_id = &"missing_difficulty"
+	invalid.residents.append(null)
+	assert_true(invalid.validate_definition(ContentRegistry).size() >= 8, "start validation catches all required reference categories")
+	assert_equal(ContentRegistry.validate_all().size(), 0, "validation leaves registered content intact")
+
+func test_session_signals() -> void:
+	var counts: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0]
+	var on_inventory := func() -> void: counts[0] += 1
+	var on_storage := func() -> void: counts[1] += 1
+	var on_reset := func() -> void: counts[2] += 1
+	var on_difficulty := func(_id: StringName) -> void: counts[3] += 1
+	var on_quest := func(_id: StringName) -> void: counts[4] += 1
+	var on_facility := func(_id: StringName, _level: int) -> void: counts[5] += 1
+	var on_started := func(_context: AdventureContext) -> void: counts[6] += 1
+	var on_finished := func(_result: AdventureSession.Result, _summary: String) -> void: counts[7] += 1
+	GameSession.inventory_changed.connect(on_inventory)
+	GameSession.storage_changed.connect(on_storage)
+	GameSession.session_reset.connect(on_reset)
+	GameSession.difficulty_changed.connect(on_difficulty)
+	GameSession.quest_changed.connect(on_quest)
+	GameSession.facility_changed.connect(on_facility)
+	GameSession.adventure_started.connect(on_started)
+	GameSession.adventure_finished.connect(on_finished)
+	for iteration in 3:
+		GameSession.start_new_game()
+		GameSession.restore_state(GameSession.export_state())
+		GameSession._create_models()
+		var inventory_before: int = counts[0]
+		var storage_before: int = counts[1]
+		GameSession.player.inventory.add_item(&"berry", 1)
+		GameSession.settlement.storage.add_item(&"rusty_scrap", 1)
+		assert_equal(counts[0] - inventory_before, 1, "inventory relay stays single after reset/restore %d" % iteration)
+		assert_equal(counts[1] - storage_before, 1, "storage relay stays single after reset/restore %d" % iteration)
+	assert_equal(counts[2], 6, "one session_reset per start or restore")
+	GameSession.set_difficulty(&"story")
+	GameSession.set_difficulty_override(&"inventory_loss", DifficultyDefinition.InventoryLoss.NONE)
+	GameSession.clear_difficulty_override(&"inventory_loss")
+	assert_equal(counts[3], 3, "difficulty signals preserved")
+	assert_true(not GameSession.set_difficulty_override(&"unknown", 1), "unknown override rejected")
+	assert_true(not GameSession.set_difficulty_override(&"inventory_loss", {}), "mistyped override rejected")
+	assert_true(not GameSession.set_difficulty_override(&"inventory_loss", 99), "invalid enum override rejected")
+	assert_equal(counts[3], 3, "invalid overrides emit no change")
+	GameSession.start_quest(&"sewer_supplies")
+	GameSession.settlement.storage.add_item(&"rusty_scrap", 3)
+	GameSession.upgrade_facility(&"workbench")
+	assert_true(counts[4] >= 2, "quest start and progression signals preserved")
+	assert_equal(counts[5], 1, "facility signal preserved")
+	GameSession.begin_adventure(&"sewer_gate", &"sewer_region", &"sewer_entrance")
+	assert_true(GameSession.active_adventure == GameSession.adventure.active_session, "adventure alias reads owner")
+	var time_before: float = GameSession.play_time_seconds
+	GameSession._process(2.0)
+	assert_equal(GameSession.play_time_seconds, time_before + 2.0, "session play time ticks")
+	assert_equal(GameSession.adventure.active_session.elapsed_seconds, 2.0, "domain adventure elapsed time ticks")
+	GameSession.finish_adventure(AdventureSession.Result.NORMAL_ESCAPE)
+	assert_equal(counts[6], 1, "adventure_started signal preserved")
+	assert_equal(counts[7], 1, "adventure_finished signal preserved")
+	GameSession.inventory_changed.disconnect(on_inventory)
+	GameSession.storage_changed.disconnect(on_storage)
+	GameSession.session_reset.disconnect(on_reset)
+	GameSession.difficulty_changed.disconnect(on_difficulty)
+	GameSession.quest_changed.disconnect(on_quest)
+	GameSession.facility_changed.disconnect(on_facility)
+	GameSession.adventure_started.disconnect(on_started)
+	GameSession.adventure_finished.disconnect(on_finished)
+
+func test_legacy_save_compatibility() -> void:
+	var fixture: Dictionary = _fixture("legacy_v2_progress.json")
+	assert_true(SaveManager.load_game("res://tests/fixtures/legacy_v2_progress.json"), "original v2 file loads")
+	_assert_saved_fields(GameSession.export_state(), fixture["game_state"], "original v2 compatibility")
+	var old: Dictionary = fixture.duplicate(true)
+	old["format_version"] = 1
+	old["game_state"].erase("difficulty_overrides")
+	old["game_state"].erase("protected_inventory")
+	var original: Dictionary = old.duplicate(true)
+	var migrated: Dictionary = SaveManager.migrate(old)
+	assert_equal(old, original, "migration never mutates caller envelope")
+	assert_equal(migrated["format_version"], 2, "sequential v1 migration reaches v2")
+	assert_equal(migrated["game_state"]["difficulty_overrides"], {}, "v1 migration adds overrides")
+	assert_equal(migrated["game_state"]["protected_inventory"], [], "v1 migration adds protected inventory")
+	var path: String = "user://return_to_cage_v1_fixture_test.json"
+	_write_envelope(path, old)
+	assert_true(SaveManager.load_game(path), "v1 save file loads through SaveManager")
+	_assert_saved_fields(GameSession.export_state(), migrated["game_state"], "v1 restored fields")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	for invalid in [{"format_version": []}, {"format_version": 0}, {"format_version": 3}, {"format_version": 1.5}, {"format_version": 2, "game_state": []}]:
+		assert_true(SaveManager.migrate(invalid).is_empty(), "invalid envelope rejected: %s" % invalid)
+	var before: Dictionary = GameSession.export_state()
+	_write_envelope(path, {"format_version": 2, "game_state": "wrong"})
+	assert_true(not SaveManager.load_game(path), "invalid game_state fails without mutation")
+	assert_equal(GameSession.export_state(), before, "rejected save preserves current session")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	# Real save -> mutate all domains -> load, with full schema comparison.
+	GameSession.restore_state(fixture["game_state"])
+	assert_true(SaveManager.save_game(path), "all-domain round trip writes")
+	GameSession.start_new_game()
+	assert_true(SaveManager.load_game(path), "all-domain round trip loads")
+	_assert_saved_fields(GameSession.export_state(), fixture["game_state"], "all-domain round trip")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))
+
+func test_partial_restore() -> void:
+	var data: Dictionary = _fixture("legacy_v2_progress.json")["game_state"]
+	data["player_inventory"].append({"item_id": "missing_item", "quantity": 1})
+	data["player_inventory"].append({"item_id": "berry", "quantity": {}})
+	data["equipment"]["1"] = {"item_id": "missing_equipment", "quantity": 1}
+	data["quests"].append({"quest_id": "missing_quest"})
+	data["quests"].append(null)
+	data["quests"][0]["progress"] = [2]
+	data["resident_states"]["broken"] = []
+	data["last_safe_position"] = [1]
+	var errors: PackedStringArray = GameSession.restore_state(data)
+	assert_true(errors.size() >= 8, "partial restore reports all damaged records")
+	assert_equal(GameSession.player.inventory.count(&"berry"), 2, "unknown and malformed items do not discard valid items")
+	assert_equal(GameSession.player.health, 73.0, "partial restore retains valid health")
+	assert_equal(GameSession.settlement.storage.count(&"rusty_scrap"), 7, "partial restore retains valid storage")
+	assert_equal(GameSession.progression.quest_states.size(), 1, "unknown quest skipped")
+	assert_equal(GameSession.progression.quest_states[&"sewer_supplies"].progress.size(), 2, "quest progress padded before gameplay indexing")
+	GameSession.report_quest_event(QuestObjectiveDefinition.ObjectiveType.UPGRADE_FACILITY, &"workbench")
+	assert_equal(GameSession.player.last_safe_position, GameSession.get_start_definition().last_safe_position, "short position uses configured fallback")
+	assert_true(GameSession.adventure.active_session == null, "restore discards active adventure")
+	var messages: Array[String] = []
+	var on_load := func(success: bool, message: String) -> void:
+		assert_true(success, "partially damaged file still loads")
+		messages.append(message)
+	var path: String = "user://return_to_cage_partial_test.json"
+	_write_envelope(path, {"format_version": 2, "game_state": data})
+	SaveManager.load_finished.connect(on_load)
+	SaveManager.load_game(path)
+	SaveManager.load_finished.disconnect(on_load)
+	assert_true(messages.size() == 1 and messages[0].contains("warnings") and messages[0].contains("missing_item") and messages[0].contains("missing_quest"), "load_finished exposes unknown-content warnings")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	for position in [null, {}, "bad", [], [1], [1, {}], [false, 2], [1, 2, 3]]:
+		assert_true(not GameSession.restore_state({"last_safe_position": position}).is_empty(), "invalid position safely warned: %s" % str(position))
+	var malformed: Dictionary = {
+		"session_id": [], "play_time_seconds": {}, "player_stats": {"max_health": []},
+		"player_inventory": {}, "equipment": {"bad": [], "0": {"item_id": "twig_sword", "quantity": 1, "durability": []}},
+		"settlement_storage": null, "protected_inventory": false, "facility_levels": {"workbench": []},
+		"quests": [{"quest_id": "sewer_supplies", "progress": [{}], "completed": {}, "reward_claimed": []}],
+		"unlocked_regions": {}, "unlocked_exits": [false], "unlocked_flags": null,
+		"discovered_escape_points": 12, "resident_states": {"milo": {"unlocked": [], "state": {}}},
+		"difficulty_id": "missing_difficulty", "difficulty_overrides": {"inventory_loss": 99, "loot_multiplier": {}},
+		"survival_state": {"hunger": {}, "thirst": [], "progression_reduction": false}, "player_health": []
+	}
+	errors = GameSession.restore_state(malformed)
+	assert_true(errors.size() >= 20, "malformed nested field types collected without exceptions")
+	assert_true(GameSession.current_difficulty() != null, "unknown difficulty recovers configured preset")
+	assert_true(GameSession.restore_state({}).is_empty(), "missing optional fields restore safely")
+	assert_equal(GameSession.player.survival.hunger, GameSession.get_start_definition().hunger, "partial saves do not inherit previous session hunger")
+
+func test_resident_and_survival_state() -> void:
+	var resident := ResidentState.new(&"milo")
+	var raw: Dictionary = {"unlocked": true, "state": "idle"}
+	assert_true(resident.restore(raw).is_empty(), "resident legacy dictionary restores")
+	assert_equal(resident.to_dict(), raw, "resident legacy JSON round trip")
+	assert_equal(resident.resident_id, &"milo", "resident identity comes from containing save key")
+	assert_equal(typeof(resident.current_state), TYPE_STRING_NAME, "resident current state is StringName")
+	GameSession.start_new_game()
+	var component := SurvivalComponent.new()
+	add_child(component)
+	component.configure(ContentRegistry.get_definition(&"survival_default") as SurvivalConfig, 1.0, GameSession.player.survival)
+	assert_true(component.state == GameSession.player.survival, "component and player share one survival state")
+	component.set_values(31.0, 42.0)
+	component.progression_reduction = 0.4
+	assert_equal(GameSession.player.survival.hunger, 31.0, "component updates persistent hunger directly")
+	assert_equal(GameSession.player.survival.progression_reduction, 0.4, "progression reduction is immediately persistent")
+	component._process(1.0)
+	assert_true(GameSession.player.survival.thirst < 42.0, "component drain updates persistent state")
+	component.queue_free()
+
+func _write_envelope(path: String, envelope: Dictionary) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(envelope))
+	file.close()
+
+func test_restart_persistence(write_phase: bool) -> void:
+	var path: String = "user://return_to_cage_restart_test.json"
+	var expected: Dictionary = _fixture("legacy_v2_progress.json")["game_state"]
+	if write_phase:
+		GameSession.start_new_game()
+		GameSession.restore_state(expected)
+		assert_true(SaveManager.save_game(path), "restart phase 1 saves changed session")
+	else:
+		assert_true(GameSession.session_id.is_empty(), "restart phase 2 starts in a fresh process")
+		assert_true(SaveManager.load_game(path), "restart phase 2 loads saved session")
+		_assert_saved_fields(GameSession.export_state(), expected, "process restart restores all fields")
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))

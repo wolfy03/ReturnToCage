@@ -40,10 +40,20 @@ func to_dict() -> Dictionary:
 		result[str(slot)] = _slots[slot].to_dict()
 	return result
 
-func restore(data: Dictionary) -> void:
+func restore(data: Dictionary) -> PackedStringArray:
+	var errors := PackedStringArray()
 	_slots.clear()
 	for slot_key in data:
+		if not SaveData.is_text(slot_key) or not String(slot_key).is_valid_int() or not int(slot_key) in EquipmentDefinition.EquipmentSlot.values() or not data[slot_key] is Dictionary:
+			errors.append("invalid equipment slot in save: %s" % slot_key)
+			continue
+		if not SaveData.valid_stack(data[slot_key], errors):
+			continue
 		var stack := ItemStack.from_dict(data[slot_key])
-		if definition_resolver.is_valid() and definition_resolver.call(stack.item_id) is EquipmentDefinition:
+		var definition: EquipmentDefinition = definition_resolver.call(stack.item_id) as EquipmentDefinition if definition_resolver.is_valid() else null
+		if definition != null and definition.equipment_slot == int(slot_key) and stack.quantity > 0:
 			_slots[int(slot_key)] = stack
+		else:
+			errors.append("unknown or invalid equipment in save: %s" % stack.item_id)
 	changed.emit()
+	return errors

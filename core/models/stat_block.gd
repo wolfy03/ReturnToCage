@@ -41,6 +41,11 @@ func to_dict() -> Dictionary:
 		result[String(key)] = base_values[key]
 	return result
 
-func restore(data: Dictionary) -> void:
+func restore(data: Dictionary) -> PackedStringArray:
+	var errors := PackedStringArray()
 	for key in data:
+		if not SaveData.is_text(key) or not SaveData.is_number(data[key]):
+			errors.append("invalid player stat in save: %s" % key)
+			continue
 		base_values[StringName(str(key))] = float(data[key])
+	return errors

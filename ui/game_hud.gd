@@ -103,23 +103,23 @@ func _on_survival_changed(hunger: float, thirst: float, _hunger_stage: int, _thi
 func refresh_all() -> void:
 	if inventory_label == null:
 		return
-	var carried := _format_inventory(GameSession.player_inventory)
-	var storage := _format_inventory(GameSession.settlement_storage)
-	var loot := _format_inventory(GameSession.active_adventure.unsecured_loot) if GameSession.active_adventure != null else "none"
-	var main_hand := GameSession.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+	var carried := _format_inventory(GameSession.player.inventory)
+	var storage := _format_inventory(GameSession.settlement.storage)
+	var loot := _format_inventory(GameSession.adventure.active_session.unsecured_loot) if GameSession.adventure.active_session != null else "none"
+	var main_hand := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 	var equipment_text := ContentRegistry.get_item(main_hand.item_id).display_name if main_hand != null else "none"
 	inventory_label.text = "CARRIED (I to toggle)\n%s\nEQUIPMENT: %s\nSTORAGE\n%s\nUNSECURED\n%s" % [carried, equipment_text, storage, loot]
 	var lines: Array[String] = []
-	for quest_id in GameSession.quest_states:
+	for quest_id in GameSession.progression.quest_states:
 		var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
-		var state: QuestState = GameSession.quest_states[quest_id]
+		var state: QuestState = GameSession.progression.quest_states[quest_id]
 		lines.append("QUEST: %s%s" % [definition.title, " [complete - talk to Milo]" if state.completed else ""])
 		for index in definition.objectives.size():
 			lines.append("  %s  %d/%d" % [definition.objectives[index].description, state.progress[index], definition.objectives[index].required_amount])
 	if lines.is_empty(): lines.append("Talk to Milo to start the sample quest")
 	quest_label.text = "\n".join(lines)
 	var buffs := ", ".join(bound_player.effects.descriptions()) if bound_player != null else "none"
-	status_label.text = "%s | Difficulty: %s | Workbench Lv.%d | Buffs: %s" % [GameSession.last_message, GameSession.difficulty_id, GameSession.facility_levels.get(&"workbench", 0), buffs]
+	status_label.text = "%s | Difficulty: %s | Workbench Lv.%d | Buffs: %s" % [GameSession.last_message, GameSession.difficulty.id, GameSession.settlement.facility_levels.get(&"workbench", 0), buffs]
 
 func _format_inventory(inventory: InventoryModel) -> String:
 	if inventory == null or inventory.stacks().is_empty():

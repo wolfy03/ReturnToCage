@@ -1,0 +1,105 @@
+{
+  "format_version": 2,
+  "game_state": {
+    "difficulty_id": "survival",
+    "difficulty_overrides": {
+      "loot_multiplier": 1.5
+    },
+    "discovered_escape_points": [
+      "sewer_ladder"
+    ],
+    "equipment": {
+      "0": {
+        "durability": 60,
+        "instance_id": "",
+        "item_id": "twig_sword",
+        "quantity": 1
+      }
+    },
+    "facility_levels": {
+      "workbench": 1
+    },
+    "last_safe_position": [
+      230.0,
+      480.0
+    ],
+    "play_time_seconds": 123.0,
+    "player_health": 73.0,
+    "player_inventory": [
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "berry",
+        "quantity": 2
+      },
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "water_drop",
+        "quantity": 1
+      },
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "return_seed",
+        "quantity": 1
+      }
+    ],
+    "player_stats": {
+      "attack_power": 5.0,
+      "defense": 0.0,
+      "max_health": 100.0,
+      "max_stamina": 100.0,
+      "move_speed": 190.0,
+      "stamina_regen": 18.0
+    },
+    "protected_inventory": [
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "return_seed",
+        "quantity": 1
+      }
+    ],
+    "quests": [
+      {
+        "completed": false,
+        "progress": [
+          2,
+          0
+        ],
+        "quest_id": "sewer_supplies",
+        "reward_claimed": false
+      }
+    ],
+    "resident_states": {
+      "milo": {
+        "state": "resting",
+        "unlocked": true
+      }
+    },
+    "session_id": "legacy-v2-fixture",
+    "settlement_storage": [
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "rusty_scrap",
+        "quantity": 7
+      }
+    ],
+    "survival_state": {
+      "hunger": 41.0,
+      "progression_reduction": 0.2,
+      "thirst": 52.0
+    },
+    "unlocked_exits": [
+      "sewer_gate"
+    ],
+    "unlocked_flags": [
+      "basic_crafting"
+    ],
+    "unlocked_regions": [
+      "sewer_region"
+    ]
+  }
+}

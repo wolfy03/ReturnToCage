@@ -50,23 +50,42 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	if migrated.is_empty():
 		load_finished.emit(false, "Unsupported save format")
 		return false
+	if GameSession.get_start_definition() == null:
+		load_finished.emit(false, "Cannot load game: invalid start configuration")
+		return false
 	var errors := GameSession.restore_state(migrated.get("game_state", {}))
 	var message := "Game loaded" if errors.is_empty() else "Game loaded with warnings: %s" % "; ".join(errors)
 	load_finished.emit(true, message)
 	return true
 
 func migrate(envelope: Dictionary) -> Dictionary:
-	var version := int(envelope.get("format_version", 1))
-	var result := envelope.duplicate(true)
-	if version == 1:
-		var state: Dictionary = result.get("game_state", {})
-		if not state.has("difficulty_overrides"):
-			state["difficulty_overrides"] = {}
-		if not state.has("protected_inventory"):
-			state["protected_inventory"] = []
-		result["game_state"] = state
-		result["format_version"] = 2
-		version = 2
+	var raw_version: Variant = envelope.get("format_version", 1)
+	if not SaveData.is_number(raw_version) or float(raw_version) != int(raw_version):
+		return {}
+	if not envelope.get("game_state", {}) is Dictionary:
+		return {}
+	var version: int = int(raw_version)
+	var result: Dictionary = envelope.duplicate(true)
+	while version < CURRENT_VERSION:
+		match version:
+			1:
+				result = _migrate_v1_to_v2(result)
+			_:
+				return {}
+		var next_version: int = int(result.get("format_version", version))
+		if next_version <= version:
+			return {}
+		version = next_version
 	if version != CURRENT_VERSION:
 		return {}
 	return result
+
+func _migrate_v1_to_v2(envelope: Dictionary) -> Dictionary:
+	var state: Dictionary = envelope.get("game_state", {})
+	if not state.has("difficulty_overrides"):
+		state["difficulty_overrides"] = {}
+	if not state.has("protected_inventory"):
+		state["protected_inventory"] = []
+	envelope["game_state"] = state
+	envelope["format_version"] = 2
+	return envelope

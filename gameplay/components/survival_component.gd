@@ -4,17 +4,35 @@ extends Node
 signal survival_changed(hunger: float, thirst: float, hunger_stage: int, thirst_stage: int)
 
 @export var config: SurvivalConfig
-var hunger: float = 100.0
-var thirst: float = 100.0
+var state: SurvivalState = SurvivalState.new()
+var hunger: float:
+	get:
+		return state.hunger
+	set(value):
+		state.hunger = value
+var thirst: float:
+	get:
+		return state.thirst
+	set(value):
+		state.thirst = value
 var drain_multiplier: float = 1.0
-var progression_reduction: float = 0.0
+var progression_reduction: float:
+	get:
+		return state.progression_reduction
+	set(value):
+		state.progression_reduction = value
 var drain_paused: bool = false
 
-func configure(p_config: SurvivalConfig, p_difficulty_multiplier: float) -> void:
+func configure(p_config: SurvivalConfig, p_difficulty_multiplier: float, p_state: SurvivalState = null) -> void:
 	config = p_config
 	drain_multiplier = p_difficulty_multiplier
-	hunger = config.max_hunger
-	thirst = config.max_thirst
+	if p_state != null:
+		state = p_state
+		state.hunger = clampf(state.hunger, 0.0, config.max_hunger)
+		state.thirst = clampf(state.thirst, 0.0, config.max_thirst)
+	else:
+		state.hunger = config.max_hunger
+		state.thirst = config.max_thirst
 	_emit_changed()
 
 func _process(delta: float) -> void:
@@ -40,11 +58,12 @@ func set_values(p_hunger: float, p_thirst: float) -> void:
 	_emit_changed()
 
 func to_dict() -> Dictionary:
-	return {"hunger": hunger, "thirst": thirst, "progression_reduction": progression_reduction}
+	return state.to_dict()
 
 func restore_state(data: Dictionary) -> void:
-	set_values(float(data.get("hunger", hunger)), float(data.get("thirst", thirst)))
-	progression_reduction = float(data.get("progression_reduction", 0.0))
+	state.progression_reduction = 0.0
+	state.restore(data)
+	set_values(hunger, thirst)
 
 func _emit_changed() -> void:
 	if config != null:

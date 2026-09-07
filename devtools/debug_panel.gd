@@ -28,11 +28,11 @@ func _build_ui() -> void:
 		if p != null: p.survival.set_values(10, 10)
 	)
 	_add_button(buttons, "Give carried supplies", func() -> void:
-		GameSession.player_inventory.add_item(&"berry", 3); GameSession.player_inventory.add_item(&"water_drop", 2)
+		GameSession.player.inventory.add_item(&"berry", 3); GameSession.player.inventory.add_item(&"water_drop", 2)
 	)
-	_add_button(buttons, "Give storage scrap", func() -> void: GameSession.settlement_storage.add_item(&"rusty_scrap", 10))
+	_add_button(buttons, "Give storage scrap", func() -> void: GameSession.settlement.storage.add_item(&"rusty_scrap", 10))
 	_add_button(buttons, "Spawn sewer beetle", func() -> void:
-		if GameSession.active_adventure != null:
+		if GameSession.adventure.active_session != null:
 			var scene := load("res://gameplay/actors/enemies/sewer_beetle.tscn") as PackedScene
 			var enemy := scene.instantiate() as EnemyAgent; enemy.position = Vector2(850, 500)
 			get_tree().current_scene.get_node("WorldLayer").get_child(0).add_child(enemy)

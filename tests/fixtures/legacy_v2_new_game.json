@@ -1,0 +1,75 @@
+{
+  "format_version": 2,
+  "game_state": {
+    "difficulty_id": "normal",
+    "difficulty_overrides": {},
+    "discovered_escape_points": [],
+    "equipment": {
+      "0": {
+        "durability": 60,
+        "instance_id": "",
+        "item_id": "twig_sword",
+        "quantity": 1
+      }
+    },
+    "facility_levels": {
+      "workbench": 0
+    },
+    "last_safe_position": [
+      180.0,
+      500.0
+    ],
+    "play_time_seconds": 0.0,
+    "player_health": 100.0,
+    "player_inventory": [
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "berry",
+        "quantity": 2
+      },
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "water_drop",
+        "quantity": 1
+      },
+      {
+        "durability": -1,
+        "instance_id": "",
+        "item_id": "return_seed",
+        "quantity": 1
+      }
+    ],
+    "player_stats": {
+      "attack_power": 5.0,
+      "defense": 0.0,
+      "max_health": 100.0,
+      "max_stamina": 100.0,
+      "move_speed": 190.0,
+      "stamina_regen": 18.0
+    },
+    "protected_inventory": [],
+    "quests": [],
+    "resident_states": {
+      "milo": {
+        "state": "idle",
+        "unlocked": true
+      }
+    },
+    "session_id": "legacy-v2-fixture",
+    "settlement_storage": [],
+    "survival_state": {
+      "hunger": 100.0,
+      "progression_reduction": 0.0,
+      "thirst": 100.0
+    },
+    "unlocked_exits": [
+      "sewer_gate"
+    ],
+    "unlocked_flags": [],
+    "unlocked_regions": [
+      "sewer_region"
+    ]
+  }
+}

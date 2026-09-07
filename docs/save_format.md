@@ -14,4 +14,4 @@ SaveManager는 동일한 직렬화 함수로 저장 내용을 만든 뒤 `.tmp`�
 
 ## Migration 추가
 
-`SaveManager.migrate()`에 `version == N` 단계 하나를 추가하고, 복제한 Dictionary에 새 필드의 안전한 기본값을 넣은 뒤 버전을 `N + 1`로 올린다. 한 단계씩 순서대로 적용해야 하며 원본 Dictionary를 직접 변경하지 않는다. 현재 v1 → v2는 `difficulty_overrides`, `protected_inventory`를 추가한다.
+`SaveManager.migrate()`의 while/match에 버전 N 분기와 `_migrate_vN_to_vNext()` 함수를 추가하고, 복제한 Dictionary에 새 필드의 안전한 기본값을 넣은 뒤 버전을 `N + 1`로 올린다. 한 단계씩 순서대로 적용해야 하며 원본 Dictionary를 직접 변경하지 않는다. 현재 v1 → v2는 `difficulty_overrides`, `protected_inventory`를 추가한다.

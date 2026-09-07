@@ -26,7 +26,7 @@ func _process(delta: float) -> void:
 func attack(facing: float) -> bool:
 	if cooldown_remaining > 0.0 or hitbox == null:
 		return false
-	var equipped_stack := GameSession.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+	var equipped_stack := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 	var weapon := ContentRegistry.get_definition(equipped_stack.item_id) as WeaponDefinition if equipped_stack != null else null
 	if weapon == null or stamina < weapon.stamina_cost:
 		return false

@@ -94,6 +94,13 @@ func clear() -> void:
 	_stacks.clear()
 	changed.emit()
 
+## Bulk initialization from validated typed start content; keeps the stack model.
+func initialize(stacks_to_copy: Array[ItemStack]) -> void:
+	_stacks.clear()
+	for stack in stacks_to_copy:
+		_stacks.append(stack.duplicate_stack())
+	changed.emit()
+
 func to_array() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for stack in _stacks:
@@ -106,6 +113,8 @@ func restore(data: Array) -> PackedStringArray:
 	for raw in data:
 		if not raw is Dictionary:
 			errors.append("invalid inventory record")
+			continue
+		if not SaveData.valid_stack(raw, errors):
 			continue
 		var stack := ItemStack.from_dict(raw)
 		if not definition_resolver.is_valid() or definition_resolver.call(stack.item_id) == null:

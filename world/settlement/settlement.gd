@@ -16,13 +16,13 @@ func _ready() -> void:
 	_create_exits()
 	_create_save_post()
 	var player := PLAYER_SCENE.instantiate() as PlayerActor
-	player.position = GameSession.last_safe_position
+	player.position = GameSession.player.last_safe_position
 	add_child(player)
 
 func _create_npc() -> void:
 	var target := WorldHelpers.add_interaction(self, &"milo", "Talk to Milo", Vector2(300, 525), Vector2(42, 62), Color("a8b37b"), 3)
 	target.activated.connect(func(_actor: Node) -> void:
-		if not GameSession.quest_states.has(&"sewer_supplies"):
+		if not GameSession.progression.quest_states.has(&"sewer_supplies"):
 			GameSession.start_quest(&"sewer_supplies")
 		elif not GameSession.claim_quest_reward(&"sewer_supplies"):
 			GameSession.last_message = "Milo: Bring back 3 scrap and improve the workbench."
@@ -37,7 +37,7 @@ func _create_npc() -> void:
 	add_child(resident)
 
 func _create_facility() -> void:
-	var level: int = GameSession.facility_levels.get(&"workbench", 0)
+	var level: int = GameSession.settlement.facility_levels.get(&"workbench", 0)
 	var data := (ContentRegistry.get_definition(&"workbench") as FacilityDefinition).get_level_data(level)
 	var color := data.appearance_color if data != null else Color("795548")
 	var target := WorldHelpers.add_interaction(self, &"workbench", "Upgrade workbench (3 scrap)", Vector2(540, 525), Vector2(90 + level * 24, 52 + level * 10), color, 2)

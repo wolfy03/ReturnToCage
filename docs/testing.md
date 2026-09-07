@@ -33,3 +33,22 @@
 8. Milo에게 돌아가 보상을 받고 Archive post 또는 HUD Save로 저장한다.
 9. 새 게임으로 상태를 바꾼 뒤 Load하여 창고, 시설, 퀘스트, 생존/체력과 난이도를 비교한다.
 10. F10 개발 패널에서 무적, 생존 정지, 수치 변경, 아이템/자원 지급, 강제 사망, 시설 업그레이드, 검증과 상태 출력을 확인한다.
+
+## 1차 세션 리팩터링 회귀 검증
+
+기존 러너를 확장했다. 수정 전 구현에서 추출한 `tests/fixtures/legacy_v2_*.json`과
+새 게임 및 복원 결과의 모든 필드를 비교한다. Resource 수정에 따른 초기값 변경,
+상태 소유권, export 스냅샷 분리, 여덟 시그널, 반복 초기화/복원 relay 중복 방지,
+v1 실제 파일 로드, v2 round trip, 중첩 타입 오류와 짧은 위치/퀘스트 배열,
+주민 JSON 호환성과 SurvivalComponent의 공유 상태도 검사한다.
+
+프로세스를 실제로 종료한 뒤 다시 실행하는 저장 검증은 순서대로 실행한다.
+
+```powershell
+& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . res://tests/test_runner.tscn -- --restart-write
+& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . res://tests/test_runner.tscn -- --restart-read
+```
+
+첫 실행은 테스트 전용 `user://return_to_cage_restart_test.json`을 저장한다.
+두 번째 실행은 새 프로세스임을 확인한 뒤 로드하고 모든 저장 필드를 비교한 후 정리한다.
+일반 플레이 저장 파일은 사용하지 않는다.

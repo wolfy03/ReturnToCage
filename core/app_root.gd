@@ -14,7 +14,10 @@ func _ready() -> void:
 		error_label.visible = true
 
 func _start_new_game() -> void:
-	GameSession.start_new_game()
+	if not GameSession.start_new_game():
+		error_label.text = "Cannot start game: invalid start configuration"
+		error_label.visible = true
+		return
 	menu.visible = false
 	SceneRouter.go_to_settlement()
 

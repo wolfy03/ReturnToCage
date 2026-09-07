@@ -1,0 +1,56 @@
+[gd_resource type="Resource" script_class="GameStartDefinition" load_steps=9 format=3]
+
+[ext_resource type="Script" path="res://data/definitions/game_start_definition.gd" id="1_start"]
+[ext_resource type="Script" path="res://data/definitions/starting_item_definition.gd" id="2_item"]
+[ext_resource type="Script" path="res://data/definitions/starting_resident_definition.gd" id="3_resident"]
+
+[sub_resource type="Resource" id="Berry"]
+script = ExtResource("2_item")
+item_id = &"berry"
+quantity = 2
+
+[sub_resource type="Resource" id="Water"]
+script = ExtResource("2_item")
+item_id = &"water_drop"
+quantity = 1
+
+[sub_resource type="Resource" id="ReturnSeed"]
+script = ExtResource("2_item")
+item_id = &"return_seed"
+quantity = 1
+
+[sub_resource type="Resource" id="Sword"]
+script = ExtResource("2_item")
+item_id = &"twig_sword"
+quantity = 1
+durability = 60
+
+[sub_resource type="Resource" id="Milo"]
+script = ExtResource("3_resident")
+resident_id = &"milo"
+unlocked = true
+current_state = &"idle"
+
+[resource]
+script = ExtResource("1_start")
+id = &"default_game_start"
+inventory_capacity = 12
+storage_capacity = 48
+protected_capacity = 8
+inventory_items = Array[ExtResource("2_item")]([SubResource("Berry"), SubResource("Water"), SubResource("ReturnSeed")])
+storage_items = Array[ExtResource("2_item")]([])
+protected_items = Array[ExtResource("2_item")]([])
+equipment_items = Array[ExtResource("2_item")]([SubResource("Sword")])
+player_stats = Dictionary[StringName, float]({&"max_health": 100.0, &"move_speed": 190.0, &"attack_power": 5.0, &"defense": 0.0, &"max_stamina": 100.0, &"stamina_regen": 18.0})
+facility_levels = Dictionary[StringName, int]({&"workbench": 0})
+residents = Array[ExtResource("3_resident")]([SubResource("Milo")])
+unlocked_regions = Array[StringName]([&"sewer_region"])
+unlocked_exits = Array[StringName]([&"sewer_gate"])
+unlocked_flags = Array[StringName]([])
+discovered_escape_points = Array[StringName]([])
+difficulty_id = &"normal"
+player_health = 100.0
+hunger = 100.0
+thirst = 100.0
+progression_reduction = 0.0
+last_safe_position = Vector2(180, 500)
