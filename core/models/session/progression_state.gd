@@ -48,6 +48,14 @@ func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 				errors.append("invalid quest progress in save: %s" % quest_id)
 		state.completed = SaveData.boolean(raw, "completed", false, errors)
 		state.reward_claimed = SaveData.boolean(raw, "reward_claimed", false, errors)
+		if not state.reward_claimed:
+			var complete: bool = true
+			for index in definition.objectives.size():
+				if state.progress[index] < definition.objectives[index].required_amount:
+					complete = false
+			if complete != state.completed:
+				errors.append("quest completion reconciled with objectives: %s" % quest_id)
+			state.completed = complete
 		quest_states[quest_id] = state
 	unlocked_regions = SaveData.names(data, "unlocked_regions", errors)
 	unlocked_exits = SaveData.names(data, "unlocked_exits", errors)

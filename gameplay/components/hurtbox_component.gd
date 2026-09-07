@@ -13,4 +13,12 @@ func _ready() -> void:
 func receive_hit(context: DamageContext) -> bool:
 	if context.source_faction == faction or health == null:
 		return false
-	return health.receive_damage(context)
+	if not context.target_factions.is_empty() and not context.target_factions.has(faction):
+		return false
+	if not health.receive_damage(context):
+		return false
+	var effects := get_parent().get_node_or_null("Effects") as EffectController
+	if effects != null:
+		for effect in context.hit_effects:
+			effects.apply_effect(effect)
+	return true

@@ -35,7 +35,7 @@ func validate_definition(registry: Node) -> PackedStringArray:
 		errors.append("%s: loot arrays differ" % id)
 		return errors
 	for index in item_ids.size():
-		if not registry.has_id(item_ids[index]):
+		if not registry.get_definition(item_ids[index]) is ItemDefinition:
 			errors.append("%s: missing loot item %s" % [id, item_ids[index]])
 		if weights[index] <= 0.0 or min_amounts[index] < 0 or max_amounts[index] < min_amounts[index]:
 			errors.append("%s: invalid loot range at %d" % [id, index])

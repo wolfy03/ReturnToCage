@@ -29,6 +29,8 @@ func run_all() -> void:
 	test_partial_restore()
 	test_resident_and_survival_state()
 	await test_world_scene_integration()
+	await get_tree().process_frame
+	await StabilityTests.new().run(self)
 	_finish_tests()
 
 func _finish_tests() -> void:
@@ -151,7 +153,7 @@ func test_quest_and_facility() -> void:
 func test_save_migration_and_round_trip() -> void:
 	var old := {"format_version": 1, "game_state": {}}
 	var migrated := SaveManager.migrate(old)
-	assert_equal(migrated.get("format_version"), 2, "save v1 migrates to v2")
+	assert_equal(migrated.get("format_version"), 3, "save v1 migrates through v2 to v3")
 	GameSession.start_new_game()
 	GameSession.settlement_storage.add_item(&"rusty_scrap", 7)
 	GameSession.facility_levels[&"workbench"] = 1
@@ -250,6 +252,11 @@ func _fixture(name: String) -> Dictionary:
 
 func _assert_saved_fields(actual: Dictionary, expected: Dictionary, label: String) -> void:
 	var normalized: Dictionary = JSON.parse_string(JSON.stringify(actual))
+	expected = expected.duplicate(true)
+	# v3 adds three fields; legacy field values are still compared individually.
+	for key in ["active_effects", "death_drops", "pending_loot"]:
+		if not expected.has(key):
+			expected[key] = []
 	assert_equal(normalized.size(), expected.size(), label + " flat schema key count")
 	for key in expected:
 		assert_equal(normalized.get(key), expected[key], "%s: %s" % [label, key])
@@ -412,7 +419,7 @@ func test_legacy_save_compatibility() -> void:
 	var original: Dictionary = old.duplicate(true)
 	var migrated: Dictionary = SaveManager.migrate(old)
 	assert_equal(old, original, "migration never mutates caller envelope")
-	assert_equal(migrated["format_version"], 2, "sequential v1 migration reaches v2")
+	assert_equal(migrated["format_version"], 3, "sequential v1 migration reaches v3")
 	assert_equal(migrated["game_state"]["difficulty_overrides"], {}, "v1 migration adds overrides")
 	assert_equal(migrated["game_state"]["protected_inventory"], [], "v1 migration adds protected inventory")
 	var path: String = "user://return_to_cage_v1_fixture_test.json"
@@ -420,7 +427,7 @@ func test_legacy_save_compatibility() -> void:
 	assert_true(SaveManager.load_game(path), "v1 save file loads through SaveManager")
 	_assert_saved_fields(GameSession.export_state(), migrated["game_state"], "v1 restored fields")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	for invalid in [{"format_version": []}, {"format_version": 0}, {"format_version": 3}, {"format_version": 1.5}, {"format_version": 2, "game_state": []}]:
+	for invalid in [{"format_version": []}, {"format_version": 0}, {"format_version": 4}, {"format_version": 1.5}, {"format_version": 2, "game_state": []}]:
 		assert_true(SaveManager.migrate(invalid).is_empty(), "invalid envelope rejected: %s" % invalid)
 	var before: Dictionary = GameSession.export_state()
 	_write_envelope(path, {"format_version": 2, "game_state": "wrong"})
@@ -479,8 +486,15 @@ func test_partial_restore() -> void:
 		"difficulty_id": "missing_difficulty", "difficulty_overrides": {"inventory_loss": 99, "loot_multiplier": {}},
 		"survival_state": {"hunger": {}, "thirst": [], "progression_reduction": false}, "player_health": []
 	}
+	var before: Dictionary = GameSession.export_state()
 	errors = GameSession.restore_state(malformed)
-	assert_true(errors.size() >= 20, "malformed nested field types collected without exceptions")
+	assert_true(not errors.is_empty(), "fatal core type errors reported")
+	assert_equal(GameSession.export_state(), before, "fatal core types preserve the live session")
+	malformed["player_inventory"] = []
+	malformed["settlement_storage"] = []
+	malformed["protected_inventory"] = []
+	errors = GameSession.restore_state(malformed)
+	assert_true(errors.size() >= 20, "recoverable nested field types collected without exceptions")
 	assert_true(GameSession.current_difficulty() != null, "unknown difficulty recovers configured preset")
 	assert_true(GameSession.restore_state({}).is_empty(), "missing optional fields restore safely")
 	assert_equal(GameSession.player.survival.hunger, GameSession.get_start_definition().hunger, "partial saves do not inherit previous session hunger")

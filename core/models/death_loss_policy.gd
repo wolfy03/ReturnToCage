@@ -17,9 +17,12 @@ static func apply(stacks: Array[ItemStack], difficulty: DifficultyDefinition, re
 			DifficultyDefinition.InventoryLoss.ALL:
 				lose_amount = stack.quantity
 		if lose_amount < stack.quantity:
-			result.kept.append(ItemStack.new(stack.item_id, stack.quantity - lose_amount))
+			var kept := stack.duplicate_stack()
+			kept.quantity = stack.quantity - lose_amount
+			result.kept.append(kept)
 		if lose_amount > 0:
-			var lost_stack := ItemStack.new(stack.item_id, lose_amount)
+			var lost_stack := stack.duplicate_stack()
+			lost_stack.quantity = lose_amount
 			result.lost.append(lost_stack)
 			if difficulty.recovery_policy == DifficultyDefinition.RecoveryPolicy.DROP_AT_DEATH:
 				result.world_drops.append(lost_stack.duplicate_stack())

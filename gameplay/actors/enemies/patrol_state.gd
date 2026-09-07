@@ -11,5 +11,5 @@ func physics_tick(_delta: float) -> StringName:
 		agent.patrol_direction = 1.0
 	elif agent.global_position.x > agent.patrol_origin.x + 90.0:
 		agent.patrol_direction = -1.0
-	agent.velocity.x = agent.patrol_direction * agent.definition.move_speed * 0.55
+	agent.velocity.x = agent.patrol_direction * agent.effect_stats.value(&"move_speed") * 0.55
 	return &""

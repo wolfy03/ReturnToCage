@@ -8,6 +8,7 @@ var hitbox: HitboxComponent
 var owner_actor: CharacterBody2D
 var cooldown_remaining: float = 0.0
 var stamina: float = 100.0
+var strategies: Dictionary[int, AttackStrategy] = {WeaponDefinition.AttackMode.MELEE: MeleeAttackStrategy.new(), WeaponDefinition.AttackMode.PROJECTILE: ProjectileAttackStrategy.new()}
 var stats: StatBlock
 var stamina_regen_multiplier: float = 1.0
 
@@ -24,17 +25,20 @@ func _process(delta: float) -> void:
 		stamina = minf(stats.value(&"max_stamina"), stamina + stats.value(&"stamina_regen") * stamina_regen_multiplier * delta)
 
 func attack(facing: float) -> bool:
-	if cooldown_remaining > 0.0 or hitbox == null:
+	if cooldown_remaining > 0.0 or hitbox == null or (owner_actor is PlayerActor and (owner_actor.movement.mode == MovementComponent.Mode.CLIMB or owner_actor.return_channel > 0.0)):
 		return false
 	var equipped_stack := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 	var weapon := ContentRegistry.get_definition(equipped_stack.item_id) as WeaponDefinition if equipped_stack != null else null
-	if weapon == null or stamina < weapon.stamina_cost:
+	if weapon == null or equipped_stack.durability == 0 or stamina < weapon.stamina_cost:
+		return false
+	var damage := weapon.base_damage + stats.value(&"attack_power")
+	var context := DamageContext.new(damage, &"physical", owner_actor, &"player", Vector2(120.0 * signf(facing), -40.0))
+	context.target_factions = weapon.target_factions.duplicate()
+	context.hit_effects = weapon.hit_effects.duplicate()
+	var strategy: AttackStrategy = strategies.get(weapon.attack_mode)
+	if strategy == null or not strategy.execute(weapon, context, owner_actor, hitbox, facing):
 		return false
 	stamina -= weapon.stamina_cost
 	cooldown_remaining = weapon.attack_cooldown
-	hitbox.position.x = absf(hitbox.position.x) * signf(facing if facing != 0.0 else 1.0)
-	var damage := weapon.base_damage + stats.value(&"attack_power")
-	var context := DamageContext.new(damage, &"physical", owner_actor, &"player", Vector2(120.0 * signf(facing), -40.0))
-	hitbox.arm(context)
 	attacked.emit()
 	return true

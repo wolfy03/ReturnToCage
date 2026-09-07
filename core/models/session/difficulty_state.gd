@@ -47,7 +47,7 @@ static func is_valid_override(property_name: StringName, value: Variant) -> bool
 			return float(value) == int(value) and int(value) in DifficultyDefinition.RecoveryPolicy.values()
 		&"escape_display":
 			return float(value) == int(value) and int(value) in DifficultyDefinition.EscapeDisplay.values()
-	return float(value) >= 0.0
+	return float(value) >= (0.1 if property_name in [&"enemy_health_multiplier", &"enemy_damage_multiplier"] else 0.0) and float(value) <= 10.0
 
 func to_save_dict() -> Dictionary:
 	var saved_overrides: Dictionary = {}
@@ -60,7 +60,8 @@ func restore(data: Dictionary, start: GameStartDefinition, registry: Node) -> Pa
 	reset(start)
 	var restored_id := StringName(SaveData.text_value(data, "difficulty_id", String(id), errors))
 	if not set_id(restored_id, registry):
-		errors.append("unknown difficulty in save: %s" % restored_id)
+		errors.append("unknown difficulty in save: %s; restored normal" % restored_id)
+		set_id(&"normal", registry)
 	var raw: Dictionary = SaveData.dictionary(data, "difficulty_overrides", errors)
 	for key in raw:
 		if not SaveData.is_text(key) or not set_override(StringName(str(key)), raw[key]):

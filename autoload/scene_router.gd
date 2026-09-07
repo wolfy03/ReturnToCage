@@ -11,9 +11,15 @@ func register_world_layer(layer: Node) -> void:
 	_world_layer = layer
 
 func go_to_settlement() -> bool:
+	if GameSession.adventure.active_session != null:
+		transition_failed.emit("Use an escape point or return item to leave the expedition")
+		return false
 	return _replace_world(SETTLEMENT_SCENE, &"settlement", null)
 
 func go_to_adventure(context: AdventureContext) -> bool:
+	if context == null or GameSession.adventure.active_session == null or GameSession.adventure.active_session.context != context:
+		transition_failed.emit("No authorized expedition context")
+		return false
 	var definition := ContentRegistry.get_definition(context.region_id) as RegionDefinition
 	if definition == null:
 		transition_failed.emit("Unknown region: %s" % context.region_id)
@@ -30,10 +36,14 @@ func _replace_world(scene_path: String, destination: StringName, context: Advent
 		transition_failed.emit("Cannot load scene: %s" % scene_path)
 		return false
 	for child in _world_layer.get_children():
+		child.process_mode = Node.PROCESS_MODE_DISABLED
+		_world_layer.remove_child(child)
 		child.queue_free()
 	var instance := packed.instantiate()
 	if context != null and instance.has_method("configure"):
 		instance.configure(context)
+	if destination == &"settlement":
+		GameSession.complete_respawn()
 	_world_layer.add_child(instance)
 	transition_finished.emit(destination)
 	return true

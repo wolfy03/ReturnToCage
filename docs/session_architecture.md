@@ -6,10 +6,10 @@
 
 | 모델 | 추가할 데이터와 책임 |
 | --- | --- |
-| `PlayerState` (`GameSession.player`) | `stats`, `inventory`, `equipment`, `protected_inventory`, `survival`, `health`, `last_safe_position`. 초기화와 플레이어 저장 필드 복원 |
-| `SettlementState` (`settlement`) | `storage`, `facility_levels`, `resident_states`. 주민 값은 `ResidentState`이며 정착지 저장을 담당 |
+| `PlayerState` (`GameSession.player`) | `stats`, `inventory`, `equipment`, `protected_inventory`, `survival`, `health`, `last_safe_position`, `effects`. 초기화와 플레이어 저장 필드 복원 |
+| `SettlementState` (`settlement`) | `storage`, `facility_levels`, `resident_states`, `pending_loot`. 주민 값은 `ResidentState`이며 정착지 저장을 담당 |
 | `ProgressionState` (`progression`) | `quest_states`, 지역·출구·플래그 해금, 발견한 탈출 지점. `QuestDefinition`은 복제하지 않음 |
-| `AdventureState` (`adventure`) | `active_session`. 원정 런타임 상태 소유와 복원 시 초기화 |
+| `AdventureState` (`adventure`) | `active_session`, `death_drops`. 원정 런타임 상태 소유와 복원 시 초기화 |
 | `DifficultyState` (`difficulty`) | `id`, `overrides`, 프리셋 복제 후 effective difficulty 생성. 허용 속성 목록은 `OVERRIDABLE_PROPERTIES` 한 곳에 정의 |
 
 `ResidentState`는 주민 ID, `unlocked`, `current_state: StringName`을 가진다.
@@ -43,10 +43,9 @@ ID는 기존 JSON의 바깥 키이며 값은 계속 `{"unlocked": true, "state":
 기존 InventoryModel·EquipmentModel·StatBlock의 복원 검증으로 잘못된 중첩 타입을 걸러낸다.
 퀘스트 진행 배열은 정의의 objective 길이에 맞춰 복원해 이후 UI/이벤트의 인덱스 접근을 보호한다.
 
-save format은 **2 그대로**이며 기존 key를 유지한다. SaveManager가 복제한 envelope를
-단계별 migration에 전달한다. 현재 단계는 `_migrate_v1_to_v2()` 하나이며
-`difficulty_overrides`, `protected_inventory`를 보충한다. 원본 envelope는 변경하지 않는다.
-진행 중 원정은 기존처럼 저장하지 않으며 로드 후 정착지로 돌아온다.
+save format은 **3**이다. 기존 flat key를 유지하고 active_effects, death_drops,
+pending_loot를 추가한다. v1 → v2 → v3 단계별 migration을 거치며 진행 중 원정은
+저장·불러오기를 허용하지 않는다. [저장 형식](save_format.md)을 따른다.
 
 누락된 inventory/진행/주민 데이터는 빈 상태로 복원한다. 생존 수치·위치·난이도와
 능력치의 누락/오류는 검증된 시작 설정을 사용하며, 체력 누락 시 복원한 max_health를 사용한다.
@@ -66,13 +65,18 @@ production의 gameplay/world/UI/devtools는 새 도메인 접근을 사용한다
 지원한다. 중첩 Dictionary 변경 대신 `player.survival.hunger` 같은 typed 접근을 사용한다.
 저장 JSON에는 이 타입 전환이 드러나지 않는다.
 
-인벤토리·창고 객체는 reset/restore 때 유지하고 내용만 교체한다. `_create_models()`와
+새 게임은 모델 내용을 초기화한다. restore는 독립 SessionSnapshot을 검증한 뒤 모델을 교체한다. `_create_models()`와
 relay 연결은 반복 호출에 안전하다. 기존 호환 setter로 모델을 교체하면 이전 relay를 해제한다.
 새 코드는 모델 객체를 교체하지 말고 InventoryModel API로 내용을 변경한다.
 기존 여덟 GameSession 시그널은 유지한다.
 
-## 다음 단계 경계
+## 명령의 확장 지점
 
-시설 업그레이드, 퀘스트 command 및 `finish_adventure()` 정산은 아직 GameSession에 있다.
-AdventureResolutionService, quest event decoupling, data-driven item use는 후속 작업이다.
-Inventory 슬롯/ItemInstance 구조, Enemy 상태 머신과 기존 컴포넌트의 플레이 책임은 유지했다.
+사망 손실·부활은 DeathResolutionService, 출입구는 ExitService, 선행 조건은
+ProgressionService, 제작 거래는 CraftingService에 둔다. GameSession은 결과를 적용하고
+시그널을 발행한다. PlayerState.effects는 장면에 독립적인 EffectRuntimeModel이다.
+AdventureSession.rules는 원정 시작 때 확정한 AdventureRulesSnapshot이다.
+더 자세한 흐름은 [아키텍처](architecture.md)를 참고한다.
+
+Quest event decoupling, 귀환 아이템 효과 데이터화, 제작 대기열은 후속 확장 대상이다.
+Inventory 슬롯/ItemInstance 구조와 기존 컴포넌트의 플레이 책임은 유지했다.

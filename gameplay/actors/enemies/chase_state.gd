@@ -6,5 +6,5 @@ func physics_tick(_delta: float) -> StringName:
 		return &"patrol"
 	if distance <= agent.definition.attack_range:
 		return &"attack"
-	agent.velocity.x = signf(agent.player.global_position.x - agent.global_position.x) * agent.definition.move_speed
+	agent.velocity.x = signf(agent.player.global_position.x - agent.global_position.x) * agent.effect_stats.value(&"move_speed")
 	return &""

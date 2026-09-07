@@ -69,7 +69,7 @@ layout_mode = 2
 text = "Load Game"
 [node name="Controls" type="Label" parent="MainMenu/CenterContainer/VBoxContainer"]
 layout_mode = 2
-text = "A/D move | Space jump | E interact | J attack | Q quick item | I inventory | F10 debug"
+text = "A/D move | W/S climb | Space jump | E interact | J attack | Q quick item | I inventory | F10 debug"
 horizontal_alignment = 1
 [node name="ErrorLabel" type="Label" parent="MainMenu/CenterContainer/VBoxContainer"]
 unique_name_in_owner = true

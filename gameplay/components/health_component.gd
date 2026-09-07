@@ -38,3 +38,15 @@ func restore_state(data: Dictionary) -> void:
 	max_health = float(data.get("max_health", max_health))
 	current_health = clampf(float(data.get("current_health", max_health)), 0.0, max_health)
 	health_changed.emit(current_health, max_health)
+
+func receive_periodic_damage(amount: float) -> bool:
+	# Timed effects use exact Resource ticks, independent of contact invulnerability.
+	if god_mode or current_health <= 0.0 or amount <= 0.0:
+		return false
+	var context := DamageContext.new(amount, &"periodic", get_parent(), &"effect")
+	current_health = maxf(0.0, current_health - amount)
+	damaged.emit(context)
+	health_changed.emit(current_health, max_health)
+	if current_health <= 0.0:
+		died.emit(context)
+	return true

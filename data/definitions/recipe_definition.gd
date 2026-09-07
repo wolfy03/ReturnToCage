@@ -15,8 +15,11 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	if input_item_ids.size() != input_amounts.size() or output_item_ids.size() != output_amounts.size():
 		errors.append("%s: recipe item and amount arrays differ" % id)
 	for item_id in input_item_ids + output_item_ids:
-		if not registry.has_id(item_id):
+		if not registry.get_definition(item_id) is ItemDefinition:
 			errors.append("%s: missing item reference %s" % [id, item_id])
-	if not required_facility_id.is_empty() and not registry.has_id(required_facility_id):
+	if not required_facility_id.is_empty() and not registry.get_definition(required_facility_id) is FacilityDefinition:
 		errors.append("%s: missing facility %s" % [id, required_facility_id])
+	for amount in input_amounts + output_amounts:
+		if amount <= 0:
+			errors.append("%s: recipe quantities must be positive" % id)
 	return errors

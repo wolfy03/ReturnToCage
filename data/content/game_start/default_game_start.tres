@@ -1,8 +1,11 @@
-[gd_resource type="Resource" script_class="GameStartDefinition" load_steps=9 format=3]
+[gd_resource type="Resource" script_class="GameStartDefinition" load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://data/definitions/game_start_definition.gd" id="1_start"]
 [ext_resource type="Script" path="res://data/definitions/starting_item_definition.gd" id="2_item"]
 [ext_resource type="Script" path="res://data/definitions/starting_resident_definition.gd" id="3_resident"]
+
+[ext_resource type="Resource" path="res://data/content/respawn/default_respawn.tres" id="4_respawn"]
+[ext_resource type="Resource" path="res://data/content/survival_default.tres" id="5_survival"]
 
 [sub_resource type="Resource" id="Berry"]
 script = ExtResource("2_item")
@@ -34,6 +37,8 @@ current_state = &"idle"
 [resource]
 script = ExtResource("1_start")
 id = &"default_game_start"
+respawn_policy = ExtResource("4_respawn")
+survival_config = ExtResource("5_survival")
 inventory_capacity = 12
 storage_capacity = 48
 protected_capacity = 8

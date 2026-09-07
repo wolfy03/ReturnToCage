@@ -1,0 +1,24 @@
+name: Godot validation
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Godot
+        shell: bash
+        run: |
+          version=$(cat .godot-version)
+          archive="Godot_v${version}-stable_linux.x86_64.zip"
+          curl --fail --location --retry 3 "https://github.com/godotengine/godot-builds/releases/download/${version}-stable/${archive}" -o "$RUNNER_TEMP/godot.zip"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          chmod +x "$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64"
+          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Import, validate, test and restart
+        run: python tools/check_project.py --godot "$GODOT"

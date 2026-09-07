@@ -11,6 +11,8 @@ signal return_channel_changed(active: bool, progress: float)
 @onready var combat: CombatComponent = %Combat
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
+var _death_handled: bool = false
+var _bound_state: PlayerState
 var facing: float = 1.0
 var return_channel: float = 0.0
 var return_channel_required: float = 3.0
@@ -18,31 +20,38 @@ var return_channel_origin: Vector2
 
 func _ready() -> void:
 	add_to_group(&"player")
+	_bound_state = GameSession.player
+	GameSession.arm_player_life()
 	movement.configure(self, input, GameSession.player.stats)
 	combat.configure(self, GameSession.player.stats)
-	effects.configure(GameSession.player.stats)
+	effects.configure(GameSession.player.stats, GameSession.player.effects)
 	input.attack_requested.connect(_on_attack)
 	input.interact_requested.connect(_on_interact)
 	input.quick_item_requested.connect(_on_quick_item)
 	interaction.target_changed.connect(_on_target_changed)
 	health.died.connect(_on_died)
-	health.damaged.connect(_cancel_return_channel.unbind(1))
+	health.damaged.connect(_on_damaged)
 	health.max_health = GameSession.player.stats.value(&"max_health")
 	health.current_health = clampf(GameSession.player.health, 0.0, health.max_health)
-	health.health_changed.connect(func(current: float, _maximum: float) -> void: GameSession.player.health = current)
+	health.health_changed.connect(_on_health_changed)
+	_bound_state.vitals_changed.connect(_sync_persistent_health)
 	GameSession.player.stats.stat_changed.connect(_on_stat_changed)
 	_on_stat_changed(&"defense", GameSession.player.stats.value(&"defense"))
-	var config := ContentRegistry.get_definition(&"survival_default") as SurvivalConfig
+	var config := GameSession.get_start_definition().survival_config
 	var difficulty := GameSession.current_difficulty()
 	survival.configure(config, difficulty.survival_drain_multiplier if difficulty != null else 1.0, GameSession.player.survival)
 	survival.survival_changed.connect(_on_survival_changed)
+	movement.climb_hint_changed.connect(_refresh_interaction_prompt)
+	movement.mode_changed.connect(_refresh_interaction_prompt)
 
 func _physics_process(delta: float) -> void:
+	if _death_handled:
+		return
 	if absf(input.move_axis) > 0.01:
 		facing = signf(input.move_axis)
 	movement.physics_tick(delta)
 	if return_channel > 0.0:
-		if absf(input.move_axis) > 0.01 or global_position.distance_to(return_channel_origin) > 3.0:
+		if input.move_vector.length() > 0.01 or global_position.distance_to(return_channel_origin) > 3.0:
 			_cancel_return_channel()
 		else:
 			return_channel += delta
@@ -51,16 +60,25 @@ func _physics_process(delta: float) -> void:
 				_complete_return_channel()
 
 func _on_attack() -> void:
+	if _death_handled:
+		return
 	if combat.attack(facing):
 		_cancel_return_channel()
 
 func _on_interact() -> void:
-	interaction.try_interact(self)
+	if _death_handled:
+		return
+	if interaction.current_target != null and interaction.current_target.can_interact(self):
+		interaction.try_interact(self)
+	else:
+		movement.grant_climb_interaction()
 
 func _on_target_changed(target: InteractionTarget) -> void:
-	interaction_prompt_changed.emit("[E] %s" % target.prompt if target != null else "")
+	_refresh_interaction_prompt()
 
 func _on_quick_item() -> void:
+	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled:
+		return
 	if GameSession.adventure.active_session == null:
 		consume_item(&"berry")
 		return
@@ -88,6 +106,8 @@ func _cancel_return_channel() -> void:
 		return_channel_changed.emit(false, 0.0)
 
 func consume_item(item_id: StringName) -> bool:
+	if _death_handled:
+		return false
 	return ItemUseService.use_item(GameSession.player.inventory, survival, effects, item_id, Callable(ContentRegistry, "get_item"))
 
 func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirst_stage: int) -> void:
@@ -96,14 +116,49 @@ func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirs
 		health.receive_damage(DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment"))
 
 func _on_died(_context: DamageContext) -> void:
+	if _death_handled:
+		return
+	_death_handled = true
+	movement.exit_climb()
 	movement.enabled = false
-	if GameSession.adventure.active_session != null:
-		GameSession.finish_adventure(AdventureSession.Result.DEATH)
+	survival.drain_paused = true
+	_cancel_return_channel()
+	movement.enabled = false
+	GameSession.handle_player_death(global_position)
 	await get_tree().create_timer(1.0).timeout
-	SceneRouter.go_to_settlement()
+	if is_inside_tree():
+		SceneRouter.go_to_settlement()
+
+func _on_health_changed(current: float, _maximum: float) -> void:
+	if not _death_handled:
+		_bound_state.set_health(current)
+
+func _sync_persistent_health() -> void:
+	if _death_handled:
+		return
+	health.current_health = _bound_state.health
+	health.health_changed.emit(health.current_health, health.max_health)
+	if health.current_health <= 0.0:
+		_on_died(DamageContext.new(0.0, &"periodic", self, &"effect"))
+
+func _on_damaged(context: DamageContext) -> void:
+	_cancel_return_channel()
+	movement.on_damage(context.knockback.length() > 0.0)
+
+func _refresh_interaction_prompt() -> void:
+	var target: InteractionTarget = interaction.current_target
+	if target != null and target.can_interact(self):
+		interaction_prompt_changed.emit("[E] %s" % target.prompt)
+	elif movement.climb_candidate() != null or movement.mode == MovementComponent.Mode.CLIMB:
+		var candidate: ClimbableArea2D = movement.climb_candidate()
+		interaction_prompt_changed.emit("[E] Grip  [W/S] Climb  [Space] Jump off" if candidate != null and candidate.definition.requires_interaction else "[W/S] Climb  [Space] Jump off")
+	else:
+		interaction_prompt_changed.emit("")
 
 func _on_stat_changed(stat_id: StringName, value: float) -> void:
 	if stat_id == &"defense":
 		health.defense = value
 	elif stat_id == &"max_health":
-		health.max_health = value
+		health.max_health = maxf(1.0, value)
+		health.current_health = minf(health.current_health, health.max_health)
+		health.health_changed.emit(health.current_health, health.max_health)

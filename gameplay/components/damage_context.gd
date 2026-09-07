@@ -1,6 +1,9 @@
 class_name DamageContext
 extends RefCounted
 
+var target_factions: Array[StringName] = []
+var hit_effects: Array[EffectDefinition] = []
+
 var amount: float
 var damage_type: StringName
 var source: Node

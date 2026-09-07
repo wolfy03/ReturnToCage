@@ -14,12 +14,21 @@ enum StackPolicy { REPLACE, REFRESH, STACK }
 @export_range(0.0, 3600.0, 0.1) var duration_seconds: float = 0.0
 @export var stack_policy: StackPolicy = StackPolicy.REFRESH
 @export_range(1, 99, 1) var max_stacks: int = 1
+@export_range(0.01, 3600.0, 0.01) var tick_interval_seconds: float = 1.0
 @export var icon: Texture2D
 
 func validate_definition(registry: Node) -> PackedStringArray:
 	var errors := super.validate_definition(registry)
 	if max_stacks < 1:
 		errors.append("%s: max_stacks must be positive" % id)
-	if duration_seconds < 0.0:
+	if not is_finite(duration_seconds) or duration_seconds < 0.0:
 		errors.append("%s: duration_seconds must not be negative" % id)
+	if tick_interval_seconds <= 0.0 or not is_finite(tick_interval_seconds):
+		errors.append("%s: invalid effect tick interval" % id)
+	if not is_finite(magnitude) or (kind != EffectKind.STAT_MODIFIER and magnitude < 0.0):
+		errors.append("%s: invalid effect magnitude" % id)
+	if kind not in EffectKind.values() or operation not in Operation.values() or stack_policy not in StackPolicy.values():
+		errors.append("%s: invalid effect policy" % id)
+	if kind == EffectKind.STAT_MODIFIER and target_stat == &"":
+		errors.append("%s: stat modifier requires target_stat" % id)
 	return errors

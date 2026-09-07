@@ -11,6 +11,7 @@ func _ready() -> void:
 	area_exited.connect(_on_area_exited)
 
 func try_interact(actor: Node) -> bool:
+	_select_target()
 	return current_target != null and current_target.interact(actor)
 
 func _on_area_entered(area: Area2D) -> void:
@@ -27,7 +28,10 @@ func _select_target() -> void:
 	var previous := current_target
 	current_target = null
 	for candidate in _targets:
-		if candidate.can_interact(get_parent()) and (current_target == null or candidate.interaction_priority > current_target.interaction_priority or (candidate.interaction_priority == current_target.interaction_priority and global_position.distance_squared_to(candidate.global_position) < global_position.distance_squared_to(current_target.global_position))):
+		if is_instance_valid(candidate) and candidate.can_interact(get_parent()) and (current_target == null or candidate.interaction_priority > current_target.interaction_priority or (candidate.interaction_priority == current_target.interaction_priority and global_position.distance_squared_to(candidate.global_position) < global_position.distance_squared_to(current_target.global_position))):
 			current_target = candidate
 	if previous != current_target:
 		target_changed.emit(current_target)
+
+func _process(_delta: float) -> void:
+	_select_target()

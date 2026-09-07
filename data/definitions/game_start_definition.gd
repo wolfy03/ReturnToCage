@@ -15,6 +15,8 @@ extends ContentDefinition
 @export var unlocked_exits: Array[StringName] = []
 @export var unlocked_flags: Array[StringName] = []
 @export var discovered_escape_points: Array[StringName] = []
+@export var respawn_policy: RespawnPolicy
+@export var survival_config: SurvivalConfig
 @export var difficulty_id: StringName
 @export var player_health: float = 100.0
 @export var hunger: float = 100.0
@@ -24,6 +26,8 @@ extends ContentDefinition
 
 func validate_definition(registry: Node) -> PackedStringArray:
 	var errors: PackedStringArray = super.validate_definition(registry)
+	if respawn_policy == null or survival_config == null:
+		errors.append("%s: respawn policy and survival config required" % id)
 	_validate_items(inventory_items, inventory_capacity, registry, errors)
 	_validate_items(storage_items, storage_capacity, registry, errors)
 	_validate_items(protected_items, protected_capacity, registry, errors)

@@ -9,6 +9,12 @@ signal adventure_started(context: AdventureContext)
 signal adventure_finished(result: AdventureSession.Result, summary: String)
 signal difficulty_changed(id: StringName)
 
+signal phase_changed
+signal player_respawned(result: RespawnResult)
+enum Phase { MENU, SETTLEMENT, ADVENTURE, RESPAWNING }
+var phase: Phase = Phase.MENU
+var last_death_result: RespawnResult
+
 const DEFAULT_START_ID: StringName = &"default_game_start"
 
 var session_id: String = ""
@@ -131,6 +137,8 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not session_id.is_empty():
 		play_time_seconds += delta
+		if phase != Phase.RESPAWNING:
+			player.effects.tick(delta)
 	if adventure.active_session != null:
 		adventure.active_session.elapsed_seconds += delta
 
@@ -174,12 +182,22 @@ func start_new_game() -> bool:
 	session_id = "%s-%s" % [Time.get_unix_time_from_system(), randi()]
 	play_time_seconds = 0.0
 	_reset_states(start)
+	last_death_result = null
+	set_phase(Phase.SETTLEMENT)
 	last_message = "New journey started"
 	session_reset.emit()
 	return true
 
 func current_difficulty() -> DifficultyDefinition:
+	if adventure.active_session != null and adventure.active_session.rules != null:
+		return adventure.active_session.rules.effective()
 	return difficulty.effective(ContentRegistry)
+
+func set_phase(value: Phase) -> void:
+	if phase != value:
+		phase = value
+		phase_changed.emit()
+
 
 func set_difficulty(id: StringName) -> bool:
 	if not difficulty.set_id(id, ContentRegistry):
@@ -199,7 +217,9 @@ func clear_difficulty_override(property_name: StringName) -> void:
 
 func start_quest(quest_id: StringName) -> bool:
 	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
-	if definition == null or progression.quest_states.has(quest_id):
+	var check: CommandResult = ProgressionService.check_quest_start(quest_id, progression, ContentRegistry)
+	if not check.success:
+		last_message = check.message
 		return false
 	var state := QuestState.new(quest_id)
 	state.initialize(definition)
@@ -216,23 +236,38 @@ func report_quest_event(type: QuestObjectiveDefinition.ObjectiveType, target_id:
 			quest_changed.emit(quest_id)
 
 func claim_quest_reward(quest_id: StringName) -> bool:
+	# Compatibility API; detailed callers can inspect the transaction result.
+	return claim_quest_reward_result(quest_id).success
+
+func claim_quest_reward_result(quest_id: StringName) -> CommandResult:
 	var state: QuestState = progression.quest_states.get(quest_id)
 	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
 	if state == null or definition == null or not state.completed or state.reward_claimed:
-		return false
-	for index in definition.reward_item_ids.size():
-		settlement.storage.add_item(definition.reward_item_ids[index], definition.reward_amounts[index])
+		last_message = "Quest reward is unavailable"
+		return CommandResult.make(false, last_message)
+	var reward: CommandResult = settlement.storage.exchange([], ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts))
+	if not reward.success:
+		last_message = reward.message
+		return reward
 	state.reward_claimed = true
 	quest_changed.emit(quest_id)
+	for next_quest in definition.follow_up_quest_ids:
+		start_quest(next_quest)
 	last_message = "Quest reward claimed"
-	return true
+	return CommandResult.make(true, last_message)
 
 func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: StringName) -> AdventureContext:
-	if not progression.unlocked_regions.has(region_id) or not progression.unlocked_exits.has(exit_id):
+	var check: CommandResult = can_use_exit(exit_id, region_id)
+	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
+	if not check.success or exit == null or entry_id != exit.entry_point_id:
+		last_message = check.message if not check.success else "Invalid entry point"
 		return null
 	var context := AdventureContext.new(region_id, exit_id, entry_id, difficulty.id, session_id)
 	context.prepared_inventory = player.inventory.to_array()
 	adventure.active_session = AdventureSession.new(context, Callable(ContentRegistry, "get_item"))
+	adventure.active_session.rules = AdventureRulesSnapshot.new(difficulty.effective(ContentRegistry))
+	last_death_result = null
+	set_phase(Phase.ADVENTURE)
 	adventure_started.emit(context)
 	return context
 
@@ -253,34 +288,71 @@ func record_enemy_kill(enemy_id: StringName) -> void:
 func finish_adventure(result: AdventureSession.Result) -> String:
 	if adventure.active_session == null:
 		return "No active adventure"
+	if result == AdventureSession.Result.DEATH:
+		return handle_player_death(player.last_safe_position).summary()
+	if result != AdventureSession.Result.NORMAL_ESCAPE and result != AdventureSession.Result.RETURN_ITEM_ESCAPE:
+		return "An expedition must end through an escape or death"
 	adventure.active_session.result = result
-	var summary := ""
-	if result == AdventureSession.Result.NORMAL_ESCAPE or result == AdventureSession.Result.RETURN_ITEM_ESCAPE:
-		for stack in adventure.active_session.unsecured_loot.stacks():
-			settlement.storage.add_item(stack.item_id, stack.quantity)
-			report_quest_event(QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM, stack.item_id, stack.quantity)
-		for point in adventure.active_session.discovered_escape_points:
-			if not progression.discovered_escape_points.has(point):
-				progression.discovered_escape_points.append(point)
-		summary = "Expedition secured: %d loot stacks" % adventure.active_session.unsecured_loot.stacks().size()
-	else:
-		var effective_difficulty := current_difficulty()
-		var loss := DeathLossPolicy.apply(adventure.active_session.unsecured_loot.stacks(), effective_difficulty, Callable(ContentRegistry, "get_item"))
-		var carried_loss := DeathLossPolicy.apply(player.inventory.stacks(), effective_difficulty, Callable(ContentRegistry, "get_item"))
-		player.inventory.clear()
-		for kept_carried in carried_loss.kept:
-			player.inventory.add_item(kept_carried.item_id, kept_carried.quantity)
-		var equipment_loss := DeathLossPolicy.apply_equipment(player.equipment.all_equipped(), effective_difficulty)
-		player.equipment.restore({})
-		for kept_equipment in equipment_loss.equipment_kept:
-			player.equipment.equip(kept_equipment)
-		for stack in loss.kept:
-			settlement.storage.add_item(stack.item_id, stack.quantity)
-		summary = "Expedition lost: %d items" % (_sum_stacks(loss.lost) + _sum_stacks(carried_loss.lost))
-	last_message = summary
+	var loot: Array[ItemStack] = adventure.active_session.unsecured_loot.stacks()
+	var secured: CommandResult = settlement.secure_loot(loot)
+	for stack in loot:
+		report_quest_event(QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM, stack.item_id, stack.quantity)
+	for point in adventure.active_session.discovered_escape_points:
+		if not progression.discovered_escape_points.has(point):
+			progression.discovered_escape_points.append(point)
+	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success else "Storage full: %d loot stacks retained in pending storage" % loot.size()
 	adventure.active_session = null
-	adventure_finished.emit(result, summary)
-	return summary
+	set_phase(Phase.SETTLEMENT)
+	adventure_finished.emit(result, last_message)
+	return last_message
+
+func handle_player_death(death_position: Vector2) -> RespawnResult:
+	if phase == Phase.RESPAWNING or last_death_result != null:
+		return last_death_result
+	set_phase(Phase.RESPAWNING)
+	player.effects.paused = true
+	var start: GameStartDefinition = get_start_definition()
+	last_death_result = DeathResolutionService.resolve(player, settlement, adventure, current_difficulty(), death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"))
+	adventure.active_session = null
+	last_message = last_death_result.summary()
+	adventure_finished.emit(AdventureSession.Result.DEATH, last_message)
+	player_respawned.emit(last_death_result)
+	return last_death_result
+
+func complete_respawn() -> void:
+	if phase == Phase.RESPAWNING:
+		set_phase(Phase.SETTLEMENT)
+
+func arm_player_life() -> void:
+	# Called only when the new actor is ready; duplicate notifications from the old
+	# actor are additionally blocked by the actor's death latch.
+	if phase != Phase.RESPAWNING:
+		last_death_result = null
+		player.effects.paused = false
+
+func can_use_exit(exit_id: StringName, region_id: StringName) -> CommandResult:
+	if phase != Phase.SETTLEMENT:
+		return CommandResult.make(false, "Exit use requires settlement state")
+	return ExitService.check(exit_id, region_id, progression, settlement, adventure, ContentRegistry)
+
+func request_adventure_from_exit(exit_id: StringName, region_id: StringName) -> AdventureContext:
+	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
+	return begin_adventure(exit_id, region_id, exit.entry_point_id) if exit != null else null
+
+func claim_pending_loot() -> CommandResult:
+	if phase != Phase.SETTLEMENT:
+		return CommandResult.make(false, "Pending loot is available in the settlement")
+	var result: CommandResult = settlement.claim_pending_loot()
+	last_message = "Pending loot claimed" if result.success else result.message
+	storage_changed.emit()
+	return result
+
+func craft(recipe_id: StringName) -> CommandResult:
+	if phase != Phase.SETTLEMENT:
+		return CommandResult.make(false, "Crafting requires settlement state")
+	var result: CommandResult = CraftingService.craft(ContentRegistry.get_definition(recipe_id) as RecipeDefinition, settlement, progression)
+	last_message = "Crafted %s" % recipe_id if result.success else result.message
+	return result
 
 func discover_escape(point_id: StringName) -> void:
 	if adventure.active_session != null:
@@ -288,29 +360,23 @@ func discover_escape(point_id: StringName) -> void:
 		report_quest_event(QuestObjectiveDefinition.ObjectiveType.DISCOVER_POINT, point_id)
 
 func can_upgrade_facility(facility_id: StringName) -> bool:
-	var definition := ContentRegistry.get_definition(facility_id) as FacilityDefinition
-	if definition == null:
-		return false
-	var next_level: int = int(settlement.facility_levels.get(facility_id, 0)) + 1
-	var level_data := definition.get_level_data(next_level)
-	if level_data == null or next_level > definition.max_level:
-		return false
-	for index in level_data.cost_item_ids.size():
-		if settlement.storage.count(level_data.cost_item_ids[index]) < level_data.cost_amounts[index]:
-			return false
-	return true
+	var check: CommandResult = ProgressionService.facility_check(facility_id, settlement, progression, ContentRegistry)
+	if not check.success:
+		last_message = check.message
+	return check.success
 
 func upgrade_facility(facility_id: StringName) -> bool:
 	if not can_upgrade_facility(facility_id):
-		last_message = "Not enough resources"
 		return false
 	var definition := ContentRegistry.get_definition(facility_id) as FacilityDefinition
-	var next_level: int = int(settlement.facility_levels.get(facility_id, 0)) + 1
-	var level_data := definition.get_level_data(next_level)
-	for index in level_data.cost_item_ids.size():
-		settlement.storage.remove_item(level_data.cost_item_ids[index], level_data.cost_amounts[index])
+	var next_level: int = settlement.facility_levels.get(facility_id, 0) + 1
+	var level: FacilityLevelDefinition = definition.get_level_data(next_level)
+	var result: CommandResult = settlement.storage.exchange(ProgressionService.item_amounts(level.cost_item_ids, level.cost_amounts), [])
+	if not result.success:
+		last_message = result.message
+		return false
 	settlement.facility_levels[facility_id] = next_level
-	for flag in level_data.unlock_flags:
+	for flag in level.unlock_flags:
 		if not progression.unlocked_flags.has(flag):
 			progression.unlocked_flags.append(flag)
 	report_quest_event(QuestObjectiveDefinition.ObjectiveType.UPGRADE_FACILITY, facility_id, 1)
@@ -328,23 +394,37 @@ func export_state() -> Dictionary:
 	return result
 
 func restore_state(data: Dictionary) -> PackedStringArray:
+	if adventure.active_session != null or phase == Phase.RESPAWNING:
+		return PackedStringArray(["Restore unavailable during expedition or respawn"])
+	var snapshot: SessionSnapshot = prepare_restore(data)
+	if not snapshot.fatal_error.is_empty():
+		return PackedStringArray([snapshot.fatal_error])
+	apply_snapshot(snapshot)
+	return snapshot.warnings
+
+func prepare_restore(data: Dictionary) -> SessionSnapshot:
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
-		return PackedStringArray(["Cannot restore session: invalid GameStartDefinition"])
-	_create_models()
-	var errors := PackedStringArray()
-	session_id = SaveData.text_value(data, "session_id", "restored", errors)
-	play_time_seconds = SaveData.number(data, "play_time_seconds", 0.0, errors)
-	errors.append_array(player.restore(data, start))
-	errors.append_array(settlement.restore(data, start, ContentRegistry))
-	errors.append_array(progression.restore(data, ContentRegistry))
-	errors.append_array(difficulty.restore(data, start, ContentRegistry))
-	errors.append_array(adventure.restore(data))
-	session_reset.emit()
-	return errors
+		var failed := SessionSnapshot.new()
+		failed.fatal_error = "Invalid start configuration"
+		return failed
+	return SessionSnapshot.build(data, start, ContentRegistry)
 
-func _sum_stacks(stacks: Array[ItemStack]) -> int:
-	var total := 0
-	for stack in stacks:
-		total += stack.quantity
-	return total
+func apply_snapshot(snapshot: SessionSnapshot) -> void:
+	if adventure.active_session != null or phase == Phase.RESPAWNING or not snapshot.fatal_error.is_empty():
+		return
+	if player.inventory.changed.is_connected(inventory_changed.emit):
+		player.inventory.changed.disconnect(inventory_changed.emit)
+	if settlement.storage.changed.is_connected(storage_changed.emit):
+		settlement.storage.changed.disconnect(storage_changed.emit)
+	player = snapshot.player
+	settlement = snapshot.settlement
+	progression = snapshot.progression
+	difficulty = snapshot.difficulty
+	adventure = snapshot.adventure
+	session_id = snapshot.session_id
+	play_time_seconds = snapshot.play_time_seconds
+	last_death_result = null
+	_connect_model_signals()
+	set_phase(Phase.SETTLEMENT)
+	session_reset.emit()

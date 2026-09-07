@@ -10,7 +10,7 @@ extends ContentDefinition
 
 func get_level_data(level: int) -> FacilityLevelDefinition:
 	for data in levels:
-		if data.level == level:
+		if data != null and data.level == level:
 			return data
 	return null
 
@@ -19,15 +19,21 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	if levels.is_empty():
 		errors.append("%s: facility has no level data" % id)
 	for level_data in levels:
+		if level_data == null:
+			errors.append("%s: null facility level" % id)
+			continue
 		if level_data.cost_item_ids.size() != level_data.cost_amounts.size():
 			errors.append("%s: level %d cost arrays differ" % [id, level_data.level])
+		for amount in level_data.cost_amounts:
+			if amount < 0:
+				errors.append("%s: negative facility cost" % id)
 		for item_id in level_data.cost_item_ids:
-			if not registry.has_id(item_id):
+			if not registry.get_definition(item_id) is ItemDefinition:
 				errors.append("%s: missing cost item %s" % [id, item_id])
 	for prerequisite in prerequisite_facility_ids:
-		if not registry.has_id(prerequisite):
+		if not registry.get_definition(prerequisite) is FacilityDefinition:
 			errors.append("%s: missing prerequisite facility %s" % [id, prerequisite])
 	for quest_id in prerequisite_quest_ids:
-		if not registry.has_id(quest_id):
+		if not registry.get_definition(quest_id) is QuestDefinition:
 			errors.append("%s: missing prerequisite quest %s" % [id, quest_id])
 	return errors

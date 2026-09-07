@@ -1,54 +1,58 @@
 # 테스트와 실행 검증
 
-## 자동 테스트
+## 환경과 공통 명령
 
-```powershell
-& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . res://tests/test_runner.tscn
+Godot 4.7.2를 사용한다. `.godot-version`과 project.godot의 4.7 feature가 일치하는지 실행 스크립트가 확인한다. Python 3.10 이상이 있으면 전체 검증을 한 번에 실행할 수 있다.
+
+```sh
+python tools/check_project.py --godot godot
 ```
 
-러너는 실패 시 종료 코드 1을 반환한다. ItemStack/중첩/overflow/제거/무게, 장비 장착, 음식 사용, 생존 임계값, Modifier와 버프 갱신·만료, seed 고정 LootTable, 세 가지 사망 손실과 장비 정책, 보호 아이템, Registry 중복/누락 참조, 퀘스트, 시설 비용, v1 Migration, 저장 round-trip, 미등록 저장 ID, 손상 JSON, 전체 원정 성공/사망 흐름과 두 월드 실제 로드를 검증한다.
-
-## 콘텐츠 검증
+Windows PowerShell 예시(설치 위치에 맞춰 변경):
 
 ```powershell
-& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . res://core/validation/validate_content.tscn
+$godotExe = 'C:\Tools\Godot\Godot_v4.7.2-stable_win64_console.exe'
+python tools/check_project.py --godot $godotExe
 ```
 
-## 에디터/메인 씬 검사
+개별 명령:
 
-```powershell
-& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --editor --quit
-& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --quit-after 60
+```sh
+godot --headless --path . --editor --quit
+godot --headless --path . res://core/validation/validate_content.tscn
+godot --headless --path . res://tests/test_runner.tscn
+godot --headless --path . res://tests/test_runner.tscn -- --restart-write
+godot --headless --path . res://tests/test_runner.tscn -- --restart-read
+godot --headless --path . --quit-after 60
 ```
+
+러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리를 받아 같은 명령을 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
+
+## 테스트 구성
+
+기존 test_runner.gd를 유지하고 StabilityTests를 추가했다. v2 fixture를 변경하지 않고 기존 저장 필드와 결과를 비교한다. 새 테스트는 사망/부활/중복 손실, 원정 persistence 차단, 난이도 스냅샷, 효과/장비/주기 tick, 사망 드롭 부분·전체 회수와 재사망, 저장 복원, 전리품 보존, 보상 거래, 선행 조건/제작, 손상 snapshot, Validator 타입/진입점, 실제 근접·투사체, HUD 난이도 동기화를 검증한다.
+
+등반 통합 테스트는 실제 플레이어·하수구 씬과 Input Action을 사용한다. 영역 밖 입력, 진입·정렬·정지·하강·점프·피격·귀환 차단, 사다리 상단 플랫폼 착지와 E 탈출, 밧줄 속도와 하단 이탈을 확인한다. 테스트용 변경 Resource는 복제하거나 임시 등록하고 종료 시 제거한다.
+
+재시작 검증은 첫 프로세스에서 테스트 전용 user://return_to_cage_restart_test.json을 기록하고, 다음 프로세스에서 읽어 전체 저장 필드를 비교한다. 일반 플레이 저장은 사용하지 않는다.
+
+## 렌더링 자동 점검
+
+GPU/디스플레이가 있는 환경에서 실행한다. headless 물리 테스트와 별개다.
+
+```sh
+godot --path . --rendering-method gl_compatibility res://tests/visual_smoke.tscn
+```
+
+메인 씬의 New Game, 정착지, 실제 등반 후 상단 화면, HUD 경계를 확인하며 스크린샷은 user://validation에 저장한다. 자동 입력 테스트이며 사람의 수동 플레이를 대체했다고 표시하지 않는다.
 
 ## 수동 플레이 절차
 
-1. 에디터에서 F6이 아니라 프로젝트 실행(F5) 후 `New Game`을 누른다.
-2. A/D, Space로 Milo에게 이동하고 E로 샘플 퀘스트를 받는다.
-3. 오른쪽 하수구 문에서 E를 눌러 원정 Context와 함께 진입한다.
-4. 두 Scrap 지점에서 E로 총 4개를 채집하고 J로 딱정벌레를 공격한다.
-5. HUD의 Eat/Drink 버튼으로 회복과 데이터 기반 버프를 확인한다.
-6. 시작 입구 또는 우측 사다리에서 E로 탈출한다. Q 귀환 씨앗은 3초 정지해야 성공하며 이동/피격 시 소모 없이 취소된다.
-7. 정착지 작업대에서 E를 눌러 Scrap 3개를 쓰고 레벨/색/기능 상태 변화를 확인한다.
-8. Milo에게 돌아가 보상을 받고 Archive post 또는 HUD Save로 저장한다.
-9. 새 게임으로 상태를 바꾼 뒤 Load하여 창고, 시설, 퀘스트, 생존/체력과 난이도를 비교한다.
-10. F10 개발 패널에서 무적, 생존 정지, 수치 변경, 아이템/자원 지급, 강제 사망, 시설 업그레이드, 검증과 상태 출력을 확인한다.
-
-## 1차 세션 리팩터링 회귀 검증
-
-기존 러너를 확장했다. 수정 전 구현에서 추출한 `tests/fixtures/legacy_v2_*.json`과
-새 게임 및 복원 결과의 모든 필드를 비교한다. Resource 수정에 따른 초기값 변경,
-상태 소유권, export 스냅샷 분리, 여덟 시그널, 반복 초기화/복원 relay 중복 방지,
-v1 실제 파일 로드, v2 round trip, 중첩 타입 오류와 짧은 위치/퀘스트 배열,
-주민 JSON 호환성과 SurvivalComponent의 공유 상태도 검사한다.
-
-프로세스를 실제로 종료한 뒤 다시 실행하는 저장 검증은 순서대로 실행한다.
-
-```powershell
-& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . res://tests/test_runner.tscn -- --restart-write
-& 'C:\Users\maker\Downloads\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe' --headless --path . res://tests/test_runner.tscn -- --restart-read
-```
-
-첫 실행은 테스트 전용 `user://return_to_cage_restart_test.json`을 저장한다.
-두 번째 실행은 새 프로세스임을 확인한 뒤 로드하고 모든 저장 필드를 비교한 후 정리한다.
-일반 플레이 저장 파일은 사용하지 않는다.
+1. F5 → New Game. A/D와 Space 이동, Milo E로 퀘스트 시작.
+2. 하수구 문 E로 진입. HUD Save/Load/난이도가 잠기고 이유가 나오는지 확인.
+3. 자원 채집, J 전투, 음식 효과 적용 후 입구 탈출. 버프와 시간이 이어지는지 확인.
+4. 다시 진입해 오른쪽 사다리에서 W로 올라가기, 멈추기, S 하강, Space 이탈. 바닥 E 탈출 불가, 상단 착지 후 E 탈출 가능 확인.
+5. Survival 사망 후 정착지에서 양수 HP와 손실 메시지 확인. 재진입해 같은 위치 드롭을 회수.
+6. 창고를 채운 뒤 탈출하고 pending 표시 및 공간 확보 후 수령 확인. 퀘스트 보상도 공간 부족 뒤 재시도.
+7. 정착지에서 Save → 프로그램 종료 → Load. 난이도/Override, 효과, 드롭, 보관함 복원 확인.
+8. F10 개발 패널은 Debug 빌드 전용 우회 기능이며 일반 플레이 경로와 구분한다.

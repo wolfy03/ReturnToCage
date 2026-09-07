@@ -24,8 +24,8 @@ func _create_npc() -> void:
 	target.activated.connect(func(_actor: Node) -> void:
 		if not GameSession.progression.quest_states.has(&"sewer_supplies"):
 			GameSession.start_quest(&"sewer_supplies")
-		elif not GameSession.claim_quest_reward(&"sewer_supplies"):
-			GameSession.last_message = "Milo: Bring back 3 scrap and improve the workbench."
+		else:
+			GameSession.claim_quest_reward(&"sewer_supplies")
 	)
 	var resident := ResidentAgent.new()
 	resident.position = Vector2(340, 530)
@@ -52,7 +52,7 @@ func _create_exits() -> void:
 	var sewer_data := ContentRegistry.get_definition(&"sewer_gate") as SettlementExitDefinition
 	var sewer := WorldHelpers.add_interaction(self, sewer_data.id, "%s - %s" % [sewer_data.prompt, sewer_data.display_name], Vector2(865, 510), Vector2(96, 90), Color("264653"), 5)
 	sewer.activated.connect(func(_actor: Node) -> void:
-		var context := GameSession.begin_adventure(sewer_data.id, sewer_data.connected_region_ids[0], sewer_data.entry_point_id)
+		var context := GameSession.request_adventure_from_exit(sewer_data.id, &"sewer_region")
 		if context != null:
 			SceneRouter.go_to_adventure(context)
 	)

@@ -3,6 +3,7 @@ extends RefCounted
 
 enum Result { ACTIVE, NORMAL_ESCAPE, RETURN_ITEM_ESCAPE, DEATH, ABORTED }
 
+var rules: AdventureRulesSnapshot
 var context: AdventureContext
 var elapsed_seconds: float = 0.0
 var starting_inventory: Array[Dictionary] = []

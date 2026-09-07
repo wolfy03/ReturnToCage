@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="ClimbableDefinition" load_steps=2 format=3]
+[ext_resource type="Script" path="res://data/definitions/climbable_definition.gd" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"ladder_default"
+display_name = "Ladder"
+kind = 0
+speed_multiplier = 0.65
+alignment_tolerance = 28.0
+alignment_speed = 100.0

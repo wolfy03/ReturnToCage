@@ -4,6 +4,8 @@ extends CharacterBody2D
 @export var definition: EnemyDefinition
 @onready var health: HealthComponent = %Health
 @onready var hurtbox: HurtboxComponent = %Hurtbox
+var effects: EffectController
+var effect_stats: StatBlock
 var player: PlayerActor
 var states: Dictionary[StringName, EnemyState] = {}
 var current_state: EnemyState
@@ -21,6 +23,16 @@ func _ready() -> void:
 	patrol_origin = global_position
 	health.max_health = definition.max_health * GameSession.current_difficulty().enemy_health_multiplier
 	health.current_health = health.max_health
+	effect_stats = StatBlock.new()
+	effect_stats.set_base(&"move_speed", definition.move_speed)
+	effect_stats.set_base(&"attack_power", definition.attack_damage * GameSession.current_difficulty().enemy_damage_multiplier)
+	effect_stats.set_base(&"max_health", health.max_health)
+	effect_stats.stat_changed.connect(_on_effect_stat_changed)
+	effects = EffectController.new()
+	effects.name = "Effects"
+	add_child(effects)
+	effects.configure(effect_stats)
+	effects.model.periodic.connect(_on_periodic)
 	hurtbox.faction = definition.faction
 	health.damaged.connect(_on_damaged)
 	health.died.connect(_on_died)
@@ -57,7 +69,7 @@ func perform_attack() -> void:
 		return
 	var target_health := player.get_node_or_null("Health") as HealthComponent
 	if target_health != null:
-		var damage := definition.attack_damage * GameSession.current_difficulty().enemy_damage_multiplier
+		var damage: float = effect_stats.value(&"attack_power")
 		target_health.receive_damage(DamageContext.new(damage, &"physical", self, definition.faction, Vector2(signf(player.global_position.x - global_position.x) * 100.0, -30.0)))
 
 func _on_damaged(context: DamageContext) -> void:
@@ -75,3 +87,16 @@ func drop_loot_and_remove() -> void:
 		for stack in definition.loot_table.roll(rng, GameSession.current_difficulty().loot_multiplier):
 			GameSession.collect_adventure_loot(stack.item_id, stack.quantity)
 	queue_free()
+
+func _on_periodic(amount: float, damage: bool) -> void:
+	if damage:
+		health.receive_periodic_damage(amount)
+	else:
+		health.heal(amount)
+
+func _on_effect_stat_changed(id: StringName, value: float) -> void:
+	if id == &"defense":
+		health.defense = value
+	elif id == &"max_health":
+		health.max_health = maxf(1.0, value)
+		health.current_health = minf(health.current_health, health.max_health)

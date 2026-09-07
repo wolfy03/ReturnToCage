@@ -63,3 +63,12 @@ static func valid_stack(data: Dictionary, errors: PackedStringArray) -> bool:
 		errors.append("invalid item stack in save")
 		return false
 	return true
+
+static func position(data: Dictionary, key: String, fallback: Vector2, errors: PackedStringArray) -> Vector2:
+	if not data.has(key):
+		return fallback
+	var raw: Variant = data[key]
+	if raw is Array and raw.size() == 2 and is_number(raw[0]) and is_number(raw[1]):
+		return Vector2(float(raw[0]), float(raw[1]))
+	errors.append("invalid position in save: %s" % key)
+	return fallback
