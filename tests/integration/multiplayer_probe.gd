@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, HEALTH, RESPAWN, CLEANUP }
+enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -27,11 +27,15 @@ var respawn_confirmations: Dictionary[int, bool] = {}
 var server_old_actor_id: int = 0
 var server_old_life_id: int = -1
 var server_death_phase: int
+var session_end_verified: bool = false
+var reconnecting: bool = false
+var reconnect_confirmations: Dictionary[int, bool] = {}
 
 func _ready() -> void:
 	_parse_arguments()
 	deadline_msec = Time.get_ticks_msec() + 15000
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
+	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
 	if role == "host":
 		if NetworkManager.host_game(port, expected_players) != OK or not GameSession.start_new_game():
 			_fail("host setup failed")
@@ -56,7 +60,10 @@ func _process(_delta: float) -> void:
 			client_saw_authoritative_snapshot = true
 		if health_test_peer > 0 and not health_confirmation_sent:
 			var health_actor := _actor(health_test_peer)
-			if health_actor != null and is_equal_approx(health_actor.health.current_health, 40.0):
+			var health_state := GameSession.get_player(health_test_peer)
+			if health_actor != null and health_state != null \
+				and is_equal_approx(health_actor.health.current_health, 40.0) \
+				and is_equal_approx(health_state.health, 40.0):
 				health_confirmation_sent = true
 				_confirm_health_presentation.rpc_id(1)
 		if respawn_test_peer > 0 and not respawn_confirmation_sent:
@@ -139,8 +146,16 @@ func _process(_delta: float) -> void:
 		ProbeState.CLEANUP:
 			if GameSession.players.size() == 1 and Time.get_ticks_msec() - phase_started_msec > 250:
 				print("PROBE HOST CLEANUP OK")
+				state = ProbeState.RECONNECT
+		ProbeState.RECONNECT:
+			if GameSession.players.size() == expected_players \
+				and get_tree().get_nodes_in_group(&"player").size() == expected_players \
+				and reconnect_confirmations.size() == expected_players - 1:
+				print("PROBE FRESH RECONNECT OK")
+				_reconnect_done.rpc()
 				print("MULTIPLAYER PROBE PASS")
-				get_tree().quit(0)
+				state = ProbeState.FINISHED
+				get_tree().create_timer(0.75).timeout.connect(func() -> void: get_tree().quit(0))
 
 func _parse_arguments() -> void:
 	for argument in OS.get_cmdline_user_args():
@@ -159,6 +174,10 @@ func _on_session_synchronized() -> void:
 	var local_actor := _actor(NetworkManager.local_peer_id())
 	if local_actor == null:
 		_fail("client local actor was not spawned by the server roster")
+		return
+	if reconnecting:
+		print("PROBE CLIENT FRESH RECONNECT OK")
+		_confirm_reconnect.rpc_id(1)
 		return
 	client_start_position = local_actor.global_position
 	Input.action_press(&"move_right")
@@ -234,10 +253,58 @@ func _probe_done() -> void:
 		return
 	print("PROBE CLIENT MOVEMENT OK")
 	NetworkManager.leave_game()
-	get_tree().create_timer(0.2).timeout.connect(func() -> void: get_tree().quit(0))
+	if not session_end_verified:
+		_fail("manual leave did not complete the network session lifecycle")
+		return
+	var retired_world := world
+	world = null
+	if is_instance_valid(retired_world):
+		remove_child(retired_world)
+		retired_world.queue_free()
+	await get_tree().create_timer(1.0).timeout
+	reconnecting = true
+	session_end_verified = false
+	if NetworkManager.join_game("127.0.0.1", port) != OK:
+		_fail("fresh reconnect setup failed")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_reconnect() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		reconnect_confirmations[sender] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _reconnect_done() -> void:
+	var peer_ids: Array[int] = []
+	peer_ids.assign(GameSession.players.keys())
+	peer_ids.sort()
+	var leave_delay := 0.1 + maxf(0.0, float(peer_ids.find(NetworkManager.local_peer_id()) - 1)) * 0.2
+	await get_tree().create_timer(leave_delay).timeout
+	NetworkManager.leave_game()
+	if not session_end_verified:
+		_fail("fresh reconnect did not end cleanly")
+		return
+	get_tree().quit(0)
+
+func _on_multiplayer_session_ended(reason: String) -> void:
+	if role != "client":
+		return
+	if NetworkManager.state != NetworkManager.ConnectionState.OFFLINE \
+		or not NetworkManager.players.is_empty() or not NetworkManager.world_ready_peers.is_empty() \
+		or GameSession.players.size() != 1 or GameSession.phase != GameSession.Phase.MENU \
+		or not GameSession.session_id.is_empty():
+		_fail("session-end signal fired before cleanup completed")
+		return
+	session_end_verified = true
+	print("PROBE CLIENT SESSION END OK %s" % reason)
 
 func _on_server_disconnected() -> void:
 	if role == "client" and disconnect_host:
+		if not session_end_verified:
+			_fail("server disconnect did not complete the network session lifecycle")
+			return
 		print("PROBE CLIENT HOST DISCONNECT OK")
 		print("MULTIPLAYER PROBE PASS")
 		get_tree().quit(0)

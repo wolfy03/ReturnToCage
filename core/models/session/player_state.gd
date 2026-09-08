@@ -97,6 +97,18 @@ func set_health(value: float) -> void:
 		health = next
 		vitals_changed.emit()
 
+# Client-only network mirrors may use a server max-health value that is not yet
+# represented by local stats. This updates health only; stats and their modifier,
+# equipment, and effect ownership remain untouched.
+func apply_replicated_health(value: float, authoritative_max_health: float) -> bool:
+	if not is_finite(value) or not is_finite(authoritative_max_health) or authoritative_max_health <= 0.0:
+		return false
+	var next := clampf(value, 0.0, authoritative_max_health)
+	if not is_equal_approx(health, next):
+		health = next
+		vitals_changed.emit()
+	return true
+
 func sync_equipment() -> void:
 	stats.begin_update()
 	for source in _gear_sources:

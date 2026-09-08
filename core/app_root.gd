@@ -4,6 +4,7 @@ extends Node
 @onready var menu: Control = %MainMenu
 @onready var error_label: Label = %ErrorLabel
 @onready var multiplayer_panel: MultiplayerPanel = %MultiplayerPanel
+var _menu_transition_pending: bool = false
 
 func _ready() -> void:
 	SceneRouter.register_world_layer(world_layer)
@@ -15,6 +16,7 @@ func _ready() -> void:
 	NetworkManager.session_synchronized.connect(_enter_network_session)
 	NetworkManager.connection_failed.connect(_on_network_failure)
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
+	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
 	var errors := ContentRegistry.validate_all()
 	if not errors.is_empty():
 		error_label.text = "Content validation failed:\n%s" % "\n".join(errors)
@@ -74,11 +76,29 @@ func _on_server_disconnected() -> void:
 	_return_to_menu()
 	_show_error("Host disconnected")
 
+func _on_multiplayer_session_ended(reason: String) -> void:
+	_return_to_menu()
+	if reason == NetworkManager.END_REASON_SERVER_DISCONNECTED:
+		_show_error("Host disconnected")
+	elif reason == NetworkManager.END_REASON_CONNECTION_FAILED:
+		_show_error(NetworkManager.last_error)
+	else:
+		error_label.visible = false
+
 func _return_to_menu() -> void:
+	if _menu_transition_pending:
+		return
+	_menu_transition_pending = true
 	for child in world_layer.get_children():
+		child.process_mode = Node.PROCESS_MODE_DISABLED
+		world_layer.remove_child(child)
 		child.queue_free()
 	menu.visible = true
 	multiplayer_panel.refresh()
+	call_deferred("_finish_menu_transition")
+
+func _finish_menu_transition() -> void:
+	_menu_transition_pending = false
 
 func _show_error(message: String) -> void:
 	error_label.text = message

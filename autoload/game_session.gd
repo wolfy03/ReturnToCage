@@ -23,6 +23,7 @@ signal player_unregistered(peer_id: int)
 enum Phase { MENU, SETTLEMENT, ADVENTURE, RESPAWNING }
 var _phase: Phase = Phase.MENU
 var _player_runtime: Dictionary[int, PlayerRuntimeState] = {}
+var _applying_runtime_snapshot: bool = false
 var phase: Phase:
 	get:
 		return _phase
@@ -193,6 +194,8 @@ func _disconnect_player_state_signals(peer_id: int, state: PlayerState) -> void:
 		state.vitals_changed.disconnect(callback)
 
 func _on_player_vitals_changed(peer_id: int) -> void:
+	if _applying_runtime_snapshot:
+		return
 	var state := get_player(peer_id)
 	if state != null:
 		player_health_changed.emit(peer_id, state.health, maxf(1.0, state.stats.value(&"max_health")))
@@ -499,11 +502,20 @@ func is_current_life(peer_id: int, life_id: int) -> bool:
 func apply_player_runtime_snapshot(snapshot: PlayerRuntimeSnapshot) -> bool:
 	if NetworkManager.is_server() or snapshot == null or not snapshot.error_message.is_empty() or not has_player(snapshot.peer_id):
 		return false
+	if not is_finite(snapshot.health) or not is_finite(snapshot.max_health) \
+		or snapshot.max_health <= 0.0 or snapshot.health < 0.0 or snapshot.health > snapshot.max_health:
+		return false
 	var runtime := get_player_runtime(snapshot.peer_id)
-	if runtime == null or snapshot.life_id < runtime.life_id:
+	var state := get_player(snapshot.peer_id)
+	if runtime == null or state == null or snapshot.life_id < runtime.life_id:
 		return false
 	runtime.life_id = snapshot.life_id
 	runtime.life_phase = snapshot.life_phase as PlayerRuntimeState.LifePhase
+	_applying_runtime_snapshot = true
+	var applied := state.apply_replicated_health(snapshot.health, snapshot.max_health)
+	_applying_runtime_snapshot = false
+	if not applied:
+		return false
 	player_life_changed.emit(snapshot.peer_id, runtime.life_id, runtime.life_phase)
 	player_health_changed.emit(snapshot.peer_id, snapshot.health, snapshot.max_health)
 	return true

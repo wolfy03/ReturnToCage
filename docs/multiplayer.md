@@ -12,6 +12,8 @@ The movement command contains a monotonically increasing sequence, horizontal in
 
 `GameSession.players` is the canonical peer-to-`PlayerState` collection. `GameSession.player` remains a compatibility view of the local peer's exact same object. Shared settlement, progression, adventure, and difficulty models remain server-owned conceptually; this phase only transmits session metadata, protocol version, and the player list rather than reusing save dictionaries.
 
+On clients, `PlayerState.health` is a read-only mirror of the latest validated server runtime snapshot. The snapshot does not rewrite stats, equipment, effects, inventory, or shared state. `PlayerActor` separately applies presentation: ALIVE displays mirrored health, while DEAD and RESPAWNING actors remain visually at zero health until the new life actor is spawned.
+
 Godot's inherited `Object.is_connected(signal, callable)` reserves the requested `is_connected` name. `NetworkManager.is_session_connected()` is therefore the no-argument connection-state query on Godot 4.7.2.
 
 ## Start a host
@@ -27,11 +29,13 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 3. Select **Join**. The client validates protocol version `2`, receives session metadata/player roster, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
+Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
+
 Allow inbound UDP `7777` in the host machine firewall for LAN testing. NAT traversal, UPnP, relay services, matchmaking, Steam networking, and host migration are not included.
 
 ## Local automated probe
 
-The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, A/D movement, jump, W/S climbing, authoritative transform and health presentation snapshots on clients, client disconnect cleanup, and host disconnect notification.
+The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, A/D movement, jump, W/S climbing, authoritative transform and health presentation snapshots on clients, client disconnect cleanup, a fresh reconnect, and host disconnect notification.
 
 ```powershell
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2

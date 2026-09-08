@@ -8,12 +8,16 @@ signal peer_joined(peer_id: int)
 signal peer_left(peer_id: int)
 signal session_synchronized
 signal peer_world_ready(peer_id: int)
+signal multiplayer_session_ended(reason: String)
 
 enum ConnectionState { OFFLINE, HOSTING, CONNECTING, CONNECTED }
 
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 4
 const NETWORK_PROTOCOL_VERSION := NetworkProtocol.VERSION
+const END_REASON_MANUAL := "manual_leave"
+const END_REASON_CONNECTION_FAILED := "connection_failed"
+const END_REASON_SERVER_DISCONNECTED := "server_disconnected"
 
 var state: ConnectionState = ConnectionState.OFFLINE
 var last_error: String = ""
@@ -21,6 +25,7 @@ var players: Dictionary[int, NetworkPlayerInfo] = {}
 var world_ready_peers: Dictionary[int, bool] = {}
 var _peer: ENetMultiplayerPeer
 var _local_peer_id: int = 1
+var _session_entered: bool = false
 
 func _ready() -> void:
 	multiplayer.peer_connected.connect(_on_transport_peer_connected)
@@ -30,7 +35,7 @@ func _ready() -> void:
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
 func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Error:
-	leave_game()
+	_reset_transport()
 	if port < 1 or port > 65535 or max_players < 2 or max_players > MAX_PLAYERS:
 		last_error = "Invalid host port or player limit"
 		return ERR_INVALID_PARAMETER
@@ -43,6 +48,7 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 	multiplayer.multiplayer_peer = _peer
 	state = ConnectionState.HOSTING
 	_local_peer_id = 1
+	_session_entered = true
 	players[1] = NetworkPlayerInfo.new(1, "Host", true)
 	world_ready_peers[1] = true
 	last_error = ""
@@ -51,7 +57,7 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 	return OK
 
 func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
-	leave_game()
+	_reset_transport()
 	var target := address.strip_edges()
 	if target.is_empty() or port < 1 or port > 65535:
 		last_error = "Invalid server address or port"
@@ -69,7 +75,7 @@ func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
 	return OK
 
 func leave_game() -> void:
-	_reset_transport()
+	_finish_network_session(END_REASON_MANUAL)
 	last_error = ""
 
 func is_server() -> bool:
@@ -138,15 +144,21 @@ func _on_connected_to_server() -> void:
 
 func _on_connection_failed() -> void:
 	last_error = "Connection failed"
-	_reset_transport()
+	_finish_network_session(END_REASON_CONNECTION_FAILED)
 	print("[NET] Connection failed")
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
 	last_error = "Server disconnected"
-	_reset_transport()
+	_finish_network_session(END_REASON_SERVER_DISCONNECTED)
 	print("[NET] Server disconnected")
 	server_disconnected.emit()
+
+func _finish_network_session(reason: String) -> void:
+	var notify_session_end := _session_entered
+	_reset_transport()
+	if notify_session_end:
+		multiplayer_session_ended.emit(reason)
 
 func _reset_transport() -> void:
 	var previous_local_peer_id := local_peer_id()
@@ -156,6 +168,7 @@ func _reset_transport() -> void:
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	state = ConnectionState.OFFLINE
 	_local_peer_id = 1
+	_session_entered = false
 	players.clear()
 	world_ready_peers.clear()
 	GameSession.reset_to_offline_local_player(previous_local_peer_id)
@@ -204,6 +217,7 @@ func _receive_session_snapshot(payload: Dictionary) -> void:
 	players.clear()
 	for peer_id in snapshot.player_ids:
 		players[peer_id] = NetworkPlayerInfo.new(peer_id, "Host" if peer_id == 1 else "Player", true)
+	_session_entered = true
 	print("[NET] Session synchronized with %d players" % players.size())
 	session_synchronized.emit()
 

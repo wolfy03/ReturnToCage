@@ -217,6 +217,10 @@ func apply_runtime_presentation(snapshot: PlayerRuntimeSnapshot) -> void:
 	if is_simulation_authority() or snapshot == null or snapshot.peer_id != peer_id or not snapshot.error_message.is_empty():
 		return
 	health.max_health = snapshot.max_health
-	health.current_health = snapshot.health
+	match snapshot.life_phase:
+		PlayerRuntimeState.LifePhase.ALIVE:
+			health.current_health = snapshot.health
+		PlayerRuntimeState.LifePhase.DEAD, PlayerRuntimeState.LifePhase.RESPAWNING:
+			health.current_health = 0.0
 	health.health_changed.emit(health.current_health, health.max_health)
 	facing = snapshot.facing
