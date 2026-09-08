@@ -1,0 +1,70 @@
+# Multiplayer foundation
+
+This is an experimental 2-4 player cooperative host game foundation. It is intended for localhost and direct-IP LAN development tests, not internet play.
+
+## Authority model
+
+The host runs both the authoritative server and its local client. Remote clients send movement intent only:
+
+`local input -> move command -> server validation -> server MovementComponent -> authoritative transform snapshot -> client interpolation`
+
+The movement command contains a monotonically increasing sequence, horizontal input, vertical/climb input, and jump intent. It never contains a claimed peer ID or final position. The server derives identity from `multiplayer.get_remote_sender_id()`, rejects unknown/spoofed senders, stale sequences, out-of-range axes, NaN, and infinity.
+
+`GameSession.players` is the canonical peer-to-`PlayerState` collection. `GameSession.player` remains a compatibility view of the local peer's exact same object. Shared settlement, progression, adventure, and difficulty models remain server-owned conceptually; this phase only transmits session metadata, protocol version, and the player list rather than reusing save dictionaries.
+
+Godot's inherited `Object.is_connected(signal, callable)` reserves the requested `is_connected` name. `NetworkManager.is_session_connected()` is therefore the no-argument connection-state query on Godot 4.7.2.
+
+## Start a host
+
+1. Run the project normally.
+2. In **Experimental Multiplayer**, select **Host**.
+3. The host listens on UDP port `7777`, creates the authoritative session, and enters the shared settlement test map.
+
+## Join a host
+
+1. Run another game instance.
+2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
+3. Select **Join**. The client validates protocol version `1`, receives session metadata/player roster, then enters the settlement.
+4. Select **Disconnect** to leave safely.
+
+Allow inbound UDP `7777` in the host machine firewall for LAN testing. NAT traversal, UPnP, relay services, matchmaking, Steam networking, and host migration are not included.
+
+## Local automated probe
+
+The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, A/D movement, jump, W/S climbing, authoritative snapshots on clients, client disconnect cleanup, and host disconnect notification.
+
+```powershell
+python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2
+python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 3
+python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --host-disconnect
+```
+
+For a visual manual test, start two to four normal instances. Verify that each instance reads input only for its own hamster, all actors occupy distinct spawn points, remote transforms interpolate, closing a client removes its actor on the host and remaining clients, and closing the host returns clients to the menu with a disconnect message.
+
+## Supported now
+
+- Host creation with `ENetMultiplayerPeer`
+- Direct-IP client join and leave
+- Protocol-version handshake
+- Two to four peer registry and `PlayerState` creation from `GameStartDefinition`
+- Server-owned player spawn/despawn in settlement and adventure scenes
+- Horizontal movement, vertical climbing, and jump commands
+- Server-authoritative movement simulation and transform snapshots
+- Basic client interpolation
+- Offline single-player compatibility
+- Host-only multiplayer save; multiplayer load disabled
+
+## Not synchronized yet
+
+- Combat, damage, death, and respawn
+- Enemy AI
+- Loot and pickup/drop transactions
+- Inventory and equipment replication
+- Quest state
+- Settlement storage, facilities, residents, and progression
+- Crafting
+- Party scene transitions and coordinated expedition start/return
+- Persistent multiplayer saves
+- Reconnect and host migration
+- Dedicated server builds
+- Internet matchmaking, relay, NAT traversal, and Steam integration

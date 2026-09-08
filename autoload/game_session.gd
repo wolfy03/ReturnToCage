@@ -11,20 +11,29 @@ signal difficulty_changed(id: StringName)
 
 signal phase_changed
 signal player_respawned(result: RespawnResult)
+signal player_registered(peer_id: int, state: PlayerState)
+signal player_unregistered(peer_id: int)
 enum Phase { MENU, SETTLEMENT, ADVENTURE, RESPAWNING }
 var _phase: Phase = Phase.MENU
 var _life_id: int = 0
+var _life_ids: Dictionary[int, int] = {}
 var phase: Phase:
 	get:
 		return _phase
 var last_death_result: RespawnResult
 
 const DEFAULT_START_ID: StringName = &"default_game_start"
+const LOCAL_SINGLEPLAYER_PEER_ID := 1
 
 var session_id: String = ""
 var play_time_seconds: float = 0.0
 var last_message: String = ""
-var player: PlayerState
+var players: Dictionary[int, PlayerState] = {}
+var player: PlayerState:
+	get:
+		return get_local_player()
+	set(value):
+		players[get_local_peer_id()] = value
 var settlement: SettlementState
 var progression: ProgressionState = ProgressionState.new()
 var adventure: AdventureState = AdventureState.new()
@@ -102,26 +111,70 @@ func _ready() -> void:
 		_reset_states(start)
 
 func _process(delta: float) -> void:
+	if not NetworkManager.is_authoritative_simulation():
+		return
 	if not session_id.is_empty():
 		play_time_seconds += delta
 		if phase in [Phase.SETTLEMENT, Phase.ADVENTURE]:
-			player.effects.tick(delta)
+			for state in players.values():
+				state.effects.tick(delta)
 	if adventure.active_session != null:
 		adventure.active_session.elapsed_seconds += delta
 
 func _create_models() -> void:
-	var resolver := Callable(ContentRegistry, "get_item")
-	if player == null:
-		player = PlayerState.new(resolver)
+	if not has_player(get_local_peer_id()):
+		players[get_local_peer_id()] = _create_player_state()
 	if settlement == null:
-		settlement = SettlementState.new(resolver)
+		settlement = SettlementState.new(Callable(ContentRegistry, "get_item"))
 	_connect_model_signals()
+
+func _create_player_state() -> PlayerState:
+	return PlayerState.new(Callable(ContentRegistry, "get_item"))
+
+func get_local_peer_id() -> int:
+	return NetworkManager.local_peer_id() if NetworkManager != null else LOCAL_SINGLEPLAYER_PEER_ID
+
+func get_local_player() -> PlayerState:
+	return players.get(get_local_peer_id())
+
+func has_player(peer_id: int) -> bool:
+	return players.has(peer_id)
+
+func get_player(peer_id: int) -> PlayerState:
+	return players.get(peer_id)
+
+func register_player(peer_id: int) -> PlayerState:
+	if peer_id <= 0:
+		return null
+	if players.has(peer_id):
+		return players[peer_id]
+	var state := _create_player_state()
+	var start := get_start_definition(false)
+	if start != null:
+		state.reset(start, ContentRegistry)
+	players[peer_id] = state
+	if peer_id == get_local_peer_id():
+		_connect_model_signals()
+	player_registered.emit(peer_id, state)
+	return state
+
+func unregister_player(peer_id: int) -> void:
+	if not players.has(peer_id):
+		return
+	players.erase(peer_id)
+	_life_ids.erase(peer_id)
+	player_unregistered.emit(peer_id)
 
 func _connect_model_signals() -> void:
 	if player != null and player.inventory != null and not player.inventory.changed.is_connected(inventory_changed.emit):
 		player.inventory.changed.connect(inventory_changed.emit)
 	if settlement != null and settlement.storage != null and not settlement.storage.changed.is_connected(storage_changed.emit):
 		settlement.storage.changed.connect(storage_changed.emit)
+
+func _disconnect_player_model_signals() -> void:
+	for state in players.values():
+		if state.inventory != null and state.inventory.changed.is_connected(inventory_changed.emit):
+			state.inventory.changed.disconnect(inventory_changed.emit)
 
 func get_start_definition(report_error: bool = true) -> GameStartDefinition:
 	var start := ContentRegistry.get_definition(DEFAULT_START_ID) as GameStartDefinition
@@ -137,16 +190,23 @@ func get_start_definition(report_error: bool = true) -> GameStartDefinition:
 	return start
 
 func _reset_states(start: GameStartDefinition) -> void:
-	player.reset(start, ContentRegistry)
+	for state in players.values():
+		state.reset(start, ContentRegistry)
 	settlement.reset(start, ContentRegistry)
 	progression.reset(start)
 	difficulty.reset(start)
 	adventure.reset()
 
 func start_new_game() -> bool:
+	if not NetworkManager.is_authoritative_simulation():
+		last_message = "Only the host can start a multiplayer session"
+		return false
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
 		return false
+	_disconnect_player_model_signals()
+	players.clear()
+	_life_ids.clear()
 	_create_models()
 	session_id = "%s-%s" % [Time.get_unix_time_from_system(), randi()]
 	play_time_seconds = 0.0
@@ -164,7 +224,12 @@ func current_difficulty() -> DifficultyDefinition:
 		return adventure.active_session.rules.effective()
 	return difficulty.effective(ContentRegistry)
 
+func can_mutate_authoritative_state() -> bool:
+	return NetworkManager.is_authoritative_simulation()
+
 func set_phase(value: Phase) -> bool:
+	if not can_mutate_authoritative_state():
+		return false
 	if value == _phase:
 		return value != Phase.ADVENTURE
 	var allowed: bool = false
@@ -186,22 +251,30 @@ func set_phase(value: Phase) -> bool:
 
 
 func set_difficulty(id: StringName) -> bool:
+	if not can_mutate_authoritative_state():
+		return false
 	if not difficulty.set_id(id, ContentRegistry):
 		return false
 	difficulty_changed.emit(id)
 	return true
 
 func set_difficulty_override(property_name: StringName, value: Variant) -> bool:
+	if not can_mutate_authoritative_state():
+		return false
 	if not difficulty.set_override(property_name, value):
 		return false
 	difficulty_changed.emit(difficulty.id)
 	return true
 
 func clear_difficulty_override(property_name: StringName) -> void:
+	if not can_mutate_authoritative_state():
+		return
 	difficulty.overrides.erase(property_name)
 	difficulty_changed.emit(difficulty.id)
 
 func start_quest(quest_id: StringName) -> bool:
+	if not can_mutate_authoritative_state():
+		return false
 	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
 	var check: CommandResult = ProgressionService.check_quest_start(quest_id, progression, ContentRegistry)
 	if not check.success:
@@ -215,6 +288,8 @@ func start_quest(quest_id: StringName) -> bool:
 	return true
 
 func report_quest_event(type: QuestObjectiveDefinition.ObjectiveType, target_id: StringName, amount: int = 1) -> void:
+	if not can_mutate_authoritative_state():
+		return
 	for quest_id in progression.quest_states:
 		var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
 		var state: QuestState = progression.quest_states[quest_id]
@@ -226,6 +301,8 @@ func claim_quest_reward(quest_id: StringName) -> bool:
 	return claim_quest_reward_result(quest_id).success
 
 func claim_quest_reward_result(quest_id: StringName) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can change quest state")
 	var state: QuestState = progression.quest_states.get(quest_id)
 	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
 	if state == null or definition == null or not state.begin_reward_claim():
@@ -246,6 +323,8 @@ func claim_quest_reward_result(quest_id: StringName) -> CommandResult:
 	return CommandResult.make(true, last_message)
 
 func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: StringName) -> AdventureContext:
+	if not can_mutate_authoritative_state():
+		return null
 	var check: CommandResult = can_use_exit(exit_id, region_id)
 	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
 	if not check.success or exit == null or entry_id != exit.entry_point_id:
@@ -261,6 +340,8 @@ func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: Strin
 	return context
 
 func collect_adventure_loot(item_id: StringName, amount: int) -> InventoryResult:
+	if not can_mutate_authoritative_state():
+		return InventoryResult.make(amount, 0, "Only the server can collect loot")
 	if adventure.active_session == null:
 		return InventoryResult.make(amount, 0, "no active adventure")
 	var result := adventure.active_session.unsecured_loot.add_item(item_id, amount)
@@ -269,12 +350,16 @@ func collect_adventure_loot(item_id: StringName, amount: int) -> InventoryResult
 	return result
 
 func record_enemy_kill(enemy_id: StringName) -> void:
+	if not can_mutate_authoritative_state():
+		return
 	if adventure.active_session == null:
 		return
 	adventure.active_session.record_kill(enemy_id)
 	report_quest_event(QuestObjectiveDefinition.ObjectiveType.KILL_ENEMY, enemy_id)
 
 func finish_adventure(result: AdventureSession.Result) -> String:
+	if not can_mutate_authoritative_state():
+		return "Only the server can finish an adventure"
 	if adventure.active_session == null:
 		return "No active adventure"
 	if result == AdventureSession.Result.DEATH:
@@ -296,6 +381,8 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	return last_message
 
 func handle_player_death(death_position: Vector2, life_id: int = -1) -> RespawnResult:
+	if not can_mutate_authoritative_state():
+		return RespawnResult.failure("Only the server can resolve player death")
 	if life_id >= 0 and life_id != _life_id:
 		return RespawnResult.failure("Ignored death callback from a retired actor")
 	if last_death_result != null:
@@ -318,20 +405,27 @@ func handle_player_death(death_position: Vector2, life_id: int = -1) -> RespawnR
 	return last_death_result
 
 func complete_respawn() -> void:
+	if not can_mutate_authoritative_state():
+		return
 	if phase == Phase.RESPAWNING and set_phase(Phase.SETTLEMENT):
 		player.effects.paused = false
 
-func arm_player_life() -> int:
+func arm_player_life(peer_id: int = -1) -> int:
 	# Each actor receives a transient generation token; late signals from a retired
 	# actor cannot affect a new life even after last_death_result is cleared.
 	if phase in [Phase.SETTLEMENT, Phase.ADVENTURE]:
+		var owner_id := get_local_peer_id() if peer_id < 0 else peer_id
 		_life_id += 1
+		_life_ids[owner_id] = _life_id
 		last_death_result = null
-		player.effects.paused = false
+		var state := get_player(owner_id)
+		if state != null:
+			state.effects.paused = false
 	return _life_id
 
-func is_current_life(life_id: int) -> bool:
-	return life_id == _life_id
+func is_current_life(life_id: int, peer_id: int = -1) -> bool:
+	var owner_id := get_local_peer_id() if peer_id < 0 else peer_id
+	return life_id == _life_ids.get(owner_id, _life_id)
 
 func can_use_exit(exit_id: StringName, region_id: StringName) -> CommandResult:
 	if phase != Phase.SETTLEMENT:
@@ -343,6 +437,8 @@ func request_adventure_from_exit(exit_id: StringName, region_id: StringName) -> 
 	return begin_adventure(exit_id, region_id, exit.entry_point_id) if exit != null else null
 
 func claim_pending_loot() -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can claim loot")
 	if phase != Phase.SETTLEMENT:
 		return CommandResult.make(false, "Pending loot is available in the settlement")
 	var result: CommandResult = settlement.claim_pending_loot()
@@ -350,6 +446,8 @@ func claim_pending_loot() -> CommandResult:
 	return result
 
 func craft(recipe_id: StringName) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can craft")
 	if phase != Phase.SETTLEMENT:
 		return CommandResult.make(false, "Crafting requires settlement state")
 	var result: CommandResult = CraftingService.craft(ContentRegistry.get_definition(recipe_id) as RecipeDefinition, settlement, progression)
@@ -357,11 +455,15 @@ func craft(recipe_id: StringName) -> CommandResult:
 	return result
 
 func discover_escape(point_id: StringName) -> void:
+	if not can_mutate_authoritative_state():
+		return
 	if adventure.active_session != null:
 		adventure.active_session.discover_escape(point_id)
 		report_quest_event(QuestObjectiveDefinition.ObjectiveType.DISCOVER_POINT, point_id)
 
 func can_upgrade_facility(facility_id: StringName) -> bool:
+	if not can_mutate_authoritative_state():
+		return false
 	var check: CommandResult = ProgressionService.facility_check(facility_id, settlement, progression, ContentRegistry)
 	if not check.success:
 		last_message = check.message
@@ -395,7 +497,64 @@ func export_state() -> Dictionary:
 	result.merge(adventure.to_save_dict())
 	return result
 
+func to_network_snapshot(protocol_version: int) -> Dictionary:
+	var peer_ids: Array[int] = []
+	peer_ids.assign(players.keys())
+	peer_ids.sort()
+	return {
+		"protocol_version": protocol_version,
+		"session_id": session_id,
+		"phase": int(_phase),
+		"difficulty_id": String(difficulty.id),
+		"players": peer_ids,
+	}
+
+func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
+	if NetworkManager.is_server() or snapshot == null or not snapshot.error_message.is_empty():
+		return false
+	if snapshot.phase < Phase.MENU or snapshot.phase > Phase.RESPAWNING:
+		return false
+	var start := get_start_definition()
+	if start == null:
+		return false
+	_disconnect_player_model_signals()
+	players.clear()
+	_life_ids.clear()
+	settlement.reset(start, ContentRegistry)
+	progression.reset(start)
+	difficulty.reset(start)
+	adventure.reset()
+	for peer_id in snapshot.player_ids:
+		register_player(peer_id)
+	if get_local_player() == null or not difficulty.set_id(snapshot.difficulty_id, ContentRegistry):
+		return false
+	session_id = snapshot.session_id
+	play_time_seconds = 0.0
+	_phase = snapshot.phase as Phase
+	last_death_result = null
+	_connect_model_signals()
+	phase_changed.emit()
+	session_reset.emit()
+	return true
+
+func end_network_session() -> void:
+	_disconnect_player_model_signals()
+	players.clear()
+	_life_ids.clear()
+	players[LOCAL_SINGLEPLAYER_PEER_ID] = _create_player_state()
+	var start := get_start_definition(false)
+	if start != null:
+		players[LOCAL_SINGLEPLAYER_PEER_ID].reset(start, ContentRegistry)
+	session_id = ""
+	play_time_seconds = 0.0
+	_phase = Phase.MENU
+	last_death_result = null
+	_connect_model_signals()
+	phase_changed.emit()
+
 func restore_state(data: Dictionary) -> PackedStringArray:
+	if not can_mutate_authoritative_state():
+		return PackedStringArray(["Only the server can restore session state"])
 	if adventure.active_session != null or phase == Phase.RESPAWNING:
 		return PackedStringArray(["Restore unavailable during expedition or respawn"])
 	var snapshot: SessionSnapshot = prepare_restore(data)
@@ -415,10 +574,11 @@ func prepare_restore(data: Dictionary) -> SessionSnapshot:
 func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	if adventure.active_session != null or phase == Phase.RESPAWNING or not snapshot.fatal_error.is_empty():
 		return
-	if player.inventory.changed.is_connected(inventory_changed.emit):
-		player.inventory.changed.disconnect(inventory_changed.emit)
+	_disconnect_player_model_signals()
 	if settlement.storage.changed.is_connected(storage_changed.emit):
 		settlement.storage.changed.disconnect(storage_changed.emit)
+	players.clear()
+	_life_ids.clear()
 	player = snapshot.player
 	settlement = snapshot.settlement
 	progression = snapshot.progression

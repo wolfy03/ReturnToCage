@@ -7,6 +7,7 @@ func _ready() -> void:
 		queue_free()
 		return
 	_build_ui()
+	NetworkManager.connected_to_server.connect(func() -> void: panel.visible = false)
 
 func _build_ui() -> void:
 	panel = PanelContainer.new()
@@ -16,15 +17,15 @@ func _build_ui() -> void:
 	add_child(panel)
 	var buttons := VBoxContainer.new(); panel.add_child(buttons)
 	_add_button(buttons, "Toggle invincible", func() -> void:
-		var p := get_tree().get_first_node_in_group(&"player") as PlayerActor
+		var p := get_tree().get_first_node_in_group(&"local_player") as PlayerActor
 		if p != null: p.health.god_mode = not p.health.god_mode
 	)
 	_add_button(buttons, "Toggle survival drain", func() -> void:
-		var p := get_tree().get_first_node_in_group(&"player") as PlayerActor
+		var p := get_tree().get_first_node_in_group(&"local_player") as PlayerActor
 		if p != null: p.survival.drain_paused = not p.survival.drain_paused
 	)
 	_add_button(buttons, "Set hunger/thirst 10", func() -> void:
-		var p := get_tree().get_first_node_in_group(&"player") as PlayerActor
+		var p := get_tree().get_first_node_in_group(&"local_player") as PlayerActor
 		if p != null: p.survival.set_values(10, 10)
 	)
 	_add_button(buttons, "Give carried supplies", func() -> void:
@@ -38,7 +39,7 @@ func _build_ui() -> void:
 			get_tree().current_scene.get_node("WorldLayer").get_child(0).add_child(enemy)
 	)
 	_add_button(buttons, "Kill player", func() -> void:
-		var p := get_tree().get_first_node_in_group(&"player") as PlayerActor
+		var p := get_tree().get_first_node_in_group(&"local_player") as PlayerActor
 		if p != null: p.health.receive_damage(DamageContext.new(9999, &"debug", self, &"debug"))
 	)
 	_add_button(buttons, "Upgrade facility", func() -> void: GameSession.upgrade_facility(&"workbench"))
@@ -57,5 +58,8 @@ func _add_button(parent: VBoxContainer, text: String, callback: Callable) -> voi
 	var button := Button.new(); button.text = text; button.pressed.connect(callback); parent.add_child(button)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if NetworkManager.is_multiplayer_active() and not NetworkManager.is_server():
+		panel.visible = false
+		return
 	if event.is_action_pressed(&"debug_panel"):
 		panel.visible = not panel.visible

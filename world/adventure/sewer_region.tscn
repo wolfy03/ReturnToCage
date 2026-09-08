@@ -1,9 +1,11 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=11 format=3]
 [ext_resource path="res://world/adventure/adventure_region.gd" type="Script" id="1"]
 [ext_resource path="res://world/region_point.gd" type="Script" id="2"]
 [ext_resource path="res://gameplay/components/climbable_area_2d.gd" type="Script" id="3"]
 [ext_resource path="res://data/content/climbing/ladder.tres" type="Resource" id="4"]
 [ext_resource path="res://data/content/climbing/rope.tres" type="Resource" id="5"]
+[ext_resource path="res://world/multiplayer/player_spawn_manager.gd" type="Script" id="6"]
+[ext_resource path="res://world/multiplayer/player_spawn_point.gd" type="Script" id="7"]
 [sub_resource type="RectangleShape2D" id="LadderShape"]
 size = Vector2(56, 340)
 [sub_resource type="RectangleShape2D" id="RopeShape"]
@@ -16,6 +18,23 @@ script = ExtResource("1")
 position = Vector2(150, 520)
 script = ExtResource("2")
 point_id = &"sewer_entrance"
+[node name="PlayerSpawnPoint0" type="Marker2D" parent="."]
+position = Vector2(150, 520)
+script = ExtResource("7")
+[node name="PlayerSpawnPoint1" type="Marker2D" parent="."]
+position = Vector2(198, 520)
+script = ExtResource("7")
+spawn_index = 1
+[node name="PlayerSpawnPoint2" type="Marker2D" parent="."]
+position = Vector2(246, 520)
+script = ExtResource("7")
+spawn_index = 2
+[node name="PlayerSpawnPoint3" type="Marker2D" parent="."]
+position = Vector2(294, 520)
+script = ExtResource("7")
+spawn_index = 3
+[node name="PlayerSpawnManager" type="Node" parent="."]
+script = ExtResource("6")
 [node name="EntranceEscape" type="Marker2D" parent="."]
 position = Vector2(70, 510)
 script = ExtResource("2")

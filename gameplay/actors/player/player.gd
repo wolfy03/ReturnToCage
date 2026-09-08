@@ -11,6 +11,8 @@ signal return_channel_changed(active: bool, progress: float)
 @onready var combat: CombatComponent = %Combat
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
+@onready var network: NetworkPlayerComponent = %Network
+@export var peer_id: int = GameSession.LOCAL_SINGLEPLAYER_PEER_ID
 var _death_handled: bool = false
 var _life_id: int = -1
 var _bound_state: PlayerState
@@ -19,38 +21,68 @@ var return_channel: float = 0.0
 var return_channel_required: float = 3.0
 var return_channel_origin: Vector2
 
+func setup_player(p_peer_id: int) -> void:
+	peer_id = p_peer_id
+
+func is_local_player() -> bool:
+	return peer_id == NetworkManager.local_peer_id()
+
+func is_simulation_authority() -> bool:
+	return NetworkManager.is_authoritative_simulation()
+
+func player_state() -> PlayerState:
+	return _bound_state
+
 func _ready() -> void:
 	add_to_group(&"player")
-	_bound_state = GameSession.player
-	_life_id = GameSession.arm_player_life()
-	movement.configure(self, input, GameSession.player.stats)
-	combat.configure(self, GameSession.player.stats)
-	effects.configure(GameSession.player.stats, GameSession.player.effects)
+	if is_local_player():
+		add_to_group(&"local_player")
+	_bound_state = GameSession.get_player(peer_id)
+	if _bound_state == null:
+		push_error("PlayerActor has no PlayerState for peer %d" % peer_id)
+		set_physics_process(false)
+		return
+	_life_id = GameSession.arm_player_life(peer_id) if is_simulation_authority() else -1
+	movement.configure(self, input, _bound_state.stats)
+	combat.configure(self, _bound_state.stats)
+	effects.configure(_bound_state.stats, _bound_state.effects)
+	network.configure(self, input, movement)
 	input.attack_requested.connect(_on_attack)
 	input.interact_requested.connect(_on_interact)
 	input.quick_item_requested.connect(_on_quick_item)
 	interaction.target_changed.connect(_on_target_changed)
 	health.died.connect(_on_died)
 	health.damaged.connect(_on_damaged)
-	health.max_health = GameSession.player.stats.value(&"max_health")
-	health.current_health = clampf(GameSession.player.health, 0.0, health.max_health)
+	health.max_health = _bound_state.stats.value(&"max_health")
+	health.current_health = clampf(_bound_state.health, 0.0, health.max_health)
 	health.health_changed.connect(_on_health_changed)
 	_bound_state.vitals_changed.connect(_sync_persistent_health)
-	GameSession.player.stats.stat_changed.connect(_on_stat_changed)
-	_on_stat_changed(&"defense", GameSession.player.stats.value(&"defense"))
+	_bound_state.stats.stat_changed.connect(_on_stat_changed)
+	_on_stat_changed(&"defense", _bound_state.stats.value(&"defense"))
 	var config := GameSession.get_start_definition().survival_config
 	var difficulty := GameSession.current_difficulty()
-	survival.configure(config, difficulty.survival_drain_multiplier if difficulty != null else 1.0, GameSession.player.survival)
+	survival.configure(config, difficulty.survival_drain_multiplier if difficulty != null else 1.0, _bound_state.survival)
 	survival.survival_changed.connect(_on_survival_changed)
 	movement.climb_hint_changed.connect(_refresh_interaction_prompt)
 	movement.mode_changed.connect(_refresh_interaction_prompt)
+	(get_node("Camera2D") as Camera2D).enabled = is_local_player()
+	if not is_simulation_authority():
+		health.set_process(false)
+		survival.set_process(false)
+		combat.set_process(false)
+		effects.set_process(false)
+		interaction.set_process(false)
 
 func _physics_process(delta: float) -> void:
 	if _death_handled:
 		return
+	if not is_simulation_authority():
+		network.presentation_tick(delta)
+		return
 	if absf(input.move_axis) > 0.01:
 		facing = signf(input.move_axis)
 	movement.physics_tick(delta)
+	network.server_snapshot_tick(delta)
 	if return_channel > 0.0:
 		if input.move_vector.length() > 0.01 or global_position.distance_to(return_channel_origin) > 3.0:
 			_cancel_return_channel()
@@ -83,7 +115,7 @@ func _on_quick_item() -> void:
 	if GameSession.adventure.active_session == null:
 		consume_item(&"berry")
 		return
-	if GameSession.player.inventory.count(&"return_seed") <= 0 or return_channel > 0.0:
+	if _bound_state.inventory.count(&"return_seed") <= 0 or return_channel > 0.0:
 		return
 	var region := ContentRegistry.get_definition(GameSession.adventure.active_session.context.region_id) as RegionDefinition
 	if region == null or not region.allow_return_item:
@@ -95,7 +127,7 @@ func _on_quick_item() -> void:
 	return_channel_changed.emit(true, 0.0)
 
 func _complete_return_channel() -> void:
-	if GameSession.player.inventory.remove_item(&"return_seed", 1).changed == 1:
+	if _bound_state.inventory.remove_item(&"return_seed", 1).changed == 1:
 		GameSession.finish_adventure(AdventureSession.Result.RETURN_ITEM_ESCAPE)
 		SceneRouter.go_to_settlement()
 	_cancel_return_channel()
@@ -107,9 +139,9 @@ func _cancel_return_channel() -> void:
 		return_channel_changed.emit(false, 0.0)
 
 func consume_item(item_id: StringName) -> bool:
-	if _death_handled:
+	if _death_handled or not is_simulation_authority():
 		return false
-	return ItemUseService.use_item(GameSession.player.inventory, survival, effects, item_id, Callable(ContentRegistry, "get_item"))
+	return ItemUseService.use_item(_bound_state.inventory, survival, effects, item_id, Callable(ContentRegistry, "get_item"))
 
 func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirst_stage: int) -> void:
 	combat.stamina_regen_multiplier = survival.config.critical_stamina_multiplier if hunger_stage >= 2 or thirst_stage >= 2 else 1.0
@@ -117,7 +149,9 @@ func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirs
 		health.receive_damage(DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment"))
 
 func _on_died(_context: DamageContext) -> void:
-	if _death_handled or not GameSession.is_current_life(_life_id):
+	if _death_handled or not GameSession.is_current_life(_life_id, peer_id):
+		return
+	if not is_local_player():
 		return
 	_death_handled = true
 	movement.exit_climb()
@@ -137,11 +171,11 @@ func _on_died(_context: DamageContext) -> void:
 		SceneRouter.go_to_settlement()
 
 func _on_health_changed(current: float, _maximum: float) -> void:
-	if not _death_handled and GameSession.is_current_life(_life_id):
+	if not _death_handled and GameSession.is_current_life(_life_id, peer_id):
 		_bound_state.set_health(current)
 
 func _sync_persistent_health() -> void:
-	if _death_handled or not GameSession.is_current_life(_life_id):
+	if _death_handled or not GameSession.is_current_life(_life_id, peer_id):
 		return
 	health.current_health = _bound_state.health
 	health.health_changed.emit(health.current_health, health.max_health)

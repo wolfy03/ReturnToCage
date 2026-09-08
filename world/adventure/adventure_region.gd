@@ -1,6 +1,5 @@
 extends Node2D
 
-const PLAYER_SCENE := preload("res://gameplay/actors/player/player.tscn")
 const ENEMY_SCENE := preload("res://gameplay/actors/enemies/sewer_beetle.tscn")
 var context: AdventureContext
 
@@ -27,7 +26,6 @@ func _ready() -> void:
 	var enemy := ENEMY_SCENE.instantiate() as EnemyAgent
 	enemy.position = Vector2(970, 525)
 	add_child(enemy)
-	var player := PLAYER_SCENE.instantiate() as PlayerActor
 	var points: Array[RegionPoint] = []
 	RegionPoint.collect(self, points)
 	var entry: RegionPoint
@@ -35,11 +33,9 @@ func _ready() -> void:
 		if point.kind == RegionPoint.Kind.ENTRY and point.point_id == context.entry_point_id:
 			entry = point
 	if entry == null:
-		player.free()
 		push_error("Missing region entry marker: %s" % context.entry_point_id)
 		return
-	player.position = to_local(entry.global_position)
-	add_child(player)
+	(get_node("PlayerSpawnManager") as PlayerSpawnManager).initialize_spawns()
 
 func _create_escape_points() -> void:
 	var points: Array[RegionPoint] = []

@@ -27,7 +27,8 @@ func _process(delta: float) -> void:
 func attack(facing: float) -> bool:
 	if cooldown_remaining > 0.0 or hitbox == null or (owner_actor is PlayerActor and (owner_actor.movement.mode == MovementComponent.Mode.CLIMB or owner_actor.return_channel > 0.0)):
 		return false
-	var equipped_stack := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+	var actor_state: PlayerState = owner_actor.player_state() if owner_actor is PlayerActor else GameSession.player
+	var equipped_stack := actor_state.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND) if actor_state != null else null
 	var weapon := ContentRegistry.get_definition(equipped_stack.item_id) as WeaponDefinition if equipped_stack != null else null
 	if weapon == null or equipped_stack.durability == 0 or stamina < weapon.stamina_cost:
 		return false

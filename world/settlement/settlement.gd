@@ -1,7 +1,5 @@
 extends Node2D
 
-const PLAYER_SCENE := preload("res://gameplay/actors/player/player.tscn")
-
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color("162133"))
 	WorldHelpers.add_platform(self, Vector2(700, 570), Vector2(1500, 70), Color("435047"))
@@ -15,9 +13,7 @@ func _ready() -> void:
 	_create_facility()
 	_create_exits()
 	_create_save_post()
-	var player := PLAYER_SCENE.instantiate() as PlayerActor
-	player.position = GameSession.player.last_safe_position
-	add_child(player)
+	(get_node("PlayerSpawnManager") as PlayerSpawnManager).initialize_spawns()
 
 func _create_npc() -> void:
 	var target := WorldHelpers.add_interaction(self, &"milo", "Talk to Milo", Vector2(300, 525), Vector2(42, 62), Color("a8b37b"), 3)

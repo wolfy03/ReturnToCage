@@ -7,11 +7,15 @@ const CURRENT_VERSION := 3
 const SAVE_PATH := "user://return_to_cage_save.json"
 
 func can_save() -> CommandResult:
+	if NetworkManager.is_multiplayer_active() and not NetworkManager.is_server():
+		return CommandResult.make(false, "Only the host can save a multiplayer session")
 	if GameSession.phase != GameSession.Phase.SETTLEMENT or GameSession.adventure.active_session != null:
 		return CommandResult.make(false, "Save is only available in the settlement")
 	return CommandResult.make(true)
 
 func can_load() -> CommandResult:
+	if NetworkManager.is_multiplayer_active():
+		return CommandResult.make(false, "Load is disabled during an active multiplayer session")
 	if GameSession.adventure.active_session != null or GameSession.phase not in [GameSession.Phase.MENU, GameSession.Phase.SETTLEMENT]:
 		return CommandResult.make(false, "Load is unavailable during an expedition or respawn")
 	return CommandResult.make(true)

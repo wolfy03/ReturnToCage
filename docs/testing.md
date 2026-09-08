@@ -26,6 +26,8 @@ godot --headless --path . res://tests/test_runner.tscn -- --restart-read
 godot --headless --path . --quit-after 60
 ```
 
+실제 localhost ENet 연결은 기본 CI에서 socket 대기로 인한 hang을 피하기 위해 별도 timeout helper로 검증한다. 상세 범위와 명령은 `docs/multiplayer.md`를 참고한다.
+
 러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리를 받아 같은 명령을 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
 
 ## 테스트 구성

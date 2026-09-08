@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource path="res://core/app_root.gd" type="Script" id="1"]
 [ext_resource path="res://ui/game_hud.gd" type="Script" id="2"]
 [ext_resource path="res://devtools/debug_panel.gd" type="Script" id="3"]
+[ext_resource path="res://ui/multiplayer/multiplayer_panel.gd" type="Script" id="4"]
 
 [node name="Boot" type="Node"]
 script = ExtResource("1")
@@ -21,6 +22,10 @@ layer = 50
 [node name="DebugPanel" type="CanvasLayer" parent="DebugLayer"]
 layer = 80
 script = ExtResource("3")
+
+[node name="MultiplayerPanel" type="CanvasLayer" parent="."]
+unique_name_in_owner = true
+script = ExtResource("4")
 
 [node name="MainMenu" type="Control" parent="."]
 unique_name_in_owner = true

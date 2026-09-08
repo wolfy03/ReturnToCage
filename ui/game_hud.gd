@@ -12,6 +12,7 @@ var load_button: Button
 var difficulty: OptionButton
 var no_loss: CheckButton
 var settlement_buttons: Array[Button] = []
+var direct_player_buttons: Array[Button] = []
 var bound_player: PlayerActor
 var _refresh_remaining: float = 0.0
 
@@ -60,13 +61,15 @@ func _build_ui() -> void:
 		if SaveManager.load_game(): SceneRouter.go_to_settlement()
 	); buttons.add_child(load_button)
 	var eat_button := Button.new(); eat_button.text = "Eat berry"; eat_button.pressed.connect(func() -> void:
-		var player := get_tree().get_first_node_in_group(&"player") as PlayerActor
+		var player := get_tree().get_first_node_in_group(&"local_player") as PlayerActor
 		if player != null: player.consume_item(&"berry"); refresh_all()
 	); buttons.add_child(eat_button)
+	direct_player_buttons.append(eat_button)
 	var drink_button := Button.new(); drink_button.text = "Drink water"; drink_button.pressed.connect(func() -> void:
-		var player := get_tree().get_first_node_in_group(&"player") as PlayerActor
+		var player := get_tree().get_first_node_in_group(&"local_player") as PlayerActor
 		if player != null: player.consume_item(&"water_drop"); refresh_all()
 	); buttons.add_child(drink_button)
+	direct_player_buttons.append(drink_button)
 	difficulty = OptionButton.new()
 	difficulty.add_item("Story"); difficulty.set_item_metadata(0, &"story")
 	difficulty.add_item("Normal"); difficulty.set_item_metadata(1, &"normal")
@@ -95,7 +98,7 @@ func _build_ui() -> void:
 
 func _on_transition_finished(_destination: StringName) -> void:
 	await get_tree().process_frame
-	_bind_player(get_tree().get_first_node_in_group(&"player") as PlayerActor)
+	_bind_player(get_tree().get_first_node_in_group(&"local_player") as PlayerActor)
 	refresh_all()
 
 func _bind_player(player: PlayerActor) -> void:
@@ -128,10 +131,14 @@ func refresh_all() -> void:
 	load_button.disabled = not SaveManager.can_load().success
 	save_button.tooltip_text = SaveManager.can_save().message
 	load_button.tooltip_text = SaveManager.can_load().message
-	difficulty.disabled = GameSession.phase == GameSession.Phase.ADVENTURE or GameSession.phase == GameSession.Phase.RESPAWNING
+	var read_only_client := NetworkManager.is_multiplayer_active() and not NetworkManager.is_server()
+	for button in direct_player_buttons:
+		button.disabled = read_only_client
+		button.tooltip_text = "Not synchronized in multiplayer yet" if read_only_client else ""
+	difficulty.disabled = read_only_client or GameSession.phase == GameSession.Phase.ADVENTURE or GameSession.phase == GameSession.Phase.RESPAWNING
 	no_loss.disabled = difficulty.disabled
 	for button in settlement_buttons:
-		button.disabled = GameSession.phase != GameSession.Phase.SETTLEMENT
+		button.disabled = read_only_client or GameSession.phase != GameSession.Phase.SETTLEMENT
 		button.tooltip_text = "Available in the settlement" if button.disabled else ""
 	difficulty.tooltip_text = "Expedition rules are fixed until return" if difficulty.disabled else "Difficulty for the next expedition"
 	no_loss.tooltip_text = difficulty.tooltip_text
@@ -179,6 +186,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed(&"open_inventory"):
 		detail_panel.visible = not detail_panel.visible
 	elif event.is_action_pressed(&"pause") and not GameSession.session_id.is_empty():
+		if NetworkManager.is_multiplayer_active():
+			GameSession.last_message = "Pause is unavailable during multiplayer"
+			refresh_all()
+			return
 		get_tree().paused = not get_tree().paused
 		GameSession.last_message = "Paused" if get_tree().paused else "Resumed"
 		refresh_all()
