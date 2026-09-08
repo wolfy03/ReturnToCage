@@ -63,17 +63,14 @@ func _enter_network_session() -> void:
 
 func _leave_game() -> void:
 	NetworkManager.leave_game()
-	GameSession.end_network_session()
 	_return_to_menu()
 
 func _on_network_failure() -> void:
 	var message := NetworkManager.last_error
-	GameSession.end_network_session()
 	_return_to_menu()
 	_show_error(message)
 
 func _on_server_disconnected() -> void:
-	GameSession.end_network_session()
 	_return_to_menu()
 	_show_error("Host disconnected")
 

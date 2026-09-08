@@ -24,6 +24,19 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent, p_movement: 
 	movement = p_movement
 	var reads_local_input := actor.is_local_player()
 	input.configure_input(reads_local_input, NetworkManager.is_authoritative_simulation())
+	if NetworkManager.is_server():
+		GameSession.player_health_changed.connect(_on_player_health_changed)
+		GameSession.player_life_changed.connect(_on_player_life_changed)
+		NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
+		call_deferred("_broadcast_runtime_snapshot")
+
+func _exit_tree() -> void:
+	if GameSession.player_health_changed.is_connected(_on_player_health_changed):
+		GameSession.player_health_changed.disconnect(_on_player_health_changed)
+	if GameSession.player_life_changed.is_connected(_on_player_life_changed):
+		GameSession.player_life_changed.disconnect(_on_player_life_changed)
+	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
+		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
 
 func _process(_delta: float) -> void:
 	if actor == null or not NetworkManager.is_multiplayer_active() or not actor.is_local_player():
@@ -59,6 +72,46 @@ func presentation_tick(delta: float) -> void:
 	actor.facing = _target_facing
 	movement.mode = _target_movement_mode as MovementComponent.Mode
 
+func _on_player_health_changed(peer_id: int, _health: float, _max_health: float) -> void:
+	if actor != null and peer_id == actor.peer_id:
+		_broadcast_runtime_snapshot()
+
+func _on_player_life_changed(peer_id: int, _life_id: int, _life_phase: int) -> void:
+	if actor != null and peer_id == actor.peer_id:
+		_broadcast_runtime_snapshot()
+
+func _on_peer_world_ready(peer_id: int) -> void:
+	_send_runtime_snapshot(peer_id)
+
+func _runtime_snapshot() -> PlayerRuntimeSnapshot:
+	if actor == null:
+		return null
+	var state := GameSession.get_player(actor.peer_id)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	if state == null or runtime == null:
+		return null
+	var snapshot := PlayerRuntimeSnapshot.new()
+	snapshot.peer_id = actor.peer_id
+	snapshot.health = state.health
+	snapshot.max_health = maxf(1.0, state.stats.value(&"max_health"))
+	snapshot.life_id = runtime.life_id
+	snapshot.life_phase = runtime.life_phase
+	snapshot.facing = actor.facing
+	return snapshot
+
+func _broadcast_runtime_snapshot() -> void:
+	if not NetworkManager.is_server():
+		return
+	for peer_id in NetworkManager.ready_remote_peer_ids():
+		_send_runtime_snapshot(peer_id)
+
+func _send_runtime_snapshot(peer_id: int) -> void:
+	if not NetworkManager.can_send_to_peer(peer_id):
+		return
+	var snapshot := _runtime_snapshot()
+	if snapshot != null:
+		_receive_runtime_snapshot.rpc_id(peer_id, snapshot.to_payload())
+
 @rpc("any_peer", "call_remote", "unreliable_ordered", 0)
 func _submit_move_input(sequence: int, move_axis: float, vertical_axis: float, jump_pressed: bool) -> void:
 	if not NetworkManager.is_server() or actor == null:
@@ -86,3 +139,13 @@ func _receive_transform_snapshot(position: Vector2, replicated_velocity: Vector2
 	if not _has_snapshot:
 		actor.global_position = position
 		_has_snapshot = true
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_runtime_snapshot(payload: Dictionary) -> void:
+	if NetworkManager.is_server() or actor == null:
+		return
+	var snapshot := PlayerRuntimeSnapshot.from_payload(payload)
+	if not snapshot.error_message.is_empty() or snapshot.peer_id != actor.peer_id:
+		return
+	if GameSession.apply_player_runtime_snapshot(snapshot):
+		actor.apply_runtime_presentation(snapshot)

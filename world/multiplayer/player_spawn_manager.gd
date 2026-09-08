@@ -26,8 +26,8 @@ func initialize_spawns() -> void:
 		peer_ids.assign(GameSession.players.keys())
 		peer_ids.sort()
 		for peer_id in peer_ids:
-			_assign_slot(peer_id)
-			_spawn_local(peer_id, _spawn_position(_slots[peer_id]))
+			if _assign_slot(peer_id):
+				_spawn_local(peer_id, _spawn_position(_slots[peer_id]))
 	else:
 		_request_world_roster.rpc_id(1)
 
@@ -40,7 +40,9 @@ func _exit_tree() -> void:
 func _on_player_registered(peer_id: int, _state: PlayerState) -> void:
 	if not NetworkManager.is_server():
 		return
-	_assign_slot(peer_id)
+	if not _assign_slot(peer_id):
+		push_warning("Cannot spawn peer %d: all %d player slots are occupied" % [peer_id, NetworkManager.MAX_PLAYERS])
+		return
 	var position := _spawn_position(_slots[peer_id])
 	_spawn_local(peer_id, position)
 	for ready_peer_id in _world_ready_peers:
@@ -56,13 +58,14 @@ func _on_player_unregistered(peer_id: int) -> void:
 			if ready_peer_id != 1 and NetworkManager.can_send_to_peer(ready_peer_id):
 				_despawn_player.rpc_id(ready_peer_id, peer_id)
 
-func _assign_slot(peer_id: int) -> void:
+func _assign_slot(peer_id: int) -> bool:
 	if _slots.has(peer_id):
-		return
+		return _slots[peer_id] >= 0 and _slots[peer_id] < NetworkManager.MAX_PLAYERS
 	for index in NetworkManager.MAX_PLAYERS:
 		if not _slots.values().has(index):
 			_slots[peer_id] = index
-			return
+			return true
+	return false
 
 func _spawn_position(index: int) -> Vector2:
 	var points: Array[PlayerSpawnPoint] = []
@@ -87,6 +90,24 @@ func _despawn_local(peer_id: int) -> void:
 	_actors.erase(peer_id)
 	if is_instance_valid(actor):
 		actor.queue_free()
+
+func respawn_player(peer_id: int) -> bool:
+	if not NetworkManager.is_server() or not GameSession.has_player(peer_id) or not _assign_slot(peer_id):
+		return false
+	var spawn_position := _spawn_position(_slots[peer_id])
+	_replace_actor_local(peer_id, spawn_position)
+	for ready_peer_id in _world_ready_peers:
+		if ready_peer_id != 1 and NetworkManager.can_send_to_peer(ready_peer_id):
+			_respawn_player.rpc_id(ready_peer_id, peer_id, spawn_position)
+	return true
+
+func _replace_actor_local(peer_id: int, spawn_position: Vector2) -> void:
+	var actor: PlayerActor = _actors.get(peer_id)
+	_actors.erase(peer_id)
+	if is_instance_valid(actor):
+		actor.get_parent().remove_child(actor)
+		actor.queue_free()
+	_spawn_local(peer_id, spawn_position)
 
 @rpc("any_peer", "call_remote", "reliable")
 func _request_world_roster() -> void:
@@ -124,3 +145,9 @@ func _spawn_player(peer_id: int, spawn_position: Vector2) -> void:
 @rpc("authority", "call_remote", "reliable")
 func _despawn_player(peer_id: int) -> void:
 	_despawn_local(peer_id)
+
+@rpc("authority", "call_remote", "reliable")
+func _respawn_player(peer_id: int, spawn_position: Vector2) -> void:
+	if not spawn_position.is_finite() or not GameSession.has_player(peer_id):
+		return
+	_replace_actor_local(peer_id, spawn_position)

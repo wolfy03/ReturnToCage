@@ -7,6 +7,7 @@ signal server_disconnected
 signal peer_joined(peer_id: int)
 signal peer_left(peer_id: int)
 signal session_synchronized
+signal peer_world_ready(peer_id: int)
 
 enum ConnectionState { OFFLINE, HOSTING, CONNECTING, CONNECTED }
 
@@ -19,6 +20,7 @@ var last_error: String = ""
 var players: Dictionary[int, NetworkPlayerInfo] = {}
 var world_ready_peers: Dictionary[int, bool] = {}
 var _peer: ENetMultiplayerPeer
+var _local_peer_id: int = 1
 
 func _ready() -> void:
 	multiplayer.peer_connected.connect(_on_transport_peer_connected)
@@ -40,6 +42,7 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 		return result
 	multiplayer.multiplayer_peer = _peer
 	state = ConnectionState.HOSTING
+	_local_peer_id = 1
 	players[1] = NetworkPlayerInfo.new(1, "Host", true)
 	world_ready_peers[1] = true
 	last_error = ""
@@ -66,18 +69,11 @@ func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
 	return OK
 
 func leave_game() -> void:
-	if _peer != null:
-		_peer.close()
-	_peer = null
-	if multiplayer.has_multiplayer_peer():
-		multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
-	state = ConnectionState.OFFLINE
-	players.clear()
-	world_ready_peers.clear()
+	_reset_transport()
 	last_error = ""
 
 func is_server() -> bool:
-	return state != ConnectionState.OFFLINE and multiplayer.is_server()
+	return state == ConnectionState.HOSTING and multiplayer.is_server()
 
 func is_session_connected() -> bool:
 	return state in [ConnectionState.HOSTING, ConnectionState.CONNECTED]
@@ -89,7 +85,7 @@ func is_authoritative_simulation() -> bool:
 	return state == ConnectionState.OFFLINE or is_server()
 
 func local_peer_id() -> int:
-	return multiplayer.get_unique_id() if state != ConnectionState.OFFLINE else 1
+	return _local_peer_id
 
 func has_peer(peer_id: int) -> bool:
 	return players.has(peer_id)
@@ -101,8 +97,9 @@ func can_send_to_peer(peer_id: int) -> bool:
 	return packet_peer != null and packet_peer.is_active() and packet_peer.get_state() == ENetPacketPeer.STATE_CONNECTED
 
 func mark_peer_world_ready(peer_id: int) -> void:
-	if is_server() and players.has(peer_id):
+	if is_server() and players.has(peer_id) and not world_ready_peers.has(peer_id):
 		world_ready_peers[peer_id] = true
+		peer_world_ready.emit(peer_id)
 
 func begin_world_sync() -> void:
 	if is_server():
@@ -134,6 +131,7 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	state = ConnectionState.CONNECTED
+	_local_peer_id = multiplayer.get_unique_id()
 	print("[NET] Joined server; validating protocol")
 	connected_to_server.emit()
 	_request_handshake.rpc_id(1, NETWORK_PROTOCOL_VERSION, "Player")
@@ -151,13 +149,16 @@ func _on_server_disconnected() -> void:
 	server_disconnected.emit()
 
 func _reset_transport() -> void:
+	var previous_local_peer_id := local_peer_id()
 	if _peer != null:
 		_peer.close()
 	_peer = null
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	state = ConnectionState.OFFLINE
+	_local_peer_id = 1
 	players.clear()
 	world_ready_peers.clear()
+	GameSession.reset_to_offline_local_player(previous_local_peer_id)
 
 @rpc("any_peer", "call_remote", "reliable")
 func _request_handshake(protocol_version: int, display_name: String) -> void:

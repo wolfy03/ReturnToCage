@@ -24,14 +24,14 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `1`, receives session metadata/player roster, then enters the settlement.
+3. Select **Join**. The client validates protocol version `2`, receives session metadata/player roster, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Allow inbound UDP `7777` in the host machine firewall for LAN testing. NAT traversal, UPnP, relay services, matchmaking, Steam networking, and host migration are not included.
 
 ## Local automated probe
 
-The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, A/D movement, jump, W/S climbing, authoritative snapshots on clients, client disconnect cleanup, and host disconnect notification.
+The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, A/D movement, jump, W/S climbing, authoritative transform and health presentation snapshots on clients, client disconnect cleanup, and host disconnect notification.
 
 ```powershell
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2
@@ -51,12 +51,17 @@ For a visual manual test, start two to four normal instances. Verify that each i
 - Horizontal movement, vertical climbing, and jump commands
 - Server-authoritative movement simulation and transform snapshots
 - Basic client interpolation
+- Peer-specific life IDs, death results, and life phases
+- Individual same-world respawn without ending the party adventure
+- Validated health/life runtime presentation snapshots (separate from save data)
 - Offline single-player compatibility
-- Host-only multiplayer save; multiplayer load disabled
+- Multiplayer save and load disabled for both host and clients
+
+`inventory_changed` remains a local-player UI compatibility signal. `storage_changed`, `facility_changed`, and `quest_changed` describe shared server-owned session state. Peer-specific presentation uses `player_health_changed` and `player_life_changed`.
 
 ## Not synchronized yet
 
-- Combat, damage, death, and respawn
+- Attack and damage commands/replication (only the individual death/respawn lifecycle foundation exists)
 - Enemy AI
 - Loot and pickup/drop transactions
 - Inventory and equipment replication

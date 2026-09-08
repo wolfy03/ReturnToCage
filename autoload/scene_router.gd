@@ -43,7 +43,7 @@ func _replace_world(scene_path: String, destination: StringName, context: Advent
 	if context != null and instance.has_method("configure"):
 		instance.configure(context)
 	if destination == &"settlement":
-		GameSession.complete_respawn()
+		GameSession.complete_respawn(GameSession.get_local_peer_id())
 	_world_layer.add_child(instance)
 	transition_finished.emit(destination)
 	return true
@@ -52,5 +52,7 @@ func _report_failure(message: String) -> void:
 	# Respawn remains retryable. GameSession gates ticks while waiting for a valid
 	# world, but no stale model pause survives a later successful retry.
 	if GameSession.phase == GameSession.Phase.RESPAWNING:
-		GameSession.player.effects.paused = false
+		var local_state := GameSession.get_player(GameSession.get_local_peer_id())
+		if local_state != null:
+			local_state.effects.paused = false
 	transition_failed.emit(message)

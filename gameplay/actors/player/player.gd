@@ -93,13 +93,13 @@ func _physics_process(delta: float) -> void:
 				_complete_return_channel()
 
 func _on_attack() -> void:
-	if _death_handled:
+	if _death_handled or not is_simulation_authority():
 		return
 	if combat.attack(facing):
 		_cancel_return_channel()
 
 func _on_interact() -> void:
-	if _death_handled:
+	if _death_handled or not is_simulation_authority():
 		return
 	if interaction.current_target != null and interaction.current_target.can_interact(self):
 		interaction.try_interact(self)
@@ -110,7 +110,7 @@ func _on_target_changed(target: InteractionTarget) -> void:
 	_refresh_interaction_prompt()
 
 func _on_quick_item() -> void:
-	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled:
+	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled or not is_simulation_authority():
 		return
 	if GameSession.adventure.active_session == null:
 		consume_item(&"berry")
@@ -144,14 +144,14 @@ func consume_item(item_id: StringName) -> bool:
 	return ItemUseService.use_item(_bound_state.inventory, survival, effects, item_id, Callable(ContentRegistry, "get_item"))
 
 func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirst_stage: int) -> void:
+	if not is_simulation_authority():
+		return
 	combat.stamina_regen_multiplier = survival.config.critical_stamina_multiplier if hunger_stage >= 2 or thirst_stage >= 2 else 1.0
 	if (hunger_stage == 3 or thirst_stage == 3) and health.current_health > 0.0:
 		health.receive_damage(DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment"))
 
 func _on_died(_context: DamageContext) -> void:
-	if _death_handled or not GameSession.is_current_life(_life_id, peer_id):
-		return
-	if not is_local_player():
+	if _death_handled or not is_simulation_authority() or not GameSession.is_current_life(peer_id, _life_id):
 		return
 	_death_handled = true
 	movement.exit_climb()
@@ -159,23 +159,30 @@ func _on_died(_context: DamageContext) -> void:
 	survival.drain_paused = true
 	_cancel_return_channel()
 	movement.enabled = false
-	var result: RespawnResult = GameSession.handle_player_death(global_position, _life_id)
+	var result: RespawnResult = GameSession.handle_player_death(peer_id, global_position, _life_id)
 	if not result.success:
 		GameSession.last_message = result.error_message
 		_death_handled = false
 		movement.enabled = true
 		survival.drain_paused = false
 		return
-	await get_tree().create_timer(1.0).timeout
-	if is_inside_tree():
-		SceneRouter.go_to_settlement()
+	if NetworkManager.is_multiplayer_active():
+		var spawn_manager := get_parent().get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
+		if spawn_manager == null:
+			push_error("Cannot respawn peer %d: PlayerSpawnManager is unavailable" % peer_id)
+			return
+		spawn_manager.call_deferred("respawn_player", peer_id)
+	else:
+		await get_tree().create_timer(1.0).timeout
+		if is_inside_tree():
+			SceneRouter.go_to_settlement()
 
 func _on_health_changed(current: float, _maximum: float) -> void:
-	if not _death_handled and GameSession.is_current_life(_life_id, peer_id):
+	if is_simulation_authority() and not _death_handled and GameSession.is_current_life(peer_id, _life_id):
 		_bound_state.set_health(current)
 
 func _sync_persistent_health() -> void:
-	if _death_handled or not GameSession.is_current_life(_life_id, peer_id):
+	if _death_handled or not is_simulation_authority() or not GameSession.is_current_life(peer_id, _life_id):
 		return
 	health.current_health = _bound_state.health
 	health.health_changed.emit(health.current_health, health.max_health)
@@ -183,6 +190,8 @@ func _sync_persistent_health() -> void:
 		_on_died(DamageContext.new(0.0, &"periodic", self, &"effect"))
 
 func _on_damaged(context: DamageContext) -> void:
+	if not is_simulation_authority():
+		return
 	_cancel_return_channel()
 	movement.on_damage(context.knockback.length() > 0.0)
 
@@ -203,3 +212,11 @@ func _on_stat_changed(stat_id: StringName, value: float) -> void:
 		health.max_health = maxf(1.0, value)
 		health.current_health = minf(health.current_health, health.max_health)
 		health.health_changed.emit(health.current_health, health.max_health)
+
+func apply_runtime_presentation(snapshot: PlayerRuntimeSnapshot) -> void:
+	if is_simulation_authority() or snapshot == null or snapshot.peer_id != peer_id or not snapshot.error_message.is_empty():
+		return
+	health.max_health = snapshot.max_health
+	health.current_health = snapshot.health
+	health.health_changed.emit(health.current_health, health.max_health)
+	facing = snapshot.facing

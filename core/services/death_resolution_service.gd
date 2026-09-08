@@ -1,12 +1,12 @@
 class_name DeathResolutionService
 extends RefCounted
 
-static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable) -> RespawnResult:
+static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable, include_shared_adventure_loot: bool = true) -> RespawnResult:
 	var result := RespawnResult.new()
 	result.in_adventure = adventure.active_session != null
 	if result.in_adventure:
 		var carried := DeathLossPolicy.apply(player.inventory.stacks(), rules, resolver)
-		var loot := DeathLossPolicy.apply(adventure.active_session.unsecured_loot.stacks(), rules, resolver)
+		var loot := DeathLossPolicy.apply(adventure.active_session.unsecured_loot.stacks(), rules, resolver) if include_shared_adventure_loot else DeathLossResult.new()
 		var gear := DeathLossPolicy.apply_equipment(player.equipment.all_equipped(), rules)
 		result.inventory_lost = carried.lost + loot.lost
 		result.inventory_kept = carried.kept + loot.kept
@@ -19,7 +19,8 @@ static func resolve(player: PlayerState, settlement: SettlementState, adventure:
 		player.equipment.restore({})
 		for kept in gear.equipment_kept:
 			player.equipment.equip(kept)
-		settlement.secure_loot(loot.kept)
+		if include_shared_adventure_loot:
+			settlement.secure_loot(loot.kept)
 		var dropped: Array[ItemStack] = carried.world_drops + loot.world_drops
 		if rules.recovery_policy == DifficultyDefinition.RecoveryPolicy.DROP_AT_DEATH:
 			dropped.append_array(gear.equipment_lost)

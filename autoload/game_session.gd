@@ -1,7 +1,10 @@
 extends Node
 
 signal session_reset
+# Local-player UI compatibility signal. Peer-specific runtime consumers use the
+# player_health_changed/player_life_changed signals below.
 signal inventory_changed
+# Shared, server-owned session model signals.
 signal storage_changed
 signal facility_changed(facility_id: StringName, level: int)
 signal quest_changed(quest_id: StringName)
@@ -10,17 +13,22 @@ signal adventure_finished(result: AdventureSession.Result, summary: String)
 signal difficulty_changed(id: StringName)
 
 signal phase_changed
-signal player_respawned(result: RespawnResult)
+signal player_died(peer_id: int, result: RespawnResult)
+signal player_respawned(peer_id: int, result: RespawnResult)
+signal player_health_changed(peer_id: int, health: float, max_health: float)
+signal player_life_changed(peer_id: int, life_id: int, life_phase: int)
 signal player_registered(peer_id: int, state: PlayerState)
 signal player_unregistered(peer_id: int)
+# RESPAWNING remains only for the offline scene-transition compatibility path.
 enum Phase { MENU, SETTLEMENT, ADVENTURE, RESPAWNING }
 var _phase: Phase = Phase.MENU
-var _life_id: int = 0
-var _life_ids: Dictionary[int, int] = {}
+var _player_runtime: Dictionary[int, PlayerRuntimeState] = {}
 var phase: Phase:
 	get:
 		return _phase
-var last_death_result: RespawnResult
+var last_death_result: RespawnResult:
+	get:
+		return get_player_death_result(get_local_peer_id())
 
 const DEFAULT_START_ID: StringName = &"default_game_start"
 const LOCAL_SINGLEPLAYER_PEER_ID := 1
@@ -28,12 +36,12 @@ const LOCAL_SINGLEPLAYER_PEER_ID := 1
 var session_id: String = ""
 var play_time_seconds: float = 0.0
 var last_message: String = ""
+# Read as the canonical registry; mutate membership only through register_player,
+# unregister_player, restore, or reset_to_offline_local_player.
 var players: Dictionary[int, PlayerState] = {}
 var player: PlayerState:
 	get:
 		return get_local_player()
-	set(value):
-		players[get_local_peer_id()] = value
 var settlement: SettlementState
 var progression: ProgressionState = ProgressionState.new()
 var adventure: AdventureState = AdventureState.new()
@@ -116,14 +124,16 @@ func _process(delta: float) -> void:
 	if not session_id.is_empty():
 		play_time_seconds += delta
 		if phase in [Phase.SETTLEMENT, Phase.ADVENTURE]:
-			for state in players.values():
-				state.effects.tick(delta)
+			for peer_id in players:
+				var runtime := get_player_runtime(peer_id)
+				if runtime != null and runtime.life_phase == PlayerRuntimeState.LifePhase.ALIVE:
+					players[peer_id].effects.tick(delta)
 	if adventure.active_session != null:
 		adventure.active_session.elapsed_seconds += delta
 
 func _create_models() -> void:
 	if not has_player(get_local_peer_id()):
-		players[get_local_peer_id()] = _create_player_state()
+		_add_player_state(get_local_peer_id(), _create_player_state())
 	if settlement == null:
 		settlement = SettlementState.new(Callable(ContentRegistry, "get_item"))
 	_connect_model_signals()
@@ -152,7 +162,7 @@ func register_player(peer_id: int) -> PlayerState:
 	var start := get_start_definition(false)
 	if start != null:
 		state.reset(start, ContentRegistry)
-	players[peer_id] = state
+	_add_player_state(peer_id, state)
 	if peer_id == get_local_peer_id():
 		_connect_model_signals()
 	player_registered.emit(peer_id, state)
@@ -161,9 +171,46 @@ func register_player(peer_id: int) -> PlayerState:
 func unregister_player(peer_id: int) -> void:
 	if not players.has(peer_id):
 		return
+	_disconnect_player_state_signals(peer_id, players[peer_id])
+	players[peer_id].effects.paused = true
 	players.erase(peer_id)
-	_life_ids.erase(peer_id)
+	_player_runtime.erase(peer_id)
 	player_unregistered.emit(peer_id)
+
+func _add_player_state(peer_id: int, state: PlayerState) -> void:
+	players[peer_id] = state
+	_player_runtime[peer_id] = PlayerRuntimeState.new(peer_id)
+	_connect_player_state_signals(peer_id, state)
+
+func _connect_player_state_signals(peer_id: int, state: PlayerState) -> void:
+	var callback := _on_player_vitals_changed.bind(peer_id)
+	if not state.vitals_changed.is_connected(callback):
+		state.vitals_changed.connect(callback)
+
+func _disconnect_player_state_signals(peer_id: int, state: PlayerState) -> void:
+	var callback := _on_player_vitals_changed.bind(peer_id)
+	if state.vitals_changed.is_connected(callback):
+		state.vitals_changed.disconnect(callback)
+
+func _on_player_vitals_changed(peer_id: int) -> void:
+	var state := get_player(peer_id)
+	if state != null:
+		player_health_changed.emit(peer_id, state.health, maxf(1.0, state.stats.value(&"max_health")))
+
+func get_player_runtime(peer_id: int) -> PlayerRuntimeState:
+	return _player_runtime.get(peer_id)
+
+func get_player_life_id(peer_id: int) -> int:
+	var runtime := get_player_runtime(peer_id)
+	return runtime.life_id if runtime != null else -1
+
+func get_player_life_phase(peer_id: int) -> int:
+	var runtime := get_player_runtime(peer_id)
+	return int(runtime.life_phase) if runtime != null else -1
+
+func get_player_death_result(peer_id: int) -> RespawnResult:
+	var runtime := get_player_runtime(peer_id)
+	return runtime.death_result if runtime != null else null
 
 func _connect_model_signals() -> void:
 	if player != null and player.inventory != null and not player.inventory.changed.is_connected(inventory_changed.emit):
@@ -172,9 +219,11 @@ func _connect_model_signals() -> void:
 		settlement.storage.changed.connect(storage_changed.emit)
 
 func _disconnect_player_model_signals() -> void:
-	for state in players.values():
+	for peer_id in players:
+		var state: PlayerState = players[peer_id]
 		if state.inventory != null and state.inventory.changed.is_connected(inventory_changed.emit):
 			state.inventory.changed.disconnect(inventory_changed.emit)
+		_disconnect_player_state_signals(peer_id, state)
 
 func get_start_definition(report_error: bool = true) -> GameStartDefinition:
 	var start := ContentRegistry.get_definition(DEFAULT_START_ID) as GameStartDefinition
@@ -206,14 +255,12 @@ func start_new_game() -> bool:
 		return false
 	_disconnect_player_model_signals()
 	players.clear()
-	_life_ids.clear()
+	_player_runtime.clear()
 	_create_models()
 	session_id = "%s-%s" % [Time.get_unix_time_from_system(), randi()]
 	play_time_seconds = 0.0
 	_reset_states(start)
-	_life_id += 1
 	_phase = Phase.MENU # Explicit new-session reset, not an in-session transition.
-	last_death_result = null
 	set_phase(Phase.SETTLEMENT)
 	last_message = "New journey started"
 	session_reset.emit()
@@ -334,7 +381,9 @@ func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: Strin
 	context.prepared_inventory = player.inventory.to_array()
 	adventure.active_session = AdventureSession.new(context, Callable(ContentRegistry, "get_item"))
 	adventure.active_session.rules = AdventureRulesSnapshot.new(difficulty.effective(ContentRegistry))
-	last_death_result = null
+	var runtime := get_player_runtime(get_local_peer_id())
+	if runtime != null:
+		runtime.death_result = null
 	set_phase(Phase.ADVENTURE)
 	adventure_started.emit(context)
 	return context
@@ -363,7 +412,7 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	if adventure.active_session == null:
 		return "No active adventure"
 	if result == AdventureSession.Result.DEATH:
-		return handle_player_death(player.last_safe_position).summary()
+		return handle_player_death(get_local_peer_id(), player.last_safe_position).summary()
 	if result != AdventureSession.Result.NORMAL_ESCAPE and result != AdventureSession.Result.RETURN_ITEM_ESCAPE:
 		return "An expedition must end through an escape or death"
 	adventure.active_session.result = result
@@ -380,13 +429,18 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	adventure_finished.emit(result, last_message)
 	return last_message
 
-func handle_player_death(death_position: Vector2, life_id: int = -1) -> RespawnResult:
+func handle_player_death(peer_id: int, death_position: Vector2, life_id: int = -1) -> RespawnResult:
 	if not can_mutate_authoritative_state():
 		return RespawnResult.failure("Only the server can resolve player death")
-	if life_id >= 0 and life_id != _life_id:
+	var state := get_player(peer_id)
+	var runtime := get_player_runtime(peer_id)
+	if state == null or runtime == null:
+		return RespawnResult.failure("Unknown player peer")
+	var expected_life_id := runtime.life_id if life_id < 0 else life_id
+	if not is_current_life(peer_id, expected_life_id):
 		return RespawnResult.failure("Ignored death callback from a retired actor")
-	if last_death_result != null:
-		return last_death_result
+	if runtime.death_result != null:
+		return runtime.death_result
 	if phase not in [Phase.SETTLEMENT, Phase.ADVENTURE]:
 		return RespawnResult.failure("Death unavailable in this session phase")
 	# Validate all dependencies before changing phase, pause flags or possessions.
@@ -394,38 +448,65 @@ func handle_player_death(death_position: Vector2, life_id: int = -1) -> RespawnR
 	var rules: DifficultyDefinition = current_difficulty()
 	if start == null or rules == null or not death_position.is_finite():
 		return RespawnResult.failure("Cannot resolve death: invalid start configuration, difficulty or position")
-	if not set_phase(Phase.RESPAWNING):
+	var individual_multiplayer_death := NetworkManager.is_multiplayer_active()
+	if not individual_multiplayer_death and not set_phase(Phase.RESPAWNING):
 		return RespawnResult.failure(last_message)
-	player.effects.paused = true
-	last_death_result = DeathResolutionService.resolve(player, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"))
-	adventure.active_session = null
-	last_message = last_death_result.summary()
-	adventure_finished.emit(AdventureSession.Result.DEATH, last_message)
-	player_respawned.emit(last_death_result)
-	return last_death_result
+	runtime.life_phase = PlayerRuntimeState.LifePhase.DEAD
+	state.effects.paused = true
+	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
+	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death)
+	runtime.life_phase = PlayerRuntimeState.LifePhase.RESPAWNING
+	last_message = runtime.death_result.summary()
+	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
+	player_died.emit(peer_id, runtime.death_result)
+	if not individual_multiplayer_death:
+		adventure.active_session = null
+		adventure_finished.emit(AdventureSession.Result.DEATH, last_message)
+	return runtime.death_result
 
-func complete_respawn() -> void:
+func complete_respawn(peer_id: int) -> void:
 	if not can_mutate_authoritative_state():
 		return
-	if phase == Phase.RESPAWNING and set_phase(Phase.SETTLEMENT):
-		player.effects.paused = false
+	var state := get_player(peer_id)
+	if state == null:
+		return
+	if not NetworkManager.is_multiplayer_active() and phase == Phase.RESPAWNING and set_phase(Phase.SETTLEMENT):
+		state.effects.paused = false
 
-func arm_player_life(peer_id: int = -1) -> int:
+func arm_player_life(peer_id: int) -> int:
 	# Each actor receives a transient generation token; late signals from a retired
-	# actor cannot affect a new life even after last_death_result is cleared.
+	# actor cannot affect a new life after its peer-specific result is cleared.
 	if phase in [Phase.SETTLEMENT, Phase.ADVENTURE]:
-		var owner_id := get_local_peer_id() if peer_id < 0 else peer_id
-		_life_id += 1
-		_life_ids[owner_id] = _life_id
-		last_death_result = null
-		var state := get_player(owner_id)
-		if state != null:
-			state.effects.paused = false
-	return _life_id
+		var state := get_player(peer_id)
+		var runtime := get_player_runtime(peer_id)
+		if state == null or runtime == null:
+			return -1
+		var completed_result := runtime.death_result
+		runtime.life_id += 1
+		runtime.life_phase = PlayerRuntimeState.LifePhase.ALIVE
+		runtime.death_result = null
+		state.effects.paused = false
+		player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
+		if completed_result != null:
+			player_respawned.emit(peer_id, completed_result)
+		return runtime.life_id
+	return -1
 
-func is_current_life(life_id: int, peer_id: int = -1) -> bool:
-	var owner_id := get_local_peer_id() if peer_id < 0 else peer_id
-	return life_id == _life_ids.get(owner_id, _life_id)
+func is_current_life(peer_id: int, life_id: int) -> bool:
+	var runtime := get_player_runtime(peer_id)
+	return runtime != null and runtime.life_id == life_id
+
+func apply_player_runtime_snapshot(snapshot: PlayerRuntimeSnapshot) -> bool:
+	if NetworkManager.is_server() or snapshot == null or not snapshot.error_message.is_empty() or not has_player(snapshot.peer_id):
+		return false
+	var runtime := get_player_runtime(snapshot.peer_id)
+	if runtime == null or snapshot.life_id < runtime.life_id:
+		return false
+	runtime.life_id = snapshot.life_id
+	runtime.life_phase = snapshot.life_phase as PlayerRuntimeState.LifePhase
+	player_life_changed.emit(snapshot.peer_id, runtime.life_id, runtime.life_phase)
+	player_health_changed.emit(snapshot.peer_id, snapshot.health, snapshot.max_health)
+	return true
 
 func can_use_exit(exit_id: StringName, region_id: StringName) -> CommandResult:
 	if phase != Phase.SETTLEMENT:
@@ -519,7 +600,7 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 		return false
 	_disconnect_player_model_signals()
 	players.clear()
-	_life_ids.clear()
+	_player_runtime.clear()
 	settlement.reset(start, ContentRegistry)
 	progression.reset(start)
 	difficulty.reset(start)
@@ -531,26 +612,43 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	session_id = snapshot.session_id
 	play_time_seconds = 0.0
 	_phase = snapshot.phase as Phase
-	last_death_result = null
 	_connect_model_signals()
 	phase_changed.emit()
 	session_reset.emit()
 	return true
 
-func end_network_session() -> void:
+func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
+	var retained_state := get_player(previous_local_peer_id)
+	if retained_state == null:
+		retained_state = get_player(LOCAL_SINGLEPLAYER_PEER_ID)
+	var retired_peer_ids: Array[int] = []
+	retired_peer_ids.assign(players.keys())
 	_disconnect_player_model_signals()
+	for state in players.values():
+		if state != retained_state:
+			state.effects.paused = true
 	players.clear()
-	_life_ids.clear()
-	players[LOCAL_SINGLEPLAYER_PEER_ID] = _create_player_state()
-	var start := get_start_definition(false)
-	if start != null:
-		players[LOCAL_SINGLEPLAYER_PEER_ID].reset(start, ContentRegistry)
+	_player_runtime.clear()
+	if retained_state == null:
+		retained_state = _create_player_state()
+		var start := get_start_definition(false)
+		if start != null:
+			retained_state.reset(start, ContentRegistry)
+	_add_player_state(LOCAL_SINGLEPLAYER_PEER_ID, retained_state)
+	retained_state.effects.paused = false
 	session_id = ""
 	play_time_seconds = 0.0
 	_phase = Phase.MENU
-	last_death_result = null
 	_connect_model_signals()
+	for peer_id in retired_peer_ids:
+		if previous_local_peer_id != LOCAL_SINGLEPLAYER_PEER_ID or peer_id != LOCAL_SINGLEPLAYER_PEER_ID:
+			player_unregistered.emit(peer_id)
 	phase_changed.emit()
+
+# Compatibility entry point for older menu code. NetworkManager owns transport
+# teardown and passes the pre-disconnect local id to the explicit API above.
+func end_network_session() -> void:
+	reset_to_offline_local_player(get_local_peer_id())
 
 func restore_state(data: Dictionary) -> PackedStringArray:
 	if not can_mutate_authoritative_state():
@@ -578,16 +676,14 @@ func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	if settlement.storage.changed.is_connected(storage_changed.emit):
 		settlement.storage.changed.disconnect(storage_changed.emit)
 	players.clear()
-	_life_ids.clear()
-	player = snapshot.player
+	_player_runtime.clear()
+	_add_player_state(get_local_peer_id(), snapshot.player)
 	settlement = snapshot.settlement
 	progression = snapshot.progression
 	difficulty = snapshot.difficulty
 	adventure = snapshot.adventure
 	session_id = snapshot.session_id
 	play_time_seconds = snapshot.play_time_seconds
-	last_death_result = null
-	_life_id += 1
 	_connect_model_signals()
 	set_phase(Phase.SETTLEMENT)
 	session_reset.emit()

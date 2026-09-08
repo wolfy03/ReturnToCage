@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, CLEANUP }
+enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, HEALTH, RESPAWN, CLEANUP }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -17,6 +17,16 @@ var phase_started_msec: int
 var diagnostic_printed: bool = false
 var client_start_position: Vector2
 var client_saw_authoritative_snapshot: bool = false
+var health_test_peer: int = 0
+var health_confirmation_sent: bool = false
+var health_confirmations: Dictionary[int, bool] = {}
+var respawn_test_peer: int = 0
+var client_old_actor_id: int = 0
+var respawn_confirmation_sent: bool = false
+var respawn_confirmations: Dictionary[int, bool] = {}
+var server_old_actor_id: int = 0
+var server_old_life_id: int = -1
+var server_death_phase: int
 
 func _ready() -> void:
 	_parse_arguments()
@@ -44,6 +54,16 @@ func _process(_delta: float) -> void:
 		var local_actor := _actor(NetworkManager.local_peer_id())
 		if local_actor != null and local_actor.global_position.distance_to(client_start_position) > 15.0:
 			client_saw_authoritative_snapshot = true
+		if health_test_peer > 0 and not health_confirmation_sent:
+			var health_actor := _actor(health_test_peer)
+			if health_actor != null and is_equal_approx(health_actor.health.current_health, 40.0):
+				health_confirmation_sent = true
+				_confirm_health_presentation.rpc_id(1)
+		if respawn_test_peer > 0 and not respawn_confirmation_sent:
+			var respawn_actor := _actor(respawn_test_peer)
+			if respawn_actor != null and respawn_actor.get_instance_id() != client_old_actor_id:
+				respawn_confirmation_sent = true
+				_confirm_respawn_presentation.rpc_id(1)
 	if role != "host" or world == null:
 		return
 	var actors := get_tree().get_nodes_in_group(&"player")
@@ -91,6 +111,28 @@ func _process(_delta: float) -> void:
 				print("PROBE CLIMB DIAGNOSTIC axis=%.2f mode=%s pos=%s ladder=%s overlaps=%s monitoring=%s masks=%d/%d areas=%d" % [actor.input.vertical_axis, MovementComponent.Mode.keys()[actor.movement.mode], actor.global_position, ladder.global_position, ladder.overlaps_body(actor), ladder.monitoring, actor.collision_layer, ladder.collision_mask, actor.movement.climb_areas.size()])
 			if actor != null and actor.global_position.y < start_position.y - 20.0:
 				print("PROBE HOST CLIMB OK")
+				GameSession.get_player(selected_peer).set_health(40.0)
+				_begin_health_test.rpc(selected_peer)
+				phase_started_msec = Time.get_ticks_msec()
+				state = ProbeState.HEALTH
+		ProbeState.HEALTH:
+			if health_confirmations.size() == expected_players - 1:
+				print("PROBE CLIENT HEALTH PRESENTATION OK")
+				var actor := _actor(selected_peer)
+				server_old_actor_id = actor.get_instance_id()
+				server_old_life_id = GameSession.get_player_life_id(selected_peer)
+				server_death_phase = GameSession.phase
+				_begin_respawn_test.rpc(selected_peer)
+				actor.health.receive_damage(DamageContext.new(10000.0, &"probe", self, &"test"))
+				phase_started_msec = Time.get_ticks_msec()
+				state = ProbeState.RESPAWN
+		ProbeState.RESPAWN:
+			var actor := _actor(selected_peer)
+			if actor != null and actor.get_instance_id() != server_old_actor_id \
+				and GameSession.get_player_life_id(selected_peer) > server_old_life_id \
+				and GameSession.phase == server_death_phase \
+				and respawn_confirmations.size() == expected_players - 1:
+				print("PROBE REMOTE PLAYER RESPAWN OK")
 				_probe_done.rpc()
 				phase_started_msec = Time.get_ticks_msec()
 				state = ProbeState.CLEANUP
@@ -151,6 +193,32 @@ func _begin_climb_test() -> void:
 	Input.action_release(&"move_right")
 	Input.action_press(&"move_up")
 	print("PROBE CLIENT CLIMB INPUT")
+
+@rpc("authority", "call_remote", "reliable")
+func _begin_health_test(peer_id: int) -> void:
+	health_test_peer = peer_id
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_health_presentation() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		health_confirmations[sender] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _begin_respawn_test(peer_id: int) -> void:
+	respawn_test_peer = peer_id
+	var actor := _actor(peer_id)
+	client_old_actor_id = actor.get_instance_id() if actor != null else 0
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_respawn_presentation() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		respawn_confirmations[sender] = true
 
 @rpc("authority", "call_remote", "reliable")
 func _probe_done() -> void:

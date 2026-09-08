@@ -7,8 +7,8 @@ const CURRENT_VERSION := 3
 const SAVE_PATH := "user://return_to_cage_save.json"
 
 func can_save() -> CommandResult:
-	if NetworkManager.is_multiplayer_active() and not NetworkManager.is_server():
-		return CommandResult.make(false, "Only the host can save a multiplayer session")
+	if NetworkManager.is_multiplayer_active():
+		return CommandResult.make(false, "Multiplayer save is not supported yet")
 	if GameSession.phase != GameSession.Phase.SETTLEMENT or GameSession.adventure.active_session != null:
 		return CommandResult.make(false, "Save is only available in the settlement")
 	return CommandResult.make(true)

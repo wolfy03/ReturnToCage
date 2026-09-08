@@ -38,6 +38,7 @@ func run_all() -> void:
 	preload("res://tests/unit/test_reward_save_boundary.gd").new().run(self)
 	preload("res://tests/unit/test_network_player_registry.gd").new().run(self)
 	preload("res://tests/unit/test_network_input_validation.gd").new().run(self)
+	await preload("res://tests/unit/test_multiplayer_lifecycle.gd").new().run(self)
 	await preload("res://tests/integration/test_session_stability.gd").new().run(self)
 	_finish_tests()
 
