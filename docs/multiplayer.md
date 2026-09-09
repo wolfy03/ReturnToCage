@@ -28,7 +28,7 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `4`, receives session metadata and the stable player-identity roster, then enters the settlement.
+3. Select **Join**. The client validates protocol version `5`, receives session metadata and the stable player-identity roster, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
@@ -37,7 +37,7 @@ Allow inbound UDP `7777` in the host machine firewall for LAN testing. NAT trave
 
 ## Local automated probe
 
-The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, stable identity mapping, private local-personal plus shared quest late-join snapshots, the enemy roster, movement/climbing, combat/loot, health presentation, disconnect cleanup, a fresh reconnect, and host disconnect notification.
+The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, stable identity mapping, private local-personal plus shared quest snapshots, client-requested facility upgrade and crafting, shared storage/unlock mirrors, late-join settlement state, the enemy roster, movement/climbing, combat/loot, health presentation, disconnect cleanup, a fresh reconnect, and host disconnect notification.
 
 ```powershell
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2
@@ -73,6 +73,12 @@ For a visual manual test, start two to four normal instances. Verify that each i
 - Server-only typed gameplay-event routing with killer/collector logical identity
 - Private personal quest snapshots plus shared quest snapshots with stale-revision rejection
 - PERSONAL rewards to the owning server `PlayerState`; PARTY/WORLD rewards to settlement storage
+- Intent-only craft and facility-upgrade requests with server sender/life/phase validation and monotonic anti-replay sequences
+- Atomic shared-storage craft transactions and atomic facility cost/level/unlock commits
+- Reliable, revisioned settlement snapshots for storage, facility levels, and resident domain state
+- Separate revisioned shared-progression snapshots for regions, exits, flags, and discovered escape points
+- Read-only client settlement mirrors with malformed/stale snapshot rejection
+- World-ready and fresh-join synchronization of current settlement and shared progression state
 - Offline single-player compatibility
 - Multiplayer save and load disabled for both host and clients
 
@@ -91,8 +97,8 @@ Save v3 continues to serialize only the existing shared quest collection. Produc
 ## Not synchronized yet
 
 - Inventory and equipment replication
-- Settlement storage, facilities, residents, and non-quest world progression
-- Crafting
+- Personal inventory-to-storage transfers and personal item use
+- Resident runtime movement and animation (resident persistent/domain state is mirrored)
 - Party scene transitions and coordinated expedition start/return
 - Persistent multiplayer saves
 - Reconnect and host migration

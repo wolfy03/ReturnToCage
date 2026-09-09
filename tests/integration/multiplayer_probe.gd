@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
+enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -45,8 +45,16 @@ var expected_killer_peer: int = 0
 var quest_progress_confirmation_sent: bool = false
 var quest_progress_confirmations: Dictionary[int, bool] = {}
 var quest_result_requested: bool = false
+var settlement_upgrade_expected: bool = false
+var settlement_craft_expected: bool = false
+var settlement_upgrade_confirmation_sent: bool = false
+var settlement_craft_confirmation_sent: bool = false
+var settlement_upgrade_confirmations: Dictionary[int, bool] = {}
+var settlement_craft_confirmations: Dictionary[int, bool] = {}
 const PROBE_PERSONAL_QUEST_ID: StringName = &"_probe_personal_kill"
 const PROBE_PARTY_QUEST_ID: StringName = &"_probe_party_kill"
+const PROBE_PERSONAL_UPGRADE_QUEST_ID: StringName = &"_probe_personal_upgrade"
+const PROBE_PARTY_UPGRADE_QUEST_ID: StringName = &"_probe_party_upgrade"
 
 func _ready() -> void:
 	_parse_arguments()
@@ -62,6 +70,11 @@ func _ready() -> void:
 		GameSession.start_quest(&"sewer_supplies", GameSession.get_local_player_id())
 		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, GameSession.get_local_player_id())
 		GameSession.start_quest(PROBE_PARTY_QUEST_ID, GameSession.get_local_player_id())
+		GameSession.start_quest(PROBE_PERSONAL_UPGRADE_QUEST_ID, GameSession.get_local_player_id())
+		GameSession.start_quest(PROBE_PARTY_UPGRADE_QUEST_ID, GameSession.get_local_player_id())
+		GameSession.settlement.storage.add_item(&"rusty_scrap", 3)
+		GameSession.settlement.storage.add_item(&"berry", 2)
+		GameSession.settlement.storage.add_item(&"moss_fiber", 1)
 		_build_world()
 		print("PROBE HOST READY")
 	elif role == "client":
@@ -77,6 +90,24 @@ func _process(_delta: float) -> void:
 		_fail("probe timed out in state %s" % ProbeState.keys()[state])
 		return
 	if role == "client" and world != null:
+		if settlement_upgrade_expected and not settlement_upgrade_confirmation_sent:
+			var personal_upgrade := GameSession.progression.get_personal_progression(GameSession.get_local_player_id())
+			var personal_upgrade_state: QuestState = personal_upgrade.quest_states.get(PROBE_PERSONAL_UPGRADE_QUEST_ID) if personal_upgrade != null else null
+			var shared_upgrade_state: QuestState = GameSession.progression.shared_quest_states.get(PROBE_PARTY_UPGRADE_QUEST_ID)
+			var expected_personal := 1 if NetworkManager.local_peer_id() == selected_peer else 0
+			if GameSession.settlement.facility_levels.get(&"workbench", 0) == 1 \
+					and GameSession.settlement.storage.count(&"rusty_scrap") == 0 \
+					and GameSession.progression.unlocked_flags.has(&"basic_crafting") \
+					and personal_upgrade_state != null and personal_upgrade_state.progress[0] == expected_personal \
+					and shared_upgrade_state != null and shared_upgrade_state.progress[0] == 1:
+				settlement_upgrade_confirmation_sent = true
+				_confirm_settlement_upgrade.rpc_id(1)
+		if settlement_craft_expected and not settlement_craft_confirmation_sent \
+				and GameSession.settlement.storage.count(&"mushroom_stew") == 1 \
+				and GameSession.settlement.storage.count(&"berry") == 0 \
+				and GameSession.settlement.storage.count(&"moss_fiber") == 0:
+			settlement_craft_confirmation_sent = true
+			_confirm_settlement_craft.rpc_id(1)
 		if not quest_sync_confirmation_sent:
 			var local_player_id := GameSession.get_local_player_id()
 			var personal := GameSession.progression.get_personal_progression(local_player_id)
@@ -139,6 +170,21 @@ func _process(_delta: float) -> void:
 				ids.assign(GameSession.players.keys())
 				ids.sort()
 				selected_peer = ids[1]
+				var actor := _actor(selected_peer)
+				start_position = actor.global_position
+				_expect_settlement_upgrade.rpc(selected_peer)
+				state = ProbeState.SETTLEMENT_UPGRADE
+		ProbeState.SETTLEMENT_UPGRADE:
+			if settlement_upgrade_confirmations.size() == expected_players - 1 \
+					and GameSession.settlement.facility_levels.get(&"workbench", 0) == 1 \
+					and GameSession.progression.unlocked_flags.has(&"basic_crafting"):
+				print("PROBE SETTLEMENT UPGRADE AUTHORITY OK")
+				_expect_settlement_craft.rpc(selected_peer)
+				state = ProbeState.SETTLEMENT_CRAFT
+		ProbeState.SETTLEMENT_CRAFT:
+			if settlement_craft_confirmations.size() == expected_players - 1 \
+					and GameSession.settlement.storage.count(&"mushroom_stew") == 1:
+				print("PROBE SETTLEMENT CRAFT AUTHORITY OK")
 				var actor := _actor(selected_peer)
 				start_position = actor.global_position
 				state = ProbeState.HORIZONTAL
@@ -293,11 +339,61 @@ func _install_probe_personal_quest() -> void:
 	party.title = "Probe Party Kill"
 	party.scope = QuestDefinition.Scope.PARTY
 	ContentRegistry._definitions[party.id] = party
+	var upgrade_objective := QuestObjectiveDefinition.new()
+	upgrade_objective.type = QuestObjectiveDefinition.ObjectiveType.UPGRADE_FACILITY
+	upgrade_objective.target_id = &"workbench"
+	upgrade_objective.required_amount = 1
+	var personal_upgrade := QuestDefinition.new()
+	personal_upgrade.id = PROBE_PERSONAL_UPGRADE_QUEST_ID
+	personal_upgrade.title = "Probe Personal Upgrade"
+	personal_upgrade.scope = QuestDefinition.Scope.PERSONAL
+	personal_upgrade.objectives = [upgrade_objective]
+	ContentRegistry._definitions[personal_upgrade.id] = personal_upgrade
+	var party_upgrade := personal_upgrade.duplicate() as QuestDefinition
+	party_upgrade.id = PROBE_PARTY_UPGRADE_QUEST_ID
+	party_upgrade.title = "Probe Party Upgrade"
+	party_upgrade.scope = QuestDefinition.Scope.PARTY
+	ContentRegistry._definitions[party_upgrade.id] = party_upgrade
 
 func _on_probe_peer_joined(peer_id: int) -> void:
 	var player_id := GameSession.get_player_id(peer_id)
 	if not player_id.is_empty():
 		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, player_id)
+		GameSession.start_quest(PROBE_PERSONAL_UPGRADE_QUEST_ID, player_id)
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_settlement_upgrade(command_peer_id: int) -> void:
+	selected_peer = command_peer_id
+	settlement_upgrade_expected = true
+	if NetworkManager.local_peer_id() == command_peer_id:
+		var service := get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
+		if service != null:
+			service.request_upgrade_facility(&"workbench")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_settlement_upgrade() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		settlement_upgrade_confirmations[sender] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_settlement_craft(command_peer_id: int) -> void:
+	selected_peer = command_peer_id
+	settlement_craft_expected = true
+	if NetworkManager.local_peer_id() == command_peer_id:
+		var service := get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
+		if service != null:
+			service.request_craft(&"stew_recipe")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_settlement_craft() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		settlement_craft_confirmations[sender] = true
 
 @rpc("any_peer", "call_remote", "reliable")
 func _confirm_quest_sync(player_id: StringName) -> void:
@@ -327,6 +423,11 @@ func _on_session_synchronized() -> void:
 		_fail("client local actor was not spawned by the server roster")
 		return
 	if reconnecting:
+		if GameSession.settlement.facility_levels.get(&"workbench", 0) != 1 \
+				or GameSession.settlement.storage.count(&"mushroom_stew") != 1 \
+				or not GameSession.progression.unlocked_flags.has(&"basic_crafting"):
+			_fail("fresh reconnect did not receive current settlement snapshot")
+			return
 		print("PROBE CLIENT FRESH RECONNECT OK")
 		_confirm_reconnect.rpc_id(1)
 		return

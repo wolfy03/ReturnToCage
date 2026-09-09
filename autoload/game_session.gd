@@ -7,6 +7,9 @@ signal inventory_changed
 # Shared, server-owned session model signals.
 signal storage_changed
 signal facility_changed(facility_id: StringName, level: int)
+signal resident_changed(resident_id: StringName)
+signal settlement_state_changed(revision: int)
+signal shared_progression_changed(revision: int)
 signal quest_changed(quest_id: StringName)
 signal quest_state_changed(quest_id: StringName, scope: int, owner_player_id: StringName, revision: int)
 signal adventure_started(context: AdventureContext)
@@ -51,6 +54,7 @@ var progression: ProgressionState = ProgressionState.new()
 var adventure: AdventureState = AdventureState.new()
 var difficulty: DifficultyState = DifficultyState.new()
 var _quest_system: QuestSystem
+var _settlement_command_service: SettlementCommandService
 
 # Deprecated compatibility facade. These properties never own separate state.
 # Object/collection properties are getter-only; replacement would break model wiring.
@@ -141,7 +145,11 @@ func _create_models() -> void:
 	if not has_player(get_local_peer_id()):
 		_add_player_state(get_local_peer_id(), _create_player_state())
 	if settlement == null:
-		settlement = SettlementState.new(Callable(ContentRegistry, "get_item"))
+		settlement = SettlementState.new(
+			Callable(ContentRegistry, "get_item"),
+			Callable(self, "can_mutate_authoritative_state")
+		)
+	progression.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 	_connect_model_signals()
 
 func _create_quest_system() -> void:
@@ -149,6 +157,12 @@ func _create_quest_system() -> void:
 		_quest_system.quest_mutated.disconnect(_on_quest_mutated)
 	_quest_system = QuestSystem.new(progression, settlement, ContentRegistry, Callable(self, "get_player_state_by_player_id"))
 	_quest_system.quest_mutated.connect(_on_quest_mutated)
+	_settlement_command_service = SettlementCommandService.new(
+		settlement,
+		progression,
+		ContentRegistry,
+		Callable(self, "report_gameplay_event")
+	)
 
 func _on_quest_mutated(quest_id: StringName, scope: int, owner_player_id: StringName, revision: int) -> void:
 	quest_changed.emit(quest_id)
@@ -259,6 +273,25 @@ func _connect_model_signals() -> void:
 		player.inventory.changed.connect(inventory_changed.emit)
 	if settlement != null and settlement.storage != null and not settlement.storage.changed.is_connected(storage_changed.emit):
 		settlement.storage.changed.connect(storage_changed.emit)
+	if settlement != null and not settlement.changed.is_connected(_on_settlement_state_changed):
+		settlement.changed.connect(_on_settlement_state_changed)
+	if progression != null and not progression.shared_changed.is_connected(_on_shared_progression_changed):
+		progression.shared_changed.connect(_on_shared_progression_changed)
+
+func _disconnect_shared_model_signals() -> void:
+	if settlement != null:
+		if settlement.storage != null and settlement.storage.changed.is_connected(storage_changed.emit):
+			settlement.storage.changed.disconnect(storage_changed.emit)
+		if settlement.changed.is_connected(_on_settlement_state_changed):
+			settlement.changed.disconnect(_on_settlement_state_changed)
+	if progression != null and progression.shared_changed.is_connected(_on_shared_progression_changed):
+		progression.shared_changed.disconnect(_on_shared_progression_changed)
+
+func _on_settlement_state_changed(revision: int) -> void:
+	settlement_state_changed.emit(revision)
+
+func _on_shared_progression_changed(revision: int) -> void:
+	shared_progression_changed.emit(revision)
 
 func _disconnect_player_model_signals() -> void:
 	for peer_id in players:
@@ -508,9 +541,13 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	for personal in adventure.active_session.player_adventures.values():
 		loot.append_array((personal as PlayerAdventureState).unsecured_loot.stacks())
 	var secured: CommandResult = settlement.secure_loot(loot)
+	var discoveries_changed := false
 	for point in adventure.active_session.discovered_escape_points:
 		if not progression.discovered_escape_points.has(point):
 			progression.discovered_escape_points.append(point)
+			discoveries_changed = true
+	if discoveries_changed:
+		progression.mark_shared_changed()
 	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success else "Storage full: %d loot stacks retained in pending storage" % loot.size()
 	adventure.active_session = null
 	set_phase(Phase.SETTLEMENT)
@@ -625,11 +662,14 @@ func claim_pending_loot() -> CommandResult:
 	return result
 
 func craft(recipe_id: StringName) -> CommandResult:
+	return execute_craft_command(recipe_id, get_local_player_id())
+
+func execute_craft_command(recipe_id: StringName, actor_player_id: StringName) -> CommandResult:
 	if not can_mutate_authoritative_state():
 		return CommandResult.make(false, "Only the server can craft")
 	if phase != Phase.SETTLEMENT:
 		return CommandResult.make(false, "Crafting requires settlement state")
-	var result: CommandResult = CraftingService.craft(ContentRegistry.get_definition(recipe_id) as RecipeDefinition, settlement, progression)
+	var result := _settlement_command_service.try_craft(recipe_id, actor_player_id)
 	last_message = "Crafted %s" % recipe_id if result.success else result.message
 	return result
 
@@ -649,23 +689,53 @@ func can_upgrade_facility(facility_id: StringName) -> bool:
 	return check.success
 
 func upgrade_facility(facility_id: StringName, player_id: StringName = LOCAL_EVENT_ACTOR) -> bool:
-	if not can_upgrade_facility(facility_id):
+	var actor_id := get_local_player_id() if player_id == LOCAL_EVENT_ACTOR else player_id
+	return execute_facility_upgrade_command(facility_id, actor_id).success
+
+func execute_facility_upgrade_command(facility_id: StringName, actor_player_id: StringName) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can upgrade facilities")
+	if phase != Phase.SETTLEMENT:
+		return CommandResult.make(false, "Facility upgrades require settlement state")
+	var result := _settlement_command_service.try_upgrade_facility(facility_id, actor_player_id)
+	last_message = result.message
+	if result.success:
+		facility_changed.emit(facility_id, settlement.facility_levels.get(facility_id, 0))
+	return result
+
+func make_settlement_snapshot() -> SettlementStateSnapshot:
+	return SettlementStateSnapshot.from_state(settlement) if can_mutate_authoritative_state() else null
+
+func make_shared_progression_snapshot() -> SharedProgressionSnapshot:
+	return SharedProgressionSnapshot.from_state(progression) if can_mutate_authoritative_state() else null
+
+func apply_settlement_network_snapshot(snapshot: SettlementStateSnapshot) -> bool:
+	if not NetworkManager.is_session_connected() or NetworkManager.is_server() or snapshot == null:
 		return false
-	var definition := ContentRegistry.get_definition(facility_id) as FacilityDefinition
-	var next_level: int = settlement.facility_levels.get(facility_id, 0) + 1
-	var level: FacilityLevelDefinition = definition.get_level_data(next_level)
-	var result: CommandResult = settlement.storage.exchange(ProgressionService.item_amounts(level.cost_item_ids, level.cost_amounts), [])
-	if not result.success:
-		last_message = result.message
+	var previous_facilities := settlement.facility_levels.duplicate()
+	var previous_residents := settlement.resident_states.duplicate()
+	if not settlement.apply_network_mirror(snapshot):
 		return false
-	settlement.facility_levels[facility_id] = next_level
-	for flag in level.unlock_flags:
-		if not progression.unlocked_flags.has(flag):
-			progression.unlocked_flags.append(flag)
-	report_quest_event(QuestObjectiveDefinition.ObjectiveType.UPGRADE_FACILITY, facility_id, 1, player_id)
-	facility_changed.emit(facility_id, next_level)
-	last_message = "%s upgraded to level %d" % [definition.display_name, next_level]
+	for facility_id in settlement.facility_levels:
+		if previous_facilities.get(facility_id, -1) != settlement.facility_levels[facility_id]:
+			facility_changed.emit(facility_id, settlement.facility_levels[facility_id])
+	for facility_id in previous_facilities:
+		if not settlement.facility_levels.has(facility_id):
+			facility_changed.emit(facility_id, 0)
+	for resident_id in settlement.resident_states:
+		var before: ResidentState = previous_residents.get(resident_id)
+		var after: ResidentState = settlement.resident_states[resident_id]
+		if before == null or before.unlocked != after.unlocked or before.current_state != after.current_state:
+			resident_changed.emit(resident_id)
+	for resident_id in previous_residents:
+		if not settlement.resident_states.has(resident_id):
+			resident_changed.emit(resident_id)
 	return true
+
+func apply_shared_progression_network_snapshot(snapshot: SharedProgressionSnapshot) -> bool:
+	return not NetworkManager.is_server() \
+		and NetworkManager.is_session_connected() \
+		and progression.apply_shared_network_mirror(snapshot)
 
 func export_state() -> Dictionary:
 	var result: Dictionary = {"session_id": session_id, "play_time_seconds": play_time_seconds}
@@ -706,6 +776,10 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	_player_runtime.clear()
 	settlement.reset(start, ContentRegistry)
 	progression.reset(start)
+	# Revision zero is a valid authoritative initial snapshot. A newly joined
+	# client starts below it so the first full mirror is accepted.
+	settlement.revision = -1
+	progression.shared_revision = -1
 	difficulty.reset(start)
 	adventure.reset()
 	for peer_id in snapshot.player_ids:
@@ -779,13 +853,14 @@ func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	if adventure.active_session != null or phase == Phase.RESPAWNING or not snapshot.fatal_error.is_empty():
 		return
 	_disconnect_player_model_signals()
-	if settlement.storage.changed.is_connected(storage_changed.emit):
-		settlement.storage.changed.disconnect(storage_changed.emit)
+	_disconnect_shared_model_signals()
 	players.clear()
 	_player_runtime.clear()
 	_add_player_state(get_local_peer_id(), snapshot.player)
 	settlement = snapshot.settlement
+	settlement.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 	progression = snapshot.progression
+	progression.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 	difficulty = snapshot.difficulty
 	adventure = snapshot.adventure
 	_create_quest_system()

@@ -1,6 +1,8 @@
 class_name ProgressionState
 extends RefCounted
 
+signal shared_changed(revision: int)
+
 var shared_quest_states: Dictionary[StringName, QuestState] = {}
 # Save v3 and existing PARTY quest compatibility facade. Personal quest state is
 # intentionally excluded from the v3 save schema.
@@ -9,12 +11,35 @@ var quest_states: Dictionary[StringName, QuestState]:
 		return shared_quest_states
 var personal_progression: Dictionary[StringName, PersonalProgressionState] = {}
 var _quest_revisions: Dictionary[String, int] = {}
-var unlocked_regions: Array[StringName] = []
-var unlocked_exits: Array[StringName] = []
-var unlocked_flags: Array[StringName] = []
-var discovered_escape_points: Array[StringName] = []
+var _unlocked_regions: Array[StringName] = []
+var unlocked_regions: Array[StringName]:
+	get: return _unlocked_regions if _can_mutate_shared() else _unlocked_regions.duplicate()
+	set(value):
+		if _can_mutate_shared(): _unlocked_regions = value
+var _unlocked_exits: Array[StringName] = []
+var unlocked_exits: Array[StringName]:
+	get: return _unlocked_exits if _can_mutate_shared() else _unlocked_exits.duplicate()
+	set(value):
+		if _can_mutate_shared(): _unlocked_exits = value
+var _unlocked_flags: Array[StringName] = []
+var unlocked_flags: Array[StringName]:
+	get: return _unlocked_flags if _can_mutate_shared() else _unlocked_flags.duplicate()
+	set(value):
+		if _can_mutate_shared(): _unlocked_flags = value
+var _discovered_escape_points: Array[StringName] = []
+var discovered_escape_points: Array[StringName]:
+	get: return _discovered_escape_points if _can_mutate_shared() else _discovered_escape_points.duplicate()
+	set(value):
+		if _can_mutate_shared(): _discovered_escape_points = value
+var shared_revision: int = 0
+var _applying_shared_snapshot: bool = false
+var _mutation_guard: Callable
+
+func set_mutation_guard(guard: Callable) -> void:
+	_mutation_guard = guard
 
 func reset(start: GameStartDefinition) -> void:
+	_applying_shared_snapshot = true
 	shared_quest_states.clear()
 	personal_progression.clear()
 	_quest_revisions.clear()
@@ -22,6 +47,8 @@ func reset(start: GameStartDefinition) -> void:
 	unlocked_exits = start.unlocked_exits.duplicate()
 	unlocked_flags = start.unlocked_flags.duplicate()
 	discovered_escape_points = start.discovered_escape_points.duplicate()
+	shared_revision = 0
+	_applying_shared_snapshot = false
 
 func to_save_dict() -> Dictionary:
 	var quests: Array[Dictionary] = []
@@ -35,6 +62,7 @@ func to_save_dict() -> Dictionary:
 
 func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 	var errors := PackedStringArray()
+	_applying_shared_snapshot = true
 	shared_quest_states.clear()
 	personal_progression.clear()
 	_quest_revisions.clear()
@@ -79,7 +107,32 @@ func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 	unlocked_exits = SaveData.names(data, "unlocked_exits", errors)
 	unlocked_flags = SaveData.names(data, "unlocked_flags", errors)
 	discovered_escape_points = SaveData.names(data, "discovered_escape_points", errors)
+	shared_revision = 0
+	_applying_shared_snapshot = false
 	return errors
+
+func mark_shared_changed() -> int:
+	if not _can_mutate_shared():
+		return shared_revision
+	shared_revision += 1
+	shared_changed.emit(shared_revision)
+	return shared_revision
+
+func apply_shared_network_mirror(snapshot: SharedProgressionSnapshot) -> bool:
+	if snapshot == null or not snapshot.error_message.is_empty() or snapshot.revision <= shared_revision:
+		return false
+	_applying_shared_snapshot = true
+	unlocked_regions = snapshot.unlocked_regions.duplicate()
+	unlocked_exits = snapshot.unlocked_exits.duplicate()
+	unlocked_flags = snapshot.unlocked_flags.duplicate()
+	discovered_escape_points = snapshot.discovered_escape_points.duplicate()
+	shared_revision = snapshot.revision
+	_applying_shared_snapshot = false
+	shared_changed.emit(shared_revision)
+	return true
+
+func _can_mutate_shared() -> bool:
+	return _applying_shared_snapshot or not _mutation_guard.is_valid() or bool(_mutation_guard.call())
 
 func ensure_personal_progression(player_id: StringName) -> PersonalProgressionState:
 	if player_id.is_empty():

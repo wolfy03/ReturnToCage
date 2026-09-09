@@ -12,6 +12,7 @@ var load_button: Button
 var difficulty: OptionButton
 var no_loss: CheckButton
 var settlement_buttons: Array[Button] = []
+var network_settlement_buttons: Array[Button] = []
 var direct_player_buttons: Array[Button] = []
 var bound_player: PlayerActor
 var _refresh_remaining: float = 0.0
@@ -92,9 +93,29 @@ func _build_ui() -> void:
 		if content is RecipeDefinition:
 			var craft_button := Button.new()
 			craft_button.text = "Craft: %s" % content.id
-			craft_button.pressed.connect(func() -> void: GameSession.craft(content.id); refresh_all())
+			craft_button.pressed.connect(func() -> void:
+				var service := _settlement_replication_service()
+				if service != null:
+					service.request_craft(content.id)
+				refresh_all()
+			)
 			buttons.add_child(craft_button)
-			settlement_buttons.append(craft_button)
+			network_settlement_buttons.append(craft_button)
+	for content in ContentRegistry.all_definitions():
+		if content is FacilityDefinition:
+			var upgrade_button := Button.new()
+			upgrade_button.text = "Upgrade: %s" % content.id
+			upgrade_button.pressed.connect(func() -> void:
+				var service := _settlement_replication_service()
+				if service != null:
+					service.request_upgrade_facility(content.id)
+				refresh_all()
+			)
+			buttons.add_child(upgrade_button)
+			network_settlement_buttons.append(upgrade_button)
+
+func _settlement_replication_service() -> SettlementReplicationService:
+	return get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
 
 func _on_transition_finished(_destination: StringName) -> void:
 	await get_tree().process_frame
@@ -139,6 +160,9 @@ func refresh_all() -> void:
 	no_loss.disabled = difficulty.disabled
 	for button in settlement_buttons:
 		button.disabled = read_only_client or GameSession.phase != GameSession.Phase.SETTLEMENT
+		button.tooltip_text = "Available in the settlement" if button.disabled else ""
+	for button in network_settlement_buttons:
+		button.disabled = GameSession.phase != GameSession.Phase.SETTLEMENT
 		button.tooltip_text = "Available in the settlement" if button.disabled else ""
 	difficulty.tooltip_text = "Expedition rules are fixed until return" if difficulty.disabled else "Difficulty for the next expedition"
 	no_loss.tooltip_text = difficulty.tooltip_text

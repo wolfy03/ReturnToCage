@@ -9,10 +9,12 @@ var _stacks: Array[ItemStack] = []
 var _update_depth: int = 0
 var _change_pending: bool = false
 var definition_resolver: Callable
+var mutation_guard: Callable
 
-func _init(p_capacity: int = 16, p_resolver: Callable = Callable()) -> void:
+func _init(p_capacity: int = 16, p_resolver: Callable = Callable(), p_mutation_guard: Callable = Callable()) -> void:
 	capacity = p_capacity
 	definition_resolver = p_resolver
+	mutation_guard = p_mutation_guard
 
 func stacks() -> Array[ItemStack]:
 	var snapshot: Array[ItemStack] = []
@@ -31,6 +33,11 @@ func add_item(item_id: StringName, amount: int) -> InventoryResult:
 	return add_stack(ItemStack.new(item_id, amount))
 
 func add_stack(incoming: ItemStack) -> InventoryResult:
+	if not _mutation_allowed():
+		var amount := incoming.quantity if incoming != null else 0
+		var denied := InventoryResult.make(amount, 0, "Inventory is a read-only mirror")
+		denied.success = false
+		return denied
 	var result: InventoryResult = _add_stack(incoming)
 	if result.changed > 0:
 		_notify_changed()
@@ -72,6 +79,8 @@ func preview_exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> Co
 	return preview._apply_exchange(inputs, outputs)
 
 func exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> CommandResult:
+	if not _mutation_allowed():
+		return CommandResult.make(false, "Inventory is a read-only mirror")
 	var result: CommandResult = preview_exchange(inputs, outputs)
 	if not result.success:
 		return result
@@ -106,6 +115,10 @@ func _apply_exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> Com
 	return CommandResult.make(true)
 
 func remove_item(item_id: StringName, amount: int) -> InventoryResult:
+	if not _mutation_allowed():
+		var denied := InventoryResult.make(amount, 0, "Inventory is a read-only mirror")
+		denied.success = false
+		return denied
 	if amount <= 0:
 		return InventoryResult.make(amount, 0, "amount must be positive")
 	var remaining := amount
@@ -126,6 +139,8 @@ func remove_item(item_id: StringName, amount: int) -> InventoryResult:
 	return result
 
 func move_item(from_index: int, to_index: int) -> bool:
+	if not _mutation_allowed():
+		return false
 	if from_index < 0 or from_index >= _stacks.size() or to_index < 0 or to_index >= _stacks.size():
 		return false
 	var temporary := _stacks[from_index]
@@ -149,11 +164,15 @@ func total_weight() -> float:
 	return result
 
 func clear() -> void:
+	if not _mutation_allowed():
+		return
 	_stacks.clear()
 	_notify_changed()
 
 ## Bulk initialization from validated typed start content; keeps the stack model.
 func initialize(stacks_to_copy: Array[ItemStack]) -> CommandResult:
+	if not _mutation_allowed():
+		return CommandResult.make(false, "Inventory is a read-only mirror")
 	var seen: Dictionary[String, String] = {}
 	var errors := PackedStringArray()
 	if stacks_to_copy.size() > capacity:
@@ -182,6 +201,9 @@ func to_array() -> Array[Dictionary]:
 
 func restore(data: Array, instances: Dictionary[String, String] = {}, context: String = "inventory") -> PackedStringArray:
 	var errors := PackedStringArray()
+	if not _mutation_allowed():
+		errors.append("%s is a read-only mirror" % context)
+		return errors
 	_stacks.clear()
 	restore_overflow.clear()
 	for index in data.size():
@@ -223,3 +245,6 @@ func _notify_changed() -> void:
 		_change_pending = true
 	else:
 		changed.emit()
+
+func _mutation_allowed() -> bool:
+	return not mutation_guard.is_valid() or bool(mutation_guard.call())

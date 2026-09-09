@@ -38,10 +38,9 @@ func _create_facility() -> void:
 	var color := data.appearance_color if data != null else Color("795548")
 	var target := WorldHelpers.add_interaction(self, &"workbench", "Upgrade workbench (3 scrap)", Vector2(540, 525), Vector2(90 + level * 24, 52 + level * 10), color, 2)
 	target.activated.connect(func(_actor: Node) -> void:
-		if GameSession.upgrade_facility(&"workbench"):
-			get_tree().call_group(&"hud", "refresh_all")
-			queue_redraw()
-			SceneRouter.go_to_settlement()
+		var service := get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
+		if service != null:
+			service.request_upgrade_facility(&"workbench")
 	)
 
 func _create_exits() -> void:
