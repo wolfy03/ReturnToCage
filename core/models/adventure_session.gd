@@ -26,9 +26,11 @@ func _init(p_context: AdventureContext = null, resolver: Callable = Callable()) 
 func record_kill(enemy_id: StringName) -> void:
 	enemy_kills[enemy_id] = enemy_kills.get(enemy_id, 0) + 1
 
-func discover_escape(point_id: StringName) -> void:
-	if not discovered_escape_points.has(point_id):
-		discovered_escape_points.append(point_id)
+func discover_escape(point_id: StringName) -> bool:
+	if discovered_escape_points.has(point_id):
+		return false
+	discovered_escape_points.append(point_id)
+	return true
 
 func set_compatibility_peer_id(peer_id: int, resolver: Callable) -> void:
 	_compatibility_peer_id = peer_id

@@ -87,6 +87,7 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 		return result
 	var item_id := loot.stack.item_id
 	var quantity := loot.stack.quantity
+	GameSession.report_gameplay_event(GameplayEvent.collect_item(GameSession.get_player_id(peer_id), item_id, quantity))
 	print("[LOOT] Claimed entity %d by peer %d" % [entity_id, peer_id])
 	_despawn_authoritative(entity_id)
 	if NetworkManager.is_server() and peer_id != 1 and NetworkManager.can_send_to_peer(peer_id):

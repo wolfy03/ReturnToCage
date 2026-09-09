@@ -20,9 +20,23 @@ func run(t: Node) -> void:
 		"session_id": "test",
 		"phase": GameSession.Phase.SETTLEMENT,
 		"difficulty_id": "normal",
-		"players": [1, 42],
+		"players": [
+			{"peer_id": 1, "player_id": "player_1"},
+			{"peer_id": 42, "player_id": "player_2"},
+		],
 	}
 	var snapshot := NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS)
-	t.assert_true(snapshot.error_message.is_empty() and snapshot.player_ids == [1, 42], "network session schema validates independently of save data")
+	t.assert_true(snapshot.error_message.is_empty() and snapshot.player_ids == [1, 42], "network session schema validates stable player identities")
+	t.assert_equal(snapshot.identities[1].player_id, &"player_2", "session identity roundtrip preserves logical player id")
+	var duplicate := payload.duplicate(true)
+	duplicate["players"][1]["player_id"] = "player_1"
+	t.assert_true(not NetworkSessionSnapshot.from_payload(duplicate, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message.is_empty(), "duplicate logical player identity is rejected")
+	NetworkManager.peer_to_player.clear()
+	NetworkManager.player_to_peer.clear()
+	t.assert_true(NetworkManager._set_identity(77, &"player_test"), "logical identity mapping accepts a unique pair")
+	t.assert_equal(NetworkManager.player_id_for_peer(77), &"player_test", "peer to logical player lookup is reversible")
+	t.assert_equal(NetworkManager.peer_id_for_player(&"player_test"), 77, "logical player to peer lookup is reversible")
+	t.assert_true(not NetworkManager._set_identity(78, &"player_test"), "duplicate logical identity mapping is rejected")
+	NetworkManager._remove_identity(77)
 	payload["protocol_version"] = NetworkProtocol.VERSION + 1
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "protocol mismatch is rejected explicitly")

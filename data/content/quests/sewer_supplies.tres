@@ -18,6 +18,7 @@ script = ExtResource("1")
 id = &"sewer_supplies"
 title = "A Bench Worth Using"
 description = "Milo needs sewer scrap to rebuild the settlement workbench."
+scope = 1
 objectives = Array[QuestObjectiveDefinition]([SubResource("Collect"), SubResource("Upgrade")])
 reward_item_ids = Array[StringName]([&"mushroom_stew"])
 reward_amounts = Array[int]([1])

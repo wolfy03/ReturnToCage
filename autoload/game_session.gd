@@ -8,6 +8,7 @@ signal inventory_changed
 signal storage_changed
 signal facility_changed(facility_id: StringName, level: int)
 signal quest_changed(quest_id: StringName)
+signal quest_state_changed(quest_id: StringName, scope: int, owner_player_id: StringName, revision: int)
 signal adventure_started(context: AdventureContext)
 signal adventure_finished(result: AdventureSession.Result, summary: String)
 signal difficulty_changed(id: StringName)
@@ -33,6 +34,8 @@ var last_death_result: RespawnResult:
 
 const DEFAULT_START_ID: StringName = &"default_game_start"
 const LOCAL_SINGLEPLAYER_PEER_ID := 1
+const LOCAL_SINGLEPLAYER_PLAYER_ID: StringName = &"local_player"
+const LOCAL_EVENT_ACTOR: StringName = &"__local_player__"
 
 var session_id: String = ""
 var play_time_seconds: float = 0.0
@@ -47,6 +50,7 @@ var settlement: SettlementState
 var progression: ProgressionState = ProgressionState.new()
 var adventure: AdventureState = AdventureState.new()
 var difficulty: DifficultyState = DifficultyState.new()
+var _quest_system: QuestSystem
 
 # Deprecated compatibility facade. These properties never own separate state.
 # Object/collection properties are getter-only; replacement would break model wiring.
@@ -115,6 +119,7 @@ var survival_state: Dictionary:
 
 func _ready() -> void:
 	_create_models()
+	_create_quest_system()
 	var start: GameStartDefinition = get_start_definition()
 	if start != null:
 		_reset_states(start)
@@ -139,6 +144,16 @@ func _create_models() -> void:
 		settlement = SettlementState.new(Callable(ContentRegistry, "get_item"))
 	_connect_model_signals()
 
+func _create_quest_system() -> void:
+	if _quest_system != null and _quest_system.quest_mutated.is_connected(_on_quest_mutated):
+		_quest_system.quest_mutated.disconnect(_on_quest_mutated)
+	_quest_system = QuestSystem.new(progression, settlement, ContentRegistry, Callable(self, "get_player_state_by_player_id"))
+	_quest_system.quest_mutated.connect(_on_quest_mutated)
+
+func _on_quest_mutated(quest_id: StringName, scope: int, owner_player_id: StringName, revision: int) -> void:
+	quest_changed.emit(quest_id)
+	quest_state_changed.emit(quest_id, scope, owner_player_id, revision)
+
 func _create_player_state() -> PlayerState:
 	return PlayerState.new(Callable(ContentRegistry, "get_item"))
 
@@ -147,6 +162,23 @@ func get_local_peer_id() -> int:
 
 func get_local_player() -> PlayerState:
 	return players.get(get_local_peer_id())
+
+func get_player_id(peer_id: int) -> StringName:
+	var mapped := NetworkManager.player_id_for_peer(peer_id) if NetworkManager != null else &""
+	if not mapped.is_empty():
+		return mapped
+	return LOCAL_SINGLEPLAYER_PLAYER_ID if peer_id == LOCAL_SINGLEPLAYER_PEER_ID and not NetworkManager.is_multiplayer_active() else &""
+
+func get_local_player_id() -> StringName:
+	return get_player_id(get_local_peer_id())
+
+func get_player_state_by_player_id(player_id: StringName) -> PlayerState:
+	if player_id.is_empty():
+		return null
+	if player_id == LOCAL_SINGLEPLAYER_PLAYER_ID and not NetworkManager.is_multiplayer_active():
+		return get_player(LOCAL_SINGLEPLAYER_PEER_ID)
+	var peer_id := NetworkManager.peer_id_for_player(player_id)
+	return get_player(peer_id) if peer_id > 0 else null
 
 func has_player(peer_id: int) -> bool:
 	return players.has(peer_id)
@@ -164,6 +196,7 @@ func register_player(peer_id: int) -> PlayerState:
 	if start != null:
 		state.reset(start, ContentRegistry)
 	_add_player_state(peer_id, state)
+	progression.ensure_personal_progression(get_player_id(peer_id))
 	if adventure.active_session != null:
 		adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
 	if peer_id == get_local_peer_id():
@@ -252,6 +285,8 @@ func _reset_states(start: GameStartDefinition) -> void:
 		state.reset(start, ContentRegistry)
 	settlement.reset(start, ContentRegistry)
 	progression.reset(start)
+	for peer_id in players:
+		progression.ensure_personal_progression(get_player_id(peer_id))
 	difficulty.reset(start)
 	adventure.reset()
 
@@ -328,55 +363,88 @@ func clear_difficulty_override(property_name: StringName) -> void:
 	difficulty.overrides.erase(property_name)
 	difficulty_changed.emit(difficulty.id)
 
-func start_quest(quest_id: StringName) -> bool:
+func start_quest(quest_id: StringName, player_id: StringName = &"") -> bool:
 	if not can_mutate_authoritative_state():
 		return false
-	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
-	var check: CommandResult = ProgressionService.check_quest_start(quest_id, progression, ContentRegistry)
-	if not check.success:
-		last_message = check.message
-		return false
-	var state := QuestState.new(quest_id)
-	state.initialize(definition)
-	progression.quest_states[quest_id] = state
-	quest_changed.emit(quest_id)
-	last_message = "Quest started: %s" % definition.title
-	return true
+	var actor_id := get_local_player_id() if player_id.is_empty() else player_id
+	var result := _quest_system.start_quest(quest_id, actor_id)
+	last_message = result.message
+	return result.success
 
-func report_quest_event(type: QuestObjectiveDefinition.ObjectiveType, target_id: StringName, amount: int = 1) -> void:
+func report_quest_event(type: QuestObjectiveDefinition.ObjectiveType, target_id: StringName, amount: int = 1, player_id: StringName = LOCAL_EVENT_ACTOR) -> void:
 	if not can_mutate_authoritative_state():
 		return
-	for quest_id in progression.quest_states:
-		var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
-		var state: QuestState = progression.quest_states[quest_id]
-		if definition != null and state.apply_event(definition, type, target_id, amount):
-			quest_changed.emit(quest_id)
+	var actor_id := get_local_player_id() if player_id == LOCAL_EVENT_ACTOR else player_id
+	report_gameplay_event(GameplayEvent.new(type, actor_id, target_id, amount))
 
-func claim_quest_reward(quest_id: StringName) -> bool:
+func report_gameplay_event(event: GameplayEvent) -> void:
+	if can_mutate_authoritative_state() and _quest_system != null:
+		_quest_system.report(event)
+
+func claim_quest_reward(quest_id: StringName, player_id: StringName = &"") -> bool:
 	# Compatibility API; detailed callers can inspect the transaction result.
-	return claim_quest_reward_result(quest_id).success
+	return claim_quest_reward_result(quest_id, player_id).success
 
-func claim_quest_reward_result(quest_id: StringName) -> CommandResult:
+func claim_quest_reward_result(quest_id: StringName, player_id: StringName = &"") -> CommandResult:
 	if not can_mutate_authoritative_state():
 		return CommandResult.make(false, "Only the server can change quest state")
-	var state: QuestState = progression.quest_states.get(quest_id)
+	var actor_id := get_local_player_id() if player_id.is_empty() else player_id
+	var result := _quest_system.claim_reward(quest_id, actor_id)
+	last_message = result.message
+	return result
+
+func get_shared_quest_states() -> Dictionary[StringName, QuestState]:
+	return progression.shared_quest_states
+
+func get_local_personal_quest_states() -> Dictionary[StringName, QuestState]:
+	var personal := progression.get_personal_progression(get_local_player_id())
+	return personal.quest_states if personal != null else {}
+
+func make_quest_snapshot(quest_id: StringName, owner_player_id: StringName = &"") -> QuestStateSnapshot:
+	if not can_mutate_authoritative_state():
+		return null
 	var definition := ContentRegistry.get_definition(quest_id) as QuestDefinition
-	if state == null or definition == null or not state.begin_reward_claim():
-		last_message = "Quest reward is unavailable"
-		return CommandResult.make(false, last_message)
-	var reward_storage: InventoryModel = settlement.storage
-	reward_storage.begin_update()
-	var reward: CommandResult = reward_storage.exchange([], ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts))
-	state.finish_reward_claim(reward.success)
-	reward_storage.end_update()
-	if not reward.success:
-		last_message = reward.message
-		return reward
-	quest_changed.emit(quest_id)
-	for next_quest in definition.follow_up_quest_ids:
-		start_quest(next_quest)
-	last_message = "Quest reward claimed"
-	return CommandResult.make(true, last_message)
+	var state := progression.get_quest_state(quest_id, owner_player_id, ContentRegistry)
+	if definition == null or state == null:
+		return null
+	var owner := owner_player_id if definition.scope == QuestDefinition.Scope.PERSONAL else &""
+	return QuestStateSnapshot.from_state(definition, state, owner, progression.quest_revision(quest_id, owner))
+
+func quest_snapshots_for_player(player_id: StringName) -> Array[QuestStateSnapshot]:
+	var result: Array[QuestStateSnapshot] = []
+	for quest_id in progression.shared_quest_states:
+		var snapshot := make_quest_snapshot(quest_id)
+		if snapshot != null:
+			result.append(snapshot)
+	var personal := progression.get_personal_progression(player_id)
+	if personal != null:
+		for quest_id in personal.quest_states:
+			var snapshot := make_quest_snapshot(quest_id, player_id)
+			if snapshot != null:
+				result.append(snapshot)
+	return result
+
+func apply_quest_network_snapshot(snapshot: QuestStateSnapshot) -> bool:
+	if not NetworkManager.is_session_connected() or NetworkManager.is_server() \
+			or snapshot == null or not snapshot.error_message.is_empty():
+		return false
+	var owner := snapshot.owner_player_id if snapshot.scope == QuestDefinition.Scope.PERSONAL else &""
+	if not progression.accept_quest_revision(snapshot.quest_id, owner, snapshot.revision):
+		return false
+	var definition := ContentRegistry.get_definition(snapshot.quest_id) as QuestDefinition
+	if definition == null:
+		return false
+	var state := progression.get_quest_state(snapshot.quest_id, owner, ContentRegistry)
+	if state == null:
+		state = QuestState.new(snapshot.quest_id)
+		state.initialize(definition)
+		if not progression.set_quest_state(snapshot.quest_id, owner, state, ContentRegistry):
+			return false
+	state.progress = snapshot.progress.duplicate()
+	state.completed = snapshot.completed
+	state.reward_claimed = snapshot.reward_claimed
+	quest_changed.emit(snapshot.quest_id)
+	return true
 
 func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: StringName) -> AdventureContext:
 	if not can_mutate_authoritative_state():
@@ -412,17 +480,17 @@ func collect_adventure_loot(item_id: StringName, amount: int, peer_id: int = -1)
 	var result := personal.unsecured_loot.add_item(item_id, amount)
 	if result.changed > 0:
 		inventory_changed.emit()
+		report_gameplay_event(GameplayEvent.collect_item(get_player_id(owner_peer_id), item_id, result.changed))
 	return result
 
-func record_enemy_kill(enemy_id: StringName) -> void:
+func record_enemy_kill(enemy_id: StringName, killer_player_id: StringName = LOCAL_EVENT_ACTOR) -> void:
 	if not can_mutate_authoritative_state():
 		return
 	if adventure.active_session == null:
 		return
-	# Temporary phase-2 policy: kill credit is party-shared. Personal/PARTY/WORLD
-	# quest ownership is intentionally deferred to phase 3.
 	adventure.active_session.record_kill(enemy_id)
-	report_quest_event(QuestObjectiveDefinition.ObjectiveType.KILL_ENEMY, enemy_id)
+	var actor_id := get_local_player_id() if killer_player_id == LOCAL_EVENT_ACTOR else killer_player_id
+	report_gameplay_event(GameplayEvent.kill_enemy(actor_id, enemy_id))
 
 func finish_adventure(result: AdventureSession.Result) -> String:
 	if not can_mutate_authoritative_state():
@@ -440,8 +508,6 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	for personal in adventure.active_session.player_adventures.values():
 		loot.append_array((personal as PlayerAdventureState).unsecured_loot.stacks())
 	var secured: CommandResult = settlement.secure_loot(loot)
-	for stack in loot:
-		report_quest_event(QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM, stack.item_id, stack.quantity)
 	for point in adventure.active_session.discovered_escape_points:
 		if not progression.discovered_escape_points.has(point):
 			progression.discovered_escape_points.append(point)
@@ -567,12 +633,12 @@ func craft(recipe_id: StringName) -> CommandResult:
 	last_message = "Crafted %s" % recipe_id if result.success else result.message
 	return result
 
-func discover_escape(point_id: StringName) -> void:
+func discover_escape(point_id: StringName, player_id: StringName = LOCAL_EVENT_ACTOR) -> void:
 	if not can_mutate_authoritative_state():
 		return
 	if adventure.active_session != null:
-		adventure.active_session.discover_escape(point_id)
-		report_quest_event(QuestObjectiveDefinition.ObjectiveType.DISCOVER_POINT, point_id)
+		if adventure.active_session.discover_escape(point_id):
+			report_quest_event(QuestObjectiveDefinition.ObjectiveType.DISCOVER_POINT, point_id, 1, player_id)
 
 func can_upgrade_facility(facility_id: StringName) -> bool:
 	if not can_mutate_authoritative_state():
@@ -582,7 +648,7 @@ func can_upgrade_facility(facility_id: StringName) -> bool:
 		last_message = check.message
 	return check.success
 
-func upgrade_facility(facility_id: StringName) -> bool:
+func upgrade_facility(facility_id: StringName, player_id: StringName = LOCAL_EVENT_ACTOR) -> bool:
 	if not can_upgrade_facility(facility_id):
 		return false
 	var definition := ContentRegistry.get_definition(facility_id) as FacilityDefinition
@@ -596,7 +662,7 @@ func upgrade_facility(facility_id: StringName) -> bool:
 	for flag in level.unlock_flags:
 		if not progression.unlocked_flags.has(flag):
 			progression.unlocked_flags.append(flag)
-	report_quest_event(QuestObjectiveDefinition.ObjectiveType.UPGRADE_FACILITY, facility_id, 1)
+	report_quest_event(QuestObjectiveDefinition.ObjectiveType.UPGRADE_FACILITY, facility_id, 1, player_id)
 	facility_changed.emit(facility_id, next_level)
 	last_message = "%s upgraded to level %d" % [definition.display_name, next_level]
 	return true
@@ -614,12 +680,17 @@ func to_network_snapshot(protocol_version: int) -> Dictionary:
 	var peer_ids: Array[int] = []
 	peer_ids.assign(players.keys())
 	peer_ids.sort()
+	var identities: Array[Dictionary] = []
+	for peer_id in peer_ids:
+		var player_id := get_player_id(peer_id)
+		if not player_id.is_empty():
+			identities.append(PlayerIdentityRecord.new(peer_id, player_id).to_payload())
 	return {
 		"protocol_version": protocol_version,
 		"session_id": session_id,
 		"phase": int(_phase),
 		"difficulty_id": String(difficulty.id),
-		"players": peer_ids,
+		"players": identities,
 	}
 
 func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
@@ -639,6 +710,7 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	adventure.reset()
 	for peer_id in snapshot.player_ids:
 		register_player(peer_id)
+	_create_quest_system()
 	if get_local_player() == null or not difficulty.set_id(snapshot.difficulty_id, ContentRegistry):
 		return false
 	session_id = snapshot.session_id
@@ -667,6 +739,8 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 		if start != null:
 			retained_state.reset(start, ContentRegistry)
 	_add_player_state(LOCAL_SINGLEPLAYER_PEER_ID, retained_state)
+	progression.personal_progression.clear()
+	progression.ensure_personal_progression(LOCAL_SINGLEPLAYER_PLAYER_ID)
 	retained_state.effects.paused = false
 	session_id = ""
 	play_time_seconds = 0.0
@@ -714,6 +788,8 @@ func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	progression = snapshot.progression
 	difficulty = snapshot.difficulty
 	adventure = snapshot.adventure
+	_create_quest_system()
+	progression.ensure_personal_progression(get_local_player_id())
 	session_id = snapshot.session_id
 	play_time_seconds = snapshot.play_time_seconds
 	_connect_model_signals()

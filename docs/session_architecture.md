@@ -8,7 +8,7 @@
 | --- | --- |
 | `PlayerState` (`GameSession.player`) | `stats`, `inventory`, `equipment`, `protected_inventory`, `survival`, `health`, `last_safe_position`, `effects`. 초기화와 플레이어 저장 필드 복원 |
 | `SettlementState` (`settlement`) | `storage`, `facility_levels`, `resident_states`, `pending_loot`. 주민 값은 `ResidentState`이며 정착지 저장을 담당 |
-| `ProgressionState` (`progression`) | `quest_states`, 지역·출구·플래그 해금, 발견한 탈출 지점. `QuestDefinition`은 복제하지 않음 |
+| `ProgressionState` (`progression`) | `shared_quest_states`, `PersonalProgressionState[player_id]`, 지역·출구·플래그 해금, 발견한 탈출 지점. `QuestDefinition` 자체는 복제하지 않음 |
 | `AdventureState` (`adventure`) | `active_session`, `death_drops`. 원정 런타임 상태 소유와 복원 시 초기화 |
 | `DifficultyState` (`difficulty`) | `id`, `overrides`, 프리셋 복제 후 effective difficulty 생성. 허용 속성 목록은 `OVERRIDABLE_PROPERTIES` 한 곳에 정의 |
 

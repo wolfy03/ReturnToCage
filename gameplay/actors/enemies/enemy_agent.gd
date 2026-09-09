@@ -19,6 +19,7 @@ var current_state_id: StringName
 var patrol_origin: Vector2
 var patrol_direction := 1.0
 var last_hit_direction := 1.0
+var last_damage_player_id: StringName = &""
 var facing := 1.0
 var _death_resolved: bool = false
 
@@ -124,6 +125,11 @@ func _on_damaged(context: DamageContext) -> void:
 	if not is_simulation_authority() or _death_resolved:
 		return
 	last_hit_direction = signf(context.source.global_position.x - global_position.x) if context.source is Node2D else 1.0
+	var attacking_player := context.source as PlayerActor
+	if attacking_player != null:
+		var resolved_player_id := GameSession.get_player_id(attacking_player.peer_id)
+		if not resolved_player_id.is_empty():
+			last_damage_player_id = resolved_player_id
 	change_state(&"hurt")
 
 func _on_died(_context: DamageContext) -> void:

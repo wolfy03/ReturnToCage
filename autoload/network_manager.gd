@@ -22,6 +22,8 @@ const END_REASON_SERVER_DISCONNECTED := "server_disconnected"
 var state: ConnectionState = ConnectionState.OFFLINE
 var last_error: String = ""
 var players: Dictionary[int, NetworkPlayerInfo] = {}
+var peer_to_player: Dictionary[int, StringName] = {}
+var player_to_peer: Dictionary[StringName, int] = {}
 var world_ready_peers: Dictionary[int, bool] = {}
 var _peer: ENetMultiplayerPeer
 var _local_peer_id: int = 1
@@ -49,7 +51,9 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 	state = ConnectionState.HOSTING
 	_local_peer_id = 1
 	_session_entered = true
-	players[1] = NetworkPlayerInfo.new(1, "Host", true)
+	var host_player_id := _allocate_player_id()
+	_set_identity(1, host_player_id)
+	players[1] = NetworkPlayerInfo.new(1, host_player_id, "Host", true)
 	world_ready_peers[1] = true
 	last_error = ""
 	print("[NET] Hosting on port %d" % port)
@@ -96,6 +100,34 @@ func local_peer_id() -> int:
 func has_peer(peer_id: int) -> bool:
 	return players.has(peer_id)
 
+func player_id_for_peer(peer_id: int) -> StringName:
+	return peer_to_player.get(peer_id, &"")
+
+func peer_id_for_player(player_id: StringName) -> int:
+	return player_to_peer.get(player_id, 0)
+
+func has_player_id(player_id: StringName) -> bool:
+	return not player_id.is_empty() and player_to_peer.has(player_id)
+
+func _allocate_player_id() -> StringName:
+	var result := StringName("player_%s" % Crypto.new().generate_random_bytes(8).hex_encode())
+	while player_to_peer.has(result):
+		result = StringName("player_%s" % Crypto.new().generate_random_bytes(8).hex_encode())
+	return result
+
+func _set_identity(peer_id: int, player_id: StringName) -> bool:
+	if peer_id <= 0 or player_id.is_empty() or peer_to_player.has(peer_id) or player_to_peer.has(player_id):
+		return false
+	peer_to_player[peer_id] = player_id
+	player_to_peer[player_id] = peer_id
+	return true
+
+func _remove_identity(peer_id: int) -> void:
+	var player_id := player_id_for_peer(peer_id)
+	peer_to_player.erase(peer_id)
+	if not player_id.is_empty() and player_to_peer.get(player_id, 0) == peer_id:
+		player_to_peer.erase(player_id)
+
 func can_send_to_peer(peer_id: int) -> bool:
 	if not is_server() or _peer == null or not multiplayer.get_peers().has(peer_id):
 		return false
@@ -129,6 +161,7 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 	if players.erase(peer_id):
 		world_ready_peers.erase(peer_id)
 		GameSession.unregister_player(peer_id)
+		_remove_identity(peer_id)
 		for remaining_peer_id in multiplayer.get_peers():
 			if can_send_to_peer(remaining_peer_id):
 				_client_remove_peer.rpc_id(remaining_peer_id, peer_id)
@@ -170,6 +203,8 @@ func _reset_transport() -> void:
 	_local_peer_id = 1
 	_session_entered = false
 	players.clear()
+	peer_to_player.clear()
+	player_to_peer.clear()
 	world_ready_peers.clear()
 	GameSession.reset_to_offline_local_player(previous_local_peer_id)
 
@@ -186,8 +221,12 @@ func _request_handshake(protocol_version: int, display_name: String) -> void:
 	if players.has(sender):
 		return
 	var safe_name := display_name.strip_edges().left(24)
-	players[sender] = NetworkPlayerInfo.new(sender, safe_name if not safe_name.is_empty() else "Player", true)
-	_client_add_peer.rpc(sender, players[sender].display_name)
+	var player_id := _allocate_player_id()
+	if not _set_identity(sender, player_id):
+		_peer.disconnect_peer(sender)
+		return
+	players[sender] = NetworkPlayerInfo.new(sender, player_id, safe_name if not safe_name.is_empty() else "Player", true)
+	_client_add_peer.rpc(sender, player_id, players[sender].display_name)
 	GameSession.register_player(sender)
 	_receive_session_snapshot.rpc_id(sender, GameSession.to_network_snapshot(NETWORK_PROTOCOL_VERSION))
 	print("[NET] Connected peer %d" % sender)
@@ -209,23 +248,33 @@ func _receive_session_snapshot(payload: Dictionary) -> void:
 		last_error = message
 		connection_failed.emit()
 		return
+	peer_to_player.clear()
+	player_to_peer.clear()
+	for identity in snapshot.identities:
+		if not _set_identity(identity.peer_id, identity.player_id):
+			leave_game()
+			last_error = "Invalid multiplayer identity mapping"
+			connection_failed.emit()
+			return
 	if not GameSession.apply_network_snapshot(snapshot):
 		leave_game()
 		last_error = "Invalid multiplayer session snapshot"
 		connection_failed.emit()
 		return
 	players.clear()
-	for peer_id in snapshot.player_ids:
-		players[peer_id] = NetworkPlayerInfo.new(peer_id, "Host" if peer_id == 1 else "Player", true)
+	for identity in snapshot.identities:
+		players[identity.peer_id] = NetworkPlayerInfo.new(identity.peer_id, identity.player_id, "Host" if identity.peer_id == 1 else "Player", true)
 	_session_entered = true
 	print("[NET] Session synchronized with %d players" % players.size())
 	session_synchronized.emit()
 
 @rpc("authority", "call_remote", "reliable")
-func _client_add_peer(peer_id: int, display_name: String) -> void:
+func _client_add_peer(peer_id: int, player_id: StringName, display_name: String) -> void:
 	if peer_id <= 0 or players.has(peer_id):
 		return
-	players[peer_id] = NetworkPlayerInfo.new(peer_id, display_name, true)
+	if not _set_identity(peer_id, player_id):
+		return
+	players[peer_id] = NetworkPlayerInfo.new(peer_id, player_id, display_name, true)
 	GameSession.register_player(peer_id)
 	peer_joined.emit(peer_id)
 
@@ -233,4 +282,5 @@ func _client_add_peer(peer_id: int, display_name: String) -> void:
 func _client_remove_peer(peer_id: int) -> void:
 	if players.erase(peer_id):
 		GameSession.unregister_player(peer_id)
+		_remove_identity(peer_id)
 		peer_left.emit(peer_id)

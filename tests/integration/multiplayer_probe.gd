@@ -39,9 +39,18 @@ var pickup_item_id: StringName
 var pickup_quantity: int = 0
 var pickup_count_before: int = 0
 var pickup_confirmations: Dictionary[int, bool] = {}
+var quest_sync_confirmation_sent: bool = false
+var quest_sync_confirmations: Dictionary[int, bool] = {}
+var expected_killer_peer: int = 0
+var quest_progress_confirmation_sent: bool = false
+var quest_progress_confirmations: Dictionary[int, bool] = {}
+var quest_result_requested: bool = false
+const PROBE_PERSONAL_QUEST_ID: StringName = &"_probe_personal_kill"
+const PROBE_PARTY_QUEST_ID: StringName = &"_probe_party_kill"
 
 func _ready() -> void:
 	_parse_arguments()
+	_install_probe_personal_quest()
 	deadline_msec = Time.get_ticks_msec() + 15000
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
 	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
@@ -49,6 +58,10 @@ func _ready() -> void:
 		if NetworkManager.host_game(port, expected_players) != OK or not GameSession.start_new_game():
 			_fail("host setup failed")
 			return
+		NetworkManager.peer_joined.connect(_on_probe_peer_joined)
+		GameSession.start_quest(&"sewer_supplies", GameSession.get_local_player_id())
+		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, GameSession.get_local_player_id())
+		GameSession.start_quest(PROBE_PARTY_QUEST_ID, GameSession.get_local_player_id())
 		_build_world()
 		print("PROBE HOST READY")
 	elif role == "client":
@@ -64,6 +77,29 @@ func _process(_delta: float) -> void:
 		_fail("probe timed out in state %s" % ProbeState.keys()[state])
 		return
 	if role == "client" and world != null:
+		if not quest_sync_confirmation_sent:
+			var local_player_id := GameSession.get_local_player_id()
+			var personal := GameSession.progression.get_personal_progression(local_player_id)
+			var personal_state_count := 0
+			for candidate in GameSession.progression.personal_progression.values():
+				if (candidate as PersonalProgressionState).quest_states.has(PROBE_PERSONAL_QUEST_ID):
+					personal_state_count += 1
+			if not local_player_id.is_empty() and personal != null \
+					and personal.quest_states.has(PROBE_PERSONAL_QUEST_ID) \
+					and GameSession.progression.shared_quest_states.has(&"sewer_supplies") \
+					and GameSession.progression.shared_quest_states.has(PROBE_PARTY_QUEST_ID) \
+					and personal_state_count == 1:
+				quest_sync_confirmation_sent = true
+				_confirm_quest_sync.rpc_id(1, local_player_id)
+		if expected_killer_peer > 0 and not quest_progress_confirmation_sent:
+			var shared_state: QuestState = GameSession.progression.shared_quest_states.get(PROBE_PARTY_QUEST_ID)
+			var own_progression := GameSession.progression.get_personal_progression(GameSession.get_local_player_id())
+			var own_state: QuestState = own_progression.quest_states.get(PROBE_PERSONAL_QUEST_ID) if own_progression != null else null
+			var expected_personal_progress := 1 if NetworkManager.local_peer_id() == expected_killer_peer else 0
+			if shared_state != null and shared_state.progress[0] == 1 and own_state != null \
+					and own_state.progress[0] == expected_personal_progress:
+				quest_progress_confirmation_sent = true
+				_confirm_quest_progress.rpc_id(1)
 		if not enemy_roster_confirmation_sent:
 			for candidate in world.get_children():
 				if candidate is EnemyAgent and candidate.network_entity_id > 0 and not candidate.is_simulation_authority():
@@ -92,7 +128,8 @@ func _process(_delta: float) -> void:
 	match state:
 		ProbeState.WAITING:
 			if GameSession.players.size() == expected_players and actors.size() == expected_players \
-				and enemy_roster_confirmations.size() == expected_players - 1:
+				and enemy_roster_confirmations.size() == expected_players - 1 \
+				and quest_sync_confirmations.size() == expected_players - 1:
 				print("PROBE HOST PLAYERS %d" % expected_players)
 				if disconnect_host:
 					print("PROBE HOST EXITING")
@@ -164,7 +201,17 @@ func _process(_delta: float) -> void:
 				enemy.health.invulnerable_remaining = 0.0
 				_begin_attack_test.rpc_id(selected_peer)
 			var loot_manager := world.get_node("LootSpawnManager") as LootSpawnManager
-			if lethal_attack_sent and enemy == null and not loot_manager.entity_ids().is_empty():
+			if lethal_attack_sent and enemy == null and not quest_result_requested:
+				var killer_id := GameSession.get_player_id(selected_peer)
+				var personal := GameSession.progression.get_personal_progression(killer_id)
+				if personal == null or not personal.quest_states[PROBE_PERSONAL_QUEST_ID].completed \
+						or not GameSession.progression.shared_quest_states[PROBE_PARTY_QUEST_ID].completed:
+					_fail("server quest attribution failed")
+					return
+				quest_result_requested = true
+				_expect_quest_result.rpc(selected_peer)
+			if quest_result_requested and quest_progress_confirmations.size() == expected_players - 1 \
+					and enemy == null and not loot_manager.entity_ids().is_empty():
 				var loot_id := loot_manager.entity_ids()[0]
 				var loot := loot_manager.get_loot(loot_id)
 				var actor := _actor(selected_peer)
@@ -229,6 +276,48 @@ func _parse_arguments() -> void:
 			expected_players = int(argument.trim_prefix("--players="))
 		elif argument == "--disconnect-host":
 			disconnect_host = true
+
+func _install_probe_personal_quest() -> void:
+	var objective := QuestObjectiveDefinition.new()
+	objective.type = QuestObjectiveDefinition.ObjectiveType.KILL_ENEMY
+	objective.target_id = &"sewer_beetle"
+	objective.required_amount = 1
+	var definition := QuestDefinition.new()
+	definition.id = PROBE_PERSONAL_QUEST_ID
+	definition.title = "Probe Personal Kill"
+	definition.scope = QuestDefinition.Scope.PERSONAL
+	definition.objectives = [objective]
+	ContentRegistry._definitions[definition.id] = definition
+	var party := definition.duplicate() as QuestDefinition
+	party.id = PROBE_PARTY_QUEST_ID
+	party.title = "Probe Party Kill"
+	party.scope = QuestDefinition.Scope.PARTY
+	ContentRegistry._definitions[party.id] = party
+
+func _on_probe_peer_joined(peer_id: int) -> void:
+	var player_id := GameSession.get_player_id(peer_id)
+	if not player_id.is_empty():
+		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, player_id)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_quest_sync(player_id: StringName) -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.player_id_for_peer(sender) == player_id:
+		quest_sync_confirmations[sender] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_quest_result(killer_peer_id: int) -> void:
+	expected_killer_peer = killer_peer_id
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_quest_progress() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		quest_progress_confirmations[sender] = true
 
 func _on_session_synchronized() -> void:
 	_build_world()

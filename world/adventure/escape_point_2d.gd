@@ -12,9 +12,14 @@ func can_interact(actor: Node) -> bool:
 	return true
 
 func _process(_delta: float) -> void:
-	var player := get_tree().get_first_node_in_group(&"player") as PlayerActor
-	if player != null and player.global_position.distance_to(global_position) < 65.0:
-		GameSession.discover_escape(interaction_id)
+	if NetworkManager.is_authoritative_simulation():
+		for node in get_tree().get_nodes_in_group(&"player"):
+			var player := node as PlayerActor
+			var runtime := GameSession.get_player_runtime(player.peer_id) if player != null else null
+			if player != null and runtime != null and runtime.life_phase == PlayerRuntimeState.LifePhase.ALIVE \
+					and player.global_position.distance_to(global_position) < 65.0:
+				GameSession.discover_escape(interaction_id, GameSession.get_player_id(player.peer_id))
+				break
 	var discovered: bool = GameSession.progression.discovered_escape_points.has(interaction_id)
 	if GameSession.adventure.active_session != null:
 		discovered = discovered or GameSession.adventure.active_session.discovered_escape_points.has(interaction_id)

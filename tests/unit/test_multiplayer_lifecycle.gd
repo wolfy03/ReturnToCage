@@ -8,11 +8,14 @@ func run(t: Node) -> void:
 	# Unit tests model hosting without opening a socket; the separate localhost
 	# probe covers the actual ENet transport with a process timeout.
 	NetworkManager.state = NetworkManager.ConnectionState.HOSTING
-	NetworkManager.players[1] = NetworkPlayerInfo.new(1, "Host", true)
+	NetworkManager._set_identity(1, &"player_1")
+	NetworkManager.players[1] = NetworkPlayerInfo.new(1, &"player_1", "Host", true)
 	t.assert_true(NetworkManager.is_server(), "lifecycle test models authoritative hosting")
 	t.assert_true(GameSession.start_new_game(), "host creates the authoritative session")
 	var host_id := GameSession.get_local_peer_id()
 	var host_state := GameSession.get_player(host_id)
+	NetworkManager._set_identity(42, &"player_2")
+	NetworkManager._set_identity(43, &"player_3")
 	var peer_b := GameSession.register_player(42)
 	var peer_c := GameSession.register_player(43)
 	var life_b := GameSession.arm_player_life(42)
@@ -51,6 +54,10 @@ func run(t: Node) -> void:
 	t.assert_equal(GameSession.get_player_death_result(43), death_c, "stale peer B callback cannot alter peer C lifecycle")
 	t.assert_true(not SaveManager.can_save().success, "host cannot save an active multiplayer session")
 	t.assert_true(not SaveManager.can_load().success, "host cannot load an active multiplayer session")
+	var retained_personal_b := GameSession.progression.get_personal_progression(&"player_2")
+	GameSession.unregister_player(42)
+	t.assert_equal(GameSession.progression.get_personal_progression(&"player_2"), retained_personal_b, "peer disconnect does not delete stable personal progression")
+	t.assert_true(GameSession.progression.get_personal_progression(&"player_3") != null, "disconnect leaves other personal progression unchanged")
 
 	NetworkManager.leave_game()
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "leave returns transport to offline")
@@ -158,7 +165,8 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 
 	NetworkManager.state = NetworkManager.ConnectionState.HOSTING
 	NetworkManager._session_entered = true
-	NetworkManager.players[1] = NetworkPlayerInfo.new(1, "Host", true)
+	NetworkManager._set_identity(1, &"player_1")
+	NetworkManager.players[1] = NetworkPlayerInfo.new(1, &"player_1", "Host", true)
 	GameSession.start_new_game()
 	GameSession.register_player(42)
 	app_menu.visible = false
@@ -172,7 +180,8 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 
 	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
 	NetworkManager._session_entered = true
-	NetworkManager.players[42] = NetworkPlayerInfo.new(42, "Client", true)
+	NetworkManager._set_identity(42, &"player_2")
+	NetworkManager.players[42] = NetworkPlayerInfo.new(42, &"player_2", "Client", true)
 	GameSession.register_player(42)
 	app_menu.visible = false
 	var client_world := Node.new()
@@ -184,7 +193,8 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 
 	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
 	NetworkManager._session_entered = true
-	NetworkManager.players[42] = NetworkPlayerInfo.new(42, "Client", true)
+	NetworkManager._set_identity(42, &"player_2")
+	NetworkManager.players[42] = NetworkPlayerInfo.new(42, &"player_2", "Client", true)
 	GameSession.register_player(42)
 	app_menu.visible = false
 	var disconnected_world := Node.new()

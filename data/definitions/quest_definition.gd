@@ -1,8 +1,11 @@
 class_name QuestDefinition
 extends ContentDefinition
 
+enum Scope { PERSONAL, PARTY, WORLD }
+
 @export var title: String = ""
 @export_multiline var description: String = ""
+@export var scope: Scope = Scope.PARTY
 @export var prerequisite_quest_ids: Array[StringName] = []
 @export var objectives: Array[QuestObjectiveDefinition] = []
 @export var reward_item_ids: Array[StringName] = []
@@ -12,6 +15,8 @@ extends ContentDefinition
 
 func validate_definition(registry: Node) -> PackedStringArray:
 	var errors := super.validate_definition(registry)
+	if scope < Scope.PERSONAL or scope > Scope.WORLD:
+		errors.append("%s: invalid quest scope" % id)
 	if objectives.is_empty():
 		errors.append("%s: quest has no objectives" % id)
 	if reward_item_ids.size() != reward_amounts.size():
@@ -19,9 +24,18 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	for item_id in reward_item_ids:
 		if not registry.get_definition(item_id) is ItemDefinition:
 			errors.append("%s: missing reward item %s" % [id, item_id])
-	for quest_id in prerequisite_quest_ids + follow_up_quest_ids:
-		if not registry.get_definition(quest_id) is QuestDefinition:
+	for quest_id in prerequisite_quest_ids:
+		var linked := registry.get_definition(quest_id) as QuestDefinition
+		if linked == null:
 			errors.append("%s: missing quest reference %s" % [id, quest_id])
+		elif not _allows_dependency(scope, linked.scope):
+			errors.append("%s: incompatible quest scope dependency %s" % [id, quest_id])
+	for quest_id in follow_up_quest_ids:
+		var linked := registry.get_definition(quest_id) as QuestDefinition
+		if linked == null:
+			errors.append("%s: missing quest reference %s" % [id, quest_id])
+		elif not _allows_dependency(linked.scope, scope):
+			errors.append("%s: incompatible follow-up quest scope %s" % [id, quest_id])
 	for amount in reward_amounts:
 		if amount < 0:
 			errors.append("%s: negative quest reward" % id)
@@ -55,3 +69,13 @@ func validate_definition(registry: Node) -> PackedStringArray:
 		if not valid:
 			errors.append("%s: quest objective target type mismatch: %s" % [id, objective.target_id])
 	return errors
+
+static func _allows_dependency(owner_scope: Scope, dependency_scope: Scope) -> bool:
+	match owner_scope:
+		Scope.PERSONAL:
+			return true
+		Scope.PARTY:
+			return dependency_scope in [Scope.PARTY, Scope.WORLD]
+		Scope.WORLD:
+			return dependency_scope == Scope.WORLD
+	return false

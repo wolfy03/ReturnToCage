@@ -74,7 +74,7 @@ func get_enemy(entity_id: int) -> EnemyAgent:
 func _on_enemy_finished(actor: EnemyAgent) -> void:
 	if actor == null or _enemies.get(actor.network_entity_id) != actor:
 		return
-	GameSession.record_enemy_kill(actor.definition.id)
+	GameSession.record_enemy_kill(actor.definition.id, actor.last_damage_player_id)
 	var table := ContentRegistry.get_definition(actor.definition.loot_table_id) as LootTableDefinition
 	for stack in LootRollService.roll(table, Callable(ContentRegistry, "get_item"), GameSession.current_difficulty().loot_multiplier):
 		_loot_manager.spawn_loot(stack, actor.global_position)

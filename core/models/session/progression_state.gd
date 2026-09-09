@@ -1,14 +1,23 @@
 class_name ProgressionState
 extends RefCounted
 
-var quest_states: Dictionary[StringName, QuestState] = {}
+var shared_quest_states: Dictionary[StringName, QuestState] = {}
+# Save v3 and existing PARTY quest compatibility facade. Personal quest state is
+# intentionally excluded from the v3 save schema.
+var quest_states: Dictionary[StringName, QuestState]:
+	get:
+		return shared_quest_states
+var personal_progression: Dictionary[StringName, PersonalProgressionState] = {}
+var _quest_revisions: Dictionary[String, int] = {}
 var unlocked_regions: Array[StringName] = []
 var unlocked_exits: Array[StringName] = []
 var unlocked_flags: Array[StringName] = []
 var discovered_escape_points: Array[StringName] = []
 
 func reset(start: GameStartDefinition) -> void:
-	quest_states.clear()
+	shared_quest_states.clear()
+	personal_progression.clear()
+	_quest_revisions.clear()
 	unlocked_regions = start.unlocked_regions.duplicate()
 	unlocked_exits = start.unlocked_exits.duplicate()
 	unlocked_flags = start.unlocked_flags.duplicate()
@@ -16,7 +25,7 @@ func reset(start: GameStartDefinition) -> void:
 
 func to_save_dict() -> Dictionary:
 	var quests: Array[Dictionary] = []
-	for state in quest_states.values():
+	for state in shared_quest_states.values():
 		quests.append(state.to_dict())
 	return {
 		"quests": quests, "unlocked_regions": SaveData.strings(unlocked_regions),
@@ -26,7 +35,9 @@ func to_save_dict() -> Dictionary:
 
 func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 	var errors := PackedStringArray()
-	quest_states.clear()
+	shared_quest_states.clear()
+	personal_progression.clear()
+	_quest_revisions.clear()
 	for raw in SaveData.array(data, "quests", errors):
 		if not raw is Dictionary:
 			errors.append("invalid quest record in save")
@@ -59,9 +70,72 @@ func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 			if complete != state.completed:
 				errors.append("quest completion reconciled with objectives: %s" % quest_id)
 			state.completed = complete
-		quest_states[quest_id] = state
+		# Save v3 stores only the legacy shared/PARTY quest collection.
+		if definition.scope != QuestDefinition.Scope.PERSONAL:
+			shared_quest_states[quest_id] = state
+		else:
+			errors.append("personal quest ignored by Save v3: %s" % quest_id)
 	unlocked_regions = SaveData.names(data, "unlocked_regions", errors)
 	unlocked_exits = SaveData.names(data, "unlocked_exits", errors)
 	unlocked_flags = SaveData.names(data, "unlocked_flags", errors)
 	discovered_escape_points = SaveData.names(data, "discovered_escape_points", errors)
 	return errors
+
+func ensure_personal_progression(player_id: StringName) -> PersonalProgressionState:
+	if player_id.is_empty():
+		return null
+	var result: PersonalProgressionState = personal_progression.get(player_id)
+	if result == null:
+		result = PersonalProgressionState.new(player_id)
+		personal_progression[player_id] = result
+	return result
+
+func get_personal_progression(player_id: StringName) -> PersonalProgressionState:
+	return personal_progression.get(player_id)
+
+func get_quest_state(quest_id: StringName, player_id: StringName, registry: Node) -> QuestState:
+	var definition := registry.get_definition(quest_id) as QuestDefinition
+	if definition == null:
+		return null
+	if definition.scope == QuestDefinition.Scope.PERSONAL:
+		var personal := get_personal_progression(player_id)
+		return personal.quest_states.get(quest_id) if personal != null else null
+	return shared_quest_states.get(quest_id)
+
+func set_quest_state(quest_id: StringName, player_id: StringName, state: QuestState, registry: Node) -> bool:
+	var definition := registry.get_definition(quest_id) as QuestDefinition
+	if definition == null or state == null:
+		return false
+	if definition.scope == QuestDefinition.Scope.PERSONAL:
+		var personal := ensure_personal_progression(player_id)
+		if personal == null:
+			return false
+		personal.quest_states[quest_id] = state
+	else:
+		shared_quest_states[quest_id] = state
+	return true
+
+func quest_states_for(definition: QuestDefinition, player_id: StringName = &"") -> Dictionary:
+	if definition != null and definition.scope == QuestDefinition.Scope.PERSONAL:
+		var personal := get_personal_progression(player_id)
+		return personal.quest_states if personal != null else {}
+	return shared_quest_states
+
+func bump_quest_revision(quest_id: StringName, owner_player_id: StringName = &"") -> int:
+	var key := _revision_key(quest_id, owner_player_id)
+	var revision: int = _quest_revisions.get(key, 0) + 1
+	_quest_revisions[key] = revision
+	return revision
+
+func quest_revision(quest_id: StringName, owner_player_id: StringName = &"") -> int:
+	return _quest_revisions.get(_revision_key(quest_id, owner_player_id), 0)
+
+func accept_quest_revision(quest_id: StringName, owner_player_id: StringName, revision: int) -> bool:
+	var key := _revision_key(quest_id, owner_player_id)
+	if revision <= _quest_revisions.get(key, -1):
+		return false
+	_quest_revisions[key] = revision
+	return true
+
+static func _revision_key(quest_id: StringName, owner_player_id: StringName) -> String:
+	return "%s\u001f%s" % [owner_player_id, quest_id]
