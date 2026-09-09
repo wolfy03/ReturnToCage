@@ -7,6 +7,7 @@ var position: Vector2
 var items: Array[ItemStack] = []
 var session_id: String = ""
 var recovered: bool = false
+var owner_peer_id: int = 0
 
 func to_dict() -> Dictionary:
 	var saved_items: Array[Dictionary] = []

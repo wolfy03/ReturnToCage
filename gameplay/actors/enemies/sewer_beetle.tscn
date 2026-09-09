@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource path="res://gameplay/actors/enemies/enemy_agent.gd" type="Script" id="1"]
 [ext_resource path="res://gameplay/components/health_component.gd" type="Script" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource path="res://gameplay/actors/enemies/attack_state.gd" type="Script" id="7"]
 [ext_resource path="res://gameplay/actors/enemies/hurt_state.gd" type="Script" id="8"]
 [ext_resource path="res://gameplay/actors/enemies/dead_state.gd" type="Script" id="9"]
+[ext_resource path="res://gameplay/components/network_enemy_component.gd" type="Script" id="10"]
 
 [sub_resource type="RectangleShape2D" id="BodyShape"]
 size = Vector2(34, 22)
@@ -28,6 +29,9 @@ shape = SubResource("BodyShape")
 unique_name_in_owner = true
 script = ExtResource("2")
 max_health = 24.0
+[node name="NetworkEnemy" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("10")
 [node name="Hurtbox" type="Area2D" parent="."]
 unique_name_in_owner = true
 collision_layer = 2

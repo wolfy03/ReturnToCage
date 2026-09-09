@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
+enum ProbeState { WAITING, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -30,6 +30,15 @@ var server_death_phase: int
 var session_end_verified: bool = false
 var reconnecting: bool = false
 var reconnect_confirmations: Dictionary[int, bool] = {}
+var enemy_roster_confirmation_sent: bool = false
+var enemy_roster_confirmations: Dictionary[int, bool] = {}
+var combat_enemy_id: int = 0
+var combat_enemy_health: float = 0.0
+var lethal_attack_sent: bool = false
+var pickup_item_id: StringName
+var pickup_quantity: int = 0
+var pickup_count_before: int = 0
+var pickup_confirmations: Dictionary[int, bool] = {}
 
 func _ready() -> void:
 	_parse_arguments()
@@ -55,6 +64,12 @@ func _process(_delta: float) -> void:
 		_fail("probe timed out in state %s" % ProbeState.keys()[state])
 		return
 	if role == "client" and world != null:
+		if not enemy_roster_confirmation_sent:
+			for candidate in world.get_children():
+				if candidate is EnemyAgent and candidate.network_entity_id > 0 and not candidate.is_simulation_authority():
+					enemy_roster_confirmation_sent = true
+					_confirm_enemy_roster.rpc_id(1, candidate.network_entity_id)
+					break
 		var local_actor := _actor(NetworkManager.local_peer_id())
 		if local_actor != null and local_actor.global_position.distance_to(client_start_position) > 15.0:
 			client_saw_authoritative_snapshot = true
@@ -76,7 +91,8 @@ func _process(_delta: float) -> void:
 	var actors := get_tree().get_nodes_in_group(&"player")
 	match state:
 		ProbeState.WAITING:
-			if GameSession.players.size() == expected_players and actors.size() == expected_players:
+			if GameSession.players.size() == expected_players and actors.size() == expected_players \
+				and enemy_roster_confirmations.size() == expected_players - 1:
 				print("PROBE HOST PLAYERS %d" % expected_players)
 				if disconnect_host:
 					print("PROBE HOST EXITING")
@@ -118,6 +134,52 @@ func _process(_delta: float) -> void:
 				print("PROBE CLIMB DIAGNOSTIC axis=%.2f mode=%s pos=%s ladder=%s overlaps=%s monitoring=%s masks=%d/%d areas=%d" % [actor.input.vertical_axis, MovementComponent.Mode.keys()[actor.movement.mode], actor.global_position, ladder.global_position, ladder.overlaps_body(actor), ladder.monitoring, actor.collision_layer, ladder.collision_mask, actor.movement.climb_areas.size()])
 			if actor != null and actor.global_position.y < start_position.y - 20.0:
 				print("PROBE HOST CLIMB OK")
+				var enemy := _enemy()
+				if enemy == null:
+					_fail("authoritative enemy is missing")
+					return
+				Input.action_release(&"move_up")
+				actor.movement.exit_climb()
+				actor.global_position = Vector2(700, 520)
+				actor.velocity = Vector2.ZERO
+				actor.facing = 1.0
+				enemy.global_position = actor.global_position + Vector2(38, 0)
+				enemy.health.invulnerable_remaining = 0.0
+				combat_enemy_id = enemy.network_entity_id
+				combat_enemy_health = enemy.health.current_health
+				_begin_attack_test.rpc_id(selected_peer)
+				phase_started_msec = Time.get_ticks_msec()
+				state = ProbeState.COMBAT
+		ProbeState.COMBAT:
+			var enemy := _enemy()
+			if enemy != null and enemy.health.current_health < combat_enemy_health:
+				print("PROBE CLIENT ATTACK AUTHORITY OK")
+				phase_started_msec = Time.get_ticks_msec()
+				state = ProbeState.ENEMY_DEATH
+		ProbeState.ENEMY_DEATH:
+			var enemy := _enemy()
+			if enemy != null and not lethal_attack_sent and Time.get_ticks_msec() - phase_started_msec > 800:
+				lethal_attack_sent = true
+				enemy.health.current_health = 1.0
+				enemy.health.invulnerable_remaining = 0.0
+				_begin_attack_test.rpc_id(selected_peer)
+			var loot_manager := world.get_node("LootSpawnManager") as LootSpawnManager
+			if lethal_attack_sent and enemy == null and not loot_manager.entity_ids().is_empty():
+				var loot_id := loot_manager.entity_ids()[0]
+				var loot := loot_manager.get_loot(loot_id)
+				var actor := _actor(selected_peer)
+				loot.global_position = actor.global_position
+				pickup_item_id = loot.stack.item_id
+				pickup_quantity = loot.stack.quantity
+				pickup_count_before = GameSession.adventure.active_session.get_player_adventure(selected_peer).unsecured_loot.count(pickup_item_id)
+				_begin_pickup_test.rpc_id(selected_peer, loot_id)
+				state = ProbeState.PICKUP
+		ProbeState.PICKUP:
+			var loot_manager := world.get_node("LootSpawnManager") as LootSpawnManager
+			var personal := GameSession.adventure.active_session.get_player_adventure(selected_peer)
+			if loot_manager.entity_ids().is_empty() and pickup_confirmations.has(selected_peer) \
+				and personal.unsecured_loot.count(pickup_item_id) == pickup_count_before + pickup_quantity:
+				print("PROBE LOOT CLAIM AUTHORITY OK")
 				GameSession.get_player(selected_peer).set_health(40.0)
 				_begin_health_test.rpc(selected_peer)
 				phase_started_msec = Time.get_ticks_msec()
@@ -184,17 +246,64 @@ func _on_session_synchronized() -> void:
 	print("PROBE CLIENT WORLD READY")
 
 func _build_world() -> void:
+	if GameSession.adventure.active_session == null:
+		var probe_context := AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id)
+		GameSession.adventure.active_session = AdventureSession.new(probe_context, Callable(ContentRegistry, "get_item"))
+		GameSession.adventure.active_session.set_compatibility_peer_id(GameSession.get_local_peer_id(), Callable(ContentRegistry, "get_item"))
+		for peer_id in GameSession.players:
+			GameSession.adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
 	world = (load("res://world/adventure/sewer_region.tscn") as PackedScene).instantiate() as Node2D
 	world.name = "NetworkProbeWorld"
 	world.call("configure", AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id))
 	add_child(world)
 	ladder = world.get_node("EmergencyLadder") as ClimbableArea2D
 	spawner = world.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	(world.get_node("LootSpawnManager") as LootSpawnManager).pickup_result.connect(_on_probe_pickup_result)
 	for enemy in get_tree().get_nodes_in_group(&"enemy"):
 		enemy.set_physics_process(false)
 
 func _actor(peer_id: int) -> PlayerActor:
 	return world.get_node_or_null("Player_%d" % peer_id) as PlayerActor
+
+func _enemy() -> EnemyAgent:
+	if world == null:
+		return null
+	for child in world.get_children():
+		if child is EnemyAgent:
+			return child
+	return null
+
+@rpc("authority", "call_remote", "reliable")
+func _begin_attack_test() -> void:
+	Input.action_release(&"move_right")
+	Input.action_release(&"move_up")
+	var event := InputEventAction.new()
+	event.action = &"primary_attack"
+	event.pressed = true
+	var actor := _actor(NetworkManager.local_peer_id())
+	if actor != null:
+		actor.input._unhandled_input(event)
+
+@rpc("authority", "call_remote", "reliable")
+func _begin_pickup_test(entity_id: int) -> void:
+	var manager := world.get_node("LootSpawnManager") as LootSpawnManager
+	var attempts := 0
+	while manager.get_loot(entity_id) == null and attempts < 30:
+		await get_tree().process_frame
+		attempts += 1
+	manager.request_pickup(entity_id)
+
+func _on_probe_pickup_result(success: bool, _item_id: StringName, _quantity: int, _message: String) -> void:
+	if success:
+		_confirm_pickup.rpc_id(1)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_pickup() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		pickup_confirmations[sender] = true
 
 @rpc("authority", "call_remote", "reliable")
 func _begin_jump_test() -> void:
@@ -224,6 +333,14 @@ func _confirm_health_presentation() -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if NetworkManager.has_peer(sender):
 		health_confirmations[sender] = true
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_enemy_roster(entity_id: int) -> void:
+	if not NetworkManager.is_server() or entity_id <= 0:
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		enemy_roster_confirmations[sender] = true
 
 @rpc("authority", "call_remote", "reliable")
 func _begin_respawn_test(peer_id: int) -> void:

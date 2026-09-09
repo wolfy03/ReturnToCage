@@ -16,6 +16,7 @@ var move_vector: Vector2:
 var move_axis: float = 0.0
 var local_input_enabled: bool = true
 var gameplay_actions_enabled: bool = true
+var network_intents_enabled: bool = false
 var _jump_pressed: bool = false
 
 func configure_input(p_local_input_enabled: bool, p_gameplay_actions_enabled: bool) -> void:
@@ -40,10 +41,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if gameplay_actions_enabled:
 			jump_requested.emit()
 	elif event.is_action_pressed(&"primary_attack"):
-		if gameplay_actions_enabled:
+		if gameplay_actions_enabled or network_intents_enabled:
 			attack_requested.emit()
 	elif event.is_action_pressed(&"interact"):
-		if gameplay_actions_enabled:
+		if gameplay_actions_enabled or network_intents_enabled:
 			interact_requested.emit()
 	elif event.is_action_pressed(&"use_quick_item"):
 		if gameplay_actions_enabled:

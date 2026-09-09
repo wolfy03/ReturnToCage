@@ -8,6 +8,10 @@ var _slots: Dictionary[int, int] = {}
 var _initialized: bool = false
 var _world_ready_peers: Dictionary[int, bool] = {}
 
+func get_actor(peer_id: int) -> PlayerActor:
+	var actor: PlayerActor = _actors.get(peer_id)
+	return actor if is_instance_valid(actor) else null
+
 func _ready() -> void:
 	GameSession.player_registered.connect(_on_player_registered)
 	GameSession.player_unregistered.connect(_on_player_unregistered)

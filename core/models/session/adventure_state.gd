@@ -34,15 +34,20 @@ func restore(data: Dictionary, instances: Dictionary[String, String] = {}) -> Pa
 			death_drops.append(record)
 	return errors
 
-func recover_drop(id: String) -> CommandResult:
+func recover_drop(id: String, peer_id: int = 1) -> CommandResult:
 	if active_session == null:
 		return CommandResult.make(false, "Death drops can only be recovered during an expedition")
 	for record in death_drops:
 		if record.id != id or record.region_id != active_session.context.region_id or record.recovered:
 			continue
+		if record.owner_peer_id > 0 and record.owner_peer_id != peer_id:
+			return CommandResult.make(false, "Death drop belongs to another player")
+		var personal := active_session.get_player_adventure(peer_id)
+		if personal == null:
+			return CommandResult.make(false, "Unknown adventure player")
 		var remaining: Array[ItemStack] = []
 		for stack in record.items:
-			var added: InventoryResult = active_session.unsecured_loot.add_stack(stack)
+			var added: InventoryResult = personal.unsecured_loot.add_stack(stack)
 			if added.remainder > 0:
 				var rest := stack.duplicate_stack()
 				rest.quantity = added.remainder

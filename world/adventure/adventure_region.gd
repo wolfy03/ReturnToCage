@@ -1,6 +1,5 @@
 extends Node2D
 
-const ENEMY_SCENE := preload("res://gameplay/actors/enemies/sewer_beetle.tscn")
 var context: AdventureContext
 
 func configure(p_context: AdventureContext) -> void:
@@ -23,9 +22,8 @@ func _ready() -> void:
 	_create_gather(&"scrap_cache_a", &"rusty_scrap", 2, Vector2(430, 395))
 	_create_gather(&"scrap_cache_b", &"rusty_scrap", 2, Vector2(760, 305))
 	_create_gather(&"berry_drop", &"berry", 1, Vector2(1070, 405))
-	var enemy := ENEMY_SCENE.instantiate() as EnemyAgent
-	enemy.position = Vector2(970, 525)
-	add_child(enemy)
+	if NetworkManager.is_authoritative_simulation():
+		(get_node("EnemySpawnManager") as EnemySpawnManager).spawn_enemy(&"sewer_beetle", Vector2(970, 525))
 	var points: Array[RegionPoint] = []
 	RegionPoint.collect(self, points)
 	var entry: RegionPoint
@@ -70,8 +68,9 @@ func _create_death_drops() -> void:
 			continue
 		var target: InteractionTarget = WorldHelpers.add_interaction(self, StringName(record.id), "Recover lost items", to_local(record.position), Vector2(34, 34), Color("d5a6e6"), 6)
 		target.add_to_group(&"death_drop")
-		target.activated.connect(func(_actor: Node) -> void:
-			var result: CommandResult = GameSession.adventure.recover_drop(record.id)
+		target.activated.connect(func(actor: Node) -> void:
+			var peer_id := (actor as PlayerActor).peer_id if actor is PlayerActor else GameSession.get_local_peer_id()
+			var result: CommandResult = GameSession.adventure.recover_drop(record.id, peer_id)
 			GameSession.last_message = result.message
 			GameSession.inventory_changed.emit()
 			if record.recovered:
@@ -82,8 +81,9 @@ func _create_death_drops() -> void:
 func _create_gather(id: StringName, item_id: StringName, amount: int, position: Vector2) -> void:
 	var definition := ContentRegistry.get_item(item_id)
 	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, amount], position, Vector2(42, 42), Color("8b6f47"), 2)
-	target.activated.connect(func(_actor: Node) -> void:
-		var result := GameSession.collect_adventure_loot(item_id, amount)
+	target.activated.connect(func(actor: Node) -> void:
+		var peer_id := (actor as PlayerActor).peer_id if actor is PlayerActor else GameSession.get_local_peer_id()
+		var result := GameSession.collect_adventure_loot(item_id, amount, peer_id)
 		if result.changed > 0:
 			GameSession.last_message = "Unsecured loot: %s x%d" % [definition.display_name, result.changed]
 			target.queue_free()

@@ -8,4 +8,13 @@ extends ContentDefinition
 @export_range(0.0, 2000.0, 1.0) var chase_range: float = 230.0
 @export_range(0.0, 1000.0, 1.0) var attack_range: float = 42.0
 @export var faction: StringName = &"hostile"
-@export var loot_table: LootTableDefinition
+@export var loot_table_id: StringName
+
+func validate_definition(registry: Node) -> PackedStringArray:
+	var errors := super.validate_definition(registry)
+	if display_name.strip_edges().is_empty() or max_health <= 0.0 or attack_damage < 0.0 \
+		or move_speed < 0.0 or chase_range < 0.0 or attack_range < 0.0 or faction.is_empty():
+		errors.append("%s: invalid enemy combat definition" % id)
+	if not loot_table_id.is_empty() and not registry.get_definition(loot_table_id) is LootTableDefinition:
+		errors.append("%s: missing loot table %s" % [id, loot_table_id])
+	return errors

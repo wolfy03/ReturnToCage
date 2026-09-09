@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=14 format=3]
 [ext_resource path="res://world/adventure/adventure_region.gd" type="Script" id="1"]
 [ext_resource path="res://world/region_point.gd" type="Script" id="2"]
 [ext_resource path="res://gameplay/components/climbable_area_2d.gd" type="Script" id="3"]
@@ -6,6 +6,9 @@
 [ext_resource path="res://data/content/climbing/rope.tres" type="Resource" id="5"]
 [ext_resource path="res://world/multiplayer/player_spawn_manager.gd" type="Script" id="6"]
 [ext_resource path="res://world/multiplayer/player_spawn_point.gd" type="Script" id="7"]
+[ext_resource path="res://world/multiplayer/network_entity_registry.gd" type="Script" id="8"]
+[ext_resource path="res://world/multiplayer/loot_spawn_manager.gd" type="Script" id="9"]
+[ext_resource path="res://world/multiplayer/enemy_spawn_manager.gd" type="Script" id="10"]
 [sub_resource type="RectangleShape2D" id="LadderShape"]
 size = Vector2(56, 340)
 [sub_resource type="RectangleShape2D" id="RopeShape"]
@@ -14,6 +17,12 @@ size = Vector2(56, 150)
 size = Vector2(140, 12)
 [node name="SewerRegion" type="Node2D"]
 script = ExtResource("1")
+[node name="NetworkEntityRegistry" type="Node" parent="."]
+script = ExtResource("8")
+[node name="LootSpawnManager" type="Node" parent="."]
+script = ExtResource("9")
+[node name="EnemySpawnManager" type="Node" parent="."]
+script = ExtResource("10")
 [node name="Entry" type="Marker2D" parent="."]
 position = Vector2(150, 520)
 script = ExtResource("2")

@@ -164,6 +164,8 @@ func register_player(peer_id: int) -> PlayerState:
 	if start != null:
 		state.reset(start, ContentRegistry)
 	_add_player_state(peer_id, state)
+	if adventure.active_session != null:
+		adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
 	if peer_id == get_local_peer_id():
 		_connect_model_signals()
 	player_registered.emit(peer_id, state)
@@ -176,6 +178,8 @@ func unregister_player(peer_id: int) -> void:
 	players[peer_id].effects.paused = true
 	players.erase(peer_id)
 	_player_runtime.erase(peer_id)
+	if adventure.active_session != null:
+		adventure.active_session.unregister_player(peer_id)
 	player_unregistered.emit(peer_id)
 
 func _add_player_state(peer_id: int, state: PlayerState) -> void:
@@ -383,6 +387,9 @@ func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: Strin
 	var context := AdventureContext.new(region_id, exit_id, entry_id, difficulty.id, session_id)
 	context.prepared_inventory = player.inventory.to_array()
 	adventure.active_session = AdventureSession.new(context, Callable(ContentRegistry, "get_item"))
+	adventure.active_session.set_compatibility_peer_id(get_local_peer_id(), Callable(ContentRegistry, "get_item"))
+	for peer_id in players:
+		adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
 	adventure.active_session.rules = AdventureRulesSnapshot.new(difficulty.effective(ContentRegistry))
 	var runtime := get_player_runtime(get_local_peer_id())
 	if runtime != null:
@@ -391,12 +398,16 @@ func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: Strin
 	adventure_started.emit(context)
 	return context
 
-func collect_adventure_loot(item_id: StringName, amount: int) -> InventoryResult:
+func collect_adventure_loot(item_id: StringName, amount: int, peer_id: int = -1) -> InventoryResult:
 	if not can_mutate_authoritative_state():
 		return InventoryResult.make(amount, 0, "Only the server can collect loot")
 	if adventure.active_session == null:
 		return InventoryResult.make(amount, 0, "no active adventure")
-	var result := adventure.active_session.unsecured_loot.add_item(item_id, amount)
+	var owner_peer_id := get_local_peer_id() if peer_id < 0 else peer_id
+	var personal := adventure.active_session.get_player_adventure(owner_peer_id)
+	if personal == null:
+		return InventoryResult.make(amount, 0, "unknown adventure player")
+	var result := personal.unsecured_loot.add_item(item_id, amount)
 	if result.changed > 0:
 		inventory_changed.emit()
 	return result
@@ -419,7 +430,9 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	if result != AdventureSession.Result.NORMAL_ESCAPE and result != AdventureSession.Result.RETURN_ITEM_ESCAPE:
 		return "An expedition must end through an escape or death"
 	adventure.active_session.result = result
-	var loot: Array[ItemStack] = adventure.active_session.unsecured_loot.stacks()
+	var loot: Array[ItemStack] = []
+	for personal in adventure.active_session.player_adventures.values():
+		loot.append_array((personal as PlayerAdventureState).unsecured_loot.stacks())
 	var secured: CommandResult = settlement.secure_loot(loot)
 	for stack in loot:
 		report_quest_event(QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM, stack.item_id, stack.quantity)
@@ -457,7 +470,8 @@ func handle_player_death(peer_id: int, death_position: Vector2, life_id: int = -
 	runtime.life_phase = PlayerRuntimeState.LifePhase.DEAD
 	state.effects.paused = true
 	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
-	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death)
+	var personal_adventure := adventure.active_session.get_player_adventure(peer_id) if adventure.active_session != null else null
+	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death, personal_adventure, peer_id)
 	runtime.life_phase = PlayerRuntimeState.LifePhase.RESPAWNING
 	last_message = runtime.death_result.summary()
 	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)

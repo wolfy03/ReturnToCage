@@ -3,6 +3,7 @@ extends CharacterBody2D
 
 signal interaction_prompt_changed(text: String)
 signal return_channel_changed(active: bool, progress: float)
+signal attack_presented(sequence: int, facing: float)
 
 @onready var input: PlayerInputComponent = %Input
 @onready var movement: MovementComponent = %Movement
@@ -12,6 +13,7 @@ signal return_channel_changed(active: bool, progress: float)
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
 @onready var network: NetworkPlayerComponent = %Network
+@onready var network_combat: NetworkCombatComponent = %NetworkCombat
 @export var peer_id: int = GameSession.LOCAL_SINGLEPLAYER_PEER_ID
 var _death_handled: bool = false
 var _life_id: int = -1
@@ -47,7 +49,8 @@ func _ready() -> void:
 	combat.configure(self, _bound_state.stats)
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
-	input.attack_requested.connect(_on_attack)
+	network_combat.configure(self, input)
+	network_combat.attack_presented.connect(func(_peer_id: int, sequence: int, replicated_facing: float) -> void: attack_presented.emit(sequence, replicated_facing))
 	input.interact_requested.connect(_on_interact)
 	input.quick_item_requested.connect(_on_quick_item)
 	interaction.target_changed.connect(_on_target_changed)
@@ -72,6 +75,10 @@ func _ready() -> void:
 		combat.set_process(false)
 		effects.set_process(false)
 		interaction.set_process(false)
+		var client_hurtbox := get_node_or_null("Hurtbox") as HurtboxComponent
+		if client_hurtbox != null:
+			client_hurtbox.monitoring = false
+			client_hurtbox.monitorable = false
 
 func _physics_process(delta: float) -> void:
 	if _death_handled:
@@ -92,14 +99,13 @@ func _physics_process(delta: float) -> void:
 			if return_channel >= return_channel_required:
 				_complete_return_channel()
 
-func _on_attack() -> void:
-	if _death_handled or not is_simulation_authority():
-		return
-	if combat.attack(facing):
-		_cancel_return_channel()
-
 func _on_interact() -> void:
-	if _death_handled or not is_simulation_authority():
+	if _death_handled:
+		return
+	if not is_simulation_authority():
+		var loot := interaction.current_target as LootActor
+		if loot != null:
+			loot.request_local_pickup()
 		return
 	if interaction.current_target != null and interaction.current_target.can_interact(self):
 		interaction.try_interact(self)
@@ -137,6 +143,12 @@ func _cancel_return_channel() -> void:
 		return_channel = 0.0
 		movement.enabled = true
 		return_channel_changed.emit(false, 0.0)
+
+func cancel_return_channel_for_combat() -> void:
+	_cancel_return_channel()
+
+func is_death_handled() -> bool:
+	return _death_handled
 
 func consume_item(item_id: StringName) -> bool:
 	if _death_handled or not is_simulation_authority():
