@@ -179,7 +179,9 @@ func unregister_player(peer_id: int) -> void:
 	players.erase(peer_id)
 	_player_runtime.erase(peer_id)
 	if adventure.active_session != null:
-		adventure.active_session.unregister_player(peer_id)
+		# Disconnect policy: without reconnect persistence, this peer forfeits its
+		# unsecured expedition loot while every other peer remains untouched.
+		adventure.active_session.discard_player_adventure(peer_id)
 	player_unregistered.emit(peer_id)
 
 func _add_player_state(peer_id: int, state: PlayerState) -> void:
@@ -417,6 +419,8 @@ func record_enemy_kill(enemy_id: StringName) -> void:
 		return
 	if adventure.active_session == null:
 		return
+	# Temporary phase-2 policy: kill credit is party-shared. Personal/PARTY/WORLD
+	# quest ownership is intentionally deferred to phase 3.
 	adventure.active_session.record_kill(enemy_id)
 	report_quest_event(QuestObjectiveDefinition.ObjectiveType.KILL_ENEMY, enemy_id)
 
@@ -430,6 +434,8 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 	if result != AdventureSession.Result.NORMAL_ESCAPE and result != AdventureSession.Result.RETURN_ITEM_ESCAPE:
 		return "An expedition must end through an escape or death"
 	adventure.active_session.result = result
+	# Temporary party-wide finish policy. Future individual extraction should be a
+	# separate finish_player_adventure(peer_id) operation, not an implicit branch.
 	var loot: Array[ItemStack] = []
 	for personal in adventure.active_session.player_adventures.values():
 		loot.append_array((personal as PlayerAdventureState).unsecured_loot.stacks())

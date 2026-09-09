@@ -1,9 +1,11 @@
-[gd_resource type="Resource" script_class="EnemyDefinition" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="EnemyDefinition" load_steps=3 format=3]
 [ext_resource path="res://data/definitions/enemy_definition.gd" type="Script" id="1"]
+[ext_resource path="res://gameplay/actors/enemies/sewer_beetle.tscn" type="PackedScene" id="2"]
 [resource]
 script = ExtResource("1")
 id = &"sewer_beetle"
 display_name = "Sewer Beetle"
+actor_scene = ExtResource("2")
 max_health = 24.0
 attack_damage = 7.0
 move_speed = 58.0

@@ -5,6 +5,9 @@ const MAX_ENTITY_ID := 2147483647
 var _next_entity_id: int = 1
 var _entities: Dictionary[int, Node] = {}
 
+func entity_count() -> int:
+	return _entities.size()
+
 func register_entity(node: Node) -> int:
 	if node == null or _next_entity_id <= 0 or _next_entity_id > MAX_ENTITY_ID:
 		return 0

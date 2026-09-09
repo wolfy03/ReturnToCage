@@ -33,9 +33,8 @@ func is_simulation_authority() -> bool:
 func _ready() -> void:
 	add_to_group(&"enemy")
 	if definition == null:
-		definition = ContentRegistry.get_definition(&"sewer_beetle") as EnemyDefinition
-	if definition == null:
 		push_error("EnemyAgent requires EnemyDefinition")
+		set_physics_process(false)
 		return
 	patrol_origin = global_position
 	health.max_health = definition.max_health * GameSession.current_difficulty().enemy_health_multiplier

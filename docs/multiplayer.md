@@ -60,6 +60,7 @@ For a visual manual test, start two to four normal instances. Verify that each i
 - Validated health/life runtime presentation snapshots (separate from save data)
 - Intent-only player attack requests with sequence replay protection
 - Server-only enemy AI, combat, knockback, health, and death resolution
+- Definition-driven enemy actors (`enemy_id -> EnemyDefinition.actor_scene -> EnemyAgent`) on server and clients
 - Stable world-local network entity IDs for enemies and loot
 - Enemy spawn/despawn plus 20 Hz interpolated transform snapshots and reliable health/state events
 - Server-only Resource-driven loot rolls and replicated loot actors
@@ -71,6 +72,10 @@ For a visual manual test, start two to four normal instances. Verify that each i
 `inventory_changed` remains a local-player UI compatibility signal. `storage_changed`, `facility_changed`, and `quest_changed` describe shared server-owned session state. Peer-specific presentation uses `player_health_changed` and `player_life_changed`.
 
 Enemy kills currently retain the existing party-shared quest-event behavior. This is an explicit temporary compatibility policy; multiplayer quest ownership is not defined in this phase.
+
+Disconnecting during an expedition explicitly forfeits that peer's current `PlayerAdventureState` and unsecured loot. Other peers' expedition loot and settlement storage are left unchanged. Joining again creates a new empty player-adventure state; reconnect restoration is not supported yet.
+
+`finish_adventure()` is currently a party-wide operation: it gathers every registered player's unsecured loot into settlement storage and ends the expedition for the party. Individual escape and separate `finish_player_adventure(peer_id)` semantics are deferred rather than introducing an unused abstraction now.
 
 ## Not synchronized yet
 

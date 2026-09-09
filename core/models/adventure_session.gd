@@ -41,7 +41,9 @@ func register_player(peer_id: int, resolver: Callable) -> PlayerAdventureState:
 		player_adventures[peer_id] = PlayerAdventureState.new(peer_id, resolver)
 	return player_adventures[peer_id]
 
-func unregister_player(peer_id: int) -> void:
+## Reconnect persistence is intentionally not implemented. A disconnected peer
+## forfeits its current unsecured expedition loot; rejoining is fresh participation.
+func discard_player_adventure(peer_id: int) -> void:
 	player_adventures.erase(peer_id)
 
 func get_player_adventure(peer_id: int) -> PlayerAdventureState:
