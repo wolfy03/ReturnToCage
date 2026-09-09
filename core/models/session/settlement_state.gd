@@ -3,7 +3,15 @@ extends RefCounted
 
 signal changed(revision: int)
 
-var pending_loot: Array[ItemStack] = []
+var _pending_loot: Array[ItemStack] = []
+var pending_loot: Array[ItemStack]:
+	get:
+		if _can_mutate_domain():
+			return _pending_loot
+		var mirror: Array[ItemStack] = []
+		for stack in _pending_loot:
+			mirror.append(stack.duplicate_stack())
+		return mirror
 var _claim_in_progress: bool = false
 var storage: InventoryModel
 var _facility_levels: Dictionary[StringName, int] = {}
@@ -45,7 +53,7 @@ func set_mutation_guard(guard: Callable) -> void:
 
 func reset(start: GameStartDefinition, registry: Node) -> void:
 	_applying_snapshot = true
-	pending_loot.clear()
+	_pending_loot.clear()
 	storage.capacity = start.storage_capacity
 	storage.initialize(start.create_stacks(start.storage_items, registry))
 	facility_levels = start.facility_levels.duplicate()
@@ -68,7 +76,7 @@ func to_save_dict() -> Dictionary:
 	for key in resident_states:
 		residents[String(key)] = resident_states[key].to_dict()
 	var pending: Array[Dictionary] = []
-	for stack in pending_loot:
+	for stack in _pending_loot:
 		pending.append(stack.to_dict())
 	return {"pending_loot": pending, "settlement_storage": storage.to_array(), "facility_levels": facilities, "resident_states": residents}
 
@@ -96,15 +104,15 @@ func restore(data: Dictionary, start: GameStartDefinition, registry: Node, insta
 		var resident := ResidentState.new(StringName(key))
 		errors.append_array(resident.restore(residents[key]))
 		resident_states[resident.resident_id] = resident
-	pending_loot.clear()
+	_pending_loot.clear()
 	var pending: Array = SaveData.array(data, "pending_loot", errors)
 	for index in pending.size():
 		var context: String = "pending_loot[%d]" % index
 		var stack: ItemStack = StackValidation.from_record(pending[index], storage.definition_resolver, errors, context)
 		if stack != null and StackValidation.accept_instance(stack, instances, errors, context):
-			pending_loot.append(stack)
+			_pending_loot.append(stack)
 	# Overflow is already validated and reserved in instances; transfer it once.
-	pending_loot.append_array(storage.take_restore_overflow())
+	_pending_loot.append_array(storage.take_restore_overflow())
 	revision = 0
 	_update_depth = 0
 	_change_pending = false
@@ -164,6 +172,9 @@ func apply_network_mirror(snapshot: SettlementStateSnapshot) -> bool:
 		storage.end_update()
 		_applying_snapshot = false
 		return false
+	_pending_loot.clear()
+	for stack in snapshot.pending_loot:
+		_pending_loot.append(stack.duplicate_stack())
 	facility_levels = snapshot.facility_levels.duplicate()
 	resident_states.clear()
 	for resident_id in snapshot.resident_states:
@@ -192,20 +203,63 @@ func _can_mutate_domain() -> bool:
 	return _applying_snapshot or not _mutation_guard.is_valid() or bool(_mutation_guard.call())
 
 func secure_loot(items: Array[ItemStack]) -> CommandResult:
+	if not _can_mutate_domain():
+		return CommandResult.make(false, "Settlement is a read-only mirror")
+	if items.is_empty():
+		return CommandResult.make(true)
+	var validation_error := _secure_items_error(items)
+	if not validation_error.is_empty():
+		return CommandResult.make(false, validation_error)
+	begin_update()
 	var result: CommandResult = storage.exchange([], items)
 	if not result.success:
 		for stack in items:
-			pending_loot.append(stack.duplicate_stack())
+			_pending_loot.append(stack.duplicate_stack())
+		mark_changed()
+	end_update()
 	return result
 
+func _secure_items_error(items: Array[ItemStack]) -> String:
+	var instance_ids: Dictionary[String, bool] = {}
+	for existing in storage.stacks():
+		if not existing.instance_id.is_empty():
+			instance_ids[existing.instance_id] = true
+	for existing in _pending_loot:
+		if not existing.instance_id.is_empty():
+			instance_ids[existing.instance_id] = true
+	for stack in items:
+		var definition: ItemDefinition = storage.definition_resolver.call(stack.item_id) as ItemDefinition \
+			if stack != null and storage.definition_resolver.is_valid() else null
+		var error := StackValidation.runtime_error(stack, definition)
+		if not error.is_empty() or stack.quantity > definition.max_stack:
+			return error if not error.is_empty() else "Loot stack exceeds max_stack"
+		if not stack.instance_id.is_empty():
+			if instance_ids.has(stack.instance_id):
+				return "Duplicate settlement item instance"
+			instance_ids[stack.instance_id] = true
+	return ""
+
 func claim_pending_loot() -> CommandResult:
+	if not _can_mutate_domain():
+		return CommandResult.make(false, "Settlement is a read-only mirror")
 	if _claim_in_progress:
 		return CommandResult.make(false, "Pending loot claim already in progress")
+	if _pending_loot.is_empty():
+		return CommandResult.make(true, "No pending loot")
 	_claim_in_progress = true
-	storage.begin_update()
-	var result: CommandResult = storage.exchange([], pending_loot)
+	begin_update()
+	var result: CommandResult = storage.exchange([], _pending_loot)
 	if result.success:
-		pending_loot.clear()
-	storage.end_update()
+		_pending_loot.clear()
+		mark_changed()
+	end_update()
 	_claim_in_progress = false
 	return result
+
+## Detached restore staging only. Runtime gameplay must use secure_loot().
+func append_restore_overflow(items: Array[ItemStack]) -> void:
+	if not _can_mutate_domain():
+		return
+	for stack in items:
+		if stack != null:
+			_pending_loot.append(stack.duplicate_stack())

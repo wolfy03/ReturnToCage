@@ -35,8 +35,8 @@ static func build(data: Dictionary, start: GameStartDefinition, registry: Node) 
 	snapshot.warnings.append_array(snapshot.progression.restore(data, registry))
 	snapshot.warnings.append_array(snapshot.difficulty.restore(data, start, registry))
 	snapshot.warnings.append_array(snapshot.adventure.restore(data, instances))
-	snapshot.settlement.pending_loot.append_array(snapshot.player.inventory.take_restore_overflow())
-	snapshot.settlement.pending_loot.append_array(snapshot.player.protected_inventory.take_restore_overflow())
+	snapshot.settlement.append_restore_overflow(snapshot.player.inventory.take_restore_overflow())
+	snapshot.settlement.append_restore_overflow(snapshot.player.protected_inventory.take_restore_overflow())
 	var p: PlayerState = snapshot.player
 	# SaveManager resumes a settlement, which must spawn a living actor. Direct
 	# PlayerState.restore still preserves the domain's valid zero-health state.

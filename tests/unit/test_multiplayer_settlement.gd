@@ -18,6 +18,7 @@ func run(t: Node) -> void:
 
 	_test_upgrade_transaction(t, settlement, progression, service)
 	_test_craft_transaction(t, settlement, progression, service)
+	_test_pending_loot_transaction(t, start)
 	_test_settlement_snapshot(t, settlement)
 	_test_shared_progression_snapshot(t, progression)
 	_test_read_only_mirror(t, start, settlement)
@@ -70,16 +71,19 @@ func _test_craft_transaction(
 
 func _test_settlement_snapshot(t: Node, settlement: SettlementState) -> void:
 	var snapshot := SettlementStateSnapshot.from_state(settlement)
+	snapshot.pending_loot = [ItemStack.new(&"berry", 2)]
 	var parsed := SettlementStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry)
 	t.assert_true(parsed.error_message.is_empty(), "valid settlement snapshot round-trips")
 	t.assert_equal(parsed.storage.size(), 1, "settlement snapshot contains the canonical storage stack")
 	t.assert_equal(parsed.storage[0].item_id, &"mushroom_stew", "settlement snapshot preserves stable item IDs")
+	t.assert_equal(parsed.pending_loot[0].quantity, 2, "settlement snapshot preserves pending loot")
 	var mirror := SettlementState.new(Callable(ContentRegistry, "get_item"), Callable(self, "_deny_mutation"))
 	var start := ContentRegistry.get_definition(GameSession.DEFAULT_START_ID) as GameStartDefinition
 	mirror.reset(start, ContentRegistry)
 	mirror.revision = -1
 	t.assert_true(mirror.apply_network_mirror(parsed), "new settlement mirror revision applies")
 	t.assert_equal(mirror.storage.count(&"mushroom_stew"), 1, "client storage mirror matches authoritative snapshot")
+	t.assert_equal(mirror.pending_loot[0].quantity, 2, "client pending loot mirror matches authoritative snapshot")
 	t.assert_true(not mirror.apply_network_mirror(parsed), "equal settlement revision is rejected as stale")
 
 	var malformed := snapshot.to_payload()
@@ -103,6 +107,71 @@ func _test_settlement_snapshot(t: Node, settlement: SettlementState) -> void:
 		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate", "durability": 100},
 	]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "duplicate storage instance ID is rejected")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = null
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "pending loot must be an array")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = [{"item_id": "missing_item", "quantity": 1, "instance_id": "", "durability": -1}]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "unknown pending loot item is rejected")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = [{"item_id": "berry", "quantity": -1, "instance_id": "", "durability": -1}]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "negative pending loot quantity is rejected")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = [{"item_id": "berry", "quantity": 11, "instance_id": "", "durability": -1}]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "oversized pending loot stack is rejected")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = [{"item_id": "leaf_vest", "quantity": 1, "instance_id": "bad_durability", "durability": 46}]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "invalid pending loot durability is rejected")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = [{"item_id": "leaf_vest", "quantity": 2, "instance_id": "bad_quantity", "durability": 45}]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "instance pending loot quantity must be one")
+	malformed = snapshot.to_payload()
+	malformed["pending_loot"] = [
+		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate_pending", "durability": 45},
+		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate_pending", "durability": 45},
+	]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "duplicate instance within pending loot is rejected")
+	malformed = snapshot.to_payload()
+	malformed["storage"] = [{"item_id": "leaf_vest", "quantity": 1, "instance_id": "cross_container", "durability": 45}]
+	malformed["pending_loot"] = [{"item_id": "leaf_vest", "quantity": 1, "instance_id": "cross_container", "durability": 45}]
+	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "storage and pending loot cannot share an instance ID")
+
+func _test_pending_loot_transaction(t: Node, start: GameStartDefinition) -> void:
+	var settlement := SettlementState.new(Callable(ContentRegistry, "get_item"))
+	settlement.reset(start, ContentRegistry)
+	settlement.storage.capacity = 1
+	settlement.storage.add_item(&"berry", 10)
+	var before_failure := settlement.revision
+	var invalid := settlement.secure_loot([ItemStack.new(&"berry", 11)])
+	t.assert_true(not invalid.success, "invalid overflow stack is rejected before pending mutation")
+	t.assert_equal(settlement.revision, before_failure, "invalid overflow stack creates no revision")
+	var secured := settlement.secure_loot([ItemStack.new(&"water_drop", 1)])
+	t.assert_true(not secured.success, "storage-full secure operation moves loot to pending")
+	t.assert_equal(settlement.pending_loot.size(), 1, "failed secure retains canonical pending loot")
+	t.assert_equal(settlement.revision, before_failure + 1, "secure failure bumps settlement revision once")
+
+	var failed_claim_revision := settlement.revision
+	var failed_claim_state := settlement.to_save_dict()
+	t.assert_true(not settlement.claim_pending_loot().success, "pending claim fails while storage remains full")
+	t.assert_equal(settlement.revision, failed_claim_revision, "failed pending claim does not bump revision")
+	t.assert_equal(settlement.to_save_dict(), failed_claim_state, "failed pending claim changes neither container")
+
+	settlement.storage.capacity = 2
+	var before_claim := settlement.revision
+	t.assert_true(settlement.claim_pending_loot().success, "pending claim succeeds after capacity is available")
+	t.assert_true(settlement.pending_loot.is_empty(), "successful claim clears pending loot")
+	t.assert_equal(settlement.storage.count(&"water_drop"), 1, "successful claim transfers pending loot into storage")
+	t.assert_equal(settlement.revision, before_claim + 1, "storage addition and pending removal share one revision")
+	var after_claim := settlement.revision
+	t.assert_true(settlement.claim_pending_loot().success, "empty pending claim keeps compatibility success semantics")
+	t.assert_equal(settlement.revision, after_claim, "empty pending claim creates no revision")
+
+	settlement.storage.capacity = 2
+	var before_nested := settlement.revision
+	settlement.begin_update()
+	settlement.secure_loot([ItemStack.new(&"moss_fiber", 1)])
+	settlement.end_update()
+	t.assert_equal(settlement.revision, before_nested + 1, "nested secure batching commits one revision")
 
 func _test_shared_progression_snapshot(t: Node, progression: ProgressionState) -> void:
 	var snapshot := SharedProgressionSnapshot.from_state(progression)
@@ -131,7 +200,16 @@ func _test_read_only_mirror(t: Node, start: GameStartDefinition, authoritative: 
 	mirror.facility_levels[&"workbench"] = 1
 	t.assert_equal(mirror.facility_levels.get(&"workbench", 0), 0, "client facility dictionary exposes a read-only copy")
 	mirror.revision = -1
-	t.assert_true(mirror.apply_network_mirror(SettlementStateSnapshot.from_state(authoritative)), "validated snapshot bypasses only the mirror mutation guard")
+	var snapshot := SettlementStateSnapshot.from_state(authoritative)
+	snapshot.pending_loot = [ItemStack.new(&"berry", 2)]
+	t.assert_true(mirror.apply_network_mirror(snapshot), "validated snapshot bypasses only the mirror mutation guard")
+	var exposed := mirror.pending_loot
+	exposed.clear()
+	var exposed_stack := mirror.pending_loot[0]
+	exposed_stack.quantity = 999
+	t.assert_equal(mirror.pending_loot.size(), 1, "client clearing a pending loot copy does not mutate the mirror")
+	t.assert_equal(mirror.pending_loot[0].quantity, 2, "client pending loot ItemStacks are deep copied")
+	t.assert_true(not mirror.secure_loot([ItemStack.new(&"berry", 1)]).success, "client cannot mutate pending loot through secure API")
 
 func _test_shared_reward_revision(t: Node, start: GameStartDefinition) -> void:
 	var settlement := SettlementState.new(Callable(ContentRegistry, "get_item"))
@@ -179,16 +257,18 @@ func _test_command_boundary(t: Node) -> void:
 
 func _test_adventure_finish_revision(t: Node) -> void:
 	GameSession.start_new_game()
+	GameSession.settlement.storage.capacity = 1
+	GameSession.settlement.storage.add_item(&"berry", 10)
 	var context := AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id)
 	GameSession.adventure.active_session = AdventureSession.new(context, Callable(ContentRegistry, "get_item"))
 	var peer_id := GameSession.get_local_peer_id()
 	GameSession.adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
-	GameSession.adventure.active_session.get_player_adventure(peer_id).unsecured_loot.add_item(&"berry", 1)
-	var storage_before := GameSession.settlement.storage.count(&"berry")
+	GameSession.adventure.active_session.get_player_adventure(peer_id).unsecured_loot.add_item(&"water_drop", 1)
 	var revision_before := GameSession.settlement.revision
 	GameSession.finish_adventure(AdventureSession.Result.NORMAL_ESCAPE)
-	t.assert_equal(GameSession.settlement.storage.count(&"berry"), storage_before + 1, "party adventure finish secures personal loot into shared storage")
-	t.assert_equal(GameSession.settlement.revision, revision_before + 1, "adventure finish storage mutation bumps settlement revision")
+	t.assert_equal(GameSession.settlement.storage.count(&"water_drop"), 0, "storage-full adventure finish does not partially secure loot")
+	t.assert_equal(GameSession.settlement.pending_loot[0].item_id, &"water_drop", "storage-full adventure finish retains loot in pending")
+	t.assert_equal(GameSession.settlement.revision, revision_before + 1, "adventure finish pending mutation bumps settlement revision")
 
 func _record_event(event: GameplayEvent) -> void:
 	_events.append(event)

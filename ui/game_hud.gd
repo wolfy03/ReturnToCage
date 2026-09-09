@@ -26,6 +26,7 @@ func _ready() -> void:
 	GameSession.inventory_changed.connect(refresh_all)
 	GameSession.session_reset.connect(func() -> void: visible = true; refresh_all())
 	GameSession.storage_changed.connect(refresh_all)
+	GameSession.settlement_state_changed.connect(func(_revision: int) -> void: refresh_all())
 	GameSession.facility_changed.connect(func(_id: StringName, _level: int) -> void: refresh_all())
 	GameSession.quest_changed.connect(func(_id: StringName) -> void: refresh_all())
 	GameSession.phase_changed.connect(refresh_all)

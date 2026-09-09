@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
+enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, PENDING_OVERFLOW, PENDING_CLAIM, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -51,6 +51,12 @@ var settlement_upgrade_confirmation_sent: bool = false
 var settlement_craft_confirmation_sent: bool = false
 var settlement_upgrade_confirmations: Dictionary[int, bool] = {}
 var settlement_craft_confirmations: Dictionary[int, bool] = {}
+var pending_overflow_expected: bool = false
+var pending_claim_expected: bool = false
+var pending_overflow_confirmation_sent: bool = false
+var pending_claim_confirmation_sent: bool = false
+var pending_overflow_confirmations: Dictionary[int, bool] = {}
+var pending_claim_confirmations: Dictionary[int, bool] = {}
 const PROBE_PERSONAL_QUEST_ID: StringName = &"_probe_personal_kill"
 const PROBE_PARTY_QUEST_ID: StringName = &"_probe_party_kill"
 const PROBE_PERSONAL_UPGRADE_QUEST_ID: StringName = &"_probe_personal_upgrade"
@@ -108,6 +114,22 @@ func _process(_delta: float) -> void:
 				and GameSession.settlement.storage.count(&"moss_fiber") == 0:
 			settlement_craft_confirmation_sent = true
 			_confirm_settlement_craft.rpc_id(1)
+		if pending_overflow_expected and not pending_overflow_confirmation_sent \
+				and GameSession.settlement.pending_loot.size() == 1 \
+				and GameSession.settlement.pending_loot[0].item_id == &"water_drop" \
+				and GameSession.settlement.pending_loot[0].quantity == 1:
+			var exposed := GameSession.settlement.pending_loot
+			exposed[0].quantity = 999
+			exposed.clear()
+			if GameSession.settlement.pending_loot.size() == 1 \
+					and GameSession.settlement.pending_loot[0].quantity == 1:
+				pending_overflow_confirmation_sent = true
+				_confirm_pending_overflow.rpc_id(1)
+		if pending_claim_expected and not pending_claim_confirmation_sent \
+				and GameSession.settlement.pending_loot.is_empty() \
+				and GameSession.settlement.storage.count(&"water_drop") == 1:
+			pending_claim_confirmation_sent = true
+			_confirm_pending_claim.rpc_id(1)
 		if not quest_sync_confirmation_sent:
 			var local_player_id := GameSession.get_local_player_id()
 			var personal := GameSession.progression.get_personal_progression(local_player_id)
@@ -185,6 +207,31 @@ func _process(_delta: float) -> void:
 			if settlement_craft_confirmations.size() == expected_players - 1 \
 					and GameSession.settlement.storage.count(&"mushroom_stew") == 1:
 				print("PROBE SETTLEMENT CRAFT AUTHORITY OK")
+				GameSession.settlement.storage.capacity = GameSession.settlement.storage.stacks().size()
+				GameSession.adventure.active_session.get_player_adventure(selected_peer).unsecured_loot.add_item(&"water_drop", 1)
+				var before_revision := GameSession.settlement.revision
+				GameSession.finish_adventure(AdventureSession.Result.NORMAL_ESCAPE)
+				if GameSession.settlement.pending_loot.size() != 1 \
+						or GameSession.settlement.revision != before_revision + 1:
+					_fail("storage-full pending loot commit failed")
+					return
+				_expect_pending_overflow.rpc()
+				state = ProbeState.PENDING_OVERFLOW
+		ProbeState.PENDING_OVERFLOW:
+			if pending_overflow_confirmations.size() == expected_players - 1:
+				print("PROBE PENDING LOOT MIRROR OK")
+				GameSession.settlement.storage.capacity = 48
+				var before_revision := GameSession.settlement.revision
+				var result := GameSession.claim_pending_loot()
+				if not result.success or GameSession.settlement.revision != before_revision + 1:
+					_fail("pending loot claim commit failed")
+					return
+				_expect_pending_claim.rpc()
+				state = ProbeState.PENDING_CLAIM
+		ProbeState.PENDING_CLAIM:
+			if pending_claim_confirmations.size() == expected_players - 1:
+				print("PROBE PENDING LOOT CLAIM OK")
+				_ensure_probe_adventure()
 				var actor := _actor(selected_peer)
 				start_position = actor.global_position
 				state = ProbeState.HORIZONTAL
@@ -295,6 +342,11 @@ func _process(_delta: float) -> void:
 				and GameSession.phase == server_death_phase \
 				and respawn_confirmations.size() == expected_players - 1:
 				print("PROBE REMOTE PLAYER RESPAWN OK")
+				GameSession.settlement.storage.capacity = GameSession.settlement.storage.stacks().size()
+				var pending_result := GameSession.settlement.secure_loot([ItemStack.new(&"moss_fiber", 1)])
+				if pending_result.success or GameSession.settlement.pending_loot.size() != 1:
+					_fail("reconnect pending loot fixture failed")
+					return
 				_probe_done.rpc()
 				phase_started_msec = Time.get_ticks_msec()
 				state = ProbeState.CLEANUP
@@ -395,6 +447,30 @@ func _confirm_settlement_craft() -> void:
 	if NetworkManager.has_peer(sender):
 		settlement_craft_confirmations[sender] = true
 
+@rpc("authority", "call_remote", "reliable")
+func _expect_pending_overflow() -> void:
+	pending_overflow_expected = true
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_pending_overflow() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		pending_overflow_confirmations[sender] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_pending_claim() -> void:
+	pending_claim_expected = true
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_pending_claim() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		pending_claim_confirmations[sender] = true
+
 @rpc("any_peer", "call_remote", "reliable")
 func _confirm_quest_sync(player_id: StringName) -> void:
 	if not NetworkManager.is_server():
@@ -425,7 +501,9 @@ func _on_session_synchronized() -> void:
 	if reconnecting:
 		if GameSession.settlement.facility_levels.get(&"workbench", 0) != 1 \
 				or GameSession.settlement.storage.count(&"mushroom_stew") != 1 \
-				or not GameSession.progression.unlocked_flags.has(&"basic_crafting"):
+				or not GameSession.progression.unlocked_flags.has(&"basic_crafting") \
+				or GameSession.settlement.pending_loot.size() != 1 \
+				or GameSession.settlement.pending_loot[0].item_id != &"moss_fiber":
 			_fail("fresh reconnect did not receive current settlement snapshot")
 			return
 		print("PROBE CLIENT FRESH RECONNECT OK")
@@ -436,12 +514,7 @@ func _on_session_synchronized() -> void:
 	print("PROBE CLIENT WORLD READY")
 
 func _build_world() -> void:
-	if GameSession.adventure.active_session == null:
-		var probe_context := AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id)
-		GameSession.adventure.active_session = AdventureSession.new(probe_context, Callable(ContentRegistry, "get_item"))
-		GameSession.adventure.active_session.set_compatibility_peer_id(GameSession.get_local_peer_id(), Callable(ContentRegistry, "get_item"))
-		for peer_id in GameSession.players:
-			GameSession.adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
+	_ensure_probe_adventure()
 	world = (load("res://world/adventure/sewer_region.tscn") as PackedScene).instantiate() as Node2D
 	world.name = "NetworkProbeWorld"
 	world.call("configure", AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id))
@@ -451,6 +524,15 @@ func _build_world() -> void:
 	(world.get_node("LootSpawnManager") as LootSpawnManager).pickup_result.connect(_on_probe_pickup_result)
 	for enemy in get_tree().get_nodes_in_group(&"enemy"):
 		enemy.set_physics_process(false)
+
+func _ensure_probe_adventure() -> void:
+	if GameSession.adventure.active_session != null:
+		return
+	var probe_context := AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id)
+	GameSession.adventure.active_session = AdventureSession.new(probe_context, Callable(ContentRegistry, "get_item"))
+	GameSession.adventure.active_session.set_compatibility_peer_id(GameSession.get_local_peer_id(), Callable(ContentRegistry, "get_item"))
+	for peer_id in GameSession.players:
+		GameSession.adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
 
 func _actor(peer_id: int) -> PlayerActor:
 	return world.get_node_or_null("Player_%d" % peer_id) as PlayerActor

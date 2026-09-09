@@ -27,7 +27,9 @@ func run(t: Node) -> void:
 	t.assert_equal(model.storage.count(&"twig_sword"), 1, "claimed instance not duplicated")
 	t.assert_equal(model.storage.count(&"water_drop"), 3, "pending claim conserves ordinary quantity")
 	model.storage.clear()
-	model.pending_loot = [ItemStack.new(&"berry", 2)]
+	model.storage.capacity = 0
+	model.secure_loot([ItemStack.new(&"berry", 2)])
+	model.storage.capacity = 3
 	var reentered: Array[bool] = []
 	var on_change := func() -> void: reentered.append(model.claim_pending_loot().success)
 	model.storage.changed.connect(on_change)
