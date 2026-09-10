@@ -20,6 +20,6 @@ static func from_payload(payload: Variant) -> PlayerIdentityRecord:
 		return result
 	result.peer_id = payload["peer_id"]
 	result.player_id = StringName(payload["player_id"])
-	if result.peer_id <= 0 or result.player_id.is_empty():
+	if result.peer_id <= 0 or not LocalPlayerProfile.is_valid_player_id(result.player_id):
 		result.error_message = "Invalid player identity"
 	return result

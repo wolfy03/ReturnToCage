@@ -38,7 +38,6 @@ var last_death_result: RespawnResult:
 
 const DEFAULT_START_ID: StringName = &"default_game_start"
 const LOCAL_SINGLEPLAYER_PEER_ID := 1
-const LOCAL_SINGLEPLAYER_PLAYER_ID: StringName = &"local_player"
 const LOCAL_EVENT_ACTOR: StringName = &"__local_player__"
 
 var session_id: String = ""
@@ -187,7 +186,8 @@ func get_player_id(peer_id: int) -> StringName:
 	var mapped := NetworkManager.player_id_for_peer(peer_id) if NetworkManager != null else &""
 	if not mapped.is_empty():
 		return mapped
-	return LOCAL_SINGLEPLAYER_PLAYER_ID if peer_id == LOCAL_SINGLEPLAYER_PEER_ID and not NetworkManager.is_multiplayer_active() else &""
+	return NetworkManager.local_profile_player_id() \
+		if peer_id == LOCAL_SINGLEPLAYER_PEER_ID and not NetworkManager.is_multiplayer_active() else &""
 
 func get_local_player_id() -> StringName:
 	return get_player_id(get_local_peer_id())
@@ -195,7 +195,7 @@ func get_local_player_id() -> StringName:
 func get_player_state_by_player_id(player_id: StringName) -> PlayerState:
 	if player_id.is_empty():
 		return null
-	if player_id == LOCAL_SINGLEPLAYER_PLAYER_ID and not NetworkManager.is_multiplayer_active():
+	if player_id == NetworkManager.local_profile_player_id() and not NetworkManager.is_multiplayer_active():
 		return get_player(LOCAL_SINGLEPLAYER_PEER_ID)
 	var peer_id := NetworkManager.peer_id_for_player(player_id)
 	return get_player(peer_id) if peer_id > 0 else null
@@ -884,7 +884,7 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 			retained_state.reset(start, ContentRegistry)
 	_add_player_state(LOCAL_SINGLEPLAYER_PEER_ID, retained_state)
 	progression.personal_progression.clear()
-	progression.ensure_personal_progression(LOCAL_SINGLEPLAYER_PLAYER_ID)
+	progression.ensure_personal_progression(get_local_player_id())
 	retained_state.effects.paused = false
 	session_id = ""
 	play_time_seconds = 0.0

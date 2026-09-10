@@ -28,8 +28,13 @@ def main() -> int:
         try:
             def launch(name: str, role: str) -> None:
                 log_path = Path(temporary) / f"{name}.log"
+                profile_path = Path(temporary) / f"{name}-local-player-profile.json"
                 log_file = log_path.open("wb")
-                process = subprocess.Popen(common + [f"--role={role}"] + extra, stdout=log_file, stderr=subprocess.STDOUT)
+                process = subprocess.Popen(
+                    common + [f"--role={role}", f"--local-profile-path={profile_path}"] + extra,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
                 processes.append((name, process, log_path, log_file))
 
             launch("host", "host")

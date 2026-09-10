@@ -29,6 +29,8 @@ var server_old_life_id: int = -1
 var server_death_phase: int
 var session_end_verified: bool = false
 var reconnecting: bool = false
+var initial_local_peer_id: int = 0
+var initial_local_player_id: StringName = &""
 var reconnect_confirmations: Dictionary[int, bool] = {}
 var enemy_roster_confirmation_sent: bool = false
 var enemy_roster_confirmations: Dictionary[int, bool] = {}
@@ -87,6 +89,9 @@ func _ready() -> void:
 	if role == "host":
 		if NetworkManager.host_game(port, expected_players) != OK or not GameSession.start_new_game():
 			_fail("host setup failed")
+			return
+		if NetworkManager.player_id_for_peer(1) != NetworkManager.local_profile_player_id():
+			_fail("host did not attach its persistent local profile identity")
 			return
 		NetworkManager.peer_joined.connect(_on_probe_peer_joined)
 		GameSession.start_quest(&"sewer_supplies", GameSession.get_local_player_id())
@@ -656,7 +661,9 @@ func _on_session_synchronized() -> void:
 		return
 	if reconnecting:
 		var reconnect_weapon := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
-		if GameSession.settlement.facility_levels.get(&"workbench", 0) != 1 \
+		if NetworkManager.local_peer_id() == initial_local_peer_id \
+				or GameSession.get_local_player_id() != initial_local_player_id \
+				or GameSession.settlement.facility_levels.get(&"workbench", 0) != 1 \
 				or GameSession.settlement.storage.count(&"mushroom_stew") != 1 \
 				or not GameSession.progression.unlocked_flags.has(&"basic_crafting") \
 				or GameSession.settlement.pending_loot.size() != 1 \
@@ -669,6 +676,11 @@ func _on_session_synchronized() -> void:
 			return
 		print("PROBE CLIENT FRESH RECONNECT OK")
 		_confirm_reconnect.rpc_id(1)
+		return
+	initial_local_peer_id = NetworkManager.local_peer_id()
+	initial_local_player_id = GameSession.get_local_player_id()
+	if initial_local_player_id != NetworkManager.local_profile_player_id():
+		_fail("client session identity differs from its persistent local profile")
 		return
 	client_start_position = local_actor.global_position
 	Input.action_press(&"move_right")

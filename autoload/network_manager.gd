@@ -18,6 +18,7 @@ const NETWORK_PROTOCOL_VERSION := NetworkProtocol.VERSION
 const END_REASON_MANUAL := "manual_leave"
 const END_REASON_CONNECTION_FAILED := "connection_failed"
 const END_REASON_SERVER_DISCONNECTED := "server_disconnected"
+const PROFILE_PATH_ARGUMENT := "--local-profile-path="
 
 var state: ConnectionState = ConnectionState.OFFLINE
 var last_error: String = ""
@@ -28,8 +29,10 @@ var world_ready_peers: Dictionary[int, bool] = {}
 var _peer: ENetMultiplayerPeer
 var _local_peer_id: int = 1
 var _session_entered: bool = false
+var _local_profile: LocalPlayerProfile
 
 func _ready() -> void:
+	_ensure_local_profile()
 	multiplayer.peer_connected.connect(_on_transport_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_transport_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -41,6 +44,9 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 	if port < 1 or port > 65535 or max_players < 2 or max_players > MAX_PLAYERS:
 		last_error = "Invalid host port or player limit"
 		return ERR_INVALID_PARAMETER
+	var profile_error := _ensure_local_profile()
+	if profile_error != OK:
+		return profile_error
 	_peer = ENetMultiplayerPeer.new()
 	var result := _peer.create_server(port, max_players - 1)
 	if result != OK:
@@ -51,9 +57,12 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 	state = ConnectionState.HOSTING
 	_local_peer_id = 1
 	_session_entered = true
-	var host_player_id := _allocate_player_id()
-	_set_identity(1, host_player_id)
-	players[1] = NetworkPlayerInfo.new(1, host_player_id, "Host", true)
+	var host_player_id := local_profile_player_id()
+	if not _set_identity(1, host_player_id):
+		last_error = "Cannot attach the host local player profile"
+		_reset_transport()
+		return ERR_INVALID_DATA
+	players[1] = NetworkPlayerInfo.new(1, host_player_id, local_profile_display_name(), true)
 	world_ready_peers[1] = true
 	last_error = ""
 	print("[NET] Hosting on port %d" % port)
@@ -66,6 +75,9 @@ func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
 	if target.is_empty() or port < 1 or port > 65535:
 		last_error = "Invalid server address or port"
 		return ERR_INVALID_PARAMETER
+	var profile_error := _ensure_local_profile()
+	if profile_error != OK:
+		return profile_error
 	_peer = ENetMultiplayerPeer.new()
 	var result := _peer.create_client(target, port)
 	if result != OK:
@@ -109,14 +121,18 @@ func peer_id_for_player(player_id: StringName) -> int:
 func has_player_id(player_id: StringName) -> bool:
 	return not player_id.is_empty() and player_to_peer.has(player_id)
 
-func _allocate_player_id() -> StringName:
-	var result := StringName("player_%s" % Crypto.new().generate_random_bytes(8).hex_encode())
-	while player_to_peer.has(result):
-		result = StringName("player_%s" % Crypto.new().generate_random_bytes(8).hex_encode())
-	return result
+func local_profile_player_id() -> StringName:
+	return _local_profile.get_player_id() if _local_profile != null and _local_profile.is_valid() else &""
+
+func local_profile_display_name() -> String:
+	return _local_profile.get_display_name() if _local_profile != null and _local_profile.is_valid() else ""
+
+func has_valid_local_profile() -> bool:
+	return _local_profile != null and _local_profile.is_valid()
 
 func _set_identity(peer_id: int, player_id: StringName) -> bool:
-	if peer_id <= 0 or player_id.is_empty() or peer_to_player.has(peer_id) or player_to_peer.has(player_id):
+	if peer_id <= 0 or not LocalPlayerProfile.is_valid_player_id(player_id) \
+			or peer_to_player.has(peer_id) or player_to_peer.has(player_id):
 		return false
 	peer_to_player[peer_id] = player_id
 	player_to_peer[player_id] = peer_id
@@ -173,7 +189,12 @@ func _on_connected_to_server() -> void:
 	_local_peer_id = multiplayer.get_unique_id()
 	print("[NET] Joined server; validating protocol")
 	connected_to_server.emit()
-	_request_handshake.rpc_id(1, NETWORK_PROTOCOL_VERSION, "Player")
+	if not has_valid_local_profile():
+		last_error = "Persistent local player profile is unavailable"
+		_finish_network_session(END_REASON_CONNECTION_FAILED)
+		connection_failed.emit()
+		return
+	_request_handshake.rpc_id(1, NETWORK_PROTOCOL_VERSION, local_profile_player_id(), local_profile_display_name())
 
 func _on_connection_failed() -> void:
 	last_error = "Connection failed"
@@ -209,21 +230,23 @@ func _reset_transport() -> void:
 	GameSession.reset_to_offline_local_player(previous_local_peer_id)
 
 @rpc("any_peer", "call_remote", "reliable")
-func _request_handshake(protocol_version: int, display_name: String) -> void:
+func _request_handshake(protocol_version: int, player_id: StringName, display_name: String) -> void:
 	if not is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if sender <= 1 or protocol_version != NETWORK_PROTOCOL_VERSION:
-		_reject_handshake.rpc_id(sender, "Incompatible multiplayer protocol version")
+		_reject_remote_handshake(sender, "Incompatible multiplayer protocol version")
 		print("[NET] Protocol mismatch for peer %d" % sender)
-		_peer.disconnect_peer(sender)
 		return
 	if players.has(sender):
 		return
+	var identity_error := _handshake_identity_error(sender, player_id)
+	if not identity_error.is_empty():
+		_reject_remote_handshake(sender, identity_error)
+		return
 	var safe_name := display_name.strip_edges().left(24)
-	var player_id := _allocate_player_id()
 	if not _set_identity(sender, player_id):
-		_peer.disconnect_peer(sender)
+		_reject_remote_handshake(sender, "Cannot attach persistent player identity")
 		return
 	players[sender] = NetworkPlayerInfo.new(sender, player_id, safe_name if not safe_name.is_empty() else "Player", true)
 	_client_add_peer.rpc(sender, player_id, players[sender].display_name)
@@ -231,6 +254,13 @@ func _request_handshake(protocol_version: int, display_name: String) -> void:
 	_receive_session_snapshot.rpc_id(sender, GameSession.to_network_snapshot(NETWORK_PROTOCOL_VERSION))
 	print("[NET] Connected peer %d" % sender)
 	peer_joined.emit(sender)
+
+func _reject_remote_handshake(peer_id: int, message: String) -> void:
+	if peer_id <= 1 or _peer == null:
+		return
+	if can_send_to_peer(peer_id):
+		_reject_handshake.rpc_id(peer_id, message)
+	_peer.disconnect_peer(peer_id)
 
 @rpc("authority", "call_remote", "reliable")
 func _reject_handshake(message: String) -> void:
@@ -246,6 +276,11 @@ func _receive_session_snapshot(payload: Dictionary) -> void:
 		var message := snapshot.error_message if not snapshot.error_message.is_empty() else "Server omitted the local player"
 		leave_game()
 		last_error = message
+		connection_failed.emit()
+		return
+	if not _snapshot_matches_local_profile(snapshot):
+		leave_game()
+		last_error = "Server returned a different local player identity"
 		connection_failed.emit()
 		return
 	peer_to_player.clear()
@@ -284,3 +319,38 @@ func _client_remove_peer(peer_id: int) -> void:
 		GameSession.unregister_player(peer_id)
 		_remove_identity(peer_id)
 		peer_left.emit(peer_id)
+
+func _ensure_local_profile() -> Error:
+	if _local_profile != null and _local_profile.is_valid():
+		return OK
+	_local_profile = LocalPlayerProfile.new(_profile_path_from_arguments())
+	var result := _local_profile.load_or_create()
+	if result != OK:
+		last_error = _local_profile.last_error
+	return result
+
+func _profile_path_from_arguments() -> String:
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with(PROFILE_PATH_ARGUMENT):
+			var path := argument.trim_prefix(PROFILE_PATH_ARGUMENT).strip_edges()
+			if not path.is_empty():
+				return path
+	return LocalPlayerProfile.DEFAULT_PATH
+
+func _snapshot_matches_local_profile(snapshot: NetworkSessionSnapshot) -> bool:
+	if snapshot == null or not has_valid_local_profile():
+		return false
+	for identity in snapshot.identities:
+		if identity.peer_id == local_peer_id():
+			return identity.player_id == local_profile_player_id()
+	return false
+
+func _handshake_identity_error(sender: int, player_id: StringName) -> String:
+	if sender <= 1:
+		return "Invalid handshake sender"
+	if not LocalPlayerProfile.is_valid_player_id(player_id):
+		return "Invalid persistent player identity"
+	var active_peer: int = player_to_peer.get(player_id, 0)
+	if active_peer > 0 and active_peer != sender:
+		return "Player identity is already connected"
+	return ""

@@ -10,7 +10,7 @@ The host runs both the authoritative server and its local client. Remote clients
 
 Attack requests contain only a monotonic sequence, and pickup requests contain only a server-issued loot entity ID. They never contain target, damage, item, or quantity results. Enemy AI, hit detection, health/death, loot RNG, and personal unsecured-loot mutation run only on the server. The server derives identity from `multiplayer.get_remote_sender_id()` and rejects unknown/spoofed senders, stale sequences, malformed values, invalid life phases, and out-of-range pickups.
 
-`peer_id` remains the transient ENet/RPC routing identity. The host assigns a distinct logical `player_id` during protocol handshake and replicates the validated peer-to-player mapping in the session snapshot. Personal progression is keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by `peer_id`. This is session-stable identity groundwork, not an account or reconnect-authentication system.
+`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`; the client submits it during handshake and the host attaches it only after format and active-duplicate validation. The validated mapping is replicated in the session snapshot. Personal progression is keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
 
 `GameSession.players` remains the canonical peer-to-`PlayerState` collection for this phase, and `GameSession.player` is a compatibility view of the local peer's exact same object. `ProgressionState` now owns separate shared quest states and `PersonalProgressionState[player_id]` containers. Shared settlement, adventure, and difficulty models remain server-owned.
 
@@ -28,7 +28,7 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `7`, receives session metadata and the stable player-identity roster, then enters the settlement.
+3. Select **Join**. The client validates protocol version `8`, verifies that its roster entry matches its local persistent profile, receives session metadata, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
@@ -37,7 +37,7 @@ Allow inbound UDP `7777` in the host machine firewall for LAN testing. NAT trave
 
 ## Local automated probe
 
-The optional helper launches isolated headless Godot processes and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, stable identity mapping, private local-personal plus shared quest snapshots, owner-only inventory/equipment snapshots, remote equip/item-use/deposit/withdraw commands, concurrent withdrawal, client-requested facility upgrade and crafting, shared storage/unlock mirrors, storage-overflow pending loot and claim, late-join settlement state, the enemy roster, movement/climbing, combat/loot, health presentation, disconnect cleanup, a fresh reconnect, and host disconnect notification.
+The optional helper launches isolated headless Godot processes with separate temporary local-profile files and enforces a timeout. It checks actual ENet host/join, two or three peer registries and actors, persistent identity continuity across a fresh reconnect, private local-personal plus shared quest snapshots, owner-only inventory/equipment snapshots, remote equip/item-use/deposit/withdraw commands, concurrent withdrawal, client-requested facility upgrade and crafting, shared storage/unlock mirrors, storage-overflow pending loot and claim, late-join settlement state, the enemy roster, movement/climbing, combat/loot, health presentation, disconnect cleanup, and host disconnect notification.
 
 ```powershell
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2
@@ -45,14 +45,16 @@ python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win6
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --host-disconnect
 ```
 
-For a visual manual test, start two to four normal instances. Verify that each instance reads input only for its own hamster, all actors occupy distinct spawn points, remote transforms interpolate, closing a client removes its actor on the host and remaining clients, and closing the host returns clients to the menu with a disconnect message.
+For a visual same-machine test, each process needs its own installation-profile identity. Launch each development instance with a different `--local-profile-path=<absolute-json-path>` user argument (after Godot's `--` separator); the automated helper configures this automatically. Two ordinary instances sharing the default `user://` profile are intentionally rejected as a duplicate active identity. Verify that each accepted instance reads input only for its own hamster, all actors occupy distinct spawn points, remote transforms interpolate, closing a client removes its actor on the host and remaining clients, and closing the host returns clients to the menu with a disconnect message.
 
 ## Supported now
 
 - Host creation with `ENetMultiplayerPeer`
 - Direct-IP client join and leave
 - Protocol-version handshake
-- Host-assigned `peer_id <-> player_id` mapping in the validated session snapshot
+- Persistent local profiles with `player_` plus 128-bit lowercase hex identities
+- Client-submitted, host-validated active `peer_id <-> player_id` mapping in the session snapshot
+- Duplicate active persistent-identity rejection and same-profile fresh reconnect identity continuity
 - Two to four peer registry and `PlayerState` creation from `GameStartDefinition`
 - Server-owned player spawn/despawn in settlement and adventure scenes
 - Horizontal movement, vertical climbing, and jump commands
@@ -90,13 +92,13 @@ For a visual manual test, start two to four normal instances. Verify that each i
 
 `SettlementState.pending_loot` is shared server-authoritative state. Its public getter always returns deep-copied ItemStacks, including on the host. A storage-full secure operation and a successful pending claim each produce exactly one settlement revision. Clients receive the mirror on late join and fresh reconnect; pending records share instance-ID validation with primary settlement storage.
 
-Each connected player's server `PlayerState.inventory` and `equipment` are canonical. Clients receive only their own revisioned `PlayerItemStateSnapshot`; another peer's full private item state is never broadcast. Equip and unequip use stable instance IDs, consumable requests contain only an item ID, and storage transfers contain only direction, item identity, and amount. Reconnect restoration remains unsupported: a fresh connection receives a new logical player and the configured starting item state.
+Each connected player's server `PlayerState.inventory` and `equipment` are canonical. Clients receive only their own revisioned `PlayerItemStateSnapshot`; another peer's full private item state is never broadcast. Equip and unequip use stable instance IDs, consumable requests contain only an item ID, and storage transfers contain only direction, item identity, and amount. Reconnect restoration remains unsupported: a fresh connection reuses its persistent logical identity but receives a newly constructed `PlayerState` with the configured starting item state.
 
 Enemy kill credit requires a player-attributed server damage source. A single kill or pickup event can advance the contributing player's PERSONAL quests and the shared PARTY/WORLD quests. Ownerless environment kills grant no quest progress.
 
 Disconnecting during an expedition explicitly forfeits that peer's current `PlayerAdventureState` and unsecured loot. Other peers' expedition loot and settlement storage are left unchanged. Joining again creates a new empty player-adventure state; reconnect restoration is not supported yet.
 
-Personal quest progression is deliberately not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. Reattaching a reconnecting peer to that prior logical identity is not implemented, so a fresh join receives a new identity and fresh personal state. A full session/new-game reset may discard these transient in-memory personal states.
+Personal quest progression is deliberately not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer now presents the same persistent identity, but reattaching the previous `PlayerState` is deferred to 4-B. A full session/new-game reset may discard these in-memory personal states.
 
 `finish_adventure()` is currently a party-wide operation: it gathers every registered player's unsecured loot into settlement storage and ends the expedition for the party. Individual escape and separate `finish_player_adventure(peer_id)` semantics are deferred rather than introducing an unused abstraction now.
 
@@ -109,6 +111,7 @@ Save v3 continues to serialize only the existing shared quest collection. Produc
 - Resident runtime movement and animation (resident persistent/domain state is mirrored)
 - Party scene transitions and coordinated expedition start/return
 - Persistent multiplayer saves
-- Reconnect and host migration
+- Reattaching a disconnected PlayerState and reconnect state restoration
+- Host migration
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration
