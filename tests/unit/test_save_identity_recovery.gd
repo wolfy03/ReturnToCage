@@ -10,6 +10,7 @@ func run(t: Node) -> void:
 	_test_candidate_contract(t, token)
 	_test_read_only_and_explicit_staging(t, token)
 	_test_full_staging_rejection(t, token)
+	_test_recovery_facade_preconditions(t, token)
 	_test_recovery_commit(t, token)
 	_test_recovery_commit_failure(t, token)
 	_test_stale_inspection(t, token)
@@ -142,27 +143,44 @@ func _test_recovery_commit(t: Node, token: String) -> void:
 	var save_path := _path(token, "recover_single")
 	_write_json(save_path, _valid_envelope([PLAYER_A]))
 	var profile_path := _profile_path(token, "recover_single")
-	var profile := _recovery_profile(profile_path)
+	_install_recovery_profile(t, profile_path)
 	var save_before := _read_text(save_path)
 	var session_before := GameSession.export_persistent_state()
-	var result := SaveManager.recover_identity_from_save(PLAYER_A, save_path, profile)
+	var active_players_before := GameSession.players.duplicate()
+	var local_state_before := GameSession.get_local_player()
+	var result := SaveManager.recover_identity_from_save(PLAYER_A, save_path)
 	t.assert_true(result.success, "explicit valid Save candidate commits profile identity")
-	t.assert_equal(profile.get_player_id(), PLAYER_A, "successful recovery activates selected identity")
+	t.assert_equal(NetworkManager.local_profile_player_id(), PLAYER_A, "NetworkManager commit facade activates selected identity")
+	t.assert_equal(NetworkManager.local_profile_load_status(), LocalPlayerProfile.LoadStatus.VALID_PRIMARY, "successful selection recovery resolves to valid-primary status")
 	t.assert_equal(_read_profile_id(profile_path), PLAYER_A, "successful recovery writes selected primary identity")
 	t.assert_equal(_read_profile_id(profile_path + ".bak"), PLAYER_A, "successful recovery writes selected backup identity")
 	t.assert_equal(_read_text(save_path), save_before, "successful recovery does not modify Save bytes")
 	t.assert_equal(GameSession.export_persistent_state(), session_before, "successful identity recovery does not apply staged GameSession")
+	t.assert_equal(GameSession.players, active_players_before, "successful profile recovery does not change active GameSession attachments")
+	t.assert_true(GameSession.get_local_player() == local_state_before, "successful profile recovery does not replace the local PlayerState")
 
 	var multiple_path := _path(token, "recover_multiple")
 	_write_json(multiple_path, _valid_envelope([PLAYER_C, PLAYER_A, PLAYER_B]))
 	var multiple_profile_path := _profile_path(token, "recover_multiple")
-	var multiple_profile := _recovery_profile(multiple_profile_path)
-	t.assert_true(SaveManager.recover_identity_from_save(PLAYER_B, multiple_path, multiple_profile).success, "multiple candidates require and accept explicit selection")
-	t.assert_equal(multiple_profile.get_player_id(), PLAYER_B, "explicit B selection never falls back to sorted candidate A")
+	_install_recovery_profile(t, multiple_profile_path)
+	t.assert_true(SaveManager.recover_identity_from_save(PLAYER_B, multiple_path).success, "multiple candidates require and accept explicit selection")
+	t.assert_equal(NetworkManager.local_profile_player_id(), PLAYER_B, "explicit B selection never falls back to sorted candidate A")
+	_restore_network_profile(t)
 	_cleanup_save(save_path)
 	_cleanup_profile(profile_path)
 	_cleanup_save(multiple_path)
 	_cleanup_profile(multiple_profile_path)
+
+func _test_recovery_facade_preconditions(t: Node, token: String) -> void:
+	var save_path := _path(token, "facade_precondition")
+	_write_json(save_path, _valid_envelope([PLAYER_A]))
+	var profile_id_before := NetworkManager.local_profile_player_id()
+	var profile_status_before := NetworkManager.local_profile_load_status()
+	var result := SaveManager.recover_identity_from_save(PLAYER_A, save_path)
+	t.assert_true(not result.success and result.message.contains("not awaiting"), "valid active profile cannot be replaced through recovery orchestration")
+	t.assert_equal(NetworkManager.local_profile_player_id(), profile_id_before, "recovery precondition rejection preserves active identity")
+	t.assert_equal(NetworkManager.local_profile_load_status(), profile_status_before, "recovery precondition rejection preserves profile status")
+	_cleanup_save(save_path)
 
 func _test_recovery_commit_failure(t: Node, token: String) -> void:
 	var save_path := _path(token, "commit_failure")
@@ -173,16 +191,24 @@ func _test_recovery_commit_failure(t: Node, token: String) -> void:
 	var backup_before := "{corrupt backup recovery"
 	_write(profile_path, primary_before)
 	_write(profile_path + ".bak", backup_before)
-	var profile := LocalPlayerProfile.new(profile_path, _failure_hook([LocalPlayerProfile.OP_AFTER_BACKUP_INSTALL]))
-	t.assert_equal(profile.load_or_create(), ERR_INVALID_DATA, "commit failure fixture requires identity recovery")
+	t.assert_equal(NetworkManager._load_local_profile_for_test(
+		profile_path,
+		_failure_hook([LocalPlayerProfile.OP_AFTER_BACKUP_INSTALL])
+	), ERR_INVALID_DATA, "commit failure fixture requires identity recovery")
+	t.assert_equal(NetworkManager.local_profile_load_status(), LocalPlayerProfile.LoadStatus.IDENTITY_RECOVERY_REQUIRED, "failure fixture is attached through the NetworkManager test seam")
 	var session_before := GameSession.export_persistent_state()
-	var result := SaveManager.recover_identity_from_save(PLAYER_A, save_path, profile)
+	var active_players_before := GameSession.players.duplicate()
+	var local_state_before := GameSession.get_local_player()
+	var result := SaveManager.recover_identity_from_save(PLAYER_A, save_path)
 	t.assert_true(not result.success, "profile transaction failure rejects recovery")
-	t.assert_true(not profile.is_valid() and profile.get_player_id().is_empty(), "profile transaction failure does not activate memory identity")
+	t.assert_true(not NetworkManager.has_valid_local_profile() and NetworkManager.local_profile_player_id().is_empty(), "profile transaction failure does not activate memory identity")
 	t.assert_equal(_read_text(profile_path), primary_before, "profile transaction failure restores primary bytes")
 	t.assert_equal(_read_text(profile_path + ".bak"), backup_before, "profile transaction failure restores backup bytes")
 	t.assert_equal(_read_text(save_path), save_before, "profile commit failure leaves Save bytes unchanged")
 	t.assert_equal(GameSession.export_persistent_state(), session_before, "profile commit failure leaves live GameSession unchanged")
+	t.assert_equal(GameSession.players, active_players_before, "profile commit failure leaves active attachments unchanged")
+	t.assert_true(GameSession.get_local_player() == local_state_before, "profile commit failure leaves local PlayerState unchanged")
+	_restore_network_profile(t)
 	_cleanup_save(save_path)
 	_cleanup_profile(profile_path)
 
@@ -194,11 +220,12 @@ func _test_stale_inspection(t: Node, token: String) -> void:
 	_write_json(save_path, _valid_envelope([PLAYER_A]))
 	var bytes_after_change := _read_text(save_path)
 	var profile_path := _profile_path(token, "stale")
-	var profile := _recovery_profile(profile_path)
-	var result := SaveManager.recover_identity_from_save(PLAYER_B, save_path, profile)
+	_install_recovery_profile(t, profile_path)
+	var result := SaveManager.recover_identity_from_save(PLAYER_B, save_path)
 	t.assert_true(not result.success, "recovery re-reads Save instead of trusting stale inspected candidates")
-	t.assert_true(not profile.is_valid(), "stale candidate is not committed")
+	t.assert_true(not NetworkManager.has_valid_local_profile(), "stale candidate is not committed")
 	t.assert_equal(_read_text(save_path), bytes_after_change, "stale candidate rejection does not rewrite Save")
+	_restore_network_profile(t)
 	_cleanup_save(save_path)
 	_cleanup_profile(profile_path)
 
@@ -228,13 +255,16 @@ func _player_record() -> Dictionary:
 		"personal_progression": {"quests": []},
 	}
 
-func _recovery_profile(path: String) -> LocalPlayerProfile:
+func _install_recovery_profile(t: Node, path: String) -> void:
 	_cleanup_profile(path)
 	_write(path, "{invalid primary")
 	_write(path + ".bak", "{invalid backup")
-	var profile := LocalPlayerProfile.new(path)
-	profile.load_or_create()
-	return profile
+	t.assert_equal(NetworkManager._load_local_profile_for_test(path), ERR_INVALID_DATA, "test profile enters identity recovery through NetworkManager")
+	t.assert_equal(NetworkManager.local_profile_load_status(), LocalPlayerProfile.LoadStatus.IDENTITY_RECOVERY_REQUIRED, "test recovery profile exposes required status")
+
+func _restore_network_profile(t: Node) -> void:
+	t.assert_equal(NetworkManager._restore_local_profile_after_test(), OK, "NetworkManager restores its normal local profile after recovery test")
+	t.assert_true(NetworkManager.has_valid_local_profile(), "restored startup profile remains valid")
 
 func _failure_hook(operations: Array) -> Callable:
 	return func(operation: StringName) -> bool:

@@ -133,8 +133,36 @@ func has_valid_local_profile() -> bool:
 func local_profile_load_status() -> int:
 	return _local_profile.load_status if _local_profile != null else LocalPlayerProfile.LoadStatus.NONE
 
-func local_player_profile() -> LocalPlayerProfile:
-	return _local_profile
+func commit_local_profile_identity(
+	player_id: StringName,
+	display_name: String = "Player"
+) -> CommandResult:
+	if _local_profile == null:
+		return CommandResult.make(false, "Local player profile is unavailable")
+	if _local_profile.load_status != LocalPlayerProfile.LoadStatus.IDENTITY_RECOVERY_REQUIRED:
+		return CommandResult.make(false, "Local profile is not awaiting identity recovery")
+	if not LocalPlayerProfile.is_valid_player_id(player_id):
+		return CommandResult.make(false, "Invalid local player identity")
+	var commit_error := _local_profile.commit_identity(player_id, display_name)
+	if commit_error != OK:
+		last_error = _local_profile.last_error
+		return CommandResult.make(false, "Profile identity commit failed: %s" % last_error)
+	last_error = ""
+	return CommandResult.make(true, "Local player identity recovered")
+
+# Narrow debug-test seam: production callers use the read-only queries above
+# and commit_local_profile_identity(), never a mutable profile object.
+func _load_local_profile_for_test(path: String, failure_hook: Callable = Callable()) -> Error:
+	if not OS.is_debug_build():
+		return ERR_UNAUTHORIZED
+	_local_profile = LocalPlayerProfile.new(path, failure_hook)
+	return _local_profile.load_or_create()
+
+func _restore_local_profile_after_test() -> Error:
+	if not OS.is_debug_build():
+		return ERR_UNAUTHORIZED
+	_local_profile = null
+	return _ensure_local_profile()
 
 func _set_identity(peer_id: int, player_id: StringName) -> bool:
 	if peer_id <= 0 or not LocalPlayerProfile.is_valid_player_id(player_id) \

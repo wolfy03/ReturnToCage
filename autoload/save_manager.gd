@@ -9,7 +9,6 @@ const SAVE_PATH := "user://return_to_cage_save.json"
 enum IdentityInspectionStatus {
 	SAVE_NOT_FOUND,
 	INVALID_SAVE,
-	NO_CANDIDATES,
 	SINGLE_CANDIDATE,
 	MULTIPLE_CANDIDATES,
 }
@@ -205,19 +204,12 @@ func validate_identity_candidate(player_id: StringName, path: String = SAVE_PATH
 # complete save stages first, then the profile performs its disk transaction.
 func recover_identity_from_save(
 	player_id: StringName,
-	path: String = SAVE_PATH,
-	profile_override: LocalPlayerProfile = null
+	path: String = SAVE_PATH
 ) -> CommandResult:
-	var profile := profile_override if profile_override != null else NetworkManager.local_player_profile()
-	if profile == null or profile.load_status != LocalPlayerProfile.LoadStatus.IDENTITY_RECOVERY_REQUIRED:
-		return CommandResult.make(false, "Local profile is not awaiting identity recovery")
 	var staged := validate_identity_candidate(player_id, path)
 	if not staged.success:
 		return CommandResult.make(false, staged.error)
-	var commit_error := profile.commit_identity(player_id)
-	if commit_error != OK:
-		return CommandResult.make(false, "Profile identity commit failed: %s" % profile.last_error)
-	return CommandResult.make(true, "Local player identity recovered")
+	return NetworkManager.commit_local_profile_identity(player_id)
 
 func _read_save_dictionary(path: String) -> Dictionary:
 	var result := {
