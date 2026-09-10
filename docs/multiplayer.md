@@ -10,7 +10,7 @@ The host runs both the authoritative server and its local client. Remote clients
 
 Attack requests contain only a monotonic sequence, and pickup requests contain only a server-issued loot entity ID. They never contain target, damage, item, or quantity results. Enemy AI, hit detection, health/death, loot RNG, and personal unsecured-loot mutation run only on the server. The server derives identity from `multiplayer.get_remote_sender_id()` and rejects unknown/spoofed senders, stale sequences, malformed values, invalid life phases, and out-of-range pickups.
 
-`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`; the client submits it during handshake and the host attaches it only after format and active-duplicate validation. Profile version `1` is part of the load contract; unsupported or malformed profiles are replaced rather than silently migrated. The validated mapping is replicated in the session snapshot. Personal progression and canonical in-session `PlayerState` ownership are keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by active `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
+`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`, with a redundant copy at `user://local_player_profile.json.bak`; the client submits that identity during handshake and the host attaches it only after format and active-duplicate validation. Profile version `1` remains the load contract. A valid primary is canonical and repairs a missing, invalid, or stale backup. A valid backup recovers a missing or corrupt primary without changing the identity. If profile files existed but neither copy is valid, the profile reports `IDENTITY_RECOVERY_REQUIRED` instead of silently generating a replacement ID; Save-based candidate selection is deferred to the next recovery phase. The validated mapping is replicated in the session snapshot. Personal progression and canonical in-session `PlayerState` ownership are keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by active `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
 
 `GameSession` owns one canonical in-memory `PlayerState` per persistent `player_id`. `GameSession.players[peer_id]` is only the active attachment view and references that exact object; `GameSession.player` remains the local compatibility facade. A disconnect removes the peer runtime, actor, command caches, and active identity mapping, but the host retains the canonical state and personal progression until the multiplayer session ends. Reconnecting with the same inactive `player_id` attaches the existing state to the new peer and sends its current owner-only item and personal quest snapshots. Shared settlement, adventure, and difficulty models remain server-owned.
 
@@ -45,14 +45,14 @@ python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win6
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --host-disconnect
 ```
 
-For a visual same-machine test, each process needs its own installation-profile identity. Launch each development instance with a different `--local-profile-path=<absolute-json-path>` user argument (after Godot's `--` separator); the automated helper configures this automatically. Two ordinary instances sharing the default `user://` profile are intentionally rejected as a duplicate active identity. Verify that each accepted instance reads input only for its own hamster, all actors occupy distinct spawn points, remote transforms interpolate, closing a client removes its actor on the host and remaining clients, and closing the host returns clients to the menu with a disconnect message.
+For a visual same-machine test, each process needs its own installation-profile identity. Launch each development instance with a different `--local-profile-path=<absolute-json-path>` user argument (after Godot's `--` separator); the automated helper configures this automatically. An override `X` derives `X.bak` and `X.tmp` without a special-case path policy. Two ordinary instances sharing the default `user://` profile are intentionally rejected as a duplicate active identity. Verify that each accepted instance reads input only for its own hamster, all actors occupy distinct spawn points, remote transforms interpolate, closing a client removes its actor on the host and remaining clients, and closing the host returns clients to the menu with a disconnect message.
 
 ## Supported now
 
 - Host creation with `ENetMultiplayerPeer`
 - Direct-IP client join and leave
 - Protocol-version handshake
-- Persistent local profiles with `player_` plus 128-bit lowercase hex identities
+- Persistent local profiles with `player_` plus 128-bit lowercase hex identities, atomic temporary writes, and same-identity `.bak` redundancy
 - Client-submitted, host-validated active `peer_id <-> player_id` mapping in the session snapshot
 - Duplicate active persistent-identity rejection and same-profile fresh reconnect identity continuity
 - Two to four peer registry and `PlayerState` creation from `GameStartDefinition`
@@ -111,7 +111,7 @@ Persistent death drops store an optional stable `owner_player_id`; the runtime `
 
 The verified baseline has no known P0 or P1 defects. Save production uses only `export_persistent_state() -> Save v4` and `migrate() -> prepare_persistent_restore() -> apply_persistent_snapshot()`. Legacy flat builders remain test/migration fixtures only. Automated Godot checks, process-restart save/load, two- and three-player ENet probes, repeated same-identity reconnect, and forced host-disconnect cleanup pass on Godot 4.7.2.
 
-Known P2/deferred work is limited to the next persistence UX phase: the local profile has no `.bak` recovery yet, a missing profile cannot yet select/recover an identity from Save v4, saves with multiple player candidates require explicit selection UX, and process-restart client reattachment is not yet orchestrated end to end. These are not described as implemented features.
+Known P2/deferred work is limited to the next persistence UX phase: an unrecoverable or missing profile cannot yet inspect and select an identity candidate from Save v4, saves with multiple player candidates require explicit selection UX, and process-restart client reattachment is not yet orchestrated end to end. These are not described as implemented features.
 
 ## Not synchronized yet
 

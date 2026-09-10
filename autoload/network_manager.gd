@@ -130,6 +130,9 @@ func local_profile_display_name() -> String:
 func has_valid_local_profile() -> bool:
 	return _local_profile != null and _local_profile.is_valid()
 
+func local_profile_load_status() -> int:
+	return _local_profile.load_status if _local_profile != null else LocalPlayerProfile.LoadStatus.NONE
+
 func _set_identity(peer_id: int, player_id: StringName) -> bool:
 	if peer_id <= 0 or not LocalPlayerProfile.is_valid_player_id(player_id) \
 			or peer_to_player.has(peer_id) or player_to_peer.has(player_id):

@@ -43,6 +43,6 @@ v3에는 PERSONAL progression이 없으므로 migration은 빈 personal quest co
 
 ## Profile과 Save 분리
 
-`user://local_player_profile.json`은 “이 설치의 player identity가 무엇인가”를 저장한다. Save v4는 “shared world 및 각 player의 canonical state가 무엇인가”를 저장한다. Profile version과 game save version은 서로 독립이다.
+`user://local_player_profile.json`은 “이 설치의 player identity가 무엇인가”를 저장한다. `user://local_player_profile.json.bak`은 이전 세대 history가 아니라 같은 identity의 검증 가능한 redundant copy다. 쓰기는 `.tmp`를 flush하고 다시 검증한 후 backup과 primary를 안전하게 교체하며, 두 disk copy의 commit이 성공한 뒤에만 선택한 identity를 memory에서 활성화한다. 유효한 primary는 missing/stale backup을 보강하고, primary가 손상됐지만 backup이 유효하면 같은 ID로 primary를 복구한다. 두 파일이 모두 처음부터 없을 때만 새 ID를 만들며, 파일이 있었지만 둘 다 invalid이면 `IDENTITY_RECOVERY_REQUIRED` 상태를 유지한다.
 
-현재 local profile은 primary file만 사용한다. `.bak` recovery, Save v4 단일-player identity recovery candidate, multi-player identity selection UX, host process restart 뒤 client 자동 재접속/reattach orchestration은 4-D 범위이며 아직 구현되지 않았다.
+개발/테스트용 `--local-profile-path=X` override는 primary `X`, backup `X.bak`, temporary `X.tmp`를 사용한다. Profile version과 game save version은 서로 독립이다. Save v4 단일-player identity recovery candidate inspection, multi-player identity selection UX, host process restart 뒤 client 자동 재접속/reattach orchestration은 이후 4-D 차수이며 아직 구현되지 않았다.
