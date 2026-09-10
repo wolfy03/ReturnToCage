@@ -34,12 +34,14 @@ func restore(data: Dictionary, instances: Dictionary[String, String] = {}) -> Pa
 			death_drops.append(record)
 	return errors
 
-func recover_drop(id: String, peer_id: int = 1) -> CommandResult:
+func recover_drop(id: String, peer_id: int = 1, player_id: StringName = &"") -> CommandResult:
 	if active_session == null:
 		return CommandResult.make(false, "Death drops can only be recovered during an expedition")
 	for record in death_drops:
 		if record.id != id or record.region_id != active_session.context.region_id or record.recovered:
 			continue
+		if not record.owner_player_id.is_empty() and record.owner_player_id != player_id:
+			return CommandResult.make(false, "Death drop belongs to another player")
 		if record.owner_peer_id > 0 and record.owner_peer_id != peer_id:
 			return CommandResult.make(false, "Death drop belongs to another player")
 		var personal := active_session.get_player_adventure(peer_id)

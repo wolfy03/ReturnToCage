@@ -125,6 +125,9 @@ func _process(_delta: float) -> void:
 		_fail("probe timed out in state %s" % ProbeState.keys()[state])
 		return
 	if role == "client" and world != null:
+		if not _remote_private_placeholders_are_empty():
+			_fail("client received another player's private item state")
+			return
 		if settlement_upgrade_expected and not settlement_upgrade_confirmation_sent:
 			var personal_upgrade := GameSession.progression.get_personal_progression(GameSession.get_local_player_id())
 			var personal_upgrade_state: QuestState = personal_upgrade.quest_states.get(PROBE_PERSONAL_UPGRADE_QUEST_ID) if personal_upgrade != null else null
@@ -814,6 +817,9 @@ func _on_session_synchronized() -> void:
 	if initial_local_player_id != NetworkManager.local_profile_player_id():
 		_fail("client session identity differs from its persistent local profile")
 		return
+	if not _remote_private_placeholders_are_empty():
+		_fail("client received another player's private item state")
+		return
 	client_start_position = local_actor.global_position
 	Input.action_press(&"move_right")
 	print("PROBE CLIENT WORLD READY")
@@ -829,6 +835,17 @@ func _build_world() -> void:
 	(world.get_node("LootSpawnManager") as LootSpawnManager).pickup_result.connect(_on_probe_pickup_result)
 	for enemy in get_tree().get_nodes_in_group(&"enemy"):
 		enemy.set_physics_process(false)
+
+func _remote_private_placeholders_are_empty() -> bool:
+	for peer_id in GameSession.players:
+		if peer_id == NetworkManager.local_peer_id():
+			continue
+		var state := GameSession.get_player(peer_id)
+		if state == null or not state.inventory.stacks().is_empty() \
+				or not state.protected_inventory.stacks().is_empty() \
+				or not state.equipment.all_equipped().is_empty():
+			return false
+	return true
 
 func _ensure_probe_adventure() -> void:
 	if GameSession.adventure.active_session != null:
@@ -987,7 +1004,9 @@ func _on_multiplayer_session_ended(reason: String) -> void:
 		return
 	if NetworkManager.state != NetworkManager.ConnectionState.OFFLINE \
 		or not NetworkManager.players.is_empty() or not NetworkManager.world_ready_peers.is_empty() \
-		or GameSession.players.size() != 1 or GameSession.phase != GameSession.Phase.MENU \
+		or GameSession.players.size() != 1 or GameSession.persistent_player_count() != 1 \
+		or GameSession.get_local_player_id() != NetworkManager.local_profile_player_id() \
+		or GameSession.phase != GameSession.Phase.MENU \
 		or not GameSession.session_id.is_empty():
 		_fail("session-end signal fired before cleanup completed")
 		return

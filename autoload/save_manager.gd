@@ -40,17 +40,36 @@ func save_game(path: String = SAVE_PATH) -> bool:
 		return false
 	file.store_string(json)
 	file.flush()
+	var write_error := file.get_error()
 	file.close()
 	var absolute_temp := ProjectSettings.globalize_path(temporary)
 	var absolute_path := ProjectSettings.globalize_path(path)
+	if write_error != OK:
+		DirAccess.remove_absolute(absolute_temp)
+		save_finished.emit(false, "Cannot write temporary save: %s" % error_string(write_error))
+		return false
+	var absolute_backup := absolute_path + ".bak"
+	if FileAccess.file_exists(path + ".bak"):
+		var remove_error := DirAccess.remove_absolute(absolute_backup)
+		if remove_error != OK:
+			DirAccess.remove_absolute(absolute_temp)
+			save_finished.emit(false, "Cannot replace save backup: %s" % error_string(remove_error))
+			return false
 	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(absolute_path + ".bak")
-		DirAccess.rename_absolute(absolute_path, absolute_path + ".bak")
+		var backup_error := DirAccess.rename_absolute(absolute_path, absolute_backup)
+		if backup_error != OK:
+			DirAccess.remove_absolute(absolute_temp)
+			save_finished.emit(false, "Cannot create save backup: %s" % error_string(backup_error))
+			return false
 	var error := DirAccess.rename_absolute(absolute_temp, absolute_path)
 	if error != OK:
+		var rollback_error := OK
 		if FileAccess.file_exists(path + ".bak"):
-			DirAccess.rename_absolute(absolute_path + ".bak", absolute_path)
-		save_finished.emit(false, "Atomic save rename failed: %s" % error_string(error))
+			rollback_error = DirAccess.rename_absolute(absolute_backup, absolute_path)
+		if FileAccess.file_exists(temporary):
+			DirAccess.remove_absolute(absolute_temp)
+		var rollback_suffix := "" if rollback_error == OK else "; rollback failed: %s" % error_string(rollback_error)
+		save_finished.emit(false, "Atomic save rename failed: %s%s" % [error_string(error), rollback_suffix])
 		return false
 	save_finished.emit(true, "Game saved")
 	return true
@@ -93,7 +112,7 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	return true
 
 func migrate(envelope: Dictionary) -> Dictionary:
-	var raw_version: Variant = envelope.get("format_version", 1)
+	var raw_version: Variant = envelope.get("format_version", null)
 	if not SaveData.is_integer(raw_version):
 		return {}
 	var version: int = int(raw_version)

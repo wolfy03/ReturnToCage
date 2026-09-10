@@ -133,6 +133,9 @@ static func build_persistent(
 		if warning.begins_with("duplicate instance ignored"):
 			snapshot.fatal_error = "Save v4 contains a duplicate item instance: %s" % warning
 			return snapshot
+		if warning.begins_with("invalid death drop owner player id"):
+			snapshot.fatal_error = "Save v4 contains an invalid death drop owner: %s" % warning
+			return snapshot
 	snapshot.player = snapshot.players_by_id.get(p_local_player_id)
 	if snapshot.player == null:
 		snapshot.fatal_error = "Save v4 local player could not be restored"

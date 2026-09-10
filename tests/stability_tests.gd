@@ -74,16 +74,17 @@ func test_death_and_snapshot() -> void:
 	_cleanup(path)
 	GameSession.request_adventure_from_exit(&"sewer_gate", &"sewer_region")
 	t.assert_equal(GameSession.current_difficulty().inventory_loss, DifficultyDefinition.InventoryLoss.NONE, "next expedition receives changed global rules")
+	t.assert_true(not GameSession.adventure.recover_drop(record.id, 99, &"player_99999999999999999999999999999999").success, "persistent death drop rejects a different logical owner")
 	GameSession.adventure.active_session.unsecured_loot.capacity = 1
 	GameSession.adventure.active_session.unsecured_loot.add_item(&"rusty_scrap", 35)
-	var recovery: CommandResult = GameSession.adventure.recover_drop(record.id)
+	var recovery: CommandResult = GameSession.adventure.recover_drop(record.id, GameSession.get_local_peer_id(), GameSession.get_local_player_id())
 	t.assert_true(not recovery.success, "partial recovery reports remainder")
 	t.assert_equal(GameSession.adventure.active_session.unsecured_loot.count(&"rusty_scrap"), 40, "partial recovery transfers only available capacity")
 	t.assert_equal(_count(GameSession.adventure.death_drops[0].items, &"rusty_scrap"), 7, "partial recovery retains exact remainder")
 	GameSession.adventure.active_session.unsecured_loot.capacity = 10
-	t.assert_true(GameSession.adventure.recover_drop(record.id).success, "full recovery succeeds after adding capacity")
+	t.assert_true(GameSession.adventure.recover_drop(record.id, GameSession.get_local_peer_id(), GameSession.get_local_player_id()).success, "full recovery succeeds after adding capacity")
 	t.assert_true(GameSession.adventure.death_drops.is_empty(), "full recovery removes record")
-	t.assert_true(not GameSession.adventure.recover_drop(record.id).success, "drop cannot be collected twice")
+	t.assert_true(not GameSession.adventure.recover_drop(record.id, GameSession.get_local_peer_id(), GameSession.get_local_player_id()).success, "drop cannot be collected twice")
 	# A second survival expedition loses recovered loot into a fresh record.
 	GameSession.finish_adventure(AdventureSession.Result.NORMAL_ESCAPE)
 	GameSession.set_difficulty(&"survival")

@@ -67,10 +67,14 @@ func run(t: Node) -> void:
 	t.assert_equal(GameSession.progression.get_personal_progression(PLAYER_TWO), retained_personal_b, "peer disconnect does not delete stable personal progression")
 	t.assert_true(GameSession.progression.get_personal_progression(PLAYER_THREE) != null, "disconnect leaves other personal progression unchanged")
 	t.assert_true(GameSession.get_player_state_by_player_id(PLAYER_TWO) == retained_state_b, "peer disconnect detaches instead of deleting canonical PlayerState")
-	var reattached_b := GameSession.attach_player(84, PLAYER_TWO)
-	t.assert_true(reattached_b == retained_state_b, "persistent player identity reattaches the same PlayerState to a new peer")
-	t.assert_true(is_equal_approx(reattached_b.health, retained_health_b) and reattached_b.item_state_revision == retained_item_revision_b, "reattach preserves vitals and item revision")
-	GameSession.detach_player(84)
+	for reconnect_peer in [84, 85]:
+		var reattached_b := GameSession.attach_player(reconnect_peer, PLAYER_TWO)
+		t.assert_true(reattached_b == retained_state_b, "persistent player identity reattaches the same PlayerState to peer %d" % reconnect_peer)
+		t.assert_true(is_equal_approx(reattached_b.health, retained_health_b) and reattached_b.item_state_revision == retained_item_revision_b, "reattach preserves vitals and item revision")
+		t.assert_true(GameSession._player_vitals_callbacks.has(reconnect_peer) and GameSession._player_item_callbacks.has(reconnect_peer), "reattach binds one callback pair")
+		GameSession.detach_player(reconnect_peer)
+		t.assert_true(not GameSession._player_vitals_callbacks.has(reconnect_peer) and not GameSession._player_item_callbacks.has(reconnect_peer), "detach removes the callback pair")
+	t.assert_equal(GameSession.persistent_player_count(), 3, "repeated reconnect retains one canonical PlayerState per logical player")
 
 	NetworkManager.leave_game()
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "leave returns transport to offline")

@@ -19,13 +19,13 @@ players
 
 `shared.progression`에는 PARTY/WORLD 퀘스트와 공용 unlock이 들어간다. `players[player_id].personal_progression`에는 그 플레이어의 PERSONAL 퀘스트가 들어간다. `player_state`는 stats, health, survival, effects, last-safe position, inventory, protected inventory, equipment를 기존 typed model의 저장 API로 직렬화한다. `peer_id`, world-ready 상태, command sequence, actor/runtime ID, replication revision/cache는 저장하지 않는다.
 
-`shared.settlement`에는 storage, pending loot, facility level, resident domain state를 저장한다. `shared.adventure`는 활성 원정을 재개하지 않고 persistent death-drop record만 보존한다. 원정 중 프로세스 종료 복귀는 아직 지원하지 않는다.
+`shared.settlement`에는 storage, pending loot, facility level, resident domain state를 저장한다. `shared.adventure`는 활성 원정을 재개하지 않고 persistent death-drop record만 보존한다. Death drop 소유권은 선택적 stable `owner_player_id`로 저장하며 transient `owner_peer_id`는 저장하지 않는다. 기존 owner 없는 v1–v3 record는 shared recovery 호환성을 유지한다. 원정 중 프로세스 종료 복귀는 아직 지원하지 않는다.
 
 ## 저장 및 로드 권위
 
 Offline은 동일한 v4 schema에 local profile player 하나를 저장한다. Multiplayer client는 파일을 쓸 수 없다. Host는 SETTLEMENT에서 canonical registry의 attached 및 detached PlayerState를 모두 저장할 수 있다. Load는 offline 또는 remote peer가 아직 없는 host에서만 허용하며, ADVENTURE/RESPAWNING 중에는 거부한다.
 
-Writer는 기존 `.tmp` write/flush/close, 기존 파일 `.bak` 이동, 최종 rename 전략을 유지한다. Loader는 독립 `SessionSnapshot`에 shared와 모든 player record를 먼저 복원하고 전체 검증이 성공한 경우에만 live `GameSession`을 교체한다. Local profile의 player record가 없거나 player ID가 형식에 맞지 않으면 load를 거부한다. 복원된 remote player는 persistent registry에 detached 상태로 남고 local profile player만 peer 1에 attach한다.
+Writer는 `.tmp` write/flush/close, 기존 파일 `.bak` 이동, 최종 rename 전략을 유지한다. Temporary write, backup remove/rename, final rename 오류는 모두 실패로 보고하며 final rename 실패 시 backup rollback 결과도 확인한다. Loader는 독립 `SessionSnapshot`에 shared와 모든 player record를 먼저 복원하고 전체 검증이 성공한 경우에만 live `GameSession`을 교체한다. Local profile의 player record가 없거나 player ID가 형식에 맞지 않으면 load를 거부한다. 복원된 remote player는 persistent registry에 detached 상태로 남고 local profile player만 peer 1에 attach한다.
 
 ## Item instance 검증
 
@@ -44,3 +44,5 @@ v3에는 PERSONAL progression이 없으므로 migration은 빈 personal quest co
 ## Profile과 Save 분리
 
 `user://local_player_profile.json`은 “이 설치의 player identity가 무엇인가”를 저장한다. Save v4는 “shared world 및 각 player의 canonical state가 무엇인가”를 저장한다. Profile version과 game save version은 서로 독립이다.
+
+현재 local profile은 primary file만 사용한다. `.bak` recovery, Save v4 단일-player identity recovery candidate, multi-player identity selection UX, host process restart 뒤 client 자동 재접속/reattach orchestration은 4-D 범위이며 아직 구현되지 않았다.

@@ -28,6 +28,33 @@ func run(t: Node) -> void:
 	t.assert_true(saved.has("shared") and saved.has("players") and not saved.has("game_state"), "Save v4 root separates shared and player records")
 	t.assert_true(saved["players"].has(String(local_id)) and saved["players"].has(String(REMOTE_PLAYER_ID)), "attached and detached canonical players are saved by player_id")
 	t.assert_true(not _contains_key(saved, "peer_id"), "Save v4 persists no transient peer identity")
+	for runtime_key in ["world_ready_peers", "peer_to_player", "player_to_peer", "item_state_revision", "settlement_revision", "shared_revision", "command_sequence", "snapshot_cache"]:
+		t.assert_true(not _contains_key(saved, runtime_key), "Save v4 excludes runtime-only field: %s" % runtime_key)
+	for shared_key in ["session", "settlement", "progression", "difficulty", "adventure"]:
+		t.assert_true(saved["shared"].get(shared_key, null) is Dictionary, "Save v4 contains shared contract object: %s" % shared_key)
+	for player_id in saved["players"]:
+		var record: Dictionary = saved["players"][player_id]
+		t.assert_true(record.get("player_state", null) is Dictionary and record.get("personal_progression", null) is Dictionary, "Save v4 player record contains state and personal progression")
+	var shared_quest_ids := _quest_ids(saved["shared"]["progression"])
+	var remote_personal_ids := _quest_ids(saved["players"][String(REMOTE_PLAYER_ID)]["personal_progression"])
+	t.assert_true(shared_quest_ids.has(&"sewer_supplies") and not shared_quest_ids.has(PERSONAL_QUEST_ID), "shared persistence contains PARTY/WORLD quests only")
+	t.assert_true(remote_personal_ids.has(PERSONAL_QUEST_ID) and not remote_personal_ids.has(&"sewer_supplies"), "player persistence contains PERSONAL quests only")
+
+	for missing_shared_key in ["session", "settlement", "progression", "difficulty", "adventure"]:
+		var missing_shared := saved.duplicate(true)
+		missing_shared["shared"].erase(missing_shared_key)
+		t.assert_true(not GameSession.prepare_persistent_restore(missing_shared).fatal_error.is_empty(), "missing shared contract is fatal: %s" % missing_shared_key)
+	for missing_player_key in ["player_state", "personal_progression"]:
+		var missing_player := saved.duplicate(true)
+		missing_player["players"][String(local_id)].erase(missing_player_key)
+		t.assert_true(not GameSession.prepare_persistent_restore(missing_player).fatal_error.is_empty(), "missing player contract is fatal: %s" % missing_player_key)
+	for malformed_root in [
+		{"shared": {}, "players": {}},
+		{"format_version": 4, "shared": [], "players": {}},
+		{"format_version": 4, "shared": {}, "players": []},
+		{"format_version": "4", "shared": {}, "players": {}},
+	]:
+		t.assert_true(SaveManager.migrate(malformed_root).is_empty(), "malformed Save v4 top-level contract is rejected")
 
 	GameSession.start_new_game()
 	t.assert_true(SaveManager.load_game(path), "Save v4 loads through detached staging")
@@ -37,6 +64,9 @@ func run(t: Node) -> void:
 	t.assert_true(restored != null and restored.health == 37.0, "detached remote health survives Save v4")
 	t.assert_equal(restored.inventory.count(&"berry"), 4, "detached remote inventory survives Save v4")
 	t.assert_equal(restored.protected_inventory.stacks()[0].instance_id, "remote_protected_vest", "protected inventory survives Save v4")
+	t.assert_equal(restored.item_state_revision, 0, "private item synchronization revision resets after persistent load")
+	t.assert_equal(GameSession.settlement.revision, 0, "settlement replication revision resets after persistent load")
+	t.assert_equal(GameSession.progression.shared_revision, 0, "shared progression replication revision resets after persistent load")
 	t.assert_equal(GameSession.progression.get_personal_progression(REMOTE_PLAYER_ID).quest_states[PERSONAL_QUEST_ID].progress[0], 1, "personal quest state survives Save v4")
 	t.assert_true(GameSession.progression.shared_quest_states.has(&"sewer_supplies"), "shared PARTY quest state survives Save v4")
 
@@ -63,12 +93,64 @@ func run(t: Node) -> void:
 	shared_duplicate["shared"]["settlement"]["settlement_storage"] = [duplicate_stack]
 	shared_duplicate["players"][String(local_id)]["player_state"]["protected_inventory"] = [duplicate_stack]
 	t.assert_true(not GameSession.prepare_persistent_restore(shared_duplicate).fatal_error.is_empty(), "shared/player item instance duplication is a fatal Save v4 error")
+	var drop_duplicate := GameSession.export_persistent_state()
+	drop_duplicate["players"][String(local_id)]["player_state"]["equipment"] = {"1": duplicate_stack}
+	drop_duplicate["shared"]["adventure"]["death_drops"] = [{
+		"id": "duplicate-drop", "region_id": "sewer_region", "position": [0, 0],
+		"items": [duplicate_stack], "session_id": "test", "recovered": false,
+	}]
+	t.assert_true(not GameSession.prepare_persistent_restore(drop_duplicate).fatal_error.is_empty(), "death drop/player item instance duplication is a fatal Save v4 error")
+	var invalid_drop_owner := GameSession.export_persistent_state()
+	invalid_drop_owner["shared"]["adventure"]["death_drops"] = [{
+		"id": "invalid-owner", "region_id": "sewer_region", "position": [0, 0],
+		"items": [], "session_id": "test", "recovered": false, "owner_player_id": "peer_42",
+	}]
+	t.assert_true(not GameSession.prepare_persistent_restore(invalid_drop_owner).fatal_error.is_empty(), "invalid persistent death drop owner is fatal")
+
+	var overflow := GameSession.export_persistent_state()
+	overflow["shared"]["settlement"]["settlement_storage"] = []
+	overflow["shared"]["settlement"]["pending_loot"] = []
+	var overflow_inventory: Array[Dictionary] = []
+	for index in 12:
+		overflow_inventory.append(_instance(&"leaf_vest", "restore_slot_%d" % index, 45).to_dict())
+	overflow_inventory.append(_instance(&"leaf_vest", "restore_overflow_vest", 45).to_dict())
+	overflow["players"][String(local_id)]["player_state"]["player_inventory"] = overflow_inventory
+	var overflow_snapshot := GameSession.prepare_persistent_restore(overflow)
+	t.assert_true(overflow_snapshot.fatal_error.is_empty(), "validated player overflow stages successfully")
+	var overflow_count := 0
+	for stack in overflow_snapshot.settlement.pending_loot:
+		if stack.instance_id == "restore_overflow_vest":
+			overflow_count += 1
+	t.assert_equal(overflow_count, 1, "restore overflow transfers one reserved instance into pending loot")
+
 	var before := GameSession.export_persistent_state()
-	duplicate["format_version"] = 4
-	duplicate["saved_at"] = "test"
-	_write_json(path, duplicate)
+	var late_corrupt := GameSession.export_persistent_state()
+	late_corrupt["players"]["player_ffffffffffffffffffffffffffffffff"] = {
+		"player_state": {"player_inventory": "corrupt"},
+		"personal_progression": {"quests": []},
+	}
+	late_corrupt["format_version"] = 4
+	late_corrupt["saved_at"] = "test"
+	_write_json(path, late_corrupt)
 	t.assert_true(not SaveManager.load_game(path), "invalid staged Save v4 does not apply")
-	t.assert_equal(GameSession.export_persistent_state(), before, "failed Save v4 load is atomic")
+	t.assert_equal(GameSession.export_persistent_state(), before, "late player staging failure leaves the live session unchanged")
+
+	var save_messages: Array[String] = []
+	var save_callback := func(_success: bool, message: String) -> void: save_messages.append(message)
+	SaveManager.save_finished.connect(save_callback)
+	var unavailable_path := "user://missing_save_parent_%d/save.json" % Time.get_ticks_usec()
+	t.assert_true(not SaveManager.save_game(unavailable_path), "temporary save open failure is reported")
+	t.assert_true(not save_messages.is_empty() and save_messages[-1].begins_with("Cannot create temporary save"), "save write failure is not reported as success")
+	SaveManager.save_finished.disconnect(save_callback)
+
+	NetworkManager.state = NetworkManager.ConnectionState.HOSTING
+	NetworkManager._set_identity(1, local_id)
+	NetworkManager.players[1] = NetworkPlayerInfo.new(1, local_id, "Host", true)
+	t.assert_true(SaveManager.can_load().success, "host may load with detached canonical players and no active remotes")
+	NetworkManager._set_identity(42, REMOTE_PLAYER_ID)
+	NetworkManager.players[42] = NetworkPlayerInfo.new(42, REMOTE_PLAYER_ID, "Remote", true)
+	t.assert_true(not SaveManager.can_load().success, "host cannot load while a remote peer is active")
+	NetworkManager.leave_game()
 
 	_test_client_remote_cleanup(t)
 	ContentRegistry._definitions.erase(PERSONAL_QUEST_ID)
@@ -113,6 +195,13 @@ func _contains_key(value: Variant, key: String) -> bool:
 			if _contains_key(child, key):
 				return true
 	return false
+
+func _quest_ids(data: Dictionary) -> Array[StringName]:
+	var result: Array[StringName] = []
+	for raw in data.get("quests", []):
+		if raw is Dictionary:
+			result.append(StringName(raw.get("quest_id", "")))
+	return result
 
 func _read_json(path: String) -> Dictionary:
 	var file := FileAccess.open(path, FileAccess.READ)

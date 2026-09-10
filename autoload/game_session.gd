@@ -588,7 +588,7 @@ func handle_player_death(peer_id: int, death_position: Vector2, life_id: int = -
 	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
 	var personal_adventure := adventure.active_session.get_player_adventure(peer_id) if adventure.active_session != null else null
 	state.begin_item_update()
-	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death, personal_adventure, peer_id)
+	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death, personal_adventure, peer_id, get_player_id(peer_id))
 	state.end_item_update()
 	runtime.life_phase = PlayerRuntimeState.LifePhase.RESPAWNING
 	last_message = runtime.death_result.summary()

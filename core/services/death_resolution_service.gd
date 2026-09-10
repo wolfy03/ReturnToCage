@@ -1,7 +1,7 @@
 class_name DeathResolutionService
 extends RefCounted
 
-static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable, finish_adventure: bool = true, player_adventure: PlayerAdventureState = null, owner_peer_id: int = 0) -> RespawnResult:
+static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable, finish_adventure: bool = true, player_adventure: PlayerAdventureState = null, owner_peer_id: int = 0, owner_player_id: StringName = &"") -> RespawnResult:
 	var result := RespawnResult.new()
 	result.in_adventure = adventure.active_session != null
 	if result.in_adventure:
@@ -34,6 +34,7 @@ static func resolve(player: PlayerState, settlement: SettlementState, adventure:
 				record.region_id = adventure.active_session.context.region_id
 				record.position = death_position
 				record.owner_peer_id = owner_peer_id
+				record.owner_player_id = owner_player_id
 				record.items = dropped
 				adventure.death_drops.append(record)
 				result.drops.append(record)

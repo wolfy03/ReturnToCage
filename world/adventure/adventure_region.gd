@@ -70,7 +70,7 @@ func _create_death_drops() -> void:
 		target.add_to_group(&"death_drop")
 		target.activated.connect(func(actor: Node) -> void:
 			var peer_id := (actor as PlayerActor).peer_id if actor is PlayerActor else GameSession.get_local_peer_id()
-			var result: CommandResult = GameSession.adventure.recover_drop(record.id, peer_id)
+			var result: CommandResult = GameSession.adventure.recover_drop(record.id, peer_id, GameSession.get_player_id(peer_id))
 			GameSession.last_message = result.message
 			GameSession.inventory_changed.emit()
 			if record.recovered:
