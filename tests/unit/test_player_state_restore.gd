@@ -61,13 +61,9 @@ func run(t: Node) -> void:
 	t.assert_equal(model.survival.hunger, 0.0, "domain survival clamps negative hunger")
 	t.assert_equal(model.survival.thirst, 140.0, "domain survival respects configured maximum")
 	t.assert_equal(model.survival.progression_reduction, 0.9, "domain progression reduction bounded")
-	var source: String = FileAccess.get_file_as_string("res://autoload/game_session.gd")
-	for name in ["player_stats", "player_inventory", "equipment", "settlement_storage", "protected_inventory", "quest_states", "facility_levels", "unlocked_regions", "unlocked_exits", "unlocked_flags", "discovered_escape_points", "resident_states", "difficulty_overrides", "active_adventure", "difficulty_id", "last_safe_position"]:
-		var block: String = source.split("var %s:" % name)[1].split("\nvar ")[0]
-		t.assert_true(not block.contains("set(value)"), "dangerous compatibility setter absent: %s" % name)
 	GameSession.start_new_game()
-	t.assert_true(GameSession.player_stats == GameSession.player.stats and GameSession.equipment == GameSession.player.equipment, "legacy object getters preserve canonical identity")
-	t.assert_true(is_same(GameSession.facility_levels, GameSession.settlement.facility_levels), "legacy collection getter returns canonical object")
+	t.assert_true(GameSession.get_player(GameSession.get_local_peer_id()) == GameSession.player, "local facade resolves the active canonical PlayerState")
+	t.assert_true(GameSession.get_player_state_by_player_id(GameSession.get_local_player_id()) == GameSession.player, "persistent and active registries share one PlayerState")
 	var initial := StartingItemDefinition.new()
 	initial.item_id = &"twig_sword"
 	initial.instance_id = "explicit"

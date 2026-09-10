@@ -1,6 +1,6 @@
 # Session stability baseline
 
-This patch stabilizes the existing systems before the second architecture phase. It adds no gameplay system and keeps save format version 3.
+This document records the earlier pre-multiplayer stabilization patch, which kept save format version 3. The current production format is Save v4; see `save_format.md`.
 
 ## 1. Confirmed problems
 
@@ -12,7 +12,7 @@ StackValidation provides shared runtime and save boundaries. PlayerState explici
 
 ## 3. Compatibility API
 
-Removed unused setters for player_stats, player_inventory, equipment, settlement_storage, protected_inventory, active_adventure, facility_levels, quest_states, unlocked_regions, unlocked_exits, unlocked_flags, discovered_escape_points, resident_states, difficulty_id, difficulty_overrides and last_safe_position. Their getters still refer to canonical state. Collections are not immutable snapshots. The used player_health setter now calls set_health; the legacy survival Dictionary adapter uses bounded restoration. New code should use typed state and domain methods.
+The deprecated state-property facade (`player_inventory`, `player_stats`, `settlement_storage`, `quest_states`, and related aliases) was removed after production and tests moved to typed owners. `GameSession.player` remains the local-player compatibility view and resolves to the same canonical object as the active peer attachment. New code uses typed state and domain methods.
 
 ## 4. ItemStack policy
 
@@ -22,7 +22,7 @@ Durability -1 remains the existing unspecified sentinel. Other negative saved va
 
 ## 5. Save stability
 
-Version remains 3. Tests load v1 through v2 to v3, v2 to v3, and v3 unchanged. String, fractional, negative, future, null and non-finite versions fail safely. Fatal container errors leave the current session unchanged. Recoverable records produce load warnings.
+At that historical baseline the version remained 3. Current tests migrate v1/v2/v3 inputs to Save v4. String, fractional, negative, future, null and non-finite versions fail safely. Fatal container errors leave the current session unchanged. Recoverable records produce load warnings.
 
 Direct PlayerState restoration clamps health to 0..max_health. Settlement snapshot loading retains the existing living-resume policy (zero becomes 1). Survival uses configured maxima. Invalid overrides are ignored. Positions require two finite components, including after Vector2 conversion. Unknown pending items are excluded with warnings; unavailable death-drop content remains recoverable under the existing policy.
 
@@ -63,4 +63,4 @@ inventory notifications until reward source/claim state commits, removes the
 extra pending-claim facade notification, and validates progress before casting.
 The new save/load/reclaim regression suite verifies both pending and quest
 rewards. Updated full check: 759 main + 26 restart assertions, 785 total; content
-validation remains 29 Resources. Save format remains v3.
+validation remains 29 Resources. Save format was v3 at the time of that review.

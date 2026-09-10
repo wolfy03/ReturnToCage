@@ -33,7 +33,7 @@ func run(t: Node) -> void:
 	t.assert_true(SaveManager.load_game(path), "Save v4 loads through detached staging")
 	t.assert_equal(GameSession.players.size(), 1, "persistent load attaches only the local profile player")
 	t.assert_equal(GameSession.persistent_player_count(), 2, "persistent load restores remote records as detached canonical state")
-	var restored := GameSession.get_persistent_player(REMOTE_PLAYER_ID)
+	var restored := GameSession.get_player_state_by_player_id(REMOTE_PLAYER_ID)
 	t.assert_true(restored != null and restored.health == 37.0, "detached remote health survives Save v4")
 	t.assert_equal(restored.inventory.count(&"berry"), 4, "detached remote inventory survives Save v4")
 	t.assert_equal(restored.protected_inventory.stacks()[0].instance_id, "remote_protected_vest", "protected inventory survives Save v4")

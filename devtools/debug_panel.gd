@@ -52,7 +52,7 @@ func _build_ui() -> void:
 	_add_button(buttons, "Validate content", func() -> void:
 		var errors := ContentRegistry.validate_all(); GameSession.last_message = "Content valid" if errors.is_empty() else "; ".join(errors); get_tree().call_group(&"hud", "refresh_all")
 	)
-	_add_button(buttons, "Print session", func() -> void: print(JSON.stringify(GameSession.export_state(), "  ")))
+	_add_button(buttons, "Print session", func() -> void: print(JSON.stringify(GameSession.export_persistent_state(), "  ")))
 
 func _add_button(parent: VBoxContainer, text: String, callback: Callable) -> void:
 	var button := Button.new(); button.text = text; button.pressed.connect(callback); parent.add_child(button)

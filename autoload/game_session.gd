@@ -61,71 +61,6 @@ var _quest_system: QuestSystem
 var _settlement_command_service: SettlementCommandService
 var _player_item_command_service: PlayerItemCommandService
 
-# Deprecated compatibility facade. These properties never own separate state.
-# Object/collection properties are getter-only; replacement would break model wiring.
-# New callers should use the typed domain models directly.
-var player_stats: StatBlock:
-	get:
-		return player.stats
-var player_inventory: InventoryModel:
-	get:
-		return player.inventory
-var equipment: EquipmentModel:
-	get:
-		return player.equipment
-var settlement_storage: InventoryModel:
-	get:
-		return settlement.storage
-var protected_inventory: InventoryModel:
-	get:
-		return player.protected_inventory
-var active_adventure: AdventureSession:
-	get:
-		return adventure.active_session
-var facility_levels: Dictionary[StringName, int]:
-	get:
-		return settlement.facility_levels
-var quest_states: Dictionary[StringName, QuestState]:
-	get:
-		return progression.quest_states
-var unlocked_regions: Array[StringName]:
-	get:
-		return progression.unlocked_regions
-var unlocked_exits: Array[StringName]:
-	get:
-		return progression.unlocked_exits
-var unlocked_flags: Array[StringName]:
-	get:
-		return progression.unlocked_flags
-var discovered_escape_points: Array[StringName]:
-	get:
-		return progression.discovered_escape_points
-var resident_states: Dictionary[StringName, ResidentState]:
-	get:
-		return settlement.resident_states
-var difficulty_id: StringName:
-	get:
-		return difficulty.id
-var difficulty_overrides: Dictionary[StringName, Variant]:
-	get:
-		return difficulty.overrides
-var player_health: float:
-	get:
-		return player.health
-	set(value):
-		player.set_health(value)
-var last_safe_position: Vector2:
-	get:
-		return player.last_safe_position
-
-# Deprecated serialization adapter: getter returns a snapshot. Use player.survival
-# for live typed mutations; assign a Dictionary only when adapting legacy callers.
-var survival_state: Dictionary:
-	get:
-		return player.survival.to_dict()
-	set(value):
-		player.survival.restore(value)
-
 func _ready() -> void:
 	_create_models()
 	_create_quest_system()
@@ -205,9 +140,6 @@ func get_player_state_by_player_id(player_id: StringName) -> PlayerState:
 func has_persistent_player(player_id: StringName) -> bool:
 	return not player_id.is_empty() and _player_states_by_id.has(player_id)
 
-func get_persistent_player(player_id: StringName) -> PlayerState:
-	return get_player_state_by_player_id(player_id)
-
 func persistent_player_count() -> int:
 	return _player_states_by_id.size()
 
@@ -222,9 +154,6 @@ func has_player(peer_id: int) -> bool:
 
 func get_player(peer_id: int) -> PlayerState:
 	return players.get(peer_id)
-
-func register_player(peer_id: int) -> PlayerState:
-	return attach_player(peer_id, get_player_id(peer_id))
 
 func attach_player(peer_id: int, player_id: StringName) -> PlayerState:
 	if peer_id <= 0 or player_id.is_empty():
@@ -251,9 +180,6 @@ func attach_player(peer_id: int, player_id: StringName) -> PlayerState:
 		_connect_model_signals()
 	player_registered.emit(peer_id, state)
 	return state
-
-func unregister_player(peer_id: int) -> void:
-	detach_player(peer_id)
 
 func detach_player(peer_id: int) -> void:
 	if not players.has(peer_id):
@@ -870,6 +796,8 @@ func apply_shared_progression_network_snapshot(snapshot: SharedProgressionSnapsh
 		and progression.apply_shared_network_mirror(snapshot)
 
 func export_state() -> Dictionary:
+	# Legacy flat v1-v3 representation retained for migration fixture tests.
+	# Production saves use export_persistent_state() exclusively.
 	var result: Dictionary = {"session_id": session_id, "play_time_seconds": play_time_seconds}
 	result.merge(player.to_save_dict())
 	result.merge(settlement.to_save_dict())
@@ -940,7 +868,7 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	difficulty.reset(start)
 	adventure.reset()
 	for peer_id in snapshot.player_ids:
-		register_player(peer_id)
+		attach_player(peer_id, get_player_id(peer_id))
 	_create_quest_system()
 	if get_local_player() == null or not difficulty.set_id(snapshot.difficulty_id, ContentRegistry):
 		return false
@@ -977,12 +905,10 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 			player_unregistered.emit(peer_id)
 	phase_changed.emit()
 
-# Compatibility entry point for older menu code. NetworkManager owns transport
-# teardown and passes the pre-disconnect local id to the explicit API above.
-func end_network_session() -> void:
-	reset_to_offline_local_player(get_local_peer_id())
-
 func restore_state(data: Dictionary) -> PackedStringArray:
+	# Legacy flat v1-v3 staging facade retained for migration/restore tests only.
+	# Production file loading always migrates to Save v4 and uses the persistent
+	# snapshot path below.
 	if not can_mutate_authoritative_state():
 		return PackedStringArray(["Only the server can restore session state"])
 	if adventure.active_session != null or phase == Phase.RESPAWNING:
@@ -994,6 +920,7 @@ func restore_state(data: Dictionary) -> PackedStringArray:
 	return snapshot.warnings
 
 func prepare_restore(data: Dictionary) -> SessionSnapshot:
+	# Legacy flat v1-v3 staging retained for migration fixture tests.
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
 		var failed := SessionSnapshot.new()
@@ -1012,6 +939,7 @@ func prepare_persistent_restore(data: Dictionary) -> SessionSnapshot:
 	)
 
 func apply_snapshot(snapshot: SessionSnapshot) -> void:
+	# Applies only a legacy flat snapshot prepared by prepare_restore().
 	if adventure.active_session != null or phase == Phase.RESPAWNING or not snapshot.fatal_error.is_empty():
 		return
 	_clear_player_state_registry()

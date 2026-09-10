@@ -457,7 +457,7 @@ func _process(_delta: float) -> void:
 		ProbeState.CLEANUP:
 			if GameSession.players.size() == 1 and Time.get_ticks_msec() - phase_started_msec > 250:
 				for player_id in reconnect_state_refs:
-					if GameSession.get_persistent_player(player_id) != reconnect_state_refs[player_id] \
+					if GameSession.get_player_state_by_player_id(player_id) != reconnect_state_refs[player_id] \
 							or NetworkManager.peer_id_for_player(player_id) != 0:
 						_fail("disconnect did not preserve a detached PlayerState with no active peer mapping")
 						return
@@ -585,7 +585,7 @@ func _on_probe_peer_left(peer_id: int) -> void:
 		if reconnect_old_peers[player_id] == peer_id:
 			if GameSession.has_player(peer_id) or GameSession.get_player_runtime(peer_id) != null:
 				_fail("disconnect left an active player or runtime attachment")
-			var detached := GameSession.get_persistent_player(player_id)
+			var detached := GameSession.get_player_state_by_player_id(player_id)
 			if detached != null:
 				reconnect_hunger_values[player_id] = detached.survival.hunger
 			return

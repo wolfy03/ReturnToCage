@@ -14,6 +14,8 @@ var warnings: PackedStringArray = PackedStringArray()
 var fatal_error: String = ""
 
 static func build(data: Dictionary, start: GameStartDefinition, registry: Node) -> SessionSnapshot:
+	# Legacy v1-v3 flat-state builder. Production file loads migrate first and
+	# enter through build_persistent(); this remains for migration regression tests.
 	var snapshot := SessionSnapshot.new()
 	for key in ["player_stats", "equipment"]:
 		if data.has(key) and not data[key] is Dictionary:

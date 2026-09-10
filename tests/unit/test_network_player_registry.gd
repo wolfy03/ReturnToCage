@@ -9,7 +9,7 @@ func run(t: Node) -> void:
 	var local_state := GameSession.player
 	t.assert_true(GameSession.has_player(local_id), "offline local player is registered")
 	t.assert_true(GameSession.players[local_id] == local_state, "GameSession.player is the canonical local peer state")
-	t.assert_true(GameSession.get_persistent_player(GameSession.get_local_player_id()) == local_state, "host/offline player is owned by persistent player_id")
+	t.assert_true(GameSession.get_player_state_by_player_id(GameSession.get_local_player_id()) == local_state, "host/offline player is owned by persistent player_id")
 	var remote := GameSession.attach_player(42, REMOTE_PLAYER_ID)
 	t.assert_true(remote != null and remote != local_state, "register peer creates a distinct PlayerState")
 	t.assert_true(remote == GameSession.attach_player(42, REMOTE_PLAYER_ID), "duplicate peer registration reuses PlayerState")

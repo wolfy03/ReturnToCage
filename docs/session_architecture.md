@@ -38,14 +38,16 @@ ID는 기존 JSON의 바깥 키이며 값은 계속 `{"unlocked": true, "state":
 
 ## 저장 경계
 
-각 State의 `to_save_dict()`가 담당 필드만 반환하고 GameSession이 flat Dictionary로 합친다.
-`restore()`는 `PackedStringArray` 경고를 반환한다. `core/serialization/save_data.gd`와
-기존 InventoryModel·EquipmentModel·StatBlock의 복원 검증으로 잘못된 중첩 타입을 걸러낸다.
-퀘스트 진행 배열은 정의의 objective 길이에 맞춰 복원해 이후 UI/이벤트의 인덱스 접근을 보호한다.
+production 저장은 `GameSession.export_persistent_state()`가 Save v4의 `shared`와
+`players[player_id]`를 만들고, 로드는 migration 뒤 `prepare_persistent_restore()`와
+`apply_persistent_snapshot()`을 거친다. 각 State의 `to_save_dict()`와 `restore()`는 자기
+도메인만 직렬화·검증한다. v1–v3 flat snapshot builder는 migration regression test 전용으로
+유지하며 live load 경로에서 직접 적용하지 않는다.
 
-save format은 **3**이다. 기존 flat key를 유지하고 active_effects, death_drops,
-pending_loot를 추가한다. v1 → v2 → v3 단계별 migration을 거치며 진행 중 원정은
-저장·불러오기를 허용하지 않는다. [저장 형식](save_format.md)을 따른다.
+save format은 **4**이다. `peer_id`와 network/runtime revision은 저장하지 않으며, Host의
+attached/detached canonical PlayerState와 personal progression은 persistent `player_id`로
+저장한다. v1 → v2 → v3 → v4 migration을 거치며 진행 중 원정은 재개하지 않는다.
+[저장 형식](save_format.md)을 따른다.
 
 누락된 inventory/진행/주민 데이터는 빈 상태로 복원한다. 생존 수치·위치·난이도와
 능력치의 누락/오류는 검증된 시작 설정을 사용하며, 체력 누락 시 복원한 max_health를 사용한다.
@@ -55,15 +57,11 @@ pending_loot를 추가한다. v1 → v2 → v3 단계별 migration을 거치며 
 
 ## 호환 API와 시그널
 
-기존 `player_inventory`, `player_stats`, `equipment`, `settlement_storage`, `quest_states`,
-`active_adventure` 등의 객체·컬렉션 속성은 deprecated getter 전용이다. State 외에 별도 객체를 저장하지 않는다.
-production의 gameplay/world/UI/devtools는 새 도메인 접근을 사용한다. 테스트의 기존 접근은
-호환 검증을 위해 의도적으로 유지한다.
-
-두 가지 타입 전환에 유의한다. `resident_states`의 값은 이제 Dictionary 대신 `ResidentState`다.
-`survival_state`의 Dictionary getter는 저장 어댑터용 **스냅샷**이며, 전체 Dictionary 대입은
-지원한다. 중첩 Dictionary 변경 대신 `player.survival.hunger` 같은 typed 접근을 사용한다.
-저장 JSON에는 이 타입 전환이 드러나지 않는다.
+과거 `player_inventory`, `player_stats`, `settlement_storage`, `quest_states` 등의 state-property
+facade는 production과 tests가 typed owner API로 이동한 뒤 제거했다. `GameSession.player`만
+local-player 호환 view로 유지하며 active peer와 persistent registry가 참조하는 동일한
+canonical PlayerState를 반환한다. 새 코드는 `GameSession.player`, `settlement`, `progression`,
+`adventure`, `difficulty`의 typed API를 사용한다.
 
 새 게임은 모델 내용을 초기화한다. restore는 독립 SessionSnapshot을 검증한 뒤 모델을 교체한다. `_create_models()`와
 relay 연결은 반복 호출에 안전하다. 외부 객체 교체용 compatibility setter는 제거했다.
@@ -83,10 +81,10 @@ Inventory 슬롯/ItemInstance 구조와 기존 컴포넌트의 플레이 책임�
 
 ## 안정화 기준점
 
-객체/컬렉션 compatibility setter와 미사용 difficulty_id, active_adventure,
-last_safe_position setter를 제거했다. 실제 사용 중인 player_health setter는
-PlayerState.set_health()를 거치고 survival_state setter는 범위 검증 restore를 거친다.
-컬렉션 getter는 canonical 객체를 반환하므로 불변 스냅샷은 아니다.
+Persistent registry는 `_player_states_by_id[player_id]`, active attachment는
+`players[peer_id]`와 `_attached_player_ids[peer_id]`가 담당한다. `attach_player`는 같은
+canonical 객체를 연결하고, `detach_player`는 연결만 해제하며, `remove_player_state`만
+persistent state를 삭제한다. Client의 remote placeholder는 disconnect 때 제거한다.
 
 PlayerState는 reset/restore 시 이전 EffectRuntimeModel의 periodic과 이전 StatBlock의
 stat_changed 연결을 명시적으로 해제한다. 외부에서 이전 RefCounted를 보관해도 현재

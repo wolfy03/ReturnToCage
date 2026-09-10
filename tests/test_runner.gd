@@ -160,28 +160,28 @@ func test_quest_and_facility() -> void:
 	GameSession.start_new_game()
 	assert_true(GameSession.start_quest(&"sewer_supplies"), "quest starts")
 	GameSession.report_quest_event(QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM, &"rusty_scrap", 3)
-	GameSession.settlement_storage.add_item(&"rusty_scrap", 3)
+	GameSession.settlement.storage.add_item(&"rusty_scrap", 3)
 	assert_true(GameSession.can_upgrade_facility(&"workbench"), "facility cost condition")
 	assert_true(GameSession.upgrade_facility(&"workbench"), "facility upgrades")
-	assert_true(GameSession.unlocked_flags.has(&"basic_crafting"), "facility level unlocks feature flag")
-	assert_true(GameSession.quest_states[&"sewer_supplies"].completed, "quest objectives complete")
+	assert_true(GameSession.progression.unlocked_flags.has(&"basic_crafting"), "facility level unlocks feature flag")
+	assert_true(GameSession.progression.quest_states[&"sewer_supplies"].completed, "quest objectives complete")
 
 func test_save_migration_and_round_trip() -> void:
 	var old := {"format_version": 1, "game_state": {}}
 	var migrated := SaveManager.migrate(old)
 	assert_equal(migrated.get("format_version"), 4, "save v1 migrates through v2/v3 to v4")
 	GameSession.start_new_game()
-	GameSession.settlement_storage.add_item(&"rusty_scrap", 7)
-	GameSession.facility_levels[&"workbench"] = 1
+	GameSession.settlement.storage.add_item(&"rusty_scrap", 7)
+	GameSession.settlement.set_facility_level(&"workbench", 1)
 	GameSession.start_quest(&"sewer_supplies")
 	GameSession.report_quest_event(QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM, &"rusty_scrap", 2)
 	var path := "user://return_to_cage_test_save.json"
 	assert_true(SaveManager.save_game(path), "round-trip save writes")
 	GameSession.start_new_game()
 	assert_true(SaveManager.load_game(path), "round-trip save loads")
-	assert_equal(GameSession.settlement_storage.count(&"rusty_scrap"), 7, "inventory restored")
-	assert_equal(GameSession.facility_levels[&"workbench"], 1, "facility restored")
-	assert_equal(GameSession.quest_states[&"sewer_supplies"].progress[0], 2, "quest progress restored")
+	assert_equal(GameSession.settlement.storage.count(&"rusty_scrap"), 7, "inventory restored")
+	assert_equal(GameSession.settlement.facility_levels[&"workbench"], 1, "facility restored")
+	assert_equal(GameSession.progression.quest_states[&"sewer_supplies"].progress[0], 2, "quest progress restored")
 	assert_equal(InventoryModel.new(2, Callable(ContentRegistry, "get_item")).restore([]).size(), 0, "empty inventory restores")
 	var unknown_inventory := InventoryModel.new(2, Callable(ContentRegistry, "get_item"))
 	assert_true(not unknown_inventory.restore([{"item_id": "missing_item", "quantity": 1}]).is_empty(), "unknown save item detected")
@@ -207,13 +207,13 @@ func test_integration_loop() -> void:
 	GameSession.record_enemy_kill(&"sewer_beetle")
 	GameSession.discover_escape(&"sewer_ladder")
 	GameSession.finish_adventure(AdventureSession.Result.NORMAL_ESCAPE)
-	assert_equal(GameSession.settlement_storage.count(&"rusty_scrap"), 4, "escaped loot secured")
+	assert_equal(GameSession.settlement.storage.count(&"rusty_scrap"), 4, "escaped loot secured")
 	assert_true(GameSession.upgrade_facility(&"workbench"), "integrated facility upgrade")
-	assert_true(GameSession.quest_states[&"sewer_supplies"].completed, "integrated quest complete")
+	assert_true(GameSession.progression.quest_states[&"sewer_supplies"].completed, "integrated quest complete")
 	GameSession.begin_adventure(&"sewer_gate", &"sewer_region", &"sewer_entrance")
 	GameSession.collect_adventure_loot(&"rusty_scrap", 5)
 	GameSession.finish_adventure(AdventureSession.Result.DEATH)
-	assert_equal(GameSession.settlement_storage.count(&"rusty_scrap"), 4, "normal death keeps deterministic half of five")
+	assert_equal(GameSession.settlement.storage.count(&"rusty_scrap"), 4, "normal death keeps deterministic half of five")
 
 func test_world_scene_integration() -> void:
 	GameSession.start_new_game()
@@ -282,19 +282,16 @@ func test_session_start_and_ownership() -> void:
 	var expected: Dictionary = _fixture("legacy_v2_new_game.json")["game_state"]
 	expected["session_id"] = GameSession.session_id
 	_assert_saved_fields(GameSession.export_state(), expected, "unchanged new game")
-	assert_true(GameSession.player_inventory == GameSession.player.inventory, "inventory has one owner")
-	assert_true(GameSession.player_stats == GameSession.player.stats, "stats have one owner")
-	assert_true(GameSession.equipment == GameSession.player.equipment, "equipment has one owner")
-	assert_true(GameSession.protected_inventory == GameSession.player.protected_inventory, "protected inventory has one owner")
-	assert_true(GameSession.settlement_storage == GameSession.settlement.storage, "storage has one owner")
-	GameSession.facility_levels[&"workbench"] = 1
-	assert_equal(GameSession.settlement.facility_levels[&"workbench"], 1, "legacy facility mutation reaches owner")
-	GameSession.player_health = 67.0
-	assert_equal(GameSession.player.health, 67.0, "legacy health setter reaches owner")
-	GameSession.player.health = 89.0
-	assert_equal(GameSession.player_health, 89.0, "legacy health getter reads owner")
-	GameSession.survival_state = {"hunger": 37.0, "thirst": 48.0, "progression_reduction": 0.2}
-	assert_equal(GameSession.player.survival.hunger, 37.0, "legacy survival assignment reaches typed state")
+	assert_true(GameSession.get_player(GameSession.get_local_peer_id()) == GameSession.player, "active peer and local facade share one PlayerState")
+	assert_true(GameSession.get_player_state_by_player_id(GameSession.get_local_player_id()) == GameSession.player, "persistent registry and active view share one PlayerState")
+	GameSession.settlement.set_facility_level(&"workbench", 1)
+	assert_equal(GameSession.settlement.facility_levels[&"workbench"], 1, "facility owner accepts authoritative mutation")
+	GameSession.player.set_health(67.0)
+	assert_equal(GameSession.player.health, 67.0, "typed health mutation reaches owner")
+	GameSession.player.set_health(89.0)
+	assert_equal(GameSession.player.health, 89.0, "typed health owner remains canonical")
+	GameSession.player.survival.restore({"hunger": 37.0, "thirst": 48.0, "progression_reduction": 0.2})
+	assert_equal(GameSession.player.survival.hunger, 37.0, "typed survival restore reaches owner")
 	var saved: Dictionary = GameSession.export_state()
 	saved["resident_states"]["milo"]["state"] = "snapshot-only"
 	assert_equal(GameSession.settlement.resident_states[&"milo"].current_state, &"idle", "exported resident data is detached")
@@ -407,7 +404,7 @@ func test_session_signals() -> void:
 	assert_true(counts[4] >= 2, "quest start and progression signals preserved")
 	assert_equal(counts[5], 1, "facility signal preserved")
 	GameSession.begin_adventure(&"sewer_gate", &"sewer_region", &"sewer_entrance")
-	assert_true(GameSession.active_adventure == GameSession.adventure.active_session, "adventure alias reads owner")
+	assert_true(GameSession.adventure.active_session != null, "adventure state owns the active session")
 	var time_before: float = GameSession.play_time_seconds
 	GameSession._process(2.0)
 	assert_equal(GameSession.play_time_seconds, time_before + 2.0, "session play time ticks")

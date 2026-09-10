@@ -177,4 +177,4 @@ RespawnPolicy, EffectDefinition, ClimbableDefinition, Region/Exit Marker, Attack
 | ui/game_hud.gd | berry/water_drop 버튼, workbench 표시, 난이도 프리셋 목록 |
 | devtools/debug_panel.gd | berry/water_drop 개발 지급, workbench 개발 명령 |
 
-production에서 구 GameSession.player_inventory/player_stats/equipment/settlement_storage/quest_states/active_adventure/facility_levels/resident_states/difficulty_id/survival_state call site는 검색되지 않았다. GameSession의 deprecated getter/setter와 테스트의 호환성 접근은 의도적으로 유지했다. State 외에 중복 상태 객체를 추가하지 않았다.
+production에서 구 GameSession.player_inventory/player_stats/equipment/settlement_storage/quest_states/active_adventure/facility_levels/resident_states/difficulty_id/survival_state call site는 검색되지 않았다. 이후 tests도 typed owner API로 옮겨 deprecated facade를 제거했다. `GameSession.player`만 local-player compatibility view로 유지하며 persistent registry와 active attachment가 참조하는 canonical PlayerState를 반환한다.

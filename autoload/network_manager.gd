@@ -345,6 +345,8 @@ func _ensure_local_profile() -> Error:
 	return result
 
 func _profile_path_from_arguments() -> String:
+	# Development/test override for running multiple local ENet processes with
+	# distinct installation identities. Production uses the user:// profile.
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with(PROFILE_PATH_ARGUMENT):
 			var path := argument.trim_prefix(PROFILE_PATH_ARGUMENT).strip_edges()
