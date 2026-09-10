@@ -1,9 +1,10 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 [ext_resource path="res://world/settlement/settlement.gd" type="Script" id="1"]
 [ext_resource path="res://world/multiplayer/player_spawn_manager.gd" type="Script" id="2"]
 [ext_resource path="res://world/multiplayer/player_spawn_point.gd" type="Script" id="3"]
 [ext_resource path="res://world/multiplayer/quest_replication_service.gd" type="Script" id="4"]
 [ext_resource path="res://world/multiplayer/settlement_replication_service.gd" type="Script" id="5"]
+[ext_resource path="res://world/multiplayer/player_item_replication_service.gd" type="Script" id="6"]
 [node name="Settlement" type="Node2D"]
 script = ExtResource("1")
 [node name="PlayerSpawnPoint0" type="Marker2D" parent="."]
@@ -27,3 +28,5 @@ script = ExtResource("2")
 script = ExtResource("4")
 [node name="SettlementReplicationService" type="Node" parent="."]
 script = ExtResource("5")
+[node name="PlayerItemReplicationService" type="Node" parent="."]
+script = ExtResource("6")

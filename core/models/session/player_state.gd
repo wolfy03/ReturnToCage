@@ -2,6 +2,7 @@ class_name PlayerState
 extends RefCounted
 
 signal vitals_changed
+signal item_state_changed(revision: int)
 
 var effects: EffectRuntimeModel
 var _gear_sources: Array[StringName] = []
@@ -13,15 +14,29 @@ var protected_inventory: InventoryModel
 var survival: SurvivalState = SurvivalState.new()
 var health: float = 0.0
 var last_safe_position: Vector2 = Vector2.ZERO
+var _item_state_revision: int = 0
+var item_state_revision: int:
+	get:
+		return _item_state_revision
+var _item_update_depth: int = 0
+var _item_change_pending: bool = false
+var _applying_item_snapshot: bool = false
+var _item_mutation_guard: Callable
 
-func _init(resolver: Callable) -> void:
-	inventory = InventoryModel.new(0, resolver)
-	equipment = EquipmentModel.new(resolver)
-	equipment.changed.connect(sync_equipment)
+func _init(resolver: Callable, mutation_guard: Callable = Callable()) -> void:
+	_item_mutation_guard = mutation_guard
+	inventory = InventoryModel.new(0, resolver, Callable(self, "_can_mutate_items"))
+	equipment = EquipmentModel.new(resolver, Callable(self, "_can_mutate_items"))
+	inventory.changed.connect(_on_item_model_changed)
+	equipment.changed.connect(_on_equipment_changed)
 	_reset_effects()
-	protected_inventory = InventoryModel.new(0, resolver)
+	protected_inventory = InventoryModel.new(0, resolver, Callable(self, "_can_mutate_items"))
+
+func set_item_mutation_guard(guard: Callable) -> void:
+	_item_mutation_guard = guard
 
 func reset(start: GameStartDefinition, registry: Node) -> void:
+	_applying_item_snapshot = true
 	stats = StatBlock.new()
 	stats.base_values = start.player_stats.duplicate()
 	_reset_effects()
@@ -36,6 +51,10 @@ func reset(start: GameStartDefinition, registry: Node) -> void:
 	equipment.restore({})
 	for entry in start.equipment_items:
 		equipment.equip(entry.create_stack())
+	_item_state_revision = 0
+	_item_update_depth = 0
+	_item_change_pending = false
+	_applying_item_snapshot = false
 
 func to_save_dict() -> Dictionary:
 	return {
@@ -47,6 +66,7 @@ func to_save_dict() -> Dictionary:
 
 func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary[String, String] = {}) -> PackedStringArray:
 	var errors := PackedStringArray()
+	_applying_item_snapshot = true
 	stats = StatBlock.new()
 	stats.base_values = start.player_stats.duplicate()
 	_reset_effects()
@@ -66,7 +86,74 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 	errors.append_array(effects.restore(SaveData.array(data, "active_effects", errors), Callable(ContentRegistry, "get_definition")))
 	sync_equipment()
 	set_health(SaveData.clamped_number(data, "player_health", stats.value(&"max_health"), 0.0, maxf(1.0, stats.value(&"max_health")), errors))
+	_item_state_revision = 0
+	_item_update_depth = 0
+	_item_change_pending = false
+	_applying_item_snapshot = false
 	return errors
+
+func begin_item_update() -> void:
+	_item_update_depth += 1
+	inventory.begin_update()
+	equipment.begin_update()
+
+func end_item_update() -> void:
+	if _item_update_depth <= 0:
+		return
+	equipment.end_update()
+	inventory.end_update()
+	_item_update_depth -= 1
+	if _item_update_depth == 0 and _item_change_pending:
+		_item_change_pending = false
+		_commit_item_change()
+
+func prepare_network_item_mirror() -> void:
+	_applying_item_snapshot = true
+	inventory.initialize([])
+	protected_inventory.initialize([])
+	equipment.initialize({})
+	_item_state_revision = -1
+	_item_change_pending = false
+	_applying_item_snapshot = false
+
+func apply_item_network_mirror(snapshot: PlayerItemStateSnapshot) -> bool:
+	if snapshot == null or not snapshot.error_message.is_empty() or snapshot.revision <= item_state_revision:
+		return false
+	_applying_item_snapshot = true
+	inventory.begin_update()
+	equipment.begin_update()
+	inventory.capacity = snapshot.inventory_capacity
+	var inventory_result := inventory.initialize(snapshot.inventory)
+	var equipment_result := equipment.initialize(snapshot.equipment)
+	equipment.end_update()
+	inventory.end_update()
+	if not inventory_result.success or not equipment_result.success:
+		_applying_item_snapshot = false
+		return false
+	_item_state_revision = snapshot.revision
+	_item_change_pending = false
+	_applying_item_snapshot = false
+	item_state_changed.emit(item_state_revision)
+	return true
+
+func _on_equipment_changed() -> void:
+	sync_equipment()
+	_on_item_model_changed()
+
+func _on_item_model_changed() -> void:
+	if _applying_item_snapshot:
+		return
+	if _item_update_depth > 0:
+		_item_change_pending = true
+	else:
+		_commit_item_change()
+
+func _commit_item_change() -> void:
+	_item_state_revision += 1
+	item_state_changed.emit(_item_state_revision)
+
+func _can_mutate_items() -> bool:
+	return _applying_item_snapshot or not _item_mutation_guard.is_valid() or bool(_item_mutation_guard.call())
 
 func _reset_effects() -> void:
 	# A scene/test may retain the retired model. Disconnect before dropping it;

@@ -3,7 +3,13 @@ extends RefCounted
 
 signal changed
 
-var capacity: int = 16
+var _capacity: int = 16
+var capacity: int:
+	get:
+		return _capacity
+	set(value):
+		if _mutation_allowed():
+			_capacity = value
 var restore_overflow: Array[ItemStack] = []
 var _stacks: Array[ItemStack] = []
 var _update_depth: int = 0

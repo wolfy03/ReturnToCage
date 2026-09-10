@@ -116,10 +116,16 @@ func _on_target_changed(target: InteractionTarget) -> void:
 	_refresh_interaction_prompt()
 
 func _on_quick_item() -> void:
-	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled or not is_simulation_authority():
+	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled:
 		return
 	if GameSession.adventure.active_session == null:
-		consume_item(&"berry")
+		var item_service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+		if item_service != null:
+			item_service.request_use_item(&"berry")
+		elif is_simulation_authority():
+			consume_item(&"berry")
+		return
+	if not is_simulation_authority():
 		return
 	if _bound_state.inventory.count(&"return_seed") <= 0 or return_channel > 0.0:
 		return

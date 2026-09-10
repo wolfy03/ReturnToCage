@@ -6,8 +6,6 @@ signal changed(revision: int)
 var _pending_loot: Array[ItemStack] = []
 var pending_loot: Array[ItemStack]:
 	get:
-		if _can_mutate_domain():
-			return _pending_loot
 		var mirror: Array[ItemStack] = []
 		for stack in _pending_loot:
 			mirror.append(stack.duplicate_stack())

@@ -29,10 +29,12 @@ func run(t: Node) -> void:
 	host_state.effects.apply_effect(effect, ItemDefinition.FoodSlot.SNACK)
 	peer_b.effects.apply_effect(effect, ItemDefinition.FoodSlot.SNACK)
 	var host_before := host_state.to_save_dict()
+	var peer_b_item_revision := peer_b.item_state_revision
 	var host_effect_before: float = host_state.effects.active_effects[&"quick_paws"].remaining
 	var peer_b_effect_before: float = peer_b.effects.active_effects[&"quick_paws"].remaining
 	var death_b := GameSession.handle_player_death(42, Vector2(320, 420), life_b)
 	t.assert_true(death_b.success, "server resolves a remote player death")
+	t.assert_equal(peer_b.item_state_revision, peer_b_item_revision + 1, "death inventory/equipment mutation commits one owner item revision")
 	t.assert_equal(GameSession.get_player_death_result(42), death_b, "remote death result is peer-specific")
 	t.assert_equal(GameSession.get_player_life_phase(42), PlayerRuntimeState.LifePhase.RESPAWNING, "only dead peer enters respawning life phase")
 	t.assert_equal(GameSession.phase, GameSession.Phase.ADVENTURE, "remote death does not change session phase")

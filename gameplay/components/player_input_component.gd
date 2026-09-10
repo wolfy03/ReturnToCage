@@ -47,7 +47,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if gameplay_actions_enabled or network_intents_enabled:
 			interact_requested.emit()
 	elif event.is_action_pressed(&"use_quick_item"):
-		if gameplay_actions_enabled:
+		if gameplay_actions_enabled or network_intents_enabled:
 			quick_item_requested.emit()
 	elif event.is_action_pressed(&"open_inventory"):
 		inventory_requested.emit()

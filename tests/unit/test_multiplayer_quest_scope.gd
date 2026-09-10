@@ -43,8 +43,10 @@ func run(t: Node) -> void:
 	var b_before := _player_states[&"player_b"].inventory.count(&"berry")
 	var c_before := _player_states[&"player_c"].inventory.count(&"berry")
 	var storage_before := settlement.storage.count(&"berry")
+	var b_item_revision := _player_states[&"player_b"].item_state_revision
 	t.assert_true(system.claim_reward(personal_kill.id, &"player_b").success, "PERSONAL reward is claimable by its owner")
 	t.assert_equal(_player_states[&"player_b"].inventory.count(&"berry"), b_before + 1, "PERSONAL reward enters owner PlayerState inventory")
+	t.assert_equal(_player_states[&"player_b"].item_state_revision, b_item_revision + 1, "PERSONAL reward bumps only the owner item revision")
 	t.assert_equal(_player_states[&"player_a"].inventory.count(&"berry"), a_before, "PERSONAL reward leaves A unchanged")
 	t.assert_equal(_player_states[&"player_c"].inventory.count(&"berry"), c_before, "PERSONAL reward leaves C unchanged")
 	t.assert_equal(settlement.storage.count(&"berry"), storage_before, "PERSONAL reward does not enter shared storage")

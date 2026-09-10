@@ -12,6 +12,7 @@ signal settlement_state_changed(revision: int)
 signal shared_progression_changed(revision: int)
 signal quest_changed(quest_id: StringName)
 signal quest_state_changed(quest_id: StringName, scope: int, owner_player_id: StringName, revision: int)
+signal player_item_state_changed(player_id: StringName, revision: int)
 signal adventure_started(context: AdventureContext)
 signal adventure_finished(result: AdventureSession.Result, summary: String)
 signal difficulty_changed(id: StringName)
@@ -55,6 +56,7 @@ var adventure: AdventureState = AdventureState.new()
 var difficulty: DifficultyState = DifficultyState.new()
 var _quest_system: QuestSystem
 var _settlement_command_service: SettlementCommandService
+var _player_item_command_service: PlayerItemCommandService
 
 # Deprecated compatibility facade. These properties never own separate state.
 # Object/collection properties are getter-only; replacement would break model wiring.
@@ -163,13 +165,17 @@ func _create_quest_system() -> void:
 		ContentRegistry,
 		Callable(self, "report_gameplay_event")
 	)
+	_player_item_command_service = PlayerItemCommandService.new(ContentRegistry)
 
 func _on_quest_mutated(quest_id: StringName, scope: int, owner_player_id: StringName, revision: int) -> void:
 	quest_changed.emit(quest_id)
 	quest_state_changed.emit(quest_id, scope, owner_player_id, revision)
 
 func _create_player_state() -> PlayerState:
-	return PlayerState.new(Callable(ContentRegistry, "get_item"))
+	return PlayerState.new(
+		Callable(ContentRegistry, "get_item"),
+		Callable(self, "can_mutate_authoritative_state")
+	)
 
 func get_local_peer_id() -> int:
 	return NetworkManager.local_peer_id() if NetworkManager != null else LOCAL_SINGLEPLAYER_PEER_ID
@@ -209,6 +215,8 @@ func register_player(peer_id: int) -> PlayerState:
 	var start := get_start_definition(false)
 	if start != null:
 		state.reset(start, ContentRegistry)
+	if NetworkManager.is_session_connected() and not NetworkManager.is_server():
+		state.prepare_network_item_mirror()
 	_add_player_state(peer_id, state)
 	progression.ensure_personal_progression(get_player_id(peer_id))
 	if adventure.active_session != null:
@@ -240,11 +248,17 @@ func _connect_player_state_signals(peer_id: int, state: PlayerState) -> void:
 	var callback := _on_player_vitals_changed.bind(peer_id)
 	if not state.vitals_changed.is_connected(callback):
 		state.vitals_changed.connect(callback)
+	var item_callback := _on_player_item_state_changed.bind(peer_id)
+	if not state.item_state_changed.is_connected(item_callback):
+		state.item_state_changed.connect(item_callback)
 
 func _disconnect_player_state_signals(peer_id: int, state: PlayerState) -> void:
 	var callback := _on_player_vitals_changed.bind(peer_id)
 	if state.vitals_changed.is_connected(callback):
 		state.vitals_changed.disconnect(callback)
+	var item_callback := _on_player_item_state_changed.bind(peer_id)
+	if state.item_state_changed.is_connected(item_callback):
+		state.item_state_changed.disconnect(item_callback)
 
 func _on_player_vitals_changed(peer_id: int) -> void:
 	if _applying_runtime_snapshot:
@@ -252,6 +266,11 @@ func _on_player_vitals_changed(peer_id: int) -> void:
 	var state := get_player(peer_id)
 	if state != null:
 		player_health_changed.emit(peer_id, state.health, maxf(1.0, state.stats.value(&"max_health")))
+
+func _on_player_item_state_changed(revision: int, peer_id: int) -> void:
+	var player_id := get_player_id(peer_id)
+	if not player_id.is_empty():
+		player_item_state_changed.emit(player_id, revision)
 
 func get_player_runtime(peer_id: int) -> PlayerRuntimeState:
 	return _player_runtime.get(peer_id)
@@ -580,7 +599,9 @@ func handle_player_death(peer_id: int, death_position: Vector2, life_id: int = -
 	state.effects.paused = true
 	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
 	var personal_adventure := adventure.active_session.get_player_adventure(peer_id) if adventure.active_session != null else null
+	state.begin_item_update()
 	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death, personal_adventure, peer_id)
+	state.end_item_update()
 	runtime.life_phase = PlayerRuntimeState.LifePhase.RESPAWNING
 	last_message = runtime.death_result.summary()
 	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
@@ -708,6 +729,55 @@ func make_settlement_snapshot() -> SettlementStateSnapshot:
 
 func make_shared_progression_snapshot() -> SharedProgressionSnapshot:
 	return SharedProgressionSnapshot.from_state(progression) if can_mutate_authoritative_state() else null
+
+func make_player_item_snapshot(peer_id: int) -> PlayerItemStateSnapshot:
+	if not can_mutate_authoritative_state():
+		return null
+	var player_id := get_player_id(peer_id)
+	var state := get_player(peer_id)
+	return PlayerItemStateSnapshot.from_state(player_id, state) if not player_id.is_empty() and state != null else null
+
+func apply_player_item_network_snapshot(snapshot: PlayerItemStateSnapshot) -> bool:
+	if NetworkManager.is_server() or not NetworkManager.is_session_connected() or snapshot == null \
+			or snapshot.owner_player_id != get_local_player_id():
+		return false
+	var state := get_local_player()
+	return state != null and state.apply_item_network_mirror(snapshot)
+
+func execute_equip_command(peer_id: int, instance_id: String) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can equip items")
+	return _player_item_command_service.try_equip(get_player(peer_id), instance_id)
+
+func execute_unequip_command(peer_id: int, slot: int) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can unequip items")
+	return _player_item_command_service.try_unequip(get_player(peer_id), slot)
+
+func execute_use_item_command(
+	peer_id: int,
+	item_id: StringName,
+	survival_component: SurvivalComponent,
+	effect_controller: EffectController
+) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can use items")
+	return _player_item_command_service.try_use_item(
+		get_player(peer_id), survival_component, effect_controller, item_id
+	)
+
+func execute_item_transfer_command(
+	peer_id: int,
+	direction: int,
+	item_id: StringName,
+	instance_id: String,
+	amount: int
+) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can transfer items")
+	return _player_item_command_service.try_transfer(
+		get_player(peer_id), settlement, direction, item_id, instance_id, amount
+	)
 
 func apply_settlement_network_snapshot(snapshot: SettlementStateSnapshot) -> bool:
 	if not NetworkManager.is_session_connected() or NetworkManager.is_server() or snapshot == null:
@@ -856,6 +926,7 @@ func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	_disconnect_shared_model_signals()
 	players.clear()
 	_player_runtime.clear()
+	snapshot.player.set_item_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 	_add_player_state(get_local_peer_id(), snapshot.player)
 	settlement = snapshot.settlement
 	settlement.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))

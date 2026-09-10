@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, PENDING_OVERFLOW, PENDING_CLAIM, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
+enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, ITEM_EQUIP, ITEM_USE, ITEM_DEPOSIT, ITEM_WITHDRAW, ITEM_RACE, PENDING_OVERFLOW, PENDING_CLAIM, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -57,6 +57,22 @@ var pending_overflow_confirmation_sent: bool = false
 var pending_claim_confirmation_sent: bool = false
 var pending_overflow_confirmations: Dictionary[int, bool] = {}
 var pending_claim_confirmations: Dictionary[int, bool] = {}
+var item_equip_expected: bool = false
+var item_use_expected: bool = false
+var item_deposit_expected: bool = false
+var item_withdraw_expected: bool = false
+var item_race_expected: bool = false
+var item_equip_confirmation_sent: bool = false
+var item_use_confirmation_sent: bool = false
+var item_deposit_confirmation_sent: bool = false
+var item_withdraw_confirmation_sent: bool = false
+var item_race_confirmation_sent: bool = false
+var item_equip_confirmations: Dictionary[int, bool] = {}
+var item_use_confirmations: Dictionary[int, bool] = {}
+var item_deposit_confirmations: Dictionary[int, bool] = {}
+var item_withdraw_confirmations: Dictionary[int, bool] = {}
+var item_race_counts: Dictionary[int, int] = {}
+const PROBE_VEST_INSTANCE := "probe_owner_vest"
 const PROBE_PERSONAL_QUEST_ID: StringName = &"_probe_personal_kill"
 const PROBE_PARTY_QUEST_ID: StringName = &"_probe_party_kill"
 const PROBE_PERSONAL_UPGRADE_QUEST_ID: StringName = &"_probe_personal_upgrade"
@@ -114,6 +130,33 @@ func _process(_delta: float) -> void:
 				and GameSession.settlement.storage.count(&"moss_fiber") == 0:
 			settlement_craft_confirmation_sent = true
 			_confirm_settlement_craft.rpc_id(1)
+		if item_equip_expected and not item_equip_confirmation_sent:
+			var local_equipped := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.BODY)
+			var owns_probe_vest := local_equipped != null and local_equipped.instance_id == PROBE_VEST_INSTANCE
+			if owns_probe_vest == (NetworkManager.local_peer_id() == selected_peer):
+				item_equip_confirmation_sent = true
+				_confirm_item_equip.rpc_id(1)
+		if item_use_expected and not item_use_confirmation_sent:
+			var expected_use_berries := 1 if NetworkManager.local_peer_id() == selected_peer else 2
+			if GameSession.player.inventory.count(&"berry") == expected_use_berries:
+				item_use_confirmation_sent = true
+				_confirm_item_use.rpc_id(1)
+		if item_deposit_expected and not item_deposit_confirmation_sent:
+			var expected_deposit_berries := 0 if NetworkManager.local_peer_id() == selected_peer else 2
+			if GameSession.player.inventory.count(&"berry") == expected_deposit_berries \
+					and GameSession.settlement.storage.count(&"berry") == 1:
+				item_deposit_confirmation_sent = true
+				_confirm_item_deposit.rpc_id(1)
+		if item_withdraw_expected and not item_withdraw_confirmation_sent:
+			var expected_withdraw_berries := 1 if NetworkManager.local_peer_id() == selected_peer else 2
+			if GameSession.player.inventory.count(&"berry") == expected_withdraw_berries \
+					and GameSession.settlement.storage.count(&"berry") == 0:
+				item_withdraw_confirmation_sent = true
+				_confirm_item_withdraw.rpc_id(1)
+		if item_race_expected and not item_race_confirmation_sent \
+				and GameSession.settlement.storage.count(&"rusty_scrap") == 1:
+			item_race_confirmation_sent = true
+			_confirm_item_race.rpc_id(1, GameSession.player.inventory.count(&"rusty_scrap"))
 		if pending_overflow_expected and not pending_overflow_confirmation_sent \
 				and GameSession.settlement.pending_loot.size() == 1 \
 				and GameSession.settlement.pending_loot[0].item_id == &"water_drop" \
@@ -207,6 +250,48 @@ func _process(_delta: float) -> void:
 			if settlement_craft_confirmations.size() == expected_players - 1 \
 					and GameSession.settlement.storage.count(&"mushroom_stew") == 1:
 				print("PROBE SETTLEMENT CRAFT AUTHORITY OK")
+				var vest := ItemStack.new(&"leaf_vest", 1)
+				vest.instance_id = PROBE_VEST_INSTANCE
+				vest.durability = 45
+				if not GameSession.get_player(selected_peer).inventory.add_stack(vest).success:
+					_fail("player item equip fixture failed")
+					return
+				_expect_item_equip.rpc(selected_peer)
+				state = ProbeState.ITEM_EQUIP
+		ProbeState.ITEM_EQUIP:
+			if item_equip_confirmations.size() == expected_players - 1:
+				print("PROBE OWNER-ONLY EQUIP OK")
+				_expect_item_use.rpc(selected_peer)
+				state = ProbeState.ITEM_USE
+		ProbeState.ITEM_USE:
+			if item_use_confirmations.size() == expected_players - 1:
+				print("PROBE OWNER-ONLY ITEM USE OK")
+				_expect_item_deposit.rpc(selected_peer)
+				state = ProbeState.ITEM_DEPOSIT
+		ProbeState.ITEM_DEPOSIT:
+			if item_deposit_confirmations.size() == expected_players - 1:
+				print("PROBE PLAYER STORAGE DEPOSIT OK")
+				_expect_item_withdraw.rpc(selected_peer)
+				state = ProbeState.ITEM_WITHDRAW
+		ProbeState.ITEM_WITHDRAW:
+			if item_withdraw_confirmations.size() == expected_players - 1:
+				print("PROBE PLAYER STORAGE WITHDRAW OK")
+				GameSession.settlement.storage.add_item(&"rusty_scrap", 5)
+				_expect_item_race.rpc()
+				state = ProbeState.ITEM_RACE
+		ProbeState.ITEM_RACE:
+			if item_race_counts.size() == expected_players - 1:
+				var winners := 0
+				for peer_id in item_race_counts:
+					if item_race_counts[peer_id] == 4 and GameSession.get_player(peer_id).inventory.count(&"rusty_scrap") == 4:
+						winners += 1
+					elif item_race_counts[peer_id] != 0 or GameSession.get_player(peer_id).inventory.count(&"rusty_scrap") != 0:
+						_fail("private inventory isolation failed during withdraw race")
+						return
+				if winners != 1 or GameSession.settlement.storage.count(&"rusty_scrap") != 1:
+					_fail("concurrent withdraw did not produce exactly one winner")
+					return
+				print("PROBE CONCURRENT WITHDRAW OK")
 				GameSession.settlement.storage.capacity = GameSession.settlement.storage.stacks().size()
 				GameSession.adventure.active_session.get_player_adventure(selected_peer).unsecured_loot.add_item(&"water_drop", 1)
 				var before_revision := GameSession.settlement.revision
@@ -448,6 +533,77 @@ func _confirm_settlement_craft() -> void:
 		settlement_craft_confirmations[sender] = true
 
 @rpc("authority", "call_remote", "reliable")
+func _expect_item_equip(command_peer_id: int) -> void:
+	selected_peer = command_peer_id
+	item_equip_expected = true
+	if NetworkManager.local_peer_id() == command_peer_id:
+		var service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+		if service != null:
+			service.request_equip(PROBE_VEST_INSTANCE)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_item_equip() -> void:
+	if NetworkManager.is_server():
+		item_equip_confirmations[multiplayer.get_remote_sender_id()] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_item_use(command_peer_id: int) -> void:
+	selected_peer = command_peer_id
+	item_use_expected = true
+	if NetworkManager.local_peer_id() == command_peer_id:
+		var service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+		if service != null:
+			service.request_use_item(&"berry")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_item_use() -> void:
+	if NetworkManager.is_server():
+		item_use_confirmations[multiplayer.get_remote_sender_id()] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_item_deposit(command_peer_id: int) -> void:
+	selected_peer = command_peer_id
+	item_deposit_expected = true
+	if NetworkManager.local_peer_id() == command_peer_id:
+		var service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+		if service != null:
+			service.request_transfer(PlayerItemCommandService.TransferDirection.DEPOSIT, &"berry", 1)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_item_deposit() -> void:
+	if NetworkManager.is_server():
+		item_deposit_confirmations[multiplayer.get_remote_sender_id()] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_item_withdraw(command_peer_id: int) -> void:
+	selected_peer = command_peer_id
+	item_withdraw_expected = true
+	if NetworkManager.local_peer_id() == command_peer_id:
+		var service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+		if service != null:
+			service.request_transfer(PlayerItemCommandService.TransferDirection.WITHDRAW, &"berry", 1)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_item_withdraw() -> void:
+	if NetworkManager.is_server():
+		item_withdraw_confirmations[multiplayer.get_remote_sender_id()] = true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_item_race() -> void:
+	item_race_expected = true
+	var service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+	if service != null:
+		service.request_transfer(PlayerItemCommandService.TransferDirection.WITHDRAW, &"rusty_scrap", 4)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_item_race(item_count: int) -> void:
+	if not NetworkManager.is_server() or item_count < 0 or item_count > 4:
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender):
+		item_race_counts[sender] = item_count
+
+@rpc("authority", "call_remote", "reliable")
 func _expect_pending_overflow() -> void:
 	pending_overflow_expected = true
 
@@ -499,11 +655,16 @@ func _on_session_synchronized() -> void:
 		_fail("client local actor was not spawned by the server roster")
 		return
 	if reconnecting:
+		var reconnect_weapon := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 		if GameSession.settlement.facility_levels.get(&"workbench", 0) != 1 \
 				or GameSession.settlement.storage.count(&"mushroom_stew") != 1 \
 				or not GameSession.progression.unlocked_flags.has(&"basic_crafting") \
 				or GameSession.settlement.pending_loot.size() != 1 \
-				or GameSession.settlement.pending_loot[0].item_id != &"moss_fiber":
+				or GameSession.settlement.pending_loot[0].item_id != &"moss_fiber" \
+				or GameSession.player.inventory.count(&"berry") != 2 \
+				or GameSession.player.inventory.count(&"rusty_scrap") != 0 \
+				or GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.BODY) != null \
+				or reconnect_weapon == null or reconnect_weapon.item_id != &"twig_sword":
 			_fail("fresh reconnect did not receive current settlement snapshot")
 			return
 		print("PROBE CLIENT FRESH RECONNECT OK")
