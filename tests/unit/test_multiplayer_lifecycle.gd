@@ -60,14 +60,24 @@ func run(t: Node) -> void:
 	t.assert_true(not SaveManager.can_save().success, "host cannot save an active multiplayer session")
 	t.assert_true(not SaveManager.can_load().success, "host cannot load an active multiplayer session")
 	var retained_personal_b := GameSession.progression.get_personal_progression(PLAYER_TWO)
-	GameSession.unregister_player(42)
+	var retained_state_b := peer_b
+	var retained_health_b := peer_b.health
+	var retained_item_revision_b := peer_b.item_state_revision
+	GameSession.detach_player(42)
 	t.assert_equal(GameSession.progression.get_personal_progression(PLAYER_TWO), retained_personal_b, "peer disconnect does not delete stable personal progression")
 	t.assert_true(GameSession.progression.get_personal_progression(PLAYER_THREE) != null, "disconnect leaves other personal progression unchanged")
+	t.assert_true(GameSession.get_persistent_player(PLAYER_TWO) == retained_state_b, "peer disconnect detaches instead of deleting canonical PlayerState")
+	var reattached_b := GameSession.attach_player(84, PLAYER_TWO)
+	t.assert_true(reattached_b == retained_state_b, "persistent player identity reattaches the same PlayerState to a new peer")
+	t.assert_true(is_equal_approx(reattached_b.health, retained_health_b) and reattached_b.item_state_revision == retained_item_revision_b, "reattach preserves vitals and item revision")
+	GameSession.detach_player(84)
 
 	NetworkManager.leave_game()
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "leave returns transport to offline")
 	t.assert_equal(NetworkManager.players.size(), 0, "leave clears network peer registry")
 	t.assert_equal(GameSession.players.size(), 1, "leave retains only the offline local player")
+	t.assert_equal(GameSession.persistent_player_count(), 1, "session end clears all remote attached and detached PlayerStates")
+	t.assert_true(GameSession.get_persistent_player(PLAYER_TWO) == null and GameSession.get_persistent_player(PLAYER_THREE) == null, "session end removes remote persistent registry entries")
 	t.assert_true(GameSession.player == GameSession.players[GameSession.LOCAL_SINGLEPLAYER_PEER_ID], "offline compatibility facade remains canonical")
 	t.assert_true(GameSession.get_player_runtime(42) == null and GameSession.get_player_runtime(43) == null, "leave clears remote lifecycle state")
 	t.assert_true(GameSession.start_new_game() and SaveManager.can_save().success, "offline restart and save policy remain available")
@@ -97,7 +107,7 @@ func _test_runtime_snapshot_validation(t: Node) -> void:
 	t.assert_true(not invalid_phase.error_message.is_empty(), "runtime snapshot rejects invalid life phase")
 
 func _test_remote_health_presentation(t: Node) -> void:
-	var remote_state := GameSession.register_player(42)
+	var remote_state := GameSession.attach_player(42, PLAYER_TWO)
 	remote_state.stats.set_base(&"max_health", 50.0)
 	var inventory_before := remote_state.inventory.to_array()
 	var equipment_before := remote_state.equipment.to_dict()
@@ -173,7 +183,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 	NetworkManager._set_identity(1, PLAYER_ONE)
 	NetworkManager.players[1] = NetworkPlayerInfo.new(1, PLAYER_ONE, "Host", true)
 	GameSession.start_new_game()
-	GameSession.register_player(42)
+	GameSession.attach_player(42, PLAYER_TWO)
 	app_menu.visible = false
 	var host_world := Node.new()
 	app_world_layer.add_child(host_world)
@@ -187,7 +197,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 	NetworkManager._session_entered = true
 	NetworkManager._set_identity(42, PLAYER_TWO)
 	NetworkManager.players[42] = NetworkPlayerInfo.new(42, PLAYER_TWO, "Client", true)
-	GameSession.register_player(42)
+	GameSession.attach_player(42, PLAYER_TWO)
 	app_menu.visible = false
 	var client_world := Node.new()
 	app_world_layer.add_child(client_world)
@@ -200,7 +210,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 	NetworkManager._session_entered = true
 	NetworkManager._set_identity(42, PLAYER_TWO)
 	NetworkManager.players[42] = NetworkPlayerInfo.new(42, PLAYER_TWO, "Client", true)
-	GameSession.register_player(42)
+	GameSession.attach_player(42, PLAYER_TWO)
 	app_menu.visible = false
 	var disconnected_world := Node.new()
 	app_world_layer.add_child(disconnected_world)

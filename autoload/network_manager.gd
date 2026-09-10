@@ -176,7 +176,7 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 		return
 	if players.erase(peer_id):
 		world_ready_peers.erase(peer_id)
-		GameSession.unregister_player(peer_id)
+		GameSession.detach_player(peer_id)
 		_remove_identity(peer_id)
 		for remaining_peer_id in multiplayer.get_peers():
 			if can_send_to_peer(remaining_peer_id):
@@ -249,8 +249,16 @@ func _request_handshake(protocol_version: int, player_id: StringName, display_na
 		_reject_remote_handshake(sender, "Cannot attach persistent player identity")
 		return
 	players[sender] = NetworkPlayerInfo.new(sender, player_id, safe_name if not safe_name.is_empty() else "Player", true)
+	# Existing clients must register the peer before PlayerSpawnManager reacts to
+	# the domain attachment and sends that actor's spawn RPC.
 	_client_add_peer.rpc(sender, player_id, players[sender].display_name)
-	GameSession.register_player(sender)
+	var attached_state := GameSession.attach_player(sender, player_id)
+	if attached_state == null:
+		players.erase(sender)
+		_client_remove_peer.rpc(sender)
+		_remove_identity(sender)
+		_reject_remote_handshake(sender, "Cannot attach persistent player state")
+		return
 	_receive_session_snapshot.rpc_id(sender, GameSession.to_network_snapshot(NETWORK_PROTOCOL_VERSION))
 	print("[NET] Connected peer %d" % sender)
 	peer_joined.emit(sender)
@@ -309,14 +317,16 @@ func _client_add_peer(peer_id: int, player_id: StringName, display_name: String)
 		return
 	if not _set_identity(peer_id, player_id):
 		return
+	if GameSession.attach_player(peer_id, player_id) == null:
+		_remove_identity(peer_id)
+		return
 	players[peer_id] = NetworkPlayerInfo.new(peer_id, player_id, display_name, true)
-	GameSession.register_player(peer_id)
 	peer_joined.emit(peer_id)
 
 @rpc("authority", "call_remote", "reliable")
 func _client_remove_peer(peer_id: int) -> void:
 	if players.erase(peer_id):
-		GameSession.unregister_player(peer_id)
+		GameSession.detach_player(peer_id)
 		_remove_identity(peer_id)
 		peer_left.emit(peer_id)
 

@@ -1,5 +1,8 @@
 extends RefCounted
 
+const PLAYER_TWO: StringName = &"player_22222222222222222222222222222222"
+const PLAYER_THREE: StringName = &"player_33333333333333333333333333333333"
+
 func run(t: Node) -> void:
 	var command := PlayerAttackCommand.new(4)
 	t.assert_true(command.is_valid_after(3), "new attack sequence is accepted")
@@ -109,8 +112,8 @@ func run(t: Node) -> void:
 	# Disconnect is an explicit forfeiture policy until reconnect persistence exists.
 	NetworkManager.leave_game()
 	GameSession.start_new_game()
-	GameSession.register_player(2)
-	GameSession.register_player(3)
+	var persistent_player_b := GameSession.attach_player(2, PLAYER_TWO)
+	GameSession.attach_player(3, PLAYER_THREE)
 	var live_context := GameSession.begin_adventure(&"sewer_gate", &"sewer_region", &"sewer_entrance")
 	t.assert_true(live_context != null, "disconnect policy fixture starts an adventure")
 	var live_session := GameSession.adventure.active_session
@@ -121,16 +124,17 @@ func run(t: Node) -> void:
 	live_b.unsecured_loot.add_item(&"rusty_scrap", 5)
 	live_c.unsecured_loot.add_item(&"rusty_scrap", 2)
 	var storage_before_disconnect := GameSession.settlement.storage.count(&"rusty_scrap")
-	GameSession.unregister_player(2)
+	GameSession.detach_player(2)
 	t.assert_true(live_session.get_player_adventure(2) == null, "disconnect discards only that peer's PlayerAdventureState")
 	t.assert_equal(live_a.unsecured_loot.count(&"rusty_scrap"), 1, "disconnect preserves peer A unsecured loot")
 	t.assert_equal(live_c.unsecured_loot.count(&"rusty_scrap"), 2, "disconnect preserves peer C unsecured loot")
 	t.assert_equal(GameSession.settlement.storage.count(&"rusty_scrap"), storage_before_disconnect, "disconnect does not secure forfeited loot into settlement storage")
-	GameSession.register_player(2)
+	var reattached_player_b := GameSession.attach_player(2, PLAYER_TWO)
+	t.assert_true(reattached_player_b == persistent_player_b, "adventure rejoin reuses PlayerState while recreating expedition participation")
 	var rejoined_b := live_session.get_player_adventure(2)
 	t.assert_true(rejoined_b != null and rejoined_b != live_b, "rejoin creates a fresh PlayerAdventureState")
 	t.assert_equal(rejoined_b.unsecured_loot.count(&"rusty_scrap"), 0, "rejoin does not restore forfeited unsecured loot")
-	GameSession.unregister_player(2)
-	GameSession.unregister_player(3)
+	GameSession.detach_player(2)
+	GameSession.detach_player(3)
 	GameSession.adventure.active_session = null
 	GameSession.set_phase(GameSession.Phase.SETTLEMENT)

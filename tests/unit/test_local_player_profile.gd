@@ -21,8 +21,25 @@ func run(t: Node) -> void:
 	t.assert_true(malformed.is_valid() and malformed.get_player_id() != original_id, "malformed profile receives a replacement identity")
 	_assert_repaired_payload(t, profile_path, malformed.get_player_id(), "malformed profile repair is persisted")
 
+	_write(profile_path, JSON.stringify({"version": LocalPlayerProfile.PROFILE_VERSION + 1, "player_id": String(original_id), "display_name": "Player"}))
+	var unsupported := LocalPlayerProfile.new(profile_path)
+	t.assert_equal(unsupported._load_existing(), ERR_INVALID_DATA, "unsupported profile version is rejected by the load contract")
+	t.assert_equal(unsupported.last_error, "Unsupported local player profile version", "unsupported profile version reports a clear error")
+	t.assert_equal(unsupported.load_or_create(), OK, "unsupported profile version is repaired without migration")
+	t.assert_true(unsupported.is_valid() and unsupported.get_player_id() != original_id, "unsupported profile version receives a replacement identity")
+	_assert_repaired_payload(t, profile_path, unsupported.get_player_id(), "profile version repair is persisted")
+
+	for invalid_version in [null, "1", 1.5]:
+		var version_payload := {"player_id": String(original_id), "display_name": "Player"}
+		if invalid_version != null:
+			version_payload["version"] = invalid_version
+		_write(profile_path, JSON.stringify(version_payload))
+		var invalid_version_profile := LocalPlayerProfile.new(profile_path)
+		t.assert_equal(invalid_version_profile._load_existing(), ERR_INVALID_DATA, "missing, non-numeric, and fractional profile versions are rejected")
+		t.assert_equal(invalid_version_profile.last_error, "Unsupported local player profile version", "invalid profile version uses the stable load error")
+
 	for invalid_id in ["", "abc", "player_", "player_0123456789abcdef0123456789abcdeg"]:
-		_write(profile_path, JSON.stringify({"player_id": invalid_id, "display_name": "Player"}))
+		_write(profile_path, JSON.stringify({"version": LocalPlayerProfile.PROFILE_VERSION, "player_id": invalid_id, "display_name": "Player"}))
 		var invalid := LocalPlayerProfile.new(profile_path)
 		t.assert_equal(invalid.load_or_create(), OK, "invalid profile identity is repaired: %s" % invalid_id)
 		t.assert_true(invalid.is_valid(), "repaired profile identity is valid: %s" % invalid_id)

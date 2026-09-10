@@ -10,9 +10,9 @@ The host runs both the authoritative server and its local client. Remote clients
 
 Attack requests contain only a monotonic sequence, and pickup requests contain only a server-issued loot entity ID. They never contain target, damage, item, or quantity results. Enemy AI, hit detection, health/death, loot RNG, and personal unsecured-loot mutation run only on the server. The server derives identity from `multiplayer.get_remote_sender_id()` and rejects unknown/spoofed senders, stale sequences, malformed values, invalid life phases, and out-of-range pickups.
 
-`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`; the client submits it during handshake and the host attaches it only after format and active-duplicate validation. The validated mapping is replicated in the session snapshot. Personal progression is keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
+`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`; the client submits it during handshake and the host attaches it only after format and active-duplicate validation. Profile version `1` is part of the load contract; unsupported or malformed profiles are replaced rather than silently migrated. The validated mapping is replicated in the session snapshot. Personal progression and canonical in-session `PlayerState` ownership are keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by active `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
 
-`GameSession.players` remains the canonical peer-to-`PlayerState` collection for this phase, and `GameSession.player` is a compatibility view of the local peer's exact same object. `ProgressionState` now owns separate shared quest states and `PersonalProgressionState[player_id]` containers. Shared settlement, adventure, and difficulty models remain server-owned.
+`GameSession` owns one canonical in-memory `PlayerState` per persistent `player_id`. `GameSession.players[peer_id]` is only the active attachment view and references that exact object; `GameSession.player` remains the local compatibility facade. A disconnect removes the peer runtime, actor, command caches, and active identity mapping, but the host retains the canonical state and personal progression until the multiplayer session ends. Reconnecting with the same inactive `player_id` attaches the existing state to the new peer and sends its current owner-only item and personal quest snapshots. Shared settlement, adventure, and difficulty models remain server-owned.
 
 On clients, `PlayerState.health` is a read-only mirror of the latest validated server runtime snapshot. The snapshot does not rewrite stats, equipment, effects, inventory, or shared state. `PlayerActor` separately applies presentation: ALIVE displays mirrored health, while DEAD and RESPAWNING actors remain visually at zero health until the new life actor is spawned.
 
@@ -92,13 +92,13 @@ For a visual same-machine test, each process needs its own installation-profile 
 
 `SettlementState.pending_loot` is shared server-authoritative state. Its public getter always returns deep-copied ItemStacks, including on the host. A storage-full secure operation and a successful pending claim each produce exactly one settlement revision. Clients receive the mirror on late join and fresh reconnect; pending records share instance-ID validation with primary settlement storage.
 
-Each connected player's server `PlayerState.inventory` and `equipment` are canonical. Clients receive only their own revisioned `PlayerItemStateSnapshot`; another peer's full private item state is never broadcast. Equip and unequip use stable instance IDs, consumable requests contain only an item ID, and storage transfers contain only direction, item identity, and amount. Reconnect restoration remains unsupported: a fresh connection reuses its persistent logical identity but receives a newly constructed `PlayerState` with the configured starting item state.
+Each connected player's server `PlayerState.inventory` and `equipment` are canonical. Clients receive only their own revisioned `PlayerItemStateSnapshot`; another peer's full private item state is never broadcast. Equip and unequip use stable instance IDs, consumable requests contain only an item ID, and storage transfers contain only direction, item identity, and amount. A same-session reconnect reuses the retained PlayerState, including health, survival, effects, inventory, protected inventory, equipment, and item revision. The current owner snapshot exposes inventory/equipment according to the existing 3-C privacy boundary; protected inventory remains server-domain state.
 
 Enemy kill credit requires a player-attributed server damage source. A single kill or pickup event can advance the contributing player's PERSONAL quests and the shared PARTY/WORLD quests. Ownerless environment kills grant no quest progress.
 
 Disconnecting during an expedition explicitly forfeits that peer's current `PlayerAdventureState` and unsecured loot. Other peers' expedition loot and settlement storage are left unchanged. Joining again creates a new empty player-adventure state; reconnect restoration is not supported yet.
 
-Personal quest progression is deliberately not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer now presents the same persistent identity, but reattaching the previous `PlayerState` is deferred to 4-B. A full session/new-game reset may discard these in-memory personal states.
+Personal quest progression is not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer presenting that inactive identity receives the retained personal quest state. A full session/new-game reset discards remote detached PlayerStates and in-memory personal states; process-exit persistence remains deferred to Save v4.
 
 `finish_adventure()` is currently a party-wide operation: it gathers every registered player's unsecured loot into settlement storage and ends the expedition for the party. Individual escape and separate `finish_player_adventure(peer_id)` semantics are deferred rather than introducing an unused abstraction now.
 
@@ -111,7 +111,7 @@ Save v3 continues to serialize only the existing shared quest collection. Produc
 - Resident runtime movement and animation (resident persistent/domain state is mirrored)
 - Party scene transitions and coordinated expedition start/return
 - Persistent multiplayer saves
-- Reattaching a disconnected PlayerState and reconnect state restoration
+- Process-exit reconnect restoration and multiplayer Save v4
 - Host migration
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration

@@ -80,6 +80,14 @@ func _ready() -> void:
 			client_hurtbox.monitoring = false
 			client_hurtbox.monitorable = false
 
+func _exit_tree() -> void:
+	if _bound_state == null:
+		return
+	if _bound_state.vitals_changed.is_connected(_sync_persistent_health):
+		_bound_state.vitals_changed.disconnect(_sync_persistent_health)
+	if _bound_state.stats.stat_changed.is_connected(_on_stat_changed):
+		_bound_state.stats.stat_changed.disconnect(_on_stat_changed)
+
 func _physics_process(delta: float) -> void:
 	if _death_handled:
 		return

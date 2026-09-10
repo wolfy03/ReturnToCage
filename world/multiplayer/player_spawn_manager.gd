@@ -93,6 +93,8 @@ func _despawn_local(peer_id: int) -> void:
 	var actor: PlayerActor = _actors.get(peer_id)
 	_actors.erase(peer_id)
 	if is_instance_valid(actor):
+		if actor.is_inside_tree() and actor.get_parent() != null:
+			actor.get_parent().remove_child(actor)
 		actor.queue_free()
 
 func respawn_player(peer_id: int) -> bool:

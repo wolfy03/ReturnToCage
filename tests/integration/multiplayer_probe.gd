@@ -32,6 +32,13 @@ var reconnecting: bool = false
 var initial_local_peer_id: int = 0
 var initial_local_player_id: StringName = &""
 var reconnect_confirmations: Dictionary[int, bool] = {}
+var reconnect_state_refs: Dictionary[StringName, PlayerState] = {}
+var reconnect_personal_refs: Dictionary[StringName, PersonalProgressionState] = {}
+var reconnect_old_peers: Dictionary[StringName, int] = {}
+var reconnect_item_revisions: Dictionary[StringName, int] = {}
+var reconnect_hunger_values: Dictionary[StringName, float] = {}
+var reconnect_water_counts: Dictionary[StringName, int] = {}
+var reconnect_reattach_verified: Dictionary[StringName, bool] = {}
 var enemy_roster_confirmation_sent: bool = false
 var enemy_roster_confirmations: Dictionary[int, bool] = {}
 var combat_enemy_id: int = 0
@@ -94,6 +101,7 @@ func _ready() -> void:
 			_fail("host did not attach its persistent local profile identity")
 			return
 		NetworkManager.peer_joined.connect(_on_probe_peer_joined)
+		NetworkManager.peer_left.connect(_on_probe_peer_left)
 		GameSession.start_quest(&"sewer_supplies", GameSession.get_local_player_id())
 		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, GameSession.get_local_player_id())
 		GameSession.start_quest(PROBE_PARTY_QUEST_ID, GameSession.get_local_player_id())
@@ -437,16 +445,24 @@ func _process(_delta: float) -> void:
 				if pending_result.success or GameSession.settlement.pending_loot.size() != 1:
 					_fail("reconnect pending loot fixture failed")
 					return
+				if not _prepare_reconnect_state():
+					return
 				_probe_done.rpc()
 				phase_started_msec = Time.get_ticks_msec()
 				state = ProbeState.CLEANUP
 		ProbeState.CLEANUP:
 			if GameSession.players.size() == 1 and Time.get_ticks_msec() - phase_started_msec > 250:
+				for player_id in reconnect_state_refs:
+					if GameSession.get_persistent_player(player_id) != reconnect_state_refs[player_id] \
+							or NetworkManager.peer_id_for_player(player_id) != 0:
+						_fail("disconnect did not preserve a detached PlayerState with no active peer mapping")
+						return
 				print("PROBE HOST CLEANUP OK")
 				state = ProbeState.RECONNECT
 		ProbeState.RECONNECT:
 			if GameSession.players.size() == expected_players \
 				and get_tree().get_nodes_in_group(&"player").size() == expected_players \
+				and reconnect_reattach_verified.size() == expected_players - 1 \
 				and reconnect_confirmations.size() == expected_players - 1:
 				print("PROBE FRESH RECONNECT OK")
 				_reconnect_done.rpc()
@@ -499,9 +515,84 @@ func _install_probe_personal_quest() -> void:
 
 func _on_probe_peer_joined(peer_id: int) -> void:
 	var player_id := GameSession.get_player_id(peer_id)
+	if state == ProbeState.RECONNECT and reconnect_state_refs.has(player_id):
+		var attached := GameSession.get_player(peer_id)
+		var personal := GameSession.progression.get_personal_progression(player_id)
+		var attached_vest := attached.equipment.equipped(EquipmentDefinition.EquipmentSlot.BODY) if attached != null else null
+		var adventure_state := GameSession.adventure.active_session.get_player_adventure(peer_id) \
+			if GameSession.adventure.active_session != null else null
+		if attached != reconnect_state_refs[player_id] \
+				or personal != reconnect_personal_refs[player_id] \
+				or not is_equal_approx(attached.health, 37.0) \
+				or not is_equal_approx(attached.survival.hunger, reconnect_hunger_values[player_id]) \
+				or attached.last_safe_position != Vector2(321, 432) \
+				or attached.inventory.count(&"water_drop") != reconnect_water_counts[player_id] \
+				or attached.protected_inventory.count(&"berry") != 1 \
+				or attached_vest == null or not attached_vest.instance_id.begins_with("reconnect_vest_") \
+				or attached.item_state_revision != reconnect_item_revisions[player_id] \
+				or adventure_state == null or not adventure_state.unsecured_loot.stacks().is_empty():
+			_fail("persistent reattach mismatch state=%s personal=%s health=%s hunger=%s safe=%s water=%s protected=%s vest=%s revision=%s/%s adventure=%s loot=%s" % [
+				attached == reconnect_state_refs[player_id], personal == reconnect_personal_refs[player_id],
+				attached.health if attached != null else -1, attached.survival.hunger if attached != null else -1,
+				attached.last_safe_position if attached != null else Vector2.ZERO,
+				attached.inventory.count(&"water_drop") if attached != null else -1,
+				attached.protected_inventory.count(&"berry") if attached != null else -1,
+				attached_vest.instance_id if attached_vest != null else "missing",
+				attached.item_state_revision if attached != null else -1, reconnect_item_revisions[player_id],
+				adventure_state != null, adventure_state.unsecured_loot.stacks().size() if adventure_state != null else -1,
+			])
+			return
+		reconnect_reattach_verified[player_id] = true
 	if not player_id.is_empty():
 		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, player_id)
 		GameSession.start_quest(PROBE_PERSONAL_UPGRADE_QUEST_ID, player_id)
+
+func _on_probe_peer_left(peer_id: int) -> void:
+	for player_id in reconnect_old_peers:
+		if reconnect_old_peers[player_id] == peer_id:
+			if GameSession.has_player(peer_id) or GameSession.get_player_runtime(peer_id) != null:
+				_fail("disconnect left an active player or runtime attachment")
+			var detached := GameSession.get_persistent_player(player_id)
+			if detached != null:
+				reconnect_hunger_values[player_id] = detached.survival.hunger
+			return
+
+func _prepare_reconnect_state() -> bool:
+	var peer_ids: Array[int] = []
+	peer_ids.assign(GameSession.players.keys())
+	peer_ids.sort()
+	for peer_id in peer_ids:
+		if peer_id == 1:
+			continue
+		var player_id := GameSession.get_player_id(peer_id)
+		var player_state := GameSession.get_player(peer_id)
+		var personal := GameSession.progression.get_personal_progression(player_id)
+		var player_adventure := GameSession.adventure.active_session.get_player_adventure(peer_id) \
+			if GameSession.adventure.active_session != null else null
+		if player_id.is_empty() or player_state == null or personal == null or player_adventure == null:
+			_fail("reconnect persistence fixture could not resolve player ownership")
+			return false
+		player_state.set_health(37.0)
+		player_state.survival.hunger = 33.0
+		player_state.last_safe_position = Vector2(321, 432)
+		if not player_state.inventory.add_item(&"water_drop", 1).success:
+			_fail("reconnect persistence item fixture failed")
+			return false
+		if not player_state.protected_inventory.add_item(&"berry", 1).success:
+			_fail("reconnect protected inventory fixture failed")
+			return false
+		var reconnect_vest := ItemStack.new(&"leaf_vest", 1)
+		reconnect_vest.instance_id = "reconnect_vest_%s" % String(player_id).trim_prefix("player_")
+		reconnect_vest.durability = 33
+		player_state.equipment.equip(reconnect_vest)
+		player_adventure.unsecured_loot.add_item(&"moss_fiber", 2)
+		reconnect_state_refs[player_id] = player_state
+		reconnect_personal_refs[player_id] = personal
+		reconnect_old_peers[player_id] = peer_id
+		reconnect_item_revisions[player_id] = player_state.item_state_revision
+		reconnect_hunger_values[player_id] = player_state.survival.hunger
+		reconnect_water_counts[player_id] = player_state.inventory.count(&"water_drop")
+	return true
 
 @rpc("authority", "call_remote", "reliable")
 func _expect_settlement_upgrade(command_peer_id: int) -> void:
@@ -661,6 +752,10 @@ func _on_session_synchronized() -> void:
 		return
 	if reconnecting:
 		var reconnect_weapon := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+		var reconnect_vest := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.BODY)
+		var reconnect_personal := GameSession.progression.get_personal_progression(GameSession.get_local_player_id())
+		var reconnect_kill_state: QuestState = reconnect_personal.quest_states.get(PROBE_PERSONAL_QUEST_ID) if reconnect_personal != null else null
+		var expected_personal_kills := 1 if initial_local_peer_id == expected_killer_peer else 0
 		if NetworkManager.local_peer_id() == initial_local_peer_id \
 				or GameSession.get_local_player_id() != initial_local_player_id \
 				or GameSession.settlement.facility_levels.get(&"workbench", 0) != 1 \
@@ -668,9 +763,13 @@ func _on_session_synchronized() -> void:
 				or not GameSession.progression.unlocked_flags.has(&"basic_crafting") \
 				or GameSession.settlement.pending_loot.size() != 1 \
 				or GameSession.settlement.pending_loot[0].item_id != &"moss_fiber" \
-				or GameSession.player.inventory.count(&"berry") != 2 \
-				or GameSession.player.inventory.count(&"rusty_scrap") != 0 \
-				or GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.BODY) != null \
+				or not is_equal_approx(GameSession.player.health, 37.0) \
+				or not is_equal_approx(local_actor.health.current_health, 37.0) \
+				or GameSession.player.inventory.count(&"water_drop") != 2 \
+				or GameSession.player.item_state_revision <= 0 \
+				or reconnect_kill_state == null or reconnect_kill_state.progress[0] != expected_personal_kills \
+				or reconnect_vest == null or not reconnect_vest.instance_id.begins_with("reconnect_vest_") \
+				or reconnect_vest.durability != 33 \
 				or reconnect_weapon == null or reconnect_weapon.item_id != &"twig_sword":
 			_fail("fresh reconnect did not receive current settlement snapshot")
 			return

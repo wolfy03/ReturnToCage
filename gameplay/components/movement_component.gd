@@ -21,6 +21,8 @@ var _needs_release: bool = false
 var _interaction_granted: bool = false
 
 func configure(p_body: CharacterBody2D, p_input: PlayerInputComponent, p_stats: StatBlock) -> void:
+	if stats != null and stats.stat_changed.is_connected(_on_stat_changed):
+		stats.stat_changed.disconnect(_on_stat_changed)
 	body = p_body
 	input = p_input
 	stats = p_stats
@@ -120,6 +122,8 @@ func request_jump() -> void:
 		body.velocity.y = jump_velocity
 
 func _exit_tree() -> void:
+	if stats != null and stats.stat_changed.is_connected(_on_stat_changed):
+		stats.stat_changed.disconnect(_on_stat_changed)
 	climb_area = null
 	climb_areas.clear()
 	mode = Mode.AIR

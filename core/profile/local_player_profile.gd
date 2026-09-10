@@ -63,6 +63,14 @@ func _load_existing() -> Error:
 		last_error = "Local player profile contains invalid JSON"
 		return ERR_PARSE_ERROR
 	var payload: Dictionary = parser.data
+	var raw_version: Variant = payload.get("version")
+	# JSON represents numbers as floats in Godot. Accept only the exact integral
+	# profile version value; strings and fractional numbers remain invalid.
+	if (not raw_version is int and not raw_version is float) \
+			or not is_equal_approx(float(raw_version), float(int(raw_version))) \
+			or int(raw_version) != PROFILE_VERSION:
+		last_error = "Unsupported local player profile version"
+		return ERR_INVALID_DATA
 	var raw_player_id: Variant = payload.get("player_id")
 	if not is_valid_player_id(raw_player_id):
 		last_error = "Local player profile contains an invalid player_id"

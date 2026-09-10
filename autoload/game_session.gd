@@ -43,9 +43,13 @@ const LOCAL_EVENT_ACTOR: StringName = &"__local_player__"
 var session_id: String = ""
 var play_time_seconds: float = 0.0
 var last_message: String = ""
-# Read as the canonical registry; mutate membership only through register_player,
-# unregister_player, restore, or reset_to_offline_local_player.
+# Active peer attachment view. Canonical PlayerState ownership is keyed by the
+# persistent logical player_id in _player_states_by_id.
 var players: Dictionary[int, PlayerState] = {}
+var _player_states_by_id: Dictionary[StringName, PlayerState] = {}
+var _attached_player_ids: Dictionary[int, StringName] = {}
+var _player_vitals_callbacks: Dictionary[int, Callable] = {}
+var _player_item_callbacks: Dictionary[int, Callable] = {}
 var player: PlayerState:
 	get:
 		return get_local_player()
@@ -144,7 +148,7 @@ func _process(delta: float) -> void:
 
 func _create_models() -> void:
 	if not has_player(get_local_peer_id()):
-		_add_player_state(get_local_peer_id(), _create_player_state())
+		_add_player_state(get_local_peer_id(), get_player_id(get_local_peer_id()), _create_player_state())
 	if settlement == null:
 		settlement = SettlementState.new(
 			Callable(ContentRegistry, "get_item"),
@@ -183,6 +187,9 @@ func get_local_player() -> PlayerState:
 	return players.get(get_local_peer_id())
 
 func get_player_id(peer_id: int) -> StringName:
+	var attached: StringName = _attached_player_ids.get(peer_id, &"")
+	if not attached.is_empty():
+		return attached
 	var mapped := NetworkManager.player_id_for_peer(peer_id) if NetworkManager != null else &""
 	if not mapped.is_empty():
 		return mapped
@@ -193,12 +200,16 @@ func get_local_player_id() -> StringName:
 	return get_player_id(get_local_peer_id())
 
 func get_player_state_by_player_id(player_id: StringName) -> PlayerState:
-	if player_id.is_empty():
-		return null
-	if player_id == NetworkManager.local_profile_player_id() and not NetworkManager.is_multiplayer_active():
-		return get_player(LOCAL_SINGLEPLAYER_PEER_ID)
-	var peer_id := NetworkManager.peer_id_for_player(player_id)
-	return get_player(peer_id) if peer_id > 0 else null
+	return _player_states_by_id.get(player_id) if not player_id.is_empty() else null
+
+func has_persistent_player(player_id: StringName) -> bool:
+	return not player_id.is_empty() and _player_states_by_id.has(player_id)
+
+func get_persistent_player(player_id: StringName) -> PlayerState:
+	return get_player_state_by_player_id(player_id)
+
+func persistent_player_count() -> int:
+	return _player_states_by_id.size()
 
 func has_player(peer_id: int) -> bool:
 	return players.has(peer_id)
@@ -207,18 +218,27 @@ func get_player(peer_id: int) -> PlayerState:
 	return players.get(peer_id)
 
 func register_player(peer_id: int) -> PlayerState:
-	if peer_id <= 0:
+	return attach_player(peer_id, get_player_id(peer_id))
+
+func attach_player(peer_id: int, player_id: StringName) -> PlayerState:
+	if peer_id <= 0 or player_id.is_empty():
 		return null
 	if players.has(peer_id):
-		return players[peer_id]
-	var state := _create_player_state()
-	var start := get_start_definition(false)
-	if start != null:
-		state.reset(start, ContentRegistry)
-	if NetworkManager.is_session_connected() and not NetworkManager.is_server():
-		state.prepare_network_item_mirror()
-	_add_player_state(peer_id, state)
-	progression.ensure_personal_progression(get_player_id(peer_id))
+		return players[peer_id] if get_player_id(peer_id) == player_id else null
+	if _attached_player_ids.values().has(player_id):
+		return null
+	var state: PlayerState = _player_states_by_id.get(player_id)
+	if state == null:
+		state = _create_player_state()
+		var start := get_start_definition(false)
+		if start != null:
+			state.reset(start, ContentRegistry)
+		if NetworkManager.is_session_connected() and not NetworkManager.is_server():
+			state.prepare_network_item_mirror()
+		_player_states_by_id[player_id] = state
+	_add_player_state(peer_id, player_id, state)
+	state.effects.paused = false
+	progression.ensure_personal_progression(player_id)
 	if adventure.active_session != null:
 		adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
 	if peer_id == get_local_peer_id():
@@ -227,38 +247,76 @@ func register_player(peer_id: int) -> PlayerState:
 	return state
 
 func unregister_player(peer_id: int) -> void:
+	detach_player(peer_id)
+
+func detach_player(peer_id: int) -> void:
 	if not players.has(peer_id):
 		return
-	_disconnect_player_state_signals(peer_id, players[peer_id])
-	players[peer_id].effects.paused = true
+	var state: PlayerState = players[peer_id]
+	_disconnect_player_state_signals(peer_id, state)
+	state.effects.paused = true
 	players.erase(peer_id)
+	_attached_player_ids.erase(peer_id)
 	_player_runtime.erase(peer_id)
 	if adventure.active_session != null:
-		# Disconnect policy: without reconnect persistence, this peer forfeits its
-		# unsecured expedition loot while every other peer remains untouched.
+		# PlayerState and personal progression survive by persistent player_id, but
+		# expedition participation does not: disconnect forfeits this peer's
+		# unsecured loot and reconnect creates an empty adventure state.
 		adventure.active_session.discard_player_adventure(peer_id)
 	player_unregistered.emit(peer_id)
 
-func _add_player_state(peer_id: int, state: PlayerState) -> void:
+func remove_player_state(player_id: StringName) -> void:
+	var state: PlayerState = _player_states_by_id.get(player_id)
+	if state == null:
+		return
+	var attached_peers: Array[int] = []
+	for peer_id in _attached_player_ids:
+		if _attached_player_ids[peer_id] == player_id:
+			attached_peers.append(peer_id)
+	for peer_id in attached_peers:
+		detach_player(peer_id)
+	state.effects.paused = true
+	_player_states_by_id.erase(player_id)
+
+func _add_player_state(peer_id: int, player_id: StringName, state: PlayerState) -> void:
+	if peer_id <= 0 or player_id.is_empty() or state == null:
+		return
 	players[peer_id] = state
+	_attached_player_ids[peer_id] = player_id
+	_player_states_by_id[player_id] = state
 	_player_runtime[peer_id] = PlayerRuntimeState.new(peer_id)
 	_connect_player_state_signals(peer_id, state)
 
+func _clear_player_state_registry() -> void:
+	_disconnect_player_model_signals()
+	for state in _player_states_by_id.values():
+		(state as PlayerState).effects.paused = true
+	players.clear()
+	_attached_player_ids.clear()
+	_player_states_by_id.clear()
+	_player_runtime.clear()
+	_player_vitals_callbacks.clear()
+	_player_item_callbacks.clear()
+
 func _connect_player_state_signals(peer_id: int, state: PlayerState) -> void:
+	if _player_vitals_callbacks.has(peer_id) or _player_item_callbacks.has(peer_id):
+		_disconnect_player_state_signals(peer_id, state)
 	var callback := _on_player_vitals_changed.bind(peer_id)
-	if not state.vitals_changed.is_connected(callback):
-		state.vitals_changed.connect(callback)
+	state.vitals_changed.connect(callback)
+	_player_vitals_callbacks[peer_id] = callback
 	var item_callback := _on_player_item_state_changed.bind(peer_id)
-	if not state.item_state_changed.is_connected(item_callback):
-		state.item_state_changed.connect(item_callback)
+	state.item_state_changed.connect(item_callback)
+	_player_item_callbacks[peer_id] = item_callback
 
 func _disconnect_player_state_signals(peer_id: int, state: PlayerState) -> void:
-	var callback := _on_player_vitals_changed.bind(peer_id)
-	if state.vitals_changed.is_connected(callback):
+	var callback: Callable = _player_vitals_callbacks.get(peer_id, Callable())
+	if callback.is_valid() and state.vitals_changed.is_connected(callback):
 		state.vitals_changed.disconnect(callback)
-	var item_callback := _on_player_item_state_changed.bind(peer_id)
-	if state.item_state_changed.is_connected(item_callback):
+	_player_vitals_callbacks.erase(peer_id)
+	var item_callback: Callable = _player_item_callbacks.get(peer_id, Callable())
+	if item_callback.is_valid() and state.item_state_changed.is_connected(item_callback):
 		state.item_state_changed.disconnect(item_callback)
+	_player_item_callbacks.erase(peer_id)
 
 func _on_player_vitals_changed(peer_id: int) -> void:
 	if _applying_runtime_snapshot:
@@ -349,9 +407,7 @@ func start_new_game() -> bool:
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
 		return false
-	_disconnect_player_model_signals()
-	players.clear()
-	_player_runtime.clear()
+	_clear_player_state_registry()
 	_create_models()
 	session_id = "%s-%s" % [Time.get_unix_time_from_system(), randi()]
 	play_time_seconds = 0.0
@@ -841,9 +897,7 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	var start := get_start_definition()
 	if start == null:
 		return false
-	_disconnect_player_model_signals()
-	players.clear()
-	_player_runtime.clear()
+	_clear_player_state_registry()
 	settlement.reset(start, ContentRegistry)
 	progression.reset(start)
 	# Revision zero is a valid authoritative initial snapshot. A newly joined
@@ -871,18 +925,13 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 		retained_state = get_player(LOCAL_SINGLEPLAYER_PEER_ID)
 	var retired_peer_ids: Array[int] = []
 	retired_peer_ids.assign(players.keys())
-	_disconnect_player_model_signals()
-	for state in players.values():
-		if state != retained_state:
-			state.effects.paused = true
-	players.clear()
-	_player_runtime.clear()
+	_clear_player_state_registry()
 	if retained_state == null:
 		retained_state = _create_player_state()
 		var start := get_start_definition(false)
 		if start != null:
 			retained_state.reset(start, ContentRegistry)
-	_add_player_state(LOCAL_SINGLEPLAYER_PEER_ID, retained_state)
+	_add_player_state(LOCAL_SINGLEPLAYER_PEER_ID, NetworkManager.local_profile_player_id(), retained_state)
 	progression.personal_progression.clear()
 	progression.ensure_personal_progression(get_local_player_id())
 	retained_state.effects.paused = false
@@ -922,12 +971,10 @@ func prepare_restore(data: Dictionary) -> SessionSnapshot:
 func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	if adventure.active_session != null or phase == Phase.RESPAWNING or not snapshot.fatal_error.is_empty():
 		return
-	_disconnect_player_model_signals()
+	_clear_player_state_registry()
 	_disconnect_shared_model_signals()
-	players.clear()
-	_player_runtime.clear()
 	snapshot.player.set_item_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
-	_add_player_state(get_local_peer_id(), snapshot.player)
+	_add_player_state(get_local_peer_id(), get_local_player_id(), snapshot.player)
 	settlement = snapshot.settlement
 	settlement.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 	progression = snapshot.progression

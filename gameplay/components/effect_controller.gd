@@ -22,7 +22,11 @@ func _process(delta: float) -> void:
 		model.tick(delta)
 
 func _exit_tree() -> void:
-	if model != null and not session_owned:
+	if model == null:
+		return
+	if model.changed.is_connected(effects_changed.emit):
+		model.changed.disconnect(effects_changed.emit)
+	if not session_owned:
 		for key in model.active_effects.keys():
 			model.remove_effect(key)
 
