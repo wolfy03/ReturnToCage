@@ -928,14 +928,17 @@ func prepare_restore(data: Dictionary) -> SessionSnapshot:
 		return failed
 	return SessionSnapshot.build(data, start, ContentRegistry)
 
-func prepare_persistent_restore(data: Dictionary) -> SessionSnapshot:
+func prepare_persistent_restore(data: Dictionary, selected_player_id: StringName = &"") -> SessionSnapshot:
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
 		var failed := SessionSnapshot.new()
 		failed.fatal_error = "Invalid start configuration"
 		return failed
+	var local_player_id := selected_player_id
+	if local_player_id.is_empty():
+		local_player_id = NetworkManager.local_profile_player_id()
 	return SessionSnapshot.build_persistent(
-		data, start, ContentRegistry, NetworkManager.local_profile_player_id()
+		data, start, ContentRegistry, local_player_id
 	)
 
 func apply_snapshot(snapshot: SessionSnapshot) -> void:
