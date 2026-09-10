@@ -137,16 +137,34 @@ func _test_validation_contract(t: Node, token: String) -> void:
 		_cleanup(invalid_path)
 
 func _test_atomic_writer_failures(t: Node, token: String) -> void:
+	var success_path := _path(token, "transaction_success")
+	_create_known_profile(success_path, PLAYER_A)
+	var success := LocalPlayerProfile.new(success_path)
+	t.assert_equal(success.load_or_create(), OK, "transaction success fixture loads")
+	t.assert_equal(success.commit_identity(PLAYER_B, "  Replacement  "), OK, "identity transaction commits both copies")
+	t.assert_equal(success.get_player_id(), PLAYER_B, "successful transaction activates requested identity")
+	t.assert_equal(success.get_display_name(), "Replacement", "successful transaction activates sanitized display name")
+	t.assert_equal(_read_id(success_path), PLAYER_B, "successful transaction installs requested primary")
+	t.assert_equal(_read_id(success_path + ".bak"), PLAYER_B, "successful transaction installs requested backup")
+	t.assert_equal(_read_display_name(success_path), "Replacement", "successful primary contains sanitized display name")
+	t.assert_equal(_read_display_name(success_path + ".bak"), "Replacement", "successful backup contains sanitized display name")
+	_assert_no_transaction_artifacts(t, success_path, "successful identity transaction cleans all artifacts")
+	_cleanup(success_path)
+
 	for operation in [LocalPlayerProfile.OP_TEMP_OPEN, LocalPlayerProfile.OP_TEMP_WRITE, LocalPlayerProfile.OP_TEMP_VALIDATE, LocalPlayerProfile.OP_BACKUP_CREATE]:
 		var path := _path(token, "failure_%s" % operation)
 		_create_known_profile(path, PLAYER_A)
 		var failing := LocalPlayerProfile.new(path, _failure_hook([operation]))
 		t.assert_equal(failing.load_or_create(), OK, "failure fixture first loads its valid profile")
 		var original_valid := failing.is_valid()
+		var original_status := failing.load_status
 		var result := failing.commit_identity(PLAYER_B, "Replacement")
 		t.assert_true(result != OK, "%s is reported" % operation)
 		t.assert_equal(failing.get_player_id(), PLAYER_A, "%s leaves the in-memory identity unchanged" % operation)
 		t.assert_equal(failing.is_valid(), original_valid, "%s leaves in-memory validity unchanged" % operation)
+		t.assert_equal(failing.load_status, original_status, "%s leaves the existing load status unchanged" % operation)
+		t.assert_equal(_read_id(path), PLAYER_A, "%s restores the previous primary" % operation)
+		t.assert_equal(_read_id(path + ".bak"), PLAYER_A, "%s restores the previous backup" % operation)
 		t.assert_true(not failing.last_error.is_empty(), "%s provides failure detail" % operation)
 		_cleanup(path)
 
@@ -156,8 +174,11 @@ func _test_atomic_writer_failures(t: Node, token: String) -> void:
 	t.assert_equal(primary_failure.load_or_create(), OK, "primary failure fixture loads")
 	t.assert_true(primary_failure.commit_identity(PLAYER_B) != OK, "final primary rename failure is reported")
 	t.assert_equal(primary_failure.get_player_id(), PLAYER_A, "primary failure does not activate the new identity")
-	t.assert_equal(_read_id(primary_failure_path), PLAYER_A, "successful rollback preserves the previous primary")
-	t.assert_true(primary_failure.last_error.begins_with("PRIMARY_REPLACE_FAILED"), "primary failure is distinguishable")
+	t.assert_equal(primary_failure.get_display_name(), "Original", "primary failure preserves in-memory display name")
+	t.assert_equal(_read_id(primary_failure_path), PLAYER_A, "transaction rollback preserves the previous primary")
+	t.assert_equal(_read_id(primary_failure_path + ".bak"), PLAYER_A, "transaction rollback restores the previous backup")
+	t.assert_true(primary_failure.last_error.begins_with("TRANSACTION_PRIMARY_FAILED"), "primary transaction failure is distinguishable")
+	_assert_no_transaction_artifacts(t, primary_failure_path, "successful transaction rollback cleans artifacts")
 	_cleanup(primary_failure_path)
 
 	var rollback_failure_path := _path(token, "rollback_failure")
@@ -170,7 +191,67 @@ func _test_atomic_writer_failures(t: Node, token: String) -> void:
 	t.assert_true(rollback_failure.commit_identity(PLAYER_B) != OK, "rollback failure is reported")
 	t.assert_equal(rollback_failure.get_player_id(), PLAYER_A, "rollback failure still does not activate the new identity")
 	t.assert_true(rollback_failure.last_error.contains("ROLLBACK_FAILED"), "rollback failure has an explicit diagnostic")
+	t.assert_equal(_read_id(rollback_failure_path), PLAYER_A, "transaction rollback repairs a failed per-file primary rollback")
+	t.assert_equal(_read_id(rollback_failure_path + ".bak"), PLAYER_A, "transaction rollback also restores backup after per-file rollback failure")
 	_cleanup(rollback_failure_path)
+
+	var after_backup_path := _path(token, "after_backup")
+	_create_known_profile(after_backup_path, PLAYER_A)
+	var after_backup := LocalPlayerProfile.new(after_backup_path, _failure_hook([LocalPlayerProfile.OP_AFTER_BACKUP_INSTALL]))
+	t.assert_equal(after_backup.load_or_create(), OK, "post-backup failure fixture loads")
+	t.assert_true(after_backup.commit_identity(PLAYER_B) != OK, "failure after backup install aborts the transaction")
+	t.assert_equal(after_backup.get_player_id(), PLAYER_A, "post-backup failure preserves memory identity")
+	t.assert_equal(_read_id(after_backup_path), PLAYER_A, "post-backup failure restores primary")
+	t.assert_equal(_read_id(after_backup_path + ".bak"), PLAYER_A, "post-backup failure restores backup instead of leaving candidate identity")
+	_assert_no_transaction_artifacts(t, after_backup_path, "post-backup rollback cleans artifacts")
+	_cleanup(after_backup_path)
+
+	var corrupt_candidate_path := _path(token, "corrupt_candidate")
+	_cleanup(corrupt_candidate_path)
+	var corrupt_primary_bytes := "{corrupt primary bytes"
+	var corrupt_backup_bytes := "{corrupt backup bytes"
+	_write(corrupt_candidate_path, corrupt_primary_bytes)
+	_write(corrupt_candidate_path + ".bak", corrupt_backup_bytes)
+	var corrupt_candidate := LocalPlayerProfile.new(corrupt_candidate_path, _failure_hook([LocalPlayerProfile.OP_AFTER_BACKUP_INSTALL]))
+	t.assert_true(corrupt_candidate.commit_identity(PLAYER_B) != OK, "candidate commit failure restores corrupt input state")
+	t.assert_true(not corrupt_candidate.is_valid(), "failed candidate commit leaves memory invalid")
+	t.assert_equal(_read_text(corrupt_candidate_path), corrupt_primary_bytes, "corrupt primary raw bytes are restored exactly")
+	t.assert_equal(_read_text(corrupt_candidate_path + ".bak"), corrupt_backup_bytes, "corrupt backup raw bytes are restored exactly")
+	t.assert_true(not _read_text(corrupt_candidate_path).contains(String(PLAYER_B)) and not _read_text(corrupt_candidate_path + ".bak").contains(String(PLAYER_B)), "failed candidate leaves no requested identity artifact")
+	_cleanup(corrupt_candidate_path)
+
+	var missing_candidate_path := _path(token, "missing_candidate")
+	_cleanup(missing_candidate_path)
+	var missing_candidate := LocalPlayerProfile.new(missing_candidate_path, _failure_hook([LocalPlayerProfile.OP_AFTER_BACKUP_INSTALL]))
+	t.assert_true(missing_candidate.commit_identity(PLAYER_B) != OK, "new identity failure rolls back a previously missing profile")
+	t.assert_true(not FileAccess.file_exists(missing_candidate_path), "missing primary remains absent after failed commit")
+	t.assert_true(not FileAccess.file_exists(missing_candidate_path + ".bak"), "missing backup remains absent after failed commit")
+	t.assert_true(not missing_candidate.is_valid(), "failed first commit never activates memory identity")
+	_cleanup(missing_candidate_path)
+
+	var verify_failure_path := _path(token, "verify_failure")
+	_create_known_profile(verify_failure_path, PLAYER_A)
+	var verify_failure := LocalPlayerProfile.new(verify_failure_path, _failure_hook([LocalPlayerProfile.OP_FINAL_VERIFY]))
+	t.assert_equal(verify_failure.load_or_create(), OK, "final verification failure fixture loads")
+	t.assert_true(verify_failure.commit_identity(PLAYER_B) != OK, "final verification failure aborts transaction")
+	t.assert_equal(verify_failure.get_player_id(), PLAYER_A, "verification failure preserves memory identity")
+	t.assert_equal(_read_id(verify_failure_path), PLAYER_A, "verification failure restores primary")
+	t.assert_equal(_read_id(verify_failure_path + ".bak"), PLAYER_A, "verification failure restores backup")
+	t.assert_true(verify_failure.last_error.begins_with("TRANSACTION_VERIFY_FAILED"), "verification failure has an explicit diagnostic")
+	_cleanup(verify_failure_path)
+
+	for rollback_operation in [LocalPlayerProfile.OP_TRANSACTION_ROLLBACK_PRIMARY, LocalPlayerProfile.OP_TRANSACTION_ROLLBACK_BACKUP]:
+		var transaction_rollback_path := _path(token, "transaction_%s" % rollback_operation)
+		_create_known_profile(transaction_rollback_path, PLAYER_A)
+		var transaction_rollback := LocalPlayerProfile.new(transaction_rollback_path, _failure_hook([
+			LocalPlayerProfile.OP_AFTER_BACKUP_INSTALL,
+			rollback_operation,
+		]))
+		t.assert_equal(transaction_rollback.load_or_create(), OK, "transaction rollback failure fixture loads")
+		t.assert_true(transaction_rollback.commit_identity(PLAYER_B) != OK, "%s is reported" % rollback_operation)
+		t.assert_equal(transaction_rollback.get_player_id(), PLAYER_A, "%s never activates candidate memory state" % rollback_operation)
+		t.assert_true(transaction_rollback.last_error.contains("TRANSACTION_ROLLBACK_FAILED"), "%s identifies transaction rollback failure" % rollback_operation)
+		_cleanup(transaction_rollback_path)
 
 	var degraded_path := _path(token, "degraded_backup")
 	_cleanup(degraded_path)
@@ -190,6 +271,8 @@ func _test_atomic_writer_failures(t: Node, token: String) -> void:
 	t.assert_true(recovery_failure.load_or_create() != OK, "backup recovery requires a successful redundant disk commit")
 	t.assert_equal(recovery_failure.load_status, LocalPlayerProfile.LoadStatus.FAILED, "recovery persistence failure is distinct from corrupt inputs")
 	t.assert_true(not recovery_failure.is_valid() and recovery_failure.get_player_id().is_empty(), "failed recovery never activates memory state")
+	t.assert_equal(_read_text(recovery_failure_path), "{invalid primary", "failed backup recovery restores original corrupt primary")
+	t.assert_equal(_read_id(recovery_failure_path + ".bak"), PLAYER_A, "failed backup recovery preserves original valid backup")
 	_cleanup(recovery_failure_path)
 
 	var missing_directory_path := "user://missing_profile_directory_%s/local_player_profile.json" % token
@@ -197,7 +280,7 @@ func _test_atomic_writer_failures(t: Node, token: String) -> void:
 	t.assert_true(unavailable.load_or_create() != OK, "profile temporary open failure is reported")
 	t.assert_equal(unavailable.load_status, LocalPlayerProfile.LoadStatus.FAILED, "write failure has FAILED status")
 	t.assert_true(not unavailable.is_valid() and unavailable.get_player_id().is_empty(), "write failure never exposes an ephemeral identity")
-	t.assert_true(unavailable.last_error.begins_with("TEMP_OPEN_FAILED"), "profile write failure identifies the temporary open stage")
+	t.assert_true(unavailable.last_error.contains("TEMP_OPEN_FAILED"), "profile write failure identifies the temporary open stage")
 
 func _test_override_path_contract(t: Node, token: String) -> void:
 	var override_path := _path(token, "override")
@@ -230,6 +313,32 @@ func _read_id(path: String) -> StringName:
 	var payload: Variant = JSON.parse_string(file.get_as_text()) if file != null else null
 	return StringName(payload.get("player_id", "")) if payload is Dictionary else &""
 
+func _read_display_name(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.READ)
+	var payload: Variant = JSON.parse_string(file.get_as_text()) if file != null else null
+	return String(payload.get("display_name", "")) if payload is Dictionary else ""
+
+func _read_text(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	var result := file.get_as_text()
+	file.close()
+	return result
+
+func _assert_no_transaction_artifacts(t: Node, path: String, message: String) -> void:
+	var artifacts := [
+		path + ".tmp",
+		path + ".rollback",
+		path + ".bak.rollback",
+		path + ".transaction_rollback",
+		path + ".bak.transaction_rollback",
+	]
+	var clean := true
+	for artifact in artifacts:
+		clean = clean and not FileAccess.file_exists(artifact)
+	t.assert_true(clean, message)
+
 func _failure_hook(operations: Array) -> Callable:
 	return func(operation: StringName) -> bool:
 		return operations.has(operation)
@@ -242,7 +351,7 @@ func _write(path: String, contents: String) -> void:
 		file.close()
 
 func _cleanup(path: String) -> void:
-	for suffix in ["", ".bak", ".tmp", ".rollback", ".bak.rollback"]:
+	for suffix in ["", ".bak", ".tmp", ".rollback", ".bak.rollback", ".transaction_rollback", ".bak.transaction_rollback"]:
 		var candidate: String = path + suffix
 		if FileAccess.file_exists(candidate):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(candidate))

@@ -24,6 +24,10 @@ const OP_TEMP_VALIDATE := &"temp_validate"
 const OP_BACKUP_CREATE := &"backup_create"
 const OP_PRIMARY_REPLACE := &"primary_replace"
 const OP_ROLLBACK := &"rollback"
+const OP_AFTER_BACKUP_INSTALL := &"after_backup_install"
+const OP_FINAL_VERIFY := &"final_verify"
+const OP_TRANSACTION_ROLLBACK_PRIMARY := &"transaction_rollback_primary"
+const OP_TRANSACTION_ROLLBACK_BACKUP := &"transaction_rollback_backup"
 
 var _path: String
 var _player_id: StringName = &""
@@ -202,21 +206,134 @@ func _read_profile_file(path: String) -> Dictionary:
 	return result
 
 func _persist_identity(player_id: StringName, display_name: String) -> Error:
-	# Install the redundant copy first. If primary replacement later fails, the
-	# previous primary is rolled back and remains canonical on the next load.
+	var safe_name := _sanitize_display_name(display_name)
+	var transaction := _capture_transaction_state()
+	if not transaction.success:
+		return transaction.error_code
+	# Per-file replacement protects each target while it is being installed. The
+	# transaction snapshots above remain until both copies pass final validation.
 	var backup_result := _install_profile_copy(backup_path(), player_id, display_name, OP_BACKUP_CREATE)
 	if backup_result != OK:
-		return backup_result
+		return _rollback_identity_transaction(transaction, "TRANSACTION_BACKUP_FAILED: %s" % last_error, backup_result)
+	if _should_fail(OP_AFTER_BACKUP_INSTALL):
+		return _rollback_identity_transaction(
+			transaction,
+			"TRANSACTION_PRIMARY_FAILED: injected failure after backup install",
+			ERR_CANT_CREATE
+		)
 	var primary_result := _install_profile_copy(_path, player_id, display_name, OP_PRIMARY_REPLACE)
 	if primary_result != OK:
-		return primary_result
+		return _rollback_identity_transaction(transaction, "TRANSACTION_PRIMARY_FAILED: %s" % last_error, primary_result)
 	var primary := _read_profile_file(_path)
 	var backup := _read_profile_file(backup_path())
-	if not primary.success or not backup.success or primary.player_id != player_id \
-			or backup.player_id != player_id:
-		last_error = "TEMP_VALIDATE_FAILED: installed profile copies did not verify"
-		return ERR_INVALID_DATA
+	if _should_fail(OP_FINAL_VERIFY) or not primary.success or not backup.success \
+			or primary.player_id != player_id or backup.player_id != player_id \
+			or primary.display_name != safe_name or backup.display_name != safe_name:
+		return _rollback_identity_transaction(
+			transaction,
+			"TRANSACTION_VERIFY_FAILED: installed profile copies did not verify",
+			ERR_INVALID_DATA
+		)
+	_cleanup_transaction_artifacts()
 	return OK
+
+func _capture_transaction_state() -> Dictionary:
+	var result := {
+		"success": false,
+		"error_code": ERR_CANT_CREATE,
+		"primary_existed": FileAccess.file_exists(_path),
+		"backup_existed": FileAccess.file_exists(backup_path()),
+	}
+	var cleanup_error := _cleanup_transaction_artifacts(true)
+	if cleanup_error != OK:
+		result.error_code = cleanup_error
+		return result
+	for target_path in [_path, backup_path()]:
+		if not FileAccess.file_exists(target_path):
+			continue
+		var copy_error := DirAccess.copy_absolute(
+			ProjectSettings.globalize_path(target_path),
+			ProjectSettings.globalize_path(_transaction_rollback_path(target_path))
+		)
+		if copy_error != OK:
+			_cleanup_transaction_artifacts()
+			last_error = "TRANSACTION_CAPTURE_FAILED: cannot preserve %s: %s" % [target_path, error_string(copy_error)]
+			result.error_code = copy_error
+			return result
+	result.success = true
+	result.error_code = OK
+	return result
+
+func _rollback_identity_transaction(transaction: Dictionary, cause: String, cause_error: Error) -> Error:
+	_remove_temporary()
+	var failures: PackedStringArray = []
+	_restore_transaction_target(
+		_path,
+		bool(transaction.primary_existed),
+		OP_TRANSACTION_ROLLBACK_PRIMARY,
+		"primary",
+		failures
+	)
+	_restore_transaction_target(
+		backup_path(),
+		bool(transaction.backup_existed),
+		OP_TRANSACTION_ROLLBACK_BACKUP,
+		"backup",
+		failures
+	)
+	if not failures.is_empty():
+		last_error = "%s; TRANSACTION_ROLLBACK_FAILED: %s" % [cause, "; ".join(failures)]
+		return FAILED
+	_cleanup_transaction_artifacts()
+	_cleanup_per_file_rollback_artifacts()
+	last_error = cause
+	return cause_error
+
+func _restore_transaction_target(target_path: String, existed: bool, failure_operation: StringName, label: String, failures: PackedStringArray) -> void:
+	if _should_fail(failure_operation):
+		failures.append("%s restore injected failure" % label)
+		return
+	var absolute_target := ProjectSettings.globalize_path(target_path)
+	if FileAccess.file_exists(target_path):
+		var remove_error := DirAccess.remove_absolute(absolute_target)
+		if remove_error != OK:
+			failures.append("%s remove failed: %s" % [label, error_string(remove_error)])
+			return
+	if not existed:
+		return
+	var rollback_path := _transaction_rollback_path(target_path)
+	if not FileAccess.file_exists(rollback_path):
+		failures.append("%s transaction copy is missing" % label)
+		return
+	var restore_error := DirAccess.copy_absolute(
+		ProjectSettings.globalize_path(rollback_path),
+		absolute_target
+	)
+	if restore_error != OK:
+		failures.append("%s restore failed: %s" % [label, error_string(restore_error)])
+
+func _transaction_rollback_path(target_path: String) -> String:
+	return target_path + ".transaction_rollback"
+
+func _cleanup_transaction_artifacts(strict: bool = false) -> Error:
+	for target_path in [_path, backup_path()]:
+		var rollback_path := _transaction_rollback_path(target_path)
+		if not FileAccess.file_exists(rollback_path):
+			continue
+		var remove_error := DirAccess.remove_absolute(ProjectSettings.globalize_path(rollback_path))
+		if remove_error != OK and strict:
+			last_error = "TRANSACTION_CAPTURE_FAILED: cannot clear stale transaction artifact %s: %s" % [
+				rollback_path,
+				error_string(remove_error),
+			]
+			return remove_error
+	return OK
+
+func _cleanup_per_file_rollback_artifacts() -> void:
+	for target_path in [_path, backup_path()]:
+		var rollback_path: String = target_path + ".rollback"
+		if FileAccess.file_exists(rollback_path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(rollback_path))
 
 func _install_profile_copy(target_path: String, player_id: StringName, display_name: String, failure_operation: StringName) -> Error:
 	var temp_result := _write_validated_temporary(player_id, display_name)
