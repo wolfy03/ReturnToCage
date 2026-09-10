@@ -66,15 +66,15 @@ func run(t: Node) -> void:
 	GameSession.start_new_game()
 	GameSession.settlement.storage.clear()
 	GameSession.settlement.storage.capacity = 0
-	t.assert_true(not GameSession.settlement.secure_loot([ItemStack.new(&"water_drop", 3)]).success, "full storage creates pending loot before Save v3 roundtrip")
+	t.assert_true(not GameSession.settlement.secure_loot([ItemStack.new(&"water_drop", 3)]).success, "full storage creates pending loot before Save v4 roundtrip")
 	GameSession.settlement.storage.capacity = 48
-	t.assert_true(SaveManager.save_game(pending_path), "Save v3 writes pending loot")
+	t.assert_true(SaveManager.save_game(pending_path), "Save v4 writes pending loot")
 	GameSession.start_new_game()
 	t.assert_true(GameSession.settlement.pending_loot.is_empty(), "new session clears pending loot before reload")
-	t.assert_true(SaveManager.load_game(pending_path), "Save v3 reloads pending loot")
-	t.assert_equal(GameSession.settlement.pending_loot.size(), 1, "Save v3 restores one pending loot stack")
-	t.assert_equal(GameSession.settlement.pending_loot[0].item_id, &"water_drop", "Save v3 restores pending item identity")
-	t.assert_equal(GameSession.settlement.pending_loot[0].quantity, 3, "Save v3 restores pending item quantity")
+	t.assert_true(SaveManager.load_game(pending_path), "Save v4 reloads pending loot")
+	t.assert_equal(GameSession.settlement.pending_loot.size(), 1, "Save v4 restores one pending loot stack")
+	t.assert_equal(GameSession.settlement.pending_loot[0].item_id, &"water_drop", "Save v4 restores pending item identity")
+	t.assert_equal(GameSession.settlement.pending_loot[0].quantity, 3, "Save v4 restores pending item quantity")
 
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path + ".bak"))

@@ -1,7 +1,7 @@
 class_name NetworkProtocol
 extends RefCounted
 
-const VERSION := 8
+const VERSION := 9
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

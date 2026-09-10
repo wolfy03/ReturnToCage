@@ -350,9 +350,11 @@ func test_safe_restore() -> void:
 	t.assert_equal(progression.quest_states[changed_quest.id].progress, PackedInt32Array([1, 1]), "removed quest objective trims saved progress")
 	for version in [1, 2]:
 		var migrated: Dictionary = SaveManager.migrate({"format_version": version, "game_state": {}})
-		t.assert_equal(migrated["format_version"], 3, "legacy migration reaches v3")
-		for key in ["active_effects", "death_drops", "pending_loot"]:
-			t.assert_equal(migrated["game_state"][key], [], "migration adds empty %s" % key)
+		t.assert_equal(migrated["format_version"], 4, "legacy migration reaches v4")
+		var local_id := String(NetworkManager.local_profile_player_id())
+		t.assert_equal(migrated["players"][local_id]["player_state"]["active_effects"], [], "migration adds empty active effects")
+		t.assert_equal(migrated["shared"]["adventure"]["death_drops"], [], "migration adds empty death drops")
+		t.assert_equal(migrated["shared"]["settlement"]["pending_loot"], [], "migration adds empty pending loot")
 
 func test_world_and_climbing() -> void:
 	GameSession.start_new_game()

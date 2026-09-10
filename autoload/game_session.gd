@@ -211,6 +211,12 @@ func get_persistent_player(player_id: StringName) -> PlayerState:
 func persistent_player_count() -> int:
 	return _player_states_by_id.size()
 
+func persistent_player_ids() -> Array[StringName]:
+	var result: Array[StringName] = []
+	result.assign(_player_states_by_id.keys())
+	result.sort()
+	return result
+
 func has_player(peer_id: int) -> bool:
 	return players.has(peer_id)
 
@@ -872,6 +878,33 @@ func export_state() -> Dictionary:
 	result.merge(adventure.to_save_dict())
 	return result
 
+# Save v4 boundary. Network peer IDs and runtime attachment state are
+# intentionally absent; every canonical attached or detached player is keyed by
+# the persistent logical player ID.
+func export_persistent_state() -> Dictionary:
+	var saved_players: Dictionary = {}
+	for player_id in persistent_player_ids():
+		var state: PlayerState = _player_states_by_id[player_id]
+		saved_players[String(player_id)] = {
+			"player_state": state.to_save_dict(),
+			"personal_progression": progression.personal_to_save_dict(player_id),
+		}
+	return {
+		"shared": {
+			"session": {
+				"session_id": session_id,
+				"play_time_seconds": play_time_seconds,
+			},
+			"settlement": settlement.to_save_dict(),
+			"progression": progression.to_save_dict(),
+			"difficulty": difficulty.to_save_dict(),
+			# Active expeditions are never resumed, but persistent recovery drops
+			# remain part of the shared session domain.
+			"adventure": adventure.to_save_dict(),
+		},
+		"players": saved_players,
+	}
+
 func to_network_snapshot(protocol_version: int) -> Dictionary:
 	var peer_ids: Array[int] = []
 	peer_ids.assign(players.keys())
@@ -968,6 +1001,16 @@ func prepare_restore(data: Dictionary) -> SessionSnapshot:
 		return failed
 	return SessionSnapshot.build(data, start, ContentRegistry)
 
+func prepare_persistent_restore(data: Dictionary) -> SessionSnapshot:
+	var start: GameStartDefinition = get_start_definition()
+	if start == null:
+		var failed := SessionSnapshot.new()
+		failed.fatal_error = "Invalid start configuration"
+		return failed
+	return SessionSnapshot.build_persistent(
+		data, start, ContentRegistry, NetworkManager.local_profile_player_id()
+	)
+
 func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	if adventure.active_session != null or phase == Phase.RESPAWNING or not snapshot.fatal_error.is_empty():
 		return
@@ -988,3 +1031,33 @@ func apply_snapshot(snapshot: SessionSnapshot) -> void:
 	_connect_model_signals()
 	set_phase(Phase.SETTLEMENT)
 	session_reset.emit()
+
+func apply_persistent_snapshot(snapshot: SessionSnapshot) -> bool:
+	if adventure.active_session != null or phase == Phase.RESPAWNING \
+			or snapshot == null or not snapshot.fatal_error.is_empty() \
+			or snapshot.player == null or snapshot.players_by_id.is_empty():
+		return false
+	_clear_player_state_registry()
+	_disconnect_shared_model_signals()
+	settlement = snapshot.settlement
+	settlement.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
+	progression = snapshot.progression
+	progression.set_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
+	difficulty = snapshot.difficulty
+	adventure = snapshot.adventure
+	for player_id in snapshot.players_by_id:
+		var state: PlayerState = snapshot.players_by_id[player_id]
+		state.set_item_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
+		state.effects.paused = true
+		_player_states_by_id[player_id] = state
+	var local_peer_id := get_local_peer_id()
+	_add_player_state(local_peer_id, snapshot.local_player_id, snapshot.player)
+	snapshot.player.effects.paused = false
+	progression.ensure_personal_progression(snapshot.local_player_id)
+	session_id = snapshot.session_id
+	play_time_seconds = snapshot.play_time_seconds
+	_create_quest_system()
+	_connect_model_signals()
+	set_phase(Phase.SETTLEMENT)
+	session_reset.emit()
+	return true

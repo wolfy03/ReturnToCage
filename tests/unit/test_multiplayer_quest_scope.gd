@@ -56,7 +56,7 @@ func run(t: Node) -> void:
 
 	_test_snapshot_validation(t, progression, personal_kill)
 	var save := progression.to_save_dict()
-	t.assert_equal((save["quests"] as Array).size(), 2, "Save v3 exports shared quests only")
+	t.assert_equal((save["quests"] as Array).size(), 2, "shared progression export contains shared quests only")
 	_cleanup()
 
 func _quest(id: StringName, scope: QuestDefinition.Scope, type: QuestObjectiveDefinition.ObjectiveType, target: StringName) -> QuestDefinition:

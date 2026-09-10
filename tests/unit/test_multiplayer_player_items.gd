@@ -26,6 +26,9 @@ func _test_item_transactions(t: Node, start: GameStartDefinition) -> void:
 	t.assert_true(not legacy.inventory.stacks()[3].instance_id.is_empty(), "unequip assigns stable identity at the command boundary")
 	var player := PlayerState.new(Callable(ContentRegistry, "get_item"))
 	player.reset(start, ContentRegistry)
+	var protected_revision := player.item_state_revision
+	t.assert_true(player.protected_inventory.add_item(&"berry", 1).success, "protected inventory accepts authoritative mutation")
+	t.assert_equal(player.item_state_revision, protected_revision + 1, "protected inventory participates in the private item revision")
 	player.inventory.capacity = 2
 	player.inventory.initialize([_instance(&"leaf_vest", "vest_a", 45), _instance(&"leaf_vest", "vest_b", 45)])
 	player.equipment.restore({})
@@ -67,6 +70,7 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	source.reset(start, ContentRegistry)
 	source.inventory.capacity = 3
 	source.inventory.initialize([ItemStack.new(&"berry", 2), _instance(&"leaf_vest", "inventory_vest", 45)])
+	source.protected_inventory.initialize([_instance(&"leaf_vest", "protected_vest", 45)])
 	source.equipment.restore({})
 	var equipped := _instance(&"twig_sword", "equipped_sword", 60)
 	source.equipment.equip(equipped)
@@ -74,6 +78,7 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	var parsed := PlayerItemStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry, &"player_b")
 	t.assert_true(parsed.error_message.is_empty(), "valid player item snapshot round-trips")
 	t.assert_equal(parsed.inventory.size(), 2, "item snapshot contains private inventory")
+	t.assert_equal(parsed.protected_inventory[0].instance_id, "protected_vest", "item snapshot contains protected inventory")
 	t.assert_equal(parsed.equipment[EquipmentDefinition.EquipmentSlot.MAIN_HAND].instance_id, "equipped_sword", "item snapshot contains equipment identity")
 	t.assert_true(not PlayerItemStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry, &"player_a").error_message.is_empty(), "owner-spoofed item snapshot is rejected")
 
@@ -90,6 +95,7 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	stale.revision = mirror.item_state_revision - 1
 	t.assert_true(not mirror.apply_item_network_mirror(stale), "older item revision is rejected")
 	var old_inventory := mirror.inventory.to_array()
+	var old_protected := mirror.protected_inventory.to_array()
 	var old_equipment := mirror.equipment.to_dict()
 	var old_capacity := mirror.inventory.capacity
 	mirror.inventory.capacity = old_capacity + 10
@@ -98,9 +104,12 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	t.assert_true(not mirror.inventory.exchange([], [ItemStack.new(&"berry", 1)]).success, "client inventory mirror rejects exchange")
 	mirror.equipment.equip(_instance(&"leaf_vest", "forged", 45))
 	mirror.equipment.unequip(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+	mirror.protected_inventory.add_item(&"berry", 1)
+	mirror.protected_inventory.remove_item(&"leaf_vest", 1)
 	t.assert_equal(mirror.inventory.to_array(), old_inventory, "client inventory remains unchanged after direct mutation attempts")
 	t.assert_equal(mirror.inventory.capacity, old_capacity, "client inventory capacity is read-only")
 	t.assert_equal(mirror.equipment.to_dict(), old_equipment, "client equipment remains unchanged after direct mutation attempts")
+	t.assert_equal(mirror.protected_inventory.to_array(), old_protected, "client protected inventory remains read-only")
 	var newer_payload := snapshot.to_payload()
 	newer_payload["revision"] = mirror.item_state_revision + 1
 	var newer := PlayerItemStateSnapshot.from_payload(newer_payload, ContentRegistry, &"player_b")
@@ -109,6 +118,12 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	var malformed := snapshot.to_payload()
 	malformed["inventory_capacity"] = 0
 	_assert_invalid(t, malformed, "invalid inventory capacity is rejected")
+	malformed = snapshot.to_payload()
+	malformed["protected_capacity"] = -1
+	_assert_invalid(t, malformed, "negative protected capacity is rejected")
+	malformed = snapshot.to_payload()
+	malformed["protected_inventory"] = [_instance(&"leaf_vest", "inventory_vest", 45).to_dict()]
+	_assert_invalid(t, malformed, "inventory and protected inventory cannot share an instance")
 	malformed = snapshot.to_payload()
 	malformed["inventory"] = [{"item_id": "missing", "quantity": 1, "instance_id": "", "durability": -1}]
 	_assert_invalid(t, malformed, "unknown inventory item is rejected")

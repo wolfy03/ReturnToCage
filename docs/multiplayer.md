@@ -28,7 +28,7 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `8`, verifies that its roster entry matches its local persistent profile, receives session metadata, then enters the settlement.
+3. Select **Join**. The client validates protocol version `9`, verifies that its roster entry matches its local persistent profile, receives session metadata, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
@@ -82,36 +82,36 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Read-only client settlement mirrors with malformed/stale snapshot rejection
 - World-ready and fresh-join synchronization of current settlement and shared progression state
 - Server-authoritative equip, unequip, consumable use, and personal inventory/shared-storage transfer commands
-- One batched player item revision for inventory/equipment transactions and owner-only reliable snapshots
+- One batched player item revision for inventory/protected-inventory/equipment transactions and owner-only reliable snapshots
 - Stable equipment-instance command identity, monotonic anti-replay validation, and private inventory isolation
 - Cross-inventory/equipment instance validation and atomic two-container transfer previews
 - Offline single-player compatibility
-- Multiplayer save and load disabled for both host and clients
+- Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
+- Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
 
 `inventory_changed` remains a local-player UI compatibility signal. `quest_changed` is a compatibility notification; `quest_state_changed` carries scope and logical owner for replication. Peer-specific health/life presentation remains separate.
 
 `SettlementState.pending_loot` is shared server-authoritative state. Its public getter always returns deep-copied ItemStacks, including on the host. A storage-full secure operation and a successful pending claim each produce exactly one settlement revision. Clients receive the mirror on late join and fresh reconnect; pending records share instance-ID validation with primary settlement storage.
 
-Each connected player's server `PlayerState.inventory` and `equipment` are canonical. Clients receive only their own revisioned `PlayerItemStateSnapshot`; another peer's full private item state is never broadcast. Equip and unequip use stable instance IDs, consumable requests contain only an item ID, and storage transfers contain only direction, item identity, and amount. A same-session reconnect reuses the retained PlayerState, including health, survival, effects, inventory, protected inventory, equipment, and item revision. The current owner snapshot exposes inventory/equipment according to the existing 3-C privacy boundary; protected inventory remains server-domain state.
+Each connected player's server `PlayerState.inventory`, `protected_inventory`, and `equipment` are canonical. Clients receive only their own revisioned `PlayerItemStateSnapshot`; another peer's full private item state is never broadcast. Equip and unequip use stable instance IDs, consumable requests contain only an item ID, and storage transfers contain only direction, item identity, and amount. A same-session reconnect reuses the retained PlayerState, including health, survival, effects, all private item containers, and item revision.
 
 Enemy kill credit requires a player-attributed server damage source. A single kill or pickup event can advance the contributing player's PERSONAL quests and the shared PARTY/WORLD quests. Ownerless environment kills grant no quest progress.
 
 Disconnecting during an expedition explicitly forfeits that peer's current `PlayerAdventureState` and unsecured loot. Other peers' expedition loot and settlement storage are left unchanged. Joining again creates a new empty player-adventure state; reconnect restoration is not supported yet.
 
-Personal quest progression is not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer presenting that inactive identity receives the retained personal quest state. A full session/new-game reset discards remote detached PlayerStates and in-memory personal states; process-exit persistence remains deferred to Save v4.
+Personal quest progression is not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer presenting that inactive identity receives the retained personal quest state. Save v4 persists attached and detached canonical PlayerStates and personal progression under that same identity. On clients, a disconnected remote peer's private placeholder state is discarded rather than retained as reconnect authority.
 
 `finish_adventure()` is currently a party-wide operation: it gathers every registered player's unsecured loot into settlement storage and ends the expedition for the party. Individual escape and separate `finish_player_adventure(peer_id)` semantics are deferred rather than introducing an unused abstraction now.
 
-Save v3 continues to serialize only the existing shared quest collection. Production quests remain PARTY-scoped. PERSONAL quest persistence is deferred to Save v4; multiplayer save/load remains disabled.
+Save v4 stores PARTY/WORLD quests in shared progression and PERSONAL quests under their owning `player_id`. It never stores peer IDs or runtime replication state. Offline and host saves use the same schema; clients remain read-only.
 
 ## Not synchronized yet
 
 - Other-player equipment appearance summaries (full item state remains owner-private)
-- Protected inventory replication and unsecured-loot item use
+- Unsecured-loot item use
 - Resident runtime movement and animation (resident persistent/domain state is mirrored)
 - Party scene transitions and coordinated expedition start/return
-- Persistent multiplayer saves
-- Process-exit reconnect restoration and multiplayer Save v4
+- End-to-end process-restart reconnect UX (Save v4 restores detached records, but lobby/load orchestration is deferred)
 - Host migration
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration

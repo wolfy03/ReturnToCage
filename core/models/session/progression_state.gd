@@ -4,8 +4,8 @@ extends RefCounted
 signal shared_changed(revision: int)
 
 var shared_quest_states: Dictionary[StringName, QuestState] = {}
-# Save v3 and existing PARTY quest compatibility facade. Personal quest state is
-# intentionally excluded from the v3 save schema.
+# Existing PARTY quest compatibility facade. Save v4 persists this shared
+# collection separately from per-player PERSONAL quest state.
 var quest_states: Dictionary[StringName, QuestState]:
 	get:
 		return shared_quest_states
@@ -60,6 +60,17 @@ func to_save_dict() -> Dictionary:
 		"discovered_escape_points": SaveData.strings(discovered_escape_points)
 	}
 
+func personal_to_save_dict(player_id: StringName) -> Dictionary:
+	var quests: Array[Dictionary] = []
+	var personal := get_personal_progression(player_id)
+	if personal == null:
+		return {"quests": quests}
+	var quest_ids: Array = personal.quest_states.keys()
+	quest_ids.sort()
+	for quest_id in quest_ids:
+		quests.append(personal.quest_states[quest_id].to_dict())
+	return {"quests": quests}
+
 func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 	var errors := PackedStringArray()
 	_applying_shared_snapshot = true
@@ -98,17 +109,61 @@ func restore(data: Dictionary, registry: Node) -> PackedStringArray:
 			if complete != state.completed:
 				errors.append("quest completion reconciled with objectives: %s" % quest_id)
 			state.completed = complete
-		# Save v3 stores only the legacy shared/PARTY quest collection.
+		# The shared save collection may contain only PARTY/WORLD quest state.
 		if definition.scope != QuestDefinition.Scope.PERSONAL:
 			shared_quest_states[quest_id] = state
 		else:
-			errors.append("personal quest ignored by Save v3: %s" % quest_id)
+			errors.append("personal quest ignored in shared progression: %s" % quest_id)
 	unlocked_regions = SaveData.names(data, "unlocked_regions", errors)
 	unlocked_exits = SaveData.names(data, "unlocked_exits", errors)
 	unlocked_flags = SaveData.names(data, "unlocked_flags", errors)
 	discovered_escape_points = SaveData.names(data, "discovered_escape_points", errors)
 	shared_revision = 0
 	_applying_shared_snapshot = false
+	return errors
+
+func restore_personal(player_id: StringName, data: Dictionary, registry: Node) -> PackedStringArray:
+	var errors := PackedStringArray()
+	if player_id.is_empty():
+		return PackedStringArray(["invalid personal progression owner"])
+	var personal := ensure_personal_progression(player_id)
+	personal.quest_states.clear()
+	for raw in SaveData.array(data, "quests", errors):
+		if not raw is Dictionary:
+			errors.append("invalid personal quest record in save")
+			continue
+		var quest_id := StringName(SaveData.text_value(raw, "quest_id", "", errors))
+		var definition := registry.get_definition(quest_id) as QuestDefinition
+		if definition == null or definition.scope != QuestDefinition.Scope.PERSONAL:
+			errors.append("unknown or non-personal quest in personal save: %s" % quest_id)
+			continue
+		if personal.quest_states.has(quest_id):
+			errors.append("duplicate personal quest ignored: %s" % quest_id)
+			continue
+		var state := QuestState.new(quest_id)
+		state.initialize(definition)
+		var progress: Array = SaveData.array(raw, "progress", errors)
+		if progress.size() != state.progress.size():
+			errors.append("personal quest progress length differs in save: %s" % quest_id)
+		for index in mini(progress.size(), state.progress.size()):
+			if not SaveData.is_integer(progress[index]):
+				errors.append("invalid personal quest progress in save: %s[%d]" % [quest_id, index])
+				continue
+			var raw_progress := int(progress[index])
+			state.progress[index] = clampi(raw_progress, 0, definition.objectives[index].required_amount)
+			if state.progress[index] != raw_progress:
+				errors.append("personal quest progress clamped in save: %s[%d]" % [quest_id, index])
+		state.completed = SaveData.boolean(raw, "completed", false, errors)
+		state.reward_claimed = SaveData.boolean(raw, "reward_claimed", false, errors)
+		if not state.reward_claimed:
+			var complete := true
+			for index in definition.objectives.size():
+				if state.progress[index] < definition.objectives[index].required_amount:
+					complete = false
+			if complete != state.completed:
+				errors.append("personal quest completion reconciled with objectives: %s" % quest_id)
+			state.completed = complete
+		personal.quest_states[quest_id] = state
 	return errors
 
 func mark_shared_changed() -> int:

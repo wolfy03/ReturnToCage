@@ -35,6 +35,7 @@ func run_all() -> void:
 	preload("res://tests/unit/test_player_state_restore.gd").new().run(self)
 	preload("res://tests/unit/test_settlement_state_restore.gd").new().run(self)
 	preload("res://tests/unit/test_save_migration.gd").new().run(self)
+	preload("res://tests/unit/test_save_v4.gd").new().run(self)
 	preload("res://tests/unit/test_reward_save_boundary.gd").new().run(self)
 	preload("res://tests/unit/test_network_player_registry.gd").new().run(self)
 	preload("res://tests/unit/test_network_input_validation.gd").new().run(self)
@@ -168,7 +169,7 @@ func test_quest_and_facility() -> void:
 func test_save_migration_and_round_trip() -> void:
 	var old := {"format_version": 1, "game_state": {}}
 	var migrated := SaveManager.migrate(old)
-	assert_equal(migrated.get("format_version"), 3, "save v1 migrates through v2 to v3")
+	assert_equal(migrated.get("format_version"), 4, "save v1 migrates through v2/v3 to v4")
 	GameSession.start_new_game()
 	GameSession.settlement_storage.add_item(&"rusty_scrap", 7)
 	GameSession.facility_levels[&"workbench"] = 1
@@ -434,13 +435,19 @@ func test_legacy_save_compatibility() -> void:
 	var original: Dictionary = old.duplicate(true)
 	var migrated: Dictionary = SaveManager.migrate(old)
 	assert_equal(old, original, "migration never mutates caller envelope")
-	assert_equal(migrated["format_version"], 3, "sequential v1 migration reaches v3")
-	assert_equal(migrated["game_state"]["difficulty_overrides"], {}, "v1 migration adds overrides")
-	assert_equal(migrated["game_state"]["protected_inventory"], [], "v1 migration adds protected inventory")
+	assert_equal(migrated["format_version"], 4, "sequential v1 migration reaches v4")
+	var local_id := String(NetworkManager.local_profile_player_id())
+	assert_equal(migrated["shared"]["difficulty"]["difficulty_overrides"], {}, "v1 migration adds overrides")
+	assert_equal(migrated["players"][local_id]["player_state"]["protected_inventory"], [], "v1 migration adds protected inventory")
 	var path: String = "user://return_to_cage_v1_fixture_test.json"
 	_write_envelope(path, old)
 	assert_true(SaveManager.load_game(path), "v1 save file loads through SaveManager")
-	_assert_saved_fields(GameSession.export_state(), migrated["game_state"], "v1 restored fields")
+	var migrated_flat: Dictionary = old["game_state"].duplicate(true)
+	migrated_flat["difficulty_overrides"] = {}
+	migrated_flat["protected_inventory"] = []
+	for key in ["active_effects", "death_drops", "pending_loot"]:
+		migrated_flat[key] = []
+	_assert_saved_fields(GameSession.export_state(), migrated_flat, "v1 restored fields")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	for invalid in [{"format_version": []}, {"format_version": 0}, {"format_version": 4}, {"format_version": 1.5}, {"format_version": 2, "game_state": []}]:
 		assert_true(SaveManager.migrate(invalid).is_empty(), "invalid envelope rejected: %s" % invalid)

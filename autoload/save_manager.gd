@@ -3,19 +3,22 @@ extends Node
 signal save_finished(success: bool, message: String)
 signal load_finished(success: bool, message: String)
 
-const CURRENT_VERSION := 3
+const CURRENT_VERSION := 4
 const SAVE_PATH := "user://return_to_cage_save.json"
 
 func can_save() -> CommandResult:
-	if NetworkManager.is_multiplayer_active():
-		return CommandResult.make(false, "Multiplayer save is not supported yet")
+	if NetworkManager.is_multiplayer_active() and not NetworkManager.is_server():
+		return CommandResult.make(false, "Only the host can save a multiplayer session")
 	if GameSession.phase != GameSession.Phase.SETTLEMENT or GameSession.adventure.active_session != null:
 		return CommandResult.make(false, "Save is only available in the settlement")
 	return CommandResult.make(true)
 
 func can_load() -> CommandResult:
 	if NetworkManager.is_multiplayer_active():
-		return CommandResult.make(false, "Load is disabled during an active multiplayer session")
+		if not NetworkManager.is_server():
+			return CommandResult.make(false, "Only the host can load a multiplayer session")
+		if NetworkManager.players.size() > 1:
+			return CommandResult.make(false, "Disconnect remote players before loading a session")
 	if GameSession.adventure.active_session != null or GameSession.phase not in [GameSession.Phase.MENU, GameSession.Phase.SETTLEMENT]:
 		return CommandResult.make(false, "Load is unavailable during an expedition or respawn")
 	return CommandResult.make(true)
@@ -25,7 +28,9 @@ func save_game(path: String = SAVE_PATH) -> bool:
 	if not permission.success:
 		save_finished.emit(false, permission.message)
 		return false
-	var envelope := {"format_version": CURRENT_VERSION, "saved_at": Time.get_datetime_string_from_system(true), "game_state": GameSession.export_state()}
+	var envelope: Dictionary = GameSession.export_persistent_state()
+	envelope["format_version"] = CURRENT_VERSION
+	envelope["saved_at"] = Time.get_datetime_string_from_system(true)
 	var json := JSON.stringify(envelope, "  ")
 	var temporary := path + ".tmp"
 	var file := FileAccess.open(temporary, FileAccess.WRITE)
@@ -75,11 +80,13 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	if GameSession.get_start_definition() == null:
 		load_finished.emit(false, "Cannot load game: invalid start configuration")
 		return false
-	var snapshot: SessionSnapshot = GameSession.prepare_restore(migrated.get("game_state", {}))
+	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrated)
 	if not snapshot.fatal_error.is_empty():
 		load_finished.emit(false, snapshot.fatal_error)
 		return false
-	GameSession.apply_snapshot(snapshot)
+	if not GameSession.apply_persistent_snapshot(snapshot):
+		load_finished.emit(false, "Cannot apply the staged Save v4 session")
+		return false
 	var errors: PackedStringArray = snapshot.warnings
 	var message := "Game loaded" if errors.is_empty() else "Game loaded with warnings: %s" % "; ".join(errors)
 	load_finished.emit(true, message)
@@ -89,9 +96,9 @@ func migrate(envelope: Dictionary) -> Dictionary:
 	var raw_version: Variant = envelope.get("format_version", 1)
 	if not SaveData.is_integer(raw_version):
 		return {}
-	if not envelope.has("game_state") or not envelope["game_state"] is Dictionary:
-		return {}
 	var version: int = int(raw_version)
+	if version <= 3 and (not envelope.has("game_state") or not envelope["game_state"] is Dictionary):
+		return {}
 	var result: Dictionary = envelope.duplicate(true)
 	while version < CURRENT_VERSION:
 		match version:
@@ -99,6 +106,8 @@ func migrate(envelope: Dictionary) -> Dictionary:
 				result = _migrate_v1_to_v2(result)
 			2:
 				result = _migrate_v2_to_v3(result)
+			3:
+				result = _migrate_v3_to_v4(result)
 			_:
 				return {}
 		var next_version: int = int(result.get("format_version", version))
@@ -106,6 +115,8 @@ func migrate(envelope: Dictionary) -> Dictionary:
 			return {}
 		version = next_version
 	if version != CURRENT_VERSION:
+		return {}
+	if not result.get("shared", null) is Dictionary or not result.get("players", null) is Dictionary:
 		return {}
 	return result
 
@@ -127,3 +138,43 @@ func _migrate_v2_to_v3(envelope: Dictionary) -> Dictionary:
 	envelope["game_state"] = state
 	envelope["format_version"] = 3
 	return envelope
+
+func _migrate_v3_to_v4(envelope: Dictionary) -> Dictionary:
+	var local_player_id := NetworkManager.local_profile_player_id()
+	if not LocalPlayerProfile.is_valid_player_id(local_player_id):
+		return {}
+	var legacy: Dictionary = envelope.get("game_state", {})
+	var player_state := _select_keys(legacy, [
+		"player_stats", "player_inventory", "equipment", "protected_inventory",
+		"active_effects", "survival_state", "player_health", "last_safe_position",
+	])
+	var result := {
+		"format_version": 4,
+		"saved_at": envelope.get("saved_at", ""),
+		"shared": {
+			"session": _select_keys(legacy, ["session_id", "play_time_seconds"]),
+			"settlement": _select_keys(legacy, [
+				"settlement_storage", "pending_loot", "facility_levels", "resident_states",
+			]),
+			"progression": _select_keys(legacy, [
+				"quests", "unlocked_regions", "unlocked_exits", "unlocked_flags",
+				"discovered_escape_points",
+			]),
+			"difficulty": _select_keys(legacy, ["difficulty_id", "difficulty_overrides"]),
+			"adventure": _select_keys(legacy, ["death_drops"]),
+		},
+		"players": {
+			String(local_player_id): {
+				"player_state": player_state,
+				"personal_progression": {"quests": []},
+			},
+		},
+	}
+	return result
+
+func _select_keys(source: Dictionary, keys: Array) -> Dictionary:
+	var result: Dictionary = {}
+	for key in keys:
+		if source.has(key):
+			result[key] = source[key]
+	return result

@@ -239,6 +239,9 @@ func _process(_delta: float) -> void:
 			if GameSession.players.size() == expected_players and actors.size() == expected_players \
 				and enemy_roster_confirmations.size() == expected_players - 1 \
 				and quest_sync_confirmations.size() == expected_players - 1:
+				if not _verify_host_save_v4():
+					_fail("host-authoritative Save v4 probe failed")
+					return
 				print("PROBE HOST PLAYERS %d" % expected_players)
 				if disconnect_host:
 					print("PROBE HOST EXITING")
@@ -252,6 +255,7 @@ func _process(_delta: float) -> void:
 				start_position = actor.global_position
 				_expect_settlement_upgrade.rpc(selected_peer)
 				state = ProbeState.SETTLEMENT_UPGRADE
+
 		ProbeState.SETTLEMENT_UPGRADE:
 			if settlement_upgrade_confirmations.size() == expected_players - 1 \
 					and GameSession.settlement.facility_levels.get(&"workbench", 0) == 1 \
@@ -469,6 +473,35 @@ func _process(_delta: float) -> void:
 				print("MULTIPLAYER PROBE PASS")
 				state = ProbeState.FINISHED
 				get_tree().create_timer(0.75).timeout.connect(func() -> void: get_tree().quit(0))
+
+func _verify_host_save_v4() -> bool:
+	var path := "user://multiplayer_host_save_v4_probe.json"
+	# The combat probe builds its adventure subtree before changing the session
+	# phase. Temporarily remove that fixture so this check exercises the real
+	# settlement-only host save policy without changing gameplay state.
+	var active_adventure := GameSession.adventure.active_session
+	GameSession.adventure.active_session = null
+	var saved_ok := SaveManager.save_game(path)
+	GameSession.adventure.active_session = active_adventure
+	if not saved_ok:
+		print("PROBE HOST SAVE DENIED: %s" % SaveManager.can_save().message)
+		return false
+	var file := FileAccess.open(path, FileAccess.READ)
+	var parser := JSON.new()
+	var valid: bool = file != null and parser.parse(file.get_as_text()) == OK and parser.data is Dictionary \
+		and parser.data.get("format_version") == 4.0 \
+		and parser.data.get("players", {}).size() == expected_players
+	if not valid:
+		print("PROBE HOST SAVE INVALID: parsed=%s version=%s players=%s expected=%s" % [
+			parser.data is Dictionary,
+			parser.data.get("format_version", -1) if parser.data is Dictionary else -1,
+			parser.data.get("players", {}).size() if parser.data is Dictionary else -1,
+			expected_players,
+		])
+	for suffix in ["", ".tmp", ".bak"]:
+		if FileAccess.file_exists(path + suffix):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(path + suffix))
+	return valid
 
 func _parse_arguments() -> void:
 	for argument in OS.get_cmdline_user_args():

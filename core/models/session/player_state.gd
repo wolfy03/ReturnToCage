@@ -31,6 +31,7 @@ func _init(resolver: Callable, mutation_guard: Callable = Callable()) -> void:
 	equipment.changed.connect(_on_equipment_changed)
 	_reset_effects()
 	protected_inventory = InventoryModel.new(0, resolver, Callable(self, "_can_mutate_items"))
+	protected_inventory.changed.connect(_on_item_model_changed)
 
 func set_item_mutation_guard(guard: Callable) -> void:
 	_item_mutation_guard = guard
@@ -95,12 +96,14 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 func begin_item_update() -> void:
 	_item_update_depth += 1
 	inventory.begin_update()
+	protected_inventory.begin_update()
 	equipment.begin_update()
 
 func end_item_update() -> void:
 	if _item_update_depth <= 0:
 		return
 	equipment.end_update()
+	protected_inventory.end_update()
 	inventory.end_update()
 	_item_update_depth -= 1
 	if _item_update_depth == 0 and _item_change_pending:
@@ -121,13 +124,17 @@ func apply_item_network_mirror(snapshot: PlayerItemStateSnapshot) -> bool:
 		return false
 	_applying_item_snapshot = true
 	inventory.begin_update()
+	protected_inventory.begin_update()
 	equipment.begin_update()
 	inventory.capacity = snapshot.inventory_capacity
+	protected_inventory.capacity = snapshot.protected_capacity
 	var inventory_result := inventory.initialize(snapshot.inventory)
+	var protected_result := protected_inventory.initialize(snapshot.protected_inventory)
 	var equipment_result := equipment.initialize(snapshot.equipment)
 	equipment.end_update()
+	protected_inventory.end_update()
 	inventory.end_update()
-	if not inventory_result.success or not equipment_result.success:
+	if not inventory_result.success or not protected_result.success or not equipment_result.success:
 		_applying_item_snapshot = false
 		return false
 	_item_state_revision = snapshot.revision

@@ -325,8 +325,13 @@ func _client_add_peer(peer_id: int, player_id: StringName, display_name: String)
 
 @rpc("authority", "call_remote", "reliable")
 func _client_remove_peer(peer_id: int) -> void:
+	var player_id := player_id_for_peer(peer_id)
 	if players.erase(peer_id):
 		GameSession.detach_player(peer_id)
+		# A client owns no reconnect-authoritative private state for remote players.
+		# The server retains its canonical state; clients discard this placeholder.
+		if peer_id != local_peer_id() and not player_id.is_empty():
+			GameSession.remove_player_state(player_id)
 		_remove_identity(peer_id)
 		peer_left.emit(peer_id)
 
