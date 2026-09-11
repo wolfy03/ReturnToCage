@@ -2,8 +2,14 @@ class_name IdentityRecoveryDialog
 extends CanvasLayer
 
 signal recover_requested(player_id: StringName)
+signal activation_retry_requested
 signal create_new_requested
 signal canceled
+
+enum ActionMode {
+	NORMAL_RECOVERY,
+	ACTIVATION_RETRY,
+}
 
 @onready var overlay: Control = %Overlay
 @onready var message_label: Label = %MessageLabel
@@ -17,6 +23,8 @@ signal canceled
 
 var _candidates: Array[StringName] = []
 var _selected_player_id: StringName = &""
+var _action_mode: ActionMode = ActionMode.NORMAL_RECOVERY
+var _busy: bool = false
 
 func _ready() -> void:
 	candidate_list.item_selected.connect(_on_candidate_selected)
@@ -29,12 +37,11 @@ func _ready() -> void:
 func present_inspection(result: Dictionary) -> void:
 	_candidates.clear()
 	_selected_player_id = &""
+	_action_mode = ActionMode.NORMAL_RECOVERY
+	_busy = false
 	candidate_list.clear()
 	error_label.visible = false
 	recover_button.text = "Recover"
-	recover_button.disabled = true
-	create_button.disabled = false
-	cancel_button.disabled = false
 	var status: int = int(result.get("status", SaveManager.IdentityInspectionStatus.INVALID_SAVE))
 	var saved_at := String(result.get("saved_at", ""))
 	saved_at_label.text = "Saved: %s" % saved_at if not saved_at.is_empty() else ""
@@ -61,6 +68,7 @@ func present_inspection(result: Dictionary) -> void:
 			var backend_error := String(result.get("error", ""))
 			if not backend_error.is_empty():
 				show_error(backend_error)
+	_refresh_action_buttons()
 	overlay.visible = true
 
 func close_dialog() -> void:
@@ -88,31 +96,40 @@ func show_error(message: String) -> void:
 	error_label.visible = not message.is_empty()
 
 func set_busy(busy: bool) -> void:
-	candidate_list.mouse_filter = Control.MOUSE_FILTER_IGNORE if busy else Control.MOUSE_FILTER_STOP
-	recover_button.disabled = busy or _selected_player_id.is_empty()
-	create_button.disabled = busy
-	cancel_button.disabled = busy
+	_busy = busy
+	_refresh_action_buttons()
 
 func set_activation_retry(message: String) -> void:
+	_action_mode = ActionMode.ACTIVATION_RETRY
+	_busy = false
 	show_error(message)
 	recover_button.text = "Retry Activation"
-	recover_button.disabled = false
-	create_button.disabled = true
+	_refresh_action_buttons()
 
 func _on_candidate_selected(index: int) -> void:
 	_select_candidate(index)
 
 func _select_candidate(index: int) -> void:
 	_selected_player_id = _candidates[index] if index >= 0 and index < _candidates.size() else &""
-	recover_button.disabled = _selected_player_id.is_empty()
+	_refresh_action_buttons()
 
 func _on_recover_pressed() -> void:
+	if _action_mode == ActionMode.ACTIVATION_RETRY:
+		activation_retry_requested.emit()
+		return
 	if not _selected_player_id.is_empty():
 		recover_requested.emit(_selected_player_id)
 
 func _on_create_pressed() -> void:
 	create_confirmation.dialog_text = "Create a new identity? Existing Save player records will not be linked automatically."
 	create_confirmation.popup_centered(Vector2i(520, 180))
+
+func _refresh_action_buttons() -> void:
+	candidate_list.mouse_filter = Control.MOUSE_FILTER_IGNORE if _busy else Control.MOUSE_FILTER_STOP
+	var retry_mode := _action_mode == ActionMode.ACTIVATION_RETRY
+	recover_button.disabled = _busy or (not retry_mode and _selected_player_id.is_empty())
+	create_button.disabled = _busy or retry_mode
+	cancel_button.disabled = _busy or retry_mode
 
 static func _candidate_label(player_id: StringName) -> String:
 	var value := String(player_id)

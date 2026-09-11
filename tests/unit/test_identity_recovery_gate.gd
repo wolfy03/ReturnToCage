@@ -6,6 +6,7 @@ const PLAYER_C := &"player_cccccccccccccccccccccccccccccccc"
 
 func run(t: Node) -> void:
 	var token := "%s_%s" % [Time.get_ticks_usec(), randi()]
+	await _test_dialog_action_modes(t)
 	await _test_resolved_and_failed_states(t, token)
 	await _test_unavailable_save_states(t, token)
 	await _test_single_candidate_cancel_and_recover(t, token)
@@ -14,7 +15,41 @@ func run(t: Node) -> void:
 	await _test_recovery_failure_and_retry(t, token)
 	await _test_profile_commit_failure(t, token)
 	await _test_activation_retry(t, token)
+	await _test_create_new_activation_retry(t, token, false)
+	await _test_create_new_activation_retry(t, token, true)
 	_restore_environment(t)
+
+func _test_dialog_action_modes(t: Node) -> void:
+	var dialog := (load("res://ui/identity_recovery_dialog.tscn") as PackedScene).instantiate() as IdentityRecoveryDialog
+	t.add_child(dialog)
+	await t.get_tree().process_frame
+	var recovered: Array[StringName] = []
+	var retries := [0]
+	dialog.recover_requested.connect(func(player_id: StringName) -> void: recovered.append(player_id))
+	dialog.activation_retry_requested.connect(func() -> void: retries[0] += 1)
+	dialog.present_inspection({
+		"status": SaveManager.IdentityInspectionStatus.MULTIPLE_CANDIDATES,
+		"candidates": [PLAYER_A, PLAYER_B],
+	})
+	dialog.recover_button.pressed.emit()
+	t.assert_true(recovered.is_empty(), "normal recovery with no selection emits no candidate request")
+	dialog.select_candidate(0)
+	dialog.recover_button.pressed.emit()
+	t.assert_equal(recovered, [PLAYER_A], "normal recovery emits the explicitly selected candidate")
+	dialog.present_inspection({"status": SaveManager.IdentityInspectionStatus.SAVE_NOT_FOUND, "candidates": []})
+	t.assert_true(dialog.selected_player_id().is_empty(), "new inspection clears previous candidate selection")
+	dialog.set_activation_retry("activation pending")
+	dialog.recover_button.pressed.emit()
+	t.assert_equal(retries[0], 1, "activation retry emits independently of candidate selection")
+	dialog.set_busy(true)
+	t.assert_true(dialog.recover_button.disabled, "busy retry mode disables Retry Activation")
+	dialog.set_busy(false)
+	t.assert_true(not dialog.recover_button.disabled, "leaving busy state restores Retry Activation without a candidate")
+	dialog.recover_button.pressed.emit()
+	t.assert_equal(retries[0], 2, "activation retry signal remains repeatable")
+	t.assert_true(dialog.create_button.disabled and dialog.cancel_button.disabled, "retry mode disables Create New and Cancel")
+	dialog.queue_free()
+	await t.get_tree().process_frame
 
 func _test_resolved_and_failed_states(t: Node, token: String) -> void:
 	var valid_path := _profile_path(token, "valid")
@@ -242,10 +277,64 @@ func _test_activation_retry(t: Node, token: String) -> void:
 	t.assert_equal(GameSession.get_local_player_id(), old_local_id, "failed activation does not mutate GameSession identity")
 	t.assert_equal(app.identity_dialog.recover_button.text, "Retry Activation", "activation failure offers activation-only retry")
 	t.assert_equal(app.identity_gate_state, AppRoot.IdentityGateState.RECOVERY_DIALOG_OPEN, "activation failure does not unlock actions")
+	_assert_actions_disabled(t, app, "candidate activation retry")
+	var primary_after_commit := _read_text(profile_path)
+	var backup_after_commit := _read_text(profile_path + ".bak")
+	_write(save_path, "{Save changed after profile commit")
 	NetworkManager.state = NetworkManager.ConnectionState.OFFLINE
 	app.identity_dialog.recover_button.pressed.emit()
 	_assert_ready(t, app, "activation-only retry")
 	t.assert_equal(GameSession.get_local_player_id(), PLAYER_A, "activation retry completes without another candidate selection")
+	t.assert_equal(_read_text(profile_path), primary_after_commit, "candidate activation retry does not rewrite primary profile")
+	t.assert_equal(_read_text(profile_path + ".bak"), backup_after_commit, "candidate activation retry does not rewrite backup profile")
+	await _free_app(t, app)
+	_cleanup_save(save_path)
+	_cleanup_profile(profile_path)
+	_restore_environment(t)
+
+func _test_create_new_activation_retry(t: Node, token: String, invalid_save: bool) -> void:
+	var label := "create_retry_invalid" if invalid_save else "create_retry_missing"
+	var profile_path := _profile_path(token, label)
+	_install_recovery_profile(t, profile_path)
+	var save_path := _save_path(token, label)
+	_cleanup_save(save_path)
+	if invalid_save:
+		_write(save_path, "{invalid Save")
+	var app := await _spawn_app(t, save_path)
+	t.assert_true(app.identity_dialog.selected_player_id().is_empty(), "%s starts without a selected candidate" % label)
+	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
+	app.identity_dialog.create_button.pressed.emit()
+	app.identity_dialog.create_confirmation.confirmed.emit()
+	var created_id := NetworkManager.local_profile_player_id()
+	t.assert_true(LocalPlayerProfile.is_valid_player_id(created_id), "%s commits one explicit new identity before activation" % label)
+	t.assert_true(app.identity_dialog.selected_player_id().is_empty(), "%s retry remains candidate-independent" % label)
+	t.assert_equal(app.identity_dialog.recover_button.text, "Retry Activation", "%s enters activation retry mode" % label)
+	t.assert_true(not app.identity_dialog.recover_button.disabled, "%s enables Retry Activation with empty selection" % label)
+	t.assert_true(app.identity_dialog.create_button.disabled and app.identity_dialog.cancel_button.disabled, "%s prevents Create New and Cancel after persistence" % label)
+	_assert_actions_disabled(t, app, label)
+	var primary_after_commit := _read_text(profile_path)
+	var backup_after_commit := _read_text(profile_path + ".bak")
+
+	app.identity_dialog.set_busy(true)
+	t.assert_true(app.identity_dialog.recover_button.disabled, "%s busy retry is disabled" % label)
+	app.identity_dialog.set_busy(false)
+	t.assert_true(not app.identity_dialog.recover_button.disabled, "%s busy release restores retry without candidate" % label)
+	app.identity_dialog.recover_button.pressed.emit()
+	t.assert_equal(app.identity_gate_state, AppRoot.IdentityGateState.RECOVERY_DIALOG_OPEN, "%s repeated failed retry remains available" % label)
+	t.assert_equal(NetworkManager.local_profile_player_id(), created_id, "%s failed retry never generates another identity" % label)
+	t.assert_equal(_read_text(profile_path), primary_after_commit, "%s failed retry does not rewrite primary" % label)
+	t.assert_equal(_read_text(profile_path + ".bak"), backup_after_commit, "%s failed retry does not rewrite backup" % label)
+
+	NetworkManager.state = NetworkManager.ConnectionState.OFFLINE
+	app.identity_dialog.recover_button.pressed.emit()
+	_assert_ready(t, app, "%s successful retry" % label)
+	t.assert_equal(NetworkManager.local_profile_player_id(), created_id, "%s successful retry retains the one generated identity" % label)
+	t.assert_equal(GameSession.get_local_player_id(), created_id, "%s successful retry activates generated identity" % label)
+	t.assert_equal(GameSession.players.size(), 1, "%s leaves exactly one offline player" % label)
+	t.assert_equal(GameSession._player_vitals_callbacks.size(), 1, "%s leaves one vitals callback" % label)
+	t.assert_equal(GameSession._player_item_callbacks.size(), 1, "%s leaves one item callback" % label)
+	t.assert_equal(_read_text(profile_path), primary_after_commit, "%s successful retry does not recommit primary" % label)
+	t.assert_equal(_read_text(profile_path + ".bak"), backup_after_commit, "%s successful retry does not recommit backup" % label)
 	await _free_app(t, app)
 	_cleanup_save(save_path)
 	_cleanup_profile(profile_path)

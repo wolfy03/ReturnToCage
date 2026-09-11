@@ -37,6 +37,7 @@ func _ready() -> void:
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
 	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
 	identity_dialog.recover_requested.connect(_recover_identity)
+	identity_dialog.activation_retry_requested.connect(_retry_identity_activation)
 	identity_dialog.create_new_requested.connect(_create_new_identity)
 	identity_dialog.canceled.connect(_cancel_identity_recovery)
 	var errors := ContentRegistry.validate_all()
@@ -77,9 +78,6 @@ func _open_recovery_dialog() -> void:
 func _recover_identity(player_id: StringName) -> void:
 	if identity_gate_state != IdentityGateState.RECOVERY_DIALOG_OPEN:
 		return
-	if _activation_pending:
-		_complete_identity_activation()
-		return
 	identity_dialog.set_busy(true)
 	var result := SaveManager.recover_identity_from_save(player_id, _identity_recovery_save_path)
 	identity_dialog.set_busy(false)
@@ -87,6 +85,11 @@ func _recover_identity(player_id: StringName) -> void:
 		identity_dialog.show_error(result.message)
 		return
 	_activation_pending = true
+	_complete_identity_activation()
+
+func _retry_identity_activation() -> void:
+	if identity_gate_state != IdentityGateState.RECOVERY_DIALOG_OPEN or not _activation_pending:
+		return
 	_complete_identity_activation()
 
 func _create_new_identity() -> void:
