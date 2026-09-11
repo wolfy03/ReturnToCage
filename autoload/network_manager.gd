@@ -29,6 +29,8 @@ var world_ready_peers: Dictionary[int, bool] = {}
 var _peer: ENetMultiplayerPeer
 var _local_peer_id: int = 1
 var _session_entered: bool = false
+var _received_session_snapshot: bool = false
+var _received_private_player_state: bool = false
 var _accepting_handshakes: bool = false
 var _pending_host_port: int = 0
 # Narrow one-shot debug seam for deterministic bind-failure lifecycle tests.
@@ -314,6 +316,8 @@ func _reset_transport_only() -> void:
 	state = ConnectionState.OFFLINE
 	_local_peer_id = 1
 	_session_entered = false
+	_received_session_snapshot = false
+	_received_private_player_state = false
 	_accepting_handshakes = false
 	_pending_host_port = 0
 	players.clear()
@@ -401,7 +405,18 @@ func _request_handshake(protocol_version: int, player_id: StringName, display_na
 		_remove_identity(sender)
 		_reject_remote_handshake(sender, "Cannot attach persistent player state")
 		return
+	# Resolve the owner from the accepted sender mapping. Clients never request
+	# another identity's private state and this payload is never broadcast.
+	var private_snapshot := GameSession.make_player_private_snapshot(sender)
+	if private_snapshot == null or not private_snapshot.error_message.is_empty():
+		players.erase(sender)
+		_client_remove_peer.rpc(sender)
+		GameSession.detach_player(sender)
+		_remove_identity(sender)
+		_reject_remote_handshake(sender, "Cannot build owner-private player state")
+		return
 	_receive_session_snapshot.rpc_id(sender, GameSession.to_network_snapshot(NETWORK_PROTOCOL_VERSION))
+	_receive_private_player_state.rpc_id(sender, private_snapshot.to_payload())
 	print("[NET] Connected peer %d" % sender)
 	peer_joined.emit(sender)
 
@@ -421,6 +436,8 @@ func _reject_handshake(message: String) -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_session_snapshot(payload: Dictionary) -> void:
+	if _received_session_snapshot or _session_entered:
+		return
 	var snapshot := NetworkSessionSnapshot.from_payload(payload, NETWORK_PROTOCOL_VERSION, MAX_PLAYERS)
 	if not snapshot.error_message.is_empty() or not snapshot.player_ids.has(local_peer_id()):
 		var message := snapshot.error_message if not snapshot.error_message.is_empty() else "Server omitted the local player"
@@ -449,9 +466,43 @@ func _receive_session_snapshot(payload: Dictionary) -> void:
 	players.clear()
 	for identity in snapshot.identities:
 		players[identity.peer_id] = NetworkPlayerInfo.new(identity.peer_id, identity.player_id, "Host" if identity.peer_id == 1 else "Player", true)
+	_received_session_snapshot = true
+	_try_complete_client_sync()
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_private_player_state(payload: Dictionary) -> void:
+	if is_server() or _received_private_player_state or _session_entered:
+		return
+	if not _received_session_snapshot:
+		_fail_client_sync("Owner-private player state arrived before the session snapshot")
+		return
+	var local_player_id := local_profile_player_id()
+	if local_player_id.is_empty() or GameSession.get_local_player_id() != local_player_id:
+		_fail_client_sync("Owner-private player identity is not attached")
+		return
+	var snapshot := PlayerPrivateStateSnapshot.from_payload(
+		payload, ContentRegistry, GameSession.get_start_definition(), local_player_id
+	)
+	if not snapshot.error_message.is_empty() or not GameSession.apply_player_private_network_snapshot(snapshot):
+		var message := snapshot.error_message if not snapshot.error_message.is_empty() \
+				else "Cannot apply owner-private player state"
+		_fail_client_sync(message)
+		return
+	_received_private_player_state = true
+	_try_complete_client_sync()
+
+func _try_complete_client_sync() -> void:
+	if _session_entered or not _received_session_snapshot or not _received_private_player_state:
+		return
 	_session_entered = true
 	print("[NET] Session synchronized with %d players" % players.size())
 	session_synchronized.emit()
+
+func _fail_client_sync(message: String) -> void:
+	leave_game()
+	last_error = message
+	print("[NET] Client synchronization failed: %s" % message)
+	connection_failed.emit()
 
 @rpc("authority", "call_remote", "reliable")
 func _client_add_peer(peer_id: int, player_id: StringName, display_name: String) -> void:

@@ -728,12 +728,27 @@ func make_player_item_snapshot(peer_id: int) -> PlayerItemStateSnapshot:
 	var state := get_player(peer_id)
 	return PlayerItemStateSnapshot.from_state(player_id, state) if not player_id.is_empty() and state != null else null
 
+func make_player_private_snapshot(peer_id: int) -> PlayerPrivateStateSnapshot:
+	if not can_mutate_authoritative_state():
+		return null
+	var player_id := get_player_id(peer_id)
+	var state := get_player(peer_id)
+	return PlayerPrivateStateSnapshot.from_state(player_id, state) if not player_id.is_empty() and state != null else null
+
 func apply_player_item_network_snapshot(snapshot: PlayerItemStateSnapshot) -> bool:
 	if NetworkManager.is_server() or not NetworkManager.is_session_connected() or snapshot == null \
 			or snapshot.owner_player_id != get_local_player_id():
 		return false
 	var state := get_local_player()
 	return state != null and state.apply_item_network_mirror(snapshot)
+
+func apply_player_private_network_snapshot(snapshot: PlayerPrivateStateSnapshot) -> bool:
+	if NetworkManager.is_server() or not NetworkManager.is_session_connected() or snapshot == null \
+			or snapshot.player_id != get_local_player_id():
+		return false
+	var state := get_local_player()
+	var start := get_start_definition()
+	return state != null and state.apply_private_network_mirror(snapshot, start, ContentRegistry)
 
 func execute_equip_command(peer_id: int, instance_id: String) -> CommandResult:
 	if not can_mutate_authoritative_state():

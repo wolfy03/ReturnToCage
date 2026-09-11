@@ -42,6 +42,7 @@ func run_all() -> void:
 	preload("res://tests/unit/test_reward_save_boundary.gd").new().run(self)
 	preload("res://tests/unit/test_network_player_registry.gd").new().run(self)
 	preload("res://tests/unit/test_network_input_validation.gd").new().run(self)
+	preload("res://tests/unit/test_player_private_state_snapshot.gd").new().run(self)
 	preload("res://tests/unit/test_local_player_profile.gd").new().run(self)
 	preload("res://tests/unit/test_multiplayer_combat_foundation.gd").new().run(self)
 	preload("res://tests/unit/test_multiplayer_quest_scope.gd").new().run(self)

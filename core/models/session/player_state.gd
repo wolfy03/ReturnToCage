@@ -3,6 +3,7 @@ extends RefCounted
 
 signal vitals_changed
 signal item_state_changed(revision: int)
+signal private_state_changed
 
 var effects: EffectRuntimeModel
 var _gear_sources: Array[StringName] = []
@@ -143,6 +144,46 @@ func apply_item_network_mirror(snapshot: PlayerItemStateSnapshot) -> bool:
 	item_state_changed.emit(item_state_revision)
 	return true
 
+func apply_private_network_mirror(
+	snapshot: PlayerPrivateStateSnapshot,
+	start: GameStartDefinition,
+	registry: Node
+) -> bool:
+	if snapshot == null or not snapshot.error_message.is_empty() or start == null or registry == null:
+		return false
+	# Build every replacement model first. Live state is swapped only after all
+	# four private domains have passed the same restore rules used by Save v4.
+	var next_stats := StatBlock.new()
+	next_stats.base_values = start.player_stats.duplicate()
+	var errors := next_stats.restore(snapshot.stats)
+	if next_stats.value(&"max_health") <= 0.0:
+		errors.append("invalid private max_health")
+	var next_survival := SurvivalState.new()
+	next_survival.reset(start)
+	errors.append_array(next_survival.restore(snapshot.survival))
+	var next_effects := EffectRuntimeModel.new(next_stats)
+	errors.append_array(next_effects.restore(snapshot.effects, Callable(registry, "get_definition")))
+	if not snapshot.last_safe_position.is_finite():
+		errors.append("invalid private last_safe_position")
+	if not errors.is_empty():
+		return false
+
+	_disconnect_effect_callbacks()
+	stats = next_stats
+	survival = next_survival
+	effects = next_effects
+	last_safe_position = snapshot.last_safe_position
+	_gear_sources.clear()
+	effects.periodic.connect(_on_periodic)
+	stats.stat_changed.connect(_on_persistent_stat_changed)
+	# Equipment remains in the separate revisioned owner-item mirror. Rebuild its
+	# derived modifiers once against the replaced base stats/effects models.
+	sync_equipment()
+	effects.paused = false
+	set_health(health)
+	private_state_changed.emit()
+	return true
+
 func _on_equipment_changed() -> void:
 	sync_equipment()
 	_on_item_model_changed()
@@ -165,16 +206,19 @@ func _can_mutate_items() -> bool:
 func _reset_effects() -> void:
 	# A scene/test may retain the retired model. Disconnect before dropping it;
 	# RefCounted lifetime alone does not protect this PlayerState from callbacks.
+	_disconnect_effect_callbacks()
+	effects = EffectRuntimeModel.new(stats)
+	effects.periodic.connect(_on_periodic)
+	_gear_sources.clear()
+	stats.stat_changed.connect(_on_persistent_stat_changed)
+
+func _disconnect_effect_callbacks() -> void:
 	if effects != null:
 		effects.paused = true
 		if effects.periodic.is_connected(_on_periodic):
 			effects.periodic.disconnect(_on_periodic)
 		if effects.stats != null and effects.stats.stat_changed.is_connected(_on_persistent_stat_changed):
 			effects.stats.stat_changed.disconnect(_on_persistent_stat_changed)
-	effects = EffectRuntimeModel.new(stats)
-	effects.periodic.connect(_on_periodic)
-	_gear_sources.clear()
-	stats.stat_changed.connect(_on_persistent_stat_changed)
 
 func _on_persistent_stat_changed(stat_id: StringName, _value: float) -> void:
 	if stat_id == &"max_health":

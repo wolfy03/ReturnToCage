@@ -37,8 +37,15 @@ var reconnect_personal_refs: Dictionary[StringName, PersonalProgressionState] = 
 var reconnect_old_peers: Dictionary[StringName, int] = {}
 var reconnect_item_revisions: Dictionary[StringName, int] = {}
 var reconnect_hunger_values: Dictionary[StringName, float] = {}
+var reconnect_thirst_values: Dictionary[StringName, float] = {}
+var reconnect_speed_values: Dictionary[StringName, float] = {}
+var reconnect_safe_positions: Dictionary[StringName, Vector2] = {}
 var reconnect_water_counts: Dictionary[StringName, int] = {}
 var reconnect_reattach_verified: Dictionary[StringName, bool] = {}
+var expected_reconnect_hunger: float = -1.0
+var expected_reconnect_thirst: float = -1.0
+var expected_reconnect_speed: float = -1.0
+var expected_reconnect_safe_position: Vector2 = Vector2(INF, INF)
 var enemy_roster_confirmation_sent: bool = false
 var enemy_roster_confirmations: Dictionary[int, bool] = {}
 var combat_enemy_id: int = 0
@@ -561,7 +568,10 @@ func _on_probe_peer_joined(peer_id: int) -> void:
 				or personal != reconnect_personal_refs[player_id] \
 				or not is_equal_approx(attached.health, 37.0) \
 				or not is_equal_approx(attached.survival.hunger, reconnect_hunger_values[player_id]) \
-				or attached.last_safe_position != Vector2(321, 432) \
+				or not is_equal_approx(attached.survival.thirst, reconnect_thirst_values[player_id]) \
+				or not is_equal_approx(attached.stats.base_values[&"move_speed"], reconnect_speed_values[player_id]) \
+				or not attached.effects.active_effects.has(&"quick_paws") \
+				or attached.last_safe_position != reconnect_safe_positions[player_id] \
 				or attached.inventory.count(&"water_drop") != reconnect_water_counts[player_id] \
 				or attached.protected_inventory.count(&"berry") != 1 \
 				or attached_vest == null or not attached_vest.instance_id.begins_with("reconnect_vest_") \
@@ -590,7 +600,11 @@ func _on_probe_peer_left(peer_id: int) -> void:
 				_fail("disconnect left an active player or runtime attachment")
 			var detached := GameSession.get_player_state_by_player_id(player_id)
 			if detached != null:
-				reconnect_hunger_values[player_id] = detached.survival.hunger
+				# Active-world survival may drain between fixture setup and transport
+				# detach. Freeze the detached canonical record at the announced values
+				# so the reconnect payload has a deterministic process-probe oracle.
+				detached.survival.hunger = reconnect_hunger_values[player_id]
+				detached.survival.thirst = reconnect_thirst_values[player_id]
 			return
 
 func _prepare_reconnect_state() -> bool:
@@ -609,8 +623,16 @@ func _prepare_reconnect_state() -> bool:
 			_fail("reconnect persistence fixture could not resolve player ownership")
 			return false
 		player_state.set_health(37.0)
-		player_state.survival.hunger = 33.0
-		player_state.last_safe_position = Vector2(321, 432)
+		var private_index := peer_ids.find(peer_id)
+		var speed := 231.0 + float(private_index)
+		var hunger := 31.0 + float(private_index)
+		var thirst := 41.0 + float(private_index)
+		var safe_position := Vector2(321 + private_index * 7, 432 + private_index * 11)
+		player_state.stats.set_base(&"move_speed", speed)
+		player_state.survival.hunger = hunger
+		player_state.survival.thirst = thirst
+		player_state.effects.apply_effect(ContentRegistry.get_definition(&"quick_paws") as EffectDefinition, ItemDefinition.FoodSlot.SNACK)
+		player_state.last_safe_position = safe_position
 		if not player_state.inventory.add_item(&"water_drop", 1).success:
 			_fail("reconnect persistence item fixture failed")
 			return false
@@ -627,8 +649,19 @@ func _prepare_reconnect_state() -> bool:
 		reconnect_old_peers[player_id] = peer_id
 		reconnect_item_revisions[player_id] = player_state.item_state_revision
 		reconnect_hunger_values[player_id] = player_state.survival.hunger
+		reconnect_thirst_values[player_id] = player_state.survival.thirst
+		reconnect_speed_values[player_id] = player_state.stats.base_values[&"move_speed"]
+		reconnect_safe_positions[player_id] = player_state.last_safe_position
 		reconnect_water_counts[player_id] = player_state.inventory.count(&"water_drop")
+		_expect_reconnect_private.rpc_id(peer_id, speed, hunger, thirst, safe_position)
 	return true
+
+@rpc("authority", "call_remote", "reliable")
+func _expect_reconnect_private(speed: float, hunger: float, thirst: float, safe_position: Vector2) -> void:
+	expected_reconnect_speed = speed
+	expected_reconnect_hunger = hunger
+	expected_reconnect_thirst = thirst
+	expected_reconnect_safe_position = safe_position
 
 @rpc("authority", "call_remote", "reliable")
 func _expect_settlement_upgrade(command_peer_id: int) -> void:
@@ -780,6 +813,21 @@ func _confirm_quest_progress() -> void:
 		quest_progress_confirmations[sender] = true
 
 func _on_session_synchronized() -> void:
+	if reconnecting:
+		if not is_equal_approx(GameSession.player.stats.base_values.get(&"move_speed", -1.0), expected_reconnect_speed) \
+				or not is_equal_approx(GameSession.player.survival.hunger, expected_reconnect_hunger) \
+				or not is_equal_approx(GameSession.player.survival.thirst, expected_reconnect_thirst) \
+				or not GameSession.player.effects.active_effects.has(&"quick_paws") \
+				or GameSession.player.last_safe_position != expected_reconnect_safe_position:
+			_fail("owner-private state was incomplete before session_synchronized speed=%s/%s hunger=%s/%s thirst=%s/%s effect=%s safe=%s/%s" % [
+				GameSession.player.stats.base_values.get(&"move_speed", -1.0), expected_reconnect_speed,
+				GameSession.player.survival.hunger, expected_reconnect_hunger,
+				GameSession.player.survival.thirst, expected_reconnect_thirst,
+				GameSession.player.effects.active_effects.has(&"quick_paws"),
+				GameSession.player.last_safe_position, expected_reconnect_safe_position,
+			])
+			return
+		print("PROBE OWNER-PRIVATE RECONNECT SYNC OK")
 	_build_world()
 	await get_tree().create_timer(0.5).timeout
 	var local_actor := _actor(NetworkManager.local_peer_id())
@@ -837,15 +885,30 @@ func _build_world() -> void:
 		enemy.set_physics_process(false)
 
 func _remote_private_placeholders_are_empty() -> bool:
+	var start := GameSession.get_start_definition()
 	for peer_id in GameSession.players:
 		if peer_id == NetworkManager.local_peer_id():
 			continue
 		var state := GameSession.get_player(peer_id)
 		if state == null or not state.inventory.stacks().is_empty() \
 				or not state.protected_inventory.stacks().is_empty() \
-				or not state.equipment.all_equipped().is_empty():
+				or not state.equipment.all_equipped().is_empty() \
+				or state.stats.to_dict() != _start_stats_payload(start) \
+				or state.survival.to_dict() != _start_survival_payload(start) \
+				or not state.effects.active_effects.is_empty() \
+				or state.last_safe_position != start.last_safe_position:
 			return false
 	return true
+
+func _start_stats_payload(start: GameStartDefinition) -> Dictionary:
+	var stats := StatBlock.new()
+	stats.base_values = start.player_stats.duplicate()
+	return stats.to_dict()
+
+func _start_survival_payload(start: GameStartDefinition) -> Dictionary:
+	var survival := SurvivalState.new()
+	survival.reset(start)
+	return survival.to_dict()
 
 func _ensure_probe_adventure() -> void:
 	if GameSession.adventure.active_session != null:
