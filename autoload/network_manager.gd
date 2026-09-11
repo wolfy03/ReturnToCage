@@ -36,9 +36,15 @@ var _accepting_handshakes: bool = false
 var _pending_host_port: int = 0
 var _returning_peers: Dictionary[int, bool] = {}
 var _spawn_assignments: Dictionary[int, PlayerSpawnAssignment] = {}
+# A rejected peer belongs only to the current transport generation. SceneTree
+# timers cannot be cancelled by clearing this cache, so delayed callbacks also
+# capture and validate the generation that scheduled them.
 var _rejected_handshake_peers: Dictionary[int, bool] = {}
+var _transport_generation: int = 0
 # Narrow one-shot debug seam for deterministic bind-failure lifecycle tests.
 var _host_transport_error_for_test: Error = OK
+# Narrow debug seam for deterministic delayed-disconnect lifecycle tests.
+var _rejected_disconnect_hook_for_test: Callable = Callable()
 var _local_profile: LocalPlayerProfile
 
 func _ready() -> void:
@@ -324,6 +330,9 @@ func _on_transport_peer_connected(peer_id: int) -> void:
 		print("[NET] Transport connected peer %d; awaiting protocol handshake" % peer_id)
 
 func _on_transport_peer_disconnected(peer_id: int) -> void:
+	# Clear quarantine even when a late disconnect signal arrives after the
+	# transport state has already moved offline.
+	_rejected_handshake_peers.erase(peer_id)
 	if not is_server():
 		return
 	var was_active := players.has(peer_id) or peer_to_player.has(peer_id) or GameSession.has_player(peer_id)
@@ -333,7 +342,6 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 	world_ready_peers.erase(peer_id)
 	_spawn_assignments.erase(peer_id)
 	_returning_peers.erase(peer_id)
-	_rejected_handshake_peers.erase(peer_id)
 	_remove_identity(peer_id)
 	if was_active:
 		for remaining_peer_id in multiplayer.get_peers():
@@ -378,6 +386,10 @@ func _reset_transport() -> void:
 	GameSession.reset_to_offline_local_player(previous_local_peer_id)
 
 func _reset_transport_only() -> void:
+	# Invalidate every delayed callback from the transport being closed before
+	# replacing its MultiplayerPeer. This is a lifecycle token, not a packet or
+	# gameplay revision.
+	_transport_generation += 1
 	if _peer != null:
 		_peer.close()
 	_peer = null
@@ -507,13 +519,24 @@ func _reject_remote_handshake(peer_id: int, message: String) -> void:
 		_reject_handshake.rpc_id(peer_id, message)
 	# Allow one network poll to flush the reliable rejection before transport
 	# teardown. The peer is quarantined above and owns no identity/session state.
+	var generation := _transport_generation
 	get_tree().create_timer(0.1).timeout.connect(
-		_disconnect_rejected_peer.bind(peer_id), CONNECT_ONE_SHOT
+		_disconnect_rejected_peer.bind(peer_id, generation), CONNECT_ONE_SHOT
 	)
 
-func _disconnect_rejected_peer(peer_id: int) -> void:
-	if _peer != null and multiplayer.get_peers().has(peer_id):
-		_peer.disconnect_peer(peer_id, false)
+func _disconnect_rejected_peer(peer_id: int, generation: int) -> void:
+	if generation != _transport_generation:
+		return
+	if not _rejected_handshake_peers.has(peer_id):
+		return
+	if OS.is_debug_build() and _rejected_disconnect_hook_for_test.is_valid():
+		_rejected_handshake_peers.erase(peer_id)
+		_rejected_disconnect_hook_for_test.call(peer_id)
+		return
+	if _peer == null or not multiplayer.get_peers().has(peer_id):
+		return
+	_rejected_handshake_peers.erase(peer_id)
+	_peer.disconnect_peer(peer_id, false)
 
 @rpc("authority", "call_remote", "reliable")
 func _reject_handshake(message: String) -> void:

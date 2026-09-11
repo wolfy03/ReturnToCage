@@ -8,6 +8,7 @@ func run(t: Node) -> void:
 	NetworkManager.leave_game()
 	t.assert_true(GameSession.activate_offline_local_identity(), "saved-host tests begin with an activated offline identity")
 	_test_non_host_authority_truth_table(t)
+	_test_rejected_handshake_transport_lifetime(t)
 	var local_id := NetworkManager.local_profile_player_id()
 	var token := "%s_%s" % [Time.get_ticks_usec(), randi()]
 	var path := "user://host_saved_game_%s.json" % token
@@ -39,6 +40,53 @@ func _test_non_host_authority_truth_table(t: Node) -> void:
 	t.assert_true(not NetworkManager.is_server() and NetworkManager.is_session_connected() \
 			and not NetworkManager.is_authoritative_simulation(), "CONNECTED client has connectivity without gameplay authority")
 	NetworkManager.state = NetworkManager.ConnectionState.OFFLINE
+
+func _test_rejected_handshake_transport_lifetime(t: Node) -> void:
+	var disconnected: Array[int] = []
+	NetworkManager._rejected_disconnect_hook_for_test = func(peer_id: int) -> void:
+		disconnected.append(peer_id)
+	var peer_id := 42
+	var generation := NetworkManager._transport_generation
+	NetworkManager._rejected_handshake_peers[peer_id] = true
+	NetworkManager._disconnect_rejected_peer(peer_id, generation)
+	t.assert_equal(disconnected, [peer_id], "current-generation rejected peer reaches delayed disconnect")
+	t.assert_true(not NetworkManager._rejected_handshake_peers.has(peer_id), "current delayed disconnect consumes the rejection quarantine")
+	t.assert_true(NetworkManager.players.is_empty() and NetworkManager.peer_to_player.is_empty() \
+			and not GameSession.has_player(peer_id), "quarantined peer never enters active or canonical session mappings")
+
+	var already_gone_peer := 43
+	NetworkManager._rejected_handshake_peers[already_gone_peer] = true
+	NetworkManager._on_transport_peer_disconnected(already_gone_peer)
+	var disconnect_count := disconnected.size()
+	NetworkManager._disconnect_rejected_peer(already_gone_peer, generation)
+	t.assert_equal(disconnected.size(), disconnect_count, "already-disconnected rejected peer callback is a no-op")
+	t.assert_true(not NetworkManager._rejected_handshake_peers.has(already_gone_peer), "peer disconnect cleanup removes rejection quarantine")
+
+	var generation_before_restore := NetworkManager._transport_generation
+	var restoring_port := 20000 + randi_range(0, 400)
+	t.assert_equal(NetworkManager.begin_host_restore(restoring_port, 2), OK, "generation test opens a gated restoring transport")
+	var old_generation := NetworkManager._transport_generation
+	t.assert_equal(old_generation, generation_before_restore + 1, "new restoring transport advances exactly one lifecycle generation")
+	NetworkManager._rejected_handshake_peers[peer_id] = true
+	NetworkManager.abort_host_restore()
+	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "aborting restore closes the rejected peer transport")
+	t.assert_true(not NetworkManager._rejected_handshake_peers.has(peer_id), "restore abort clears current transport rejection quarantine")
+	var replacement_port := 20401 + randi_range(0, 400)
+	t.assert_equal(NetworkManager.host_game(replacement_port, 2), OK, "generation test starts a replacement host transport")
+	var new_generation := NetworkManager._transport_generation
+	t.assert_true(new_generation > old_generation, "replacement host has a newer transport generation")
+	# Model a new transport reusing the same numeric peer ID and quarantining it
+	# for its own reason. The old callback must neither disconnect nor erase it.
+	NetworkManager._rejected_handshake_peers[peer_id] = true
+	NetworkManager._disconnect_rejected_peer(peer_id, old_generation)
+	t.assert_equal(disconnected.size(), disconnect_count, "stale-generation callback cannot disconnect a reused numeric peer ID")
+	t.assert_true(NetworkManager._rejected_handshake_peers.has(peer_id), "stale callback cannot mutate current-generation rejection state")
+	NetworkManager._disconnect_rejected_peer(peer_id, new_generation)
+	t.assert_equal(disconnected.size(), disconnect_count + 1, "current generation still disconnects the reused rejected peer")
+	t.assert_true(not NetworkManager._rejected_handshake_peers.has(peer_id), "current generation clears its own rejection state")
+	t.assert_true(NetworkManager.validate_runtime_invariants().is_empty(), "delayed rejection tests leave runtime mappings unchanged")
+	NetworkManager._rejected_disconnect_hook_for_test = Callable()
+	NetworkManager.leave_game()
 
 func _build_saved_fixture(t: Node, local_id: StringName) -> Dictionary:
 	t.assert_true(GameSession.start_new_game(), "saved-host fixture starts a canonical session")

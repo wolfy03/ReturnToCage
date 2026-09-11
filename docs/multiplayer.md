@@ -112,6 +112,8 @@ Spawn ownership is server-side. The accepted persistent `player_id`, not a curre
 
 The attach transaction records whether the canonical PlayerState existed before mutation. If private/spawn preparation fails, returning state is detached and retained, while a just-created fresh state is detached and removed. In both cases active identity maps, world-ready state, and spawn caches are cleared. Disconnect is idempotent and retains only server canonical state; transport reset clears session/private/spawn receive gates plus all runtime spawn decisions. A client-supplied position is never accepted.
 
+Handshake rejection sends its reliable reason before a short delayed disconnect. The quarantine cache is scoped to the current transport generation, and the delayed callback captures both `peer_id` and that generation. Resetting or replacing the transport advances the generation and clears quarantine, so an old timer cannot disconnect or mutate a later connection even if ENet reuses the same numeric peer ID. A peer that disconnects before its timer fires is removed from quarantine and makes the callback a no-op.
+
 Enemy kill credit requires a player-attributed server damage source. A single kill or pickup event can advance the contributing player's PERSONAL quests and the shared PARTY/WORLD quests. Ownerless environment kills grant no quest progress.
 
 Disconnecting during an expedition explicitly forfeits that peer's current `PlayerAdventureState` and unsecured loot. Other peers' expedition loot and settlement storage are left unchanged. Joining again creates a new empty player-adventure state; same-session PlayerState reattachment does not restore the forfeited expedition participation.
