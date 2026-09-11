@@ -40,13 +40,16 @@ func _ready() -> void:
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
 func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Error:
-	_reset_transport()
 	if port < 1 or port > 65535 or max_players < 2 or max_players > MAX_PLAYERS:
 		last_error = "Invalid host port or player limit"
 		return ERR_INVALID_PARAMETER
 	var profile_error := _ensure_local_profile()
 	if profile_error != OK:
 		return profile_error
+	if not is_local_identity_activated():
+		last_error = "Local player identity is not activated"
+		return ERR_UNCONFIGURED
+	_reset_transport()
 	_peer = ENetMultiplayerPeer.new()
 	var result := _peer.create_server(port, max_players - 1)
 	if result != OK:
@@ -70,7 +73,6 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 	return OK
 
 func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
-	_reset_transport()
 	var target := address.strip_edges()
 	if target.is_empty() or port < 1 or port > 65535:
 		last_error = "Invalid server address or port"
@@ -78,6 +80,10 @@ func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
 	var profile_error := _ensure_local_profile()
 	if profile_error != OK:
 		return profile_error
+	if not is_local_identity_activated():
+		last_error = "Local player identity is not activated"
+		return ERR_UNCONFIGURED
+	_reset_transport()
 	_peer = ENetMultiplayerPeer.new()
 	var result := _peer.create_client(target, port)
 	if result != OK:
@@ -133,6 +139,10 @@ func has_valid_local_profile() -> bool:
 func local_profile_load_status() -> int:
 	return _local_profile.load_status if _local_profile != null else LocalPlayerProfile.LoadStatus.NONE
 
+func is_local_identity_activated() -> bool:
+	return has_valid_local_profile() and GameSession.get_local_player() != null \
+		and GameSession.get_local_player_id() == local_profile_player_id()
+
 func commit_local_profile_identity(
 	player_id: StringName,
 	display_name: String = "Player"
@@ -150,13 +160,27 @@ func commit_local_profile_identity(
 	last_error = ""
 	return CommandResult.make(true, "Local player identity recovered")
 
+func create_new_local_identity(display_name: String = "Player") -> CommandResult:
+	if _local_profile == null:
+		return CommandResult.make(false, "Local player profile is unavailable")
+	if _local_profile.load_status != LocalPlayerProfile.LoadStatus.IDENTITY_RECOVERY_REQUIRED:
+		return CommandResult.make(false, "Local profile is not awaiting identity recovery")
+	var create_error := _local_profile.create_new_identity(display_name)
+	if create_error != OK:
+		last_error = _local_profile.last_error
+		return CommandResult.make(false, "New profile identity creation failed: %s" % last_error)
+	last_error = ""
+	return CommandResult.make(true, "New local player identity created")
+
 # Narrow debug-test seam: production callers use the read-only queries above
 # and commit_local_profile_identity(), never a mutable profile object.
 func _load_local_profile_for_test(path: String, failure_hook: Callable = Callable()) -> Error:
 	if not OS.is_debug_build():
 		return ERR_UNAUTHORIZED
 	_local_profile = LocalPlayerProfile.new(path, failure_hook)
-	return _local_profile.load_or_create()
+	var result := _local_profile.load_or_create()
+	last_error = _local_profile.last_error if result != OK else ""
+	return result
 
 func _restore_local_profile_after_test() -> Error:
 	if not OS.is_debug_build():
@@ -370,12 +394,19 @@ func _client_remove_peer(peer_id: int) -> void:
 		peer_left.emit(peer_id)
 
 func _ensure_local_profile() -> Error:
-	if _local_profile != null and _local_profile.is_valid():
-		return OK
+	if _local_profile != null:
+		if _local_profile.is_valid():
+			return OK
+		# Preserve recovery evidence and the configured path. Reconstructing an
+		# unresolved profile here could bypass a startup gate or test override.
+		last_error = _local_profile.last_error
+		return ERR_INVALID_DATA
 	_local_profile = LocalPlayerProfile.new(_profile_path_from_arguments())
 	var result := _local_profile.load_or_create()
 	if result != OK:
 		last_error = _local_profile.last_error
+	else:
+		last_error = ""
 	return result
 
 func _profile_path_from_arguments() -> String:

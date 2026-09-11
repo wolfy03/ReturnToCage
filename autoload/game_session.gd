@@ -336,6 +336,9 @@ func start_new_game() -> bool:
 	if not NetworkManager.is_authoritative_simulation():
 		last_message = "Only the host can start a multiplayer session"
 		return false
+	if not NetworkManager.is_local_identity_activated():
+		last_message = "Local player identity is not activated"
+		return false
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
 		return false
@@ -904,6 +907,34 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 		if previous_local_peer_id != LOCAL_SINGLEPLAYER_PEER_ID or peer_id != LOCAL_SINGLEPLAYER_PEER_ID:
 			player_unregistered.emit(peer_id)
 	phase_changed.emit()
+
+# Startup recovery commits profile persistence first, then calls this explicit
+# lifecycle step. It creates a fresh menu-domain state and never applies the
+# Save snapshot that was staged only to validate the recovered identity.
+func activate_offline_local_identity() -> bool:
+	if NetworkManager.is_multiplayer_active() or not NetworkManager.has_valid_local_profile():
+		last_message = "Cannot activate the offline local identity"
+		return false
+	var player_id := NetworkManager.local_profile_player_id()
+	var start := get_start_definition()
+	if player_id.is_empty() or start == null:
+		last_message = "Cannot activate the offline local identity"
+		return false
+	_clear_player_state_registry()
+	_create_models()
+	if players.size() != 1 or get_local_player() == null or get_local_player_id() != player_id:
+		last_message = "Offline local identity activation failed"
+		return false
+	_reset_states(start)
+	session_id = ""
+	play_time_seconds = 0.0
+	_phase = Phase.MENU
+	_create_quest_system()
+	_connect_model_signals()
+	phase_changed.emit()
+	session_reset.emit()
+	last_message = "Local player identity activated"
+	return true
 
 func restore_state(data: Dictionary) -> PackedStringArray:
 	# Legacy flat v1-v3 staging facade retained for migration/restore tests only.

@@ -37,6 +37,7 @@ func run_all() -> void:
 	preload("res://tests/unit/test_save_migration.gd").new().run(self)
 	preload("res://tests/unit/test_save_v4.gd").new().run(self)
 	preload("res://tests/unit/test_save_identity_recovery.gd").new().run(self)
+	await preload("res://tests/unit/test_identity_recovery_gate.gd").new().run(self)
 	preload("res://tests/unit/test_reward_save_boundary.gd").new().run(self)
 	preload("res://tests/unit/test_network_player_registry.gd").new().run(self)
 	preload("res://tests/unit/test_network_input_validation.gd").new().run(self)

@@ -10,6 +10,7 @@ var host_button: Button
 var join_button: Button
 var disconnect_button: Button
 var status_label: Label
+var _session_actions_enabled: bool = true
 
 func _ready() -> void:
 	layer = 40
@@ -51,11 +52,15 @@ func _ready() -> void:
 
 func refresh() -> void:
 	var active := NetworkManager.is_multiplayer_active()
-	host_button.disabled = active
-	join_button.disabled = active
-	address_edit.editable = not active
+	host_button.disabled = active or not _session_actions_enabled
+	join_button.disabled = active or not _session_actions_enabled
+	address_edit.editable = not active and _session_actions_enabled
 	disconnect_button.disabled = not active
 	if not NetworkManager.last_error.is_empty():
 		status_label.text = NetworkManager.last_error
 	else:
 		status_label.text = NetworkManager.ConnectionState.keys()[NetworkManager.state]
+
+func set_session_actions_enabled(enabled: bool) -> void:
+	_session_actions_enabled = enabled
+	refresh()

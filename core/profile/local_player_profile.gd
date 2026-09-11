@@ -110,6 +110,11 @@ func commit_identity(player_id: StringName, display_name: String = "Player") -> 
 	_activate(player_id, safe_name, LoadStatus.VALID_PRIMARY)
 	return OK
 
+# Explicit recovery escape hatch. Unlike first-install load_or_create(), this
+# is invoked only after the user confirms abandoning unavailable identities.
+func create_new_identity(display_name: String = "Player") -> Error:
+	return commit_identity(_generate_player_id(), display_name)
+
 func get_player_id() -> StringName:
 	return _player_id if _valid else &""
 

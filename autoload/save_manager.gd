@@ -21,6 +21,8 @@ func can_save() -> CommandResult:
 	return CommandResult.make(true)
 
 func can_load() -> CommandResult:
+	if not NetworkManager.is_local_identity_activated():
+		return CommandResult.make(false, "Local player identity is not activated")
 	if NetworkManager.is_multiplayer_active():
 		if not NetworkManager.is_server():
 			return CommandResult.make(false, "Only the host can load a multiplayer session")
