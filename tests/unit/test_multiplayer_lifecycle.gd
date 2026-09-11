@@ -11,6 +11,8 @@ func run(t: Node) -> void:
 	# Unit tests model hosting without opening a socket; the separate localhost
 	# probe covers the actual ENet transport with a process timeout.
 	NetworkManager.state = NetworkManager.ConnectionState.HOSTING
+	NetworkManager._session_entered = true
+	NetworkManager._accepting_handshakes = true
 	NetworkManager._set_identity(1, PLAYER_ONE)
 	NetworkManager.players[1] = NetworkPlayerInfo.new(1, PLAYER_ONE, "Host", true)
 	t.assert_true(NetworkManager.is_server(), "lifecycle test models authoritative hosting")
@@ -184,6 +186,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 
 	NetworkManager.state = NetworkManager.ConnectionState.HOSTING
 	NetworkManager._session_entered = true
+	NetworkManager._accepting_handshakes = true
 	NetworkManager._set_identity(1, PLAYER_ONE)
 	NetworkManager.players[1] = NetworkPlayerInfo.new(1, PLAYER_ONE, "Host", true)
 	GameSession.start_new_game()

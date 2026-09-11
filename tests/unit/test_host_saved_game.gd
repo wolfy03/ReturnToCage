@@ -7,6 +7,7 @@ const FRESH_D := &"player_dddddddddddddddddddddddddddddddd"
 func run(t: Node) -> void:
 	NetworkManager.leave_game()
 	t.assert_true(GameSession.activate_offline_local_identity(), "saved-host tests begin with an activated offline identity")
+	_test_non_host_authority_truth_table(t)
 	var local_id := NetworkManager.local_profile_player_id()
 	var token := "%s_%s" % [Time.get_ticks_usec(), randi()]
 	var path := "user://host_saved_game_%s.json" % token
@@ -19,12 +20,25 @@ func run(t: Node) -> void:
 	_test_bind_failure_does_not_apply(t, path, local_id)
 	_test_gated_transport_and_restore(t, path, local_id)
 	await _test_app_root_orchestration(t, path, corrupt_path, local_id)
+	_test_fresh_host_authority(t)
 
 	_cleanup(path)
 	_cleanup(corrupt_path)
 	if NetworkManager.is_multiplayer_active():
 		NetworkManager.leave_game()
 	t.assert_true(GameSession.activate_offline_local_identity(), "saved-host tests restore the offline identity")
+
+func _test_non_host_authority_truth_table(t: Node) -> void:
+	t.assert_true(not NetworkManager.is_server() and not NetworkManager.is_session_connected(), "OFFLINE has no server role or connected session")
+	t.assert_true(NetworkManager.is_authoritative_simulation(), "OFFLINE retains local gameplay authority")
+	t.assert_true(not NetworkManager.is_host_session_ready(), "OFFLINE is not a ready host session")
+	NetworkManager.state = NetworkManager.ConnectionState.CONNECTING
+	t.assert_true(not NetworkManager.is_server() and not NetworkManager.is_session_connected() \
+			and not NetworkManager.is_authoritative_simulation(), "CONNECTING has no server role, ready session, or gameplay authority")
+	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
+	t.assert_true(not NetworkManager.is_server() and NetworkManager.is_session_connected() \
+			and not NetworkManager.is_authoritative_simulation(), "CONNECTED client has connectivity without gameplay authority")
+	NetworkManager.state = NetworkManager.ConnectionState.OFFLINE
 
 func _build_saved_fixture(t: Node, local_id: StringName) -> Dictionary:
 	t.assert_true(GameSession.start_new_game(), "saved-host fixture starts a canonical session")
@@ -78,12 +92,23 @@ func _test_gated_transport_and_restore(t: Node, path: String, local_id: StringNa
 	var port := 22000 + randi_range(0, 1000)
 	t.assert_equal(NetworkManager.begin_host_restore(port, 3), OK, "valid staging permits gated server transport open")
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.HOSTING_RESTORING, "server transport exposes an explicit restoring state")
-	t.assert_true(NetworkManager.is_server() and not NetworkManager.is_session_connected(), "restoring transport is authoritative but not session-ready")
+	t.assert_true(NetworkManager.is_server() and not NetworkManager.is_session_connected(), "restoring host has the transport server role but no ready session")
+	t.assert_true(not NetworkManager.is_authoritative_simulation() and not NetworkManager.is_host_session_ready(), "restoring host has no gameplay authority")
 	t.assert_true(not NetworkManager.is_accepting_handshakes(), "restoring transport keeps the handshake gate closed")
 	t.assert_true(not SaveManager.can_load().success and not SaveManager.can_save().success, "restoring host rejects competing Save and Load operations")
 	t.assert_equal(ready_signals[0], 0, "transport open does not emit hosting_started")
 	t.assert_true(NetworkManager.players.is_empty() and NetworkManager.peer_to_player.is_empty(), "gated transport has no partial host or remote roster")
 	t.assert_equal(GameSession.export_persistent_state(), live_before, "gated transport open does not mutate GameSession")
+	var restoring_phase := GameSession.phase
+	var restoring_session_id := GameSession.session_id
+	var restoring_play_time := GameSession.play_time_seconds
+	t.assert_true(not GameSession.start_new_game(), "direct New Game is rejected while host restoration is pending")
+	GameSession._process(5.0)
+	t.assert_equal(GameSession.export_persistent_state(), live_before, "rejected New Game and restoring tick leave canonical state unchanged")
+	t.assert_equal(GameSession.phase, restoring_phase, "restoring command rejection preserves phase")
+	t.assert_equal(GameSession.session_id, restoring_session_id, "restoring command rejection preserves session ID")
+	t.assert_equal(GameSession.play_time_seconds, restoring_play_time, "restoring authoritative tick remains frozen")
+	t.assert_true(NetworkManager.players.is_empty() and NetworkManager.peer_to_player.is_empty(), "rejected gameplay command creates no network mapping")
 	var canonical_before := GameSession.persistent_player_count()
 	NetworkManager._request_handshake(NetworkProtocol.VERSION, REMOTE_B, "B")
 	t.assert_equal(GameSession.persistent_player_count(), canonical_before, "handshake before ready cannot attach canonical state")
@@ -93,14 +118,16 @@ func _test_gated_transport_and_restore(t: Node, path: String, local_id: StringNa
 	t.assert_true(GameSession.apply_persistent_snapshot(snapshot), "staged Save applies after transport open")
 	t.assert_equal(GameSession.persistent_player_count(), 3, "apply restores all canonical player states")
 	t.assert_equal(GameSession.players.size(), 1, "apply attaches only the saved local host")
-	t.assert_true(not NetworkManager.is_accepting_handshakes(), "snapshot apply alone does not open the handshake gate")
+	t.assert_true(not NetworkManager.is_accepting_handshakes() and not NetworkManager.is_authoritative_simulation(), "snapshot apply alone opens neither handshake nor gameplay authority")
 	t.assert_equal(NetworkManager.finalize_host_restore(), OK, "validated host attachment finalizes restore")
 	t.assert_equal(ready_signals[0], 1, "host-ready signal emits once after finalization")
-	t.assert_true(NetworkManager.is_accepting_handshakes(), "finalization opens the handshake gate")
+	t.assert_true(NetworkManager.is_accepting_handshakes() and NetworkManager.is_host_session_ready(), "finalization opens the ready host boundary")
+	t.assert_true(NetworkManager.is_authoritative_simulation(), "finalization enables gameplay authority")
 	t.assert_equal(NetworkManager.players.size(), 1, "finalization creates only the host network roster")
 	t.assert_equal(NetworkManager.player_id_for_peer(1), local_id, "finalization maps host peer 1 to the saved profile")
 	NetworkManager.hosting_started.disconnect(ready_callback)
 	NetworkManager.leave_game()
+	t.assert_true(not NetworkManager.is_server() and NetworkManager.is_authoritative_simulation(), "abort/leave returns to authoritative offline semantics")
 
 func _test_app_root_orchestration(t: Node, path: String, corrupt_path: String, local_id: StringName) -> void:
 	var app := (load("res://core/boot.tscn") as PackedScene).instantiate() as AppRoot
@@ -120,8 +147,10 @@ func _test_app_root_orchestration(t: Node, path: String, corrupt_path: String, l
 	t.assert_true(GameSession.apply_persistent_snapshot(rollback_prepared.snapshot), "rollback fixture applies its staged snapshot")
 	GameSession.detach_player(1)
 	t.assert_true(NetworkManager.finalize_host_restore() != OK, "invalid restored host attachment prevents finalization")
+	t.assert_true(NetworkManager.is_server() and not NetworkManager.is_authoritative_simulation(), "failed finalization retains transport role without gameplay authority")
 	app._rollback_host_restore(NetworkManager.last_error)
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "finalization failure closes host transport")
+	t.assert_true(not NetworkManager.is_server() and NetworkManager.is_authoritative_simulation(), "rollback restores offline authority semantics")
 	t.assert_true(NetworkManager.is_local_identity_activated(), "finalization failure restores the offline local identity")
 	t.assert_equal(GameSession.persistent_player_ids(), [local_id], "finalization failure removes restored remote session state")
 	t.assert_true(not app._host_restore_pending and not app.multiplayer_panel.host_saved_button.disabled, "rollback clears lifecycle busy state")
@@ -177,6 +206,15 @@ func _test_app_root_orchestration(t: Node, path: String, corrupt_path: String, l
 	t.assert_equal(GameSession.persistent_player_ids(), [local_id], "leaving removes saved remote session state from the offline menu")
 	app.queue_free()
 	await t.get_tree().process_frame
+
+func _test_fresh_host_authority(t: Node) -> void:
+	var port := 25200 + randi_range(0, 600)
+	t.assert_equal(NetworkManager.host_game(port, 2), OK, "fresh Host still finalizes normally")
+	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.HOSTING, "fresh Host reaches HOSTING")
+	t.assert_true(NetworkManager.is_server() and NetworkManager.is_session_connected(), "fresh Host has server and connected-session semantics")
+	t.assert_true(NetworkManager.is_host_session_ready() and NetworkManager.is_authoritative_simulation(), "fresh Host receives gameplay authority after finalization")
+	t.assert_true(NetworkManager.is_accepting_handshakes(), "fresh Host accepts handshakes after finalization")
+	NetworkManager.leave_game()
 
 func _write_json(path: String, value: Dictionary) -> void:
 	_write(path, JSON.stringify(value))

@@ -117,6 +117,8 @@ func leave_game() -> void:
 	last_error = ""
 
 func is_server() -> bool:
+	# Transport role only. A restoring host owns the ENet server but is not yet
+	# allowed to run authoritative gameplay simulation.
 	return state in [ConnectionState.HOSTING_RESTORING, ConnectionState.HOSTING] and multiplayer.is_server()
 
 func is_session_connected() -> bool:
@@ -126,7 +128,12 @@ func is_multiplayer_active() -> bool:
 	return state != ConnectionState.OFFLINE
 
 func is_authoritative_simulation() -> bool:
-	return state == ConnectionState.OFFLINE or is_server()
+	# Gameplay mutation authority starts only at completed host finalization.
+	return state == ConnectionState.OFFLINE or is_host_session_ready()
+
+func is_host_session_ready() -> bool:
+	return state == ConnectionState.HOSTING and multiplayer.is_server() \
+			and _accepting_handshakes and _session_entered
 
 func is_host_restoring() -> bool:
 	return state == ConnectionState.HOSTING_RESTORING

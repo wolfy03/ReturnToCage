@@ -1020,6 +1020,10 @@ func apply_persistent_snapshot(snapshot: SessionSnapshot) -> bool:
 	play_time_seconds = snapshot.play_time_seconds
 	_create_quest_system()
 	_connect_model_signals()
-	set_phase(Phase.SETTLEMENT)
+	# Installing an already validated detached snapshot is a lifecycle swap, not
+	# a gameplay command. Saved Host performs it while HOSTING_RESTORING has no
+	# gameplay authority; finalize_host_restore() is the authority boundary.
+	_phase = Phase.SETTLEMENT
+	phase_changed.emit()
 	session_reset.emit()
 	return true

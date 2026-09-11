@@ -144,6 +144,8 @@ func run(t: Node) -> void:
 	SaveManager.save_finished.disconnect(save_callback)
 
 	NetworkManager.state = NetworkManager.ConnectionState.HOSTING
+	NetworkManager._session_entered = true
+	NetworkManager._accepting_handshakes = true
 	NetworkManager._set_identity(1, local_id)
 	NetworkManager.players[1] = NetworkPlayerInfo.new(1, local_id, "Host", true)
 	t.assert_true(SaveManager.can_load().success, "host may load with detached canonical players and no active remotes")
