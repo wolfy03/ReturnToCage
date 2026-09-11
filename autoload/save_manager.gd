@@ -14,6 +14,8 @@ enum IdentityInspectionStatus {
 }
 
 func can_save() -> CommandResult:
+	if NetworkManager.is_host_restoring():
+		return CommandResult.make(false, "Save is unavailable while the host session is restoring")
 	if NetworkManager.is_multiplayer_active() and not NetworkManager.is_server():
 		return CommandResult.make(false, "Only the host can save a multiplayer session")
 	if GameSession.phase != GameSession.Phase.SETTLEMENT or GameSession.adventure.active_session != null:
@@ -23,6 +25,8 @@ func can_save() -> CommandResult:
 func can_load() -> CommandResult:
 	if not NetworkManager.is_local_identity_activated():
 		return CommandResult.make(false, "Local player identity is not activated")
+	if NetworkManager.is_host_restoring():
+		return CommandResult.make(false, "Load is unavailable while the host session is restoring")
 	if NetworkManager.is_multiplayer_active():
 		if not NetworkManager.is_server():
 			return CommandResult.make(false, "Only the host can load a multiplayer session")
@@ -88,29 +92,53 @@ func load_game(path: String = SAVE_PATH) -> bool:
 	if not permission.success:
 		load_finished.emit(false, permission.message)
 		return false
-	var read_result := _read_save_dictionary(path)
-	if not read_result.success:
-		load_finished.emit(false, read_result.error)
+	var prepared := prepare_load(path)
+	if not prepared.success:
+		load_finished.emit(false, prepared.error)
 		return false
-	var envelope: Dictionary = read_result.data
-	var migrated := migrate(envelope)
-	if migrated.is_empty():
-		load_finished.emit(false, "Unsupported save format")
-		return false
-	if GameSession.get_start_definition() == null:
-		load_finished.emit(false, "Cannot load game: invalid start configuration")
-		return false
-	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrated)
-	if not snapshot.fatal_error.is_empty():
-		load_finished.emit(false, snapshot.fatal_error)
-		return false
+	var snapshot: SessionSnapshot = prepared.snapshot
 	if not GameSession.apply_persistent_snapshot(snapshot):
 		load_finished.emit(false, "Cannot apply the staged Save v4 session")
 		return false
-	var errors: PackedStringArray = snapshot.warnings
+	var errors: PackedStringArray = prepared.warnings
 	var message := "Game loaded" if errors.is_empty() else "Game loaded with warnings: %s" % "; ".join(errors)
 	load_finished.emit(true, message)
 	return true
+
+# Reads, migrates, and fully validates a save into a detached SessionSnapshot.
+# It never mutates the live GameSession or opens multiplayer transport. Offline
+# Load applies the result immediately; Host Saved Game applies it only after a
+# gated server transport has opened successfully.
+func prepare_load(
+	path: String = SAVE_PATH,
+	selected_player_id: StringName = &""
+) -> Dictionary:
+	var result := {
+		"success": false,
+		"snapshot": null,
+		"warnings": PackedStringArray(),
+		"error": "",
+	}
+	var read_result := _read_save_dictionary(path)
+	if not read_result.success:
+		result.error = read_result.error
+		return result
+	var envelope: Dictionary = read_result.data
+	var migrated := migrate(envelope)
+	if migrated.is_empty():
+		result.error = "Unsupported save format"
+		return result
+	if GameSession.get_start_definition() == null:
+		result.error = "Cannot load game: invalid start configuration"
+		return result
+	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrated, selected_player_id)
+	if not snapshot.fatal_error.is_empty():
+		result.error = snapshot.fatal_error
+		return result
+	result.success = true
+	result.snapshot = snapshot
+	result.warnings = snapshot.warnings
+	return result
 
 # Reads only the primary Save v4 file and validates the identity-bearing
 # envelope contract. It never migrates, stages domain objects, applies live

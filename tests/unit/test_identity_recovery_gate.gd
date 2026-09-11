@@ -139,6 +139,7 @@ func _test_single_candidate_cancel_and_recover(t: Node, token: String) -> void:
 	app._start_new_game()
 	app._load_game()
 	app._host_game()
+	app._host_saved_game(save_path, 19500 + randi_range(0, 400), 3)
 	app._join_game("127.0.0.1")
 	t.assert_true(not SaveManager.load_game(save_path), "direct Load call is blocked before GameSession identity activation")
 	t.assert_equal(GameSession.export_persistent_state(), session_before, "guarded AppRoot commands do not mutate unresolved GameSession")
@@ -354,12 +355,14 @@ func _free_app(t: Node, app: AppRoot) -> void:
 func _assert_ready(t: Node, app: AppRoot, context: String) -> void:
 	t.assert_equal(app.identity_gate_state, AppRoot.IdentityGateState.READY, "%s reaches READY" % context)
 	t.assert_true(not app.new_game_button.disabled and not app.load_game_button.disabled, "%s enables New and Load" % context)
-	t.assert_true(not app.multiplayer_panel.host_button.disabled and not app.multiplayer_panel.join_button.disabled, "%s enables Host and Join" % context)
+	t.assert_true(not app.multiplayer_panel.host_button.disabled and not app.multiplayer_panel.host_saved_button.disabled \
+			and not app.multiplayer_panel.join_button.disabled, "%s enables Host, Host Save, and Join" % context)
 	t.assert_true(not app.identity_dialog.is_open(), "%s closes recovery dialog" % context)
 
 func _assert_actions_disabled(t: Node, app: AppRoot, context: String) -> void:
 	t.assert_true(app.new_game_button.disabled and app.load_game_button.disabled, "%s disables New and Load" % context)
-	t.assert_true(app.multiplayer_panel.host_button.disabled and app.multiplayer_panel.join_button.disabled, "%s disables Host and Join" % context)
+	t.assert_true(app.multiplayer_panel.host_button.disabled and app.multiplayer_panel.host_saved_button.disabled \
+			and app.multiplayer_panel.join_button.disabled, "%s disables Host, Host Save, and Join" % context)
 
 func _install_recovery_profile(t: Node, path: String) -> void:
 	_cleanup_profile(path)

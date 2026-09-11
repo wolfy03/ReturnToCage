@@ -25,6 +25,8 @@ players
 
 Offline은 동일한 v4 schema에 local profile player 하나를 저장한다. Multiplayer client는 파일을 쓸 수 없다. Host는 SETTLEMENT에서 canonical registry의 attached 및 detached PlayerState를 모두 저장할 수 있다. Load는 offline 또는 remote peer가 아직 없는 host에서만 허용하며, ADVENTURE/RESPAWNING 중에는 거부한다.
 
+`Host Save`는 offline `Load Game` 뒤에 fresh Host를 실행하지 않는다. Primary Save를 read/migrate/full-stage한 뒤에만 ENet transport를 `HOSTING_RESTORING` 상태로 열며, 이 상태에서는 protocol handshake가 canonical state를 변경할 수 없다. Transport bind가 성공한 뒤 staged snapshot을 적용하여 모든 `players[player_id]`를 복원하고 local profile player만 peer `1`에 attach한다. Network roster와 host world-ready invariant가 확인된 후에만 handshake gate를 열고 `hosting_started`를 emit한다. Saved remote records는 peer ID 없이 detached 상태로 남는다. Staging 실패는 transport를 열지 않고, bind 실패는 live session을 변경하지 않으며, post-open 실패는 transport를 닫고 offline local identity로 복귀한다.
+
 Writer는 `.tmp` write/flush/close, 기존 파일 `.bak` 이동, 최종 rename 전략을 유지한다. Temporary write, backup remove/rename, final rename 오류는 모두 실패로 보고하며 final rename 실패 시 backup rollback 결과도 확인한다. Loader는 독립 `SessionSnapshot`에 shared와 모든 player record를 먼저 복원하고 전체 검증이 성공한 경우에만 live `GameSession`을 교체한다. Local profile의 player record가 없거나 player ID가 형식에 맞지 않으면 load를 거부한다. 복원된 remote player는 persistent registry에 detached 상태로 남고 local profile player만 peer 1에 attach한다.
 
 ## Item instance 검증
@@ -53,4 +55,4 @@ Identity recovery backend는 primary `return_to_cage_save.json`이 정확한 Sav
 
 Startup에서는 `AppRoot`가 profile load status를 검사한다. 정상 primary, 신규 생성, backup 복구는 즉시 ready다. `IDENTITY_RECOVERY_REQUIRED`만 modal selection UI를 열며 single candidate도 사용자 확인이 필요하고 multiple candidate는 full player ID를 selection key로 명시 선택한다. 표시는 ID 마지막 12자리 fingerprint와 optional root `saved_at`만 사용한다. Cancel은 파일과 session을 변경하지 않고 모든 session action을 계속 잠그며, Create New Player는 별도 경고 확인 뒤 동일 transactional profile writer로 새 ID를 만든다.
 
-Candidate recovery 또는 새 ID commit이 성공하면 Save snapshot을 apply하지 않는다. 대신 `GameSession.activate_offline_local_identity()`가 fresh menu-domain local state를 하나만 만들고 profile ID와 일치하는지 확인한다. 그 검증 후에만 New Game, Load, Host, Join이 활성화된다. Profile commit 이후 activation만 실패한 경우 dialog는 candidate recovery와 분리된 activation-only mode/signal을 사용한다. 따라서 candidate 선택이 없는 Create New 경로에서도 profile이나 Save를 다시 검증·기록하지 않고 activation만 반복 재시도한다. Host Saved Game과 process-restart remote reattach는 다음 차수이며 아직 구현되지 않았다.
+Candidate recovery 또는 새 ID commit이 성공하면 Save snapshot을 apply하지 않는다. 대신 `GameSession.activate_offline_local_identity()`가 fresh menu-domain local state를 하나만 만들고 profile ID와 일치하는지 확인한다. 그 검증 후에만 New Game, Load, Host Save, Host, Join이 활성화된다. Profile commit 이후 activation만 실패한 경우 dialog는 candidate recovery와 분리된 activation-only mode/signal을 사용한다. 따라서 candidate 선택이 없는 Create New 경로에서도 profile이나 Save를 다시 검증·기록하지 않고 activation만 반복 재시도한다. Complete owner-private state resynchronization for a new-process remote reconnect remains deferred to the next protocol phase.

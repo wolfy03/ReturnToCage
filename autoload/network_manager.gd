@@ -10,7 +10,7 @@ signal session_synchronized
 signal peer_world_ready(peer_id: int)
 signal multiplayer_session_ended(reason: String)
 
-enum ConnectionState { OFFLINE, HOSTING, CONNECTING, CONNECTED }
+enum ConnectionState { OFFLINE, HOSTING_RESTORING, HOSTING, CONNECTING, CONNECTED }
 
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 4
@@ -29,6 +29,10 @@ var world_ready_peers: Dictionary[int, bool] = {}
 var _peer: ENetMultiplayerPeer
 var _local_peer_id: int = 1
 var _session_entered: bool = false
+var _accepting_handshakes: bool = false
+var _pending_host_port: int = 0
+# Narrow one-shot debug seam for deterministic bind-failure lifecycle tests.
+var _host_transport_error_for_test: Error = OK
 var _local_profile: LocalPlayerProfile
 
 func _ready() -> void:
@@ -50,27 +54,39 @@ func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Erro
 		last_error = "Local player identity is not activated"
 		return ERR_UNCONFIGURED
 	_reset_transport()
-	_peer = ENetMultiplayerPeer.new()
-	var result := _peer.create_server(port, max_players - 1)
+	var result := _open_host_transport(port, max_players)
 	if result != OK:
-		last_error = "Cannot host on port %d: %s" % [port, error_string(result)]
-		_peer = null
 		return result
-	multiplayer.multiplayer_peer = _peer
-	state = ConnectionState.HOSTING
-	_local_peer_id = 1
-	_session_entered = true
-	var host_player_id := local_profile_player_id()
-	if not _set_identity(1, host_player_id):
-		last_error = "Cannot attach the host local player profile"
+	result = _finalize_host_session(false)
+	if result != OK:
 		_reset_transport()
-		return ERR_INVALID_DATA
-	players[1] = NetworkPlayerInfo.new(1, host_player_id, local_profile_display_name(), true)
-	world_ready_peers[1] = true
-	last_error = ""
-	print("[NET] Hosting on port %d" % port)
-	hosting_started.emit()
-	return OK
+	return result
+
+# Saved hosting opens a real ENet server while protocol handshakes remain
+# disabled. The caller must apply its already-staged SessionSnapshot and then
+# call finalize_host_restore(). This function never mutates GameSession.
+func begin_host_restore(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Error:
+	if state != ConnectionState.OFFLINE:
+		last_error = "Cannot restore a hosted session while networking is active"
+		return ERR_ALREADY_IN_USE
+	if port < 1 or port > 65535 or max_players < 2 or max_players > MAX_PLAYERS:
+		last_error = "Invalid host port or player limit"
+		return ERR_INVALID_PARAMETER
+	var profile_error := _ensure_local_profile()
+	if profile_error != OK:
+		return profile_error
+	if not is_local_identity_activated():
+		last_error = "Local player identity is not activated"
+		return ERR_UNCONFIGURED
+	_reset_transport_only()
+	return _open_host_transport(port, max_players)
+
+func finalize_host_restore() -> Error:
+	return _finalize_host_session(true)
+
+func abort_host_restore() -> void:
+	if state == ConnectionState.HOSTING_RESTORING:
+		_reset_transport_only()
 
 func join_game(address: String, port: int = DEFAULT_PORT) -> Error:
 	var target := address.strip_edges()
@@ -101,7 +117,7 @@ func leave_game() -> void:
 	last_error = ""
 
 func is_server() -> bool:
-	return state == ConnectionState.HOSTING and multiplayer.is_server()
+	return state in [ConnectionState.HOSTING_RESTORING, ConnectionState.HOSTING] and multiplayer.is_server()
 
 func is_session_connected() -> bool:
 	return state in [ConnectionState.HOSTING, ConnectionState.CONNECTED]
@@ -111,6 +127,12 @@ func is_multiplayer_active() -> bool:
 
 func is_authoritative_simulation() -> bool:
 	return state == ConnectionState.OFFLINE or is_server()
+
+func is_host_restoring() -> bool:
+	return state == ConnectionState.HOSTING_RESTORING
+
+func is_accepting_handshakes() -> bool:
+	return is_server() and _accepting_handshakes
 
 func local_peer_id() -> int:
 	return _local_peer_id
@@ -274,6 +296,10 @@ func _finish_network_session(reason: String) -> void:
 
 func _reset_transport() -> void:
 	var previous_local_peer_id := local_peer_id()
+	_reset_transport_only()
+	GameSession.reset_to_offline_local_player(previous_local_peer_id)
+
+func _reset_transport_only() -> void:
 	if _peer != null:
 		_peer.close()
 	_peer = null
@@ -281,17 +307,68 @@ func _reset_transport() -> void:
 	state = ConnectionState.OFFLINE
 	_local_peer_id = 1
 	_session_entered = false
+	_accepting_handshakes = false
+	_pending_host_port = 0
 	players.clear()
 	peer_to_player.clear()
 	player_to_peer.clear()
 	world_ready_peers.clear()
-	GameSession.reset_to_offline_local_player(previous_local_peer_id)
+
+func _open_host_transport(port: int, max_players: int) -> Error:
+	_accepting_handshakes = false
+	if OS.is_debug_build() and _host_transport_error_for_test != OK:
+		var injected_error := _host_transport_error_for_test
+		_host_transport_error_for_test = OK
+		last_error = "Cannot host on port %d: %s" % [port, error_string(injected_error)]
+		return injected_error
+	_peer = ENetMultiplayerPeer.new()
+	var result := _peer.create_server(port, max_players - 1)
+	if result != OK:
+		last_error = "Cannot host on port %d: %s" % [port, error_string(result)]
+		_peer = null
+		return result
+	multiplayer.multiplayer_peer = _peer
+	state = ConnectionState.HOSTING_RESTORING
+	_local_peer_id = 1
+	_session_entered = false
+	_pending_host_port = port
+	return OK
+
+func _finalize_host_session(require_restored_session: bool) -> Error:
+	if state != ConnectionState.HOSTING_RESTORING or _peer == null or not multiplayer.is_server():
+		last_error = "Host transport is not awaiting session finalization"
+		return ERR_UNCONFIGURED
+	var host_player_id := local_profile_player_id()
+	if GameSession.get_local_player() == null or GameSession.get_local_player_id() != host_player_id:
+		last_error = "Cannot attach the host local player profile"
+		return ERR_INVALID_DATA
+	if require_restored_session and (GameSession.phase != GameSession.Phase.SETTLEMENT \
+			or GameSession.session_id.is_empty() or GameSession.players.size() != 1):
+		last_error = "Restored host session is not ready"
+		return ERR_INVALID_DATA
+	if not players.is_empty() or not peer_to_player.is_empty() or not player_to_peer.is_empty() \
+			or not world_ready_peers.is_empty() or not _set_identity(1, host_player_id):
+		last_error = "Cannot initialize the host network roster"
+		return ERR_INVALID_DATA
+	players[1] = NetworkPlayerInfo.new(1, host_player_id, local_profile_display_name(), true)
+	world_ready_peers[1] = true
+	_accepting_handshakes = true
+	state = ConnectionState.HOSTING
+	_session_entered = true
+	last_error = ""
+	print("[NET] Hosting on port %d" % _pending_host_port)
+	_pending_host_port = 0
+	hosting_started.emit()
+	return OK
 
 @rpc("any_peer", "call_remote", "reliable")
 func _request_handshake(protocol_version: int, player_id: StringName, display_name: String) -> void:
 	if not is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
+	if not _accepting_handshakes:
+		_reject_remote_handshake(sender, "Server is restoring session")
+		return
 	if sender <= 1 or protocol_version != NETWORK_PROTOCOL_VERSION:
 		_reject_remote_handshake(sender, "Incompatible multiplayer protocol version")
 		print("[NET] Protocol mismatch for peer %d" % sender)

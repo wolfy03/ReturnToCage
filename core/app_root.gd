@@ -20,9 +20,11 @@ enum IdentityGateState {
 var _menu_transition_pending: bool = false
 var identity_gate_state: IdentityGateState = IdentityGateState.CHECKING
 var _activation_pending: bool = false
+var _host_restore_pending: bool = false
 # Test harnesses may point the gate at an isolated Save; production retains the
 # canonical primary path and never inspects the game-save backup.
 var _identity_recovery_save_path: String = SaveManager.SAVE_PATH
+var _host_saved_game_path: String = SaveManager.SAVE_PATH
 
 func _ready() -> void:
 	SceneRouter.register_world_layer(world_layer)
@@ -30,6 +32,7 @@ func _ready() -> void:
 	%LoadGameButton.pressed.connect(_load_game)
 	recover_identity_button.pressed.connect(_open_recovery_dialog)
 	multiplayer_panel.host_requested.connect(_host_game)
+	multiplayer_panel.host_saved_requested.connect(_host_saved_game)
 	multiplayer_panel.join_requested.connect(_join_game)
 	multiplayer_panel.disconnect_requested.connect(_leave_game)
 	NetworkManager.session_synchronized.connect(_enter_network_session)
@@ -168,7 +171,7 @@ func _load_game() -> void:
 		error_label.visible = true
 
 func _host_game() -> void:
-	if not _identity_actions_allowed():
+	if _host_restore_pending or not _identity_actions_allowed():
 		return
 	var result := NetworkManager.host_game()
 	if result != OK:
@@ -181,6 +184,59 @@ func _host_game() -> void:
 	menu.visible = false
 	error_label.visible = false
 	SceneRouter.go_to_settlement()
+
+func _host_saved_game(
+	path: String = "",
+	port: int = NetworkManager.DEFAULT_PORT,
+	max_players: int = NetworkManager.MAX_PLAYERS
+) -> void:
+	if _host_restore_pending or not _identity_actions_allowed():
+		return
+	var permission := SaveManager.can_load()
+	if not permission.success:
+		_show_error(permission.message)
+		return
+	_set_host_restore_busy(true)
+	var target_path := path if not path.is_empty() else _host_saved_game_path
+	var prepared := SaveManager.prepare_load(target_path, NetworkManager.local_profile_player_id())
+	if not prepared.success:
+		_finish_host_restore_failure(prepared.error)
+		return
+	var transport_error := NetworkManager.begin_host_restore(port, max_players)
+	if transport_error != OK:
+		_finish_host_restore_failure(NetworkManager.last_error)
+		return
+	var snapshot: SessionSnapshot = prepared.snapshot
+	if not GameSession.apply_persistent_snapshot(snapshot):
+		_rollback_host_restore("Cannot apply the staged Save session")
+		return
+	var finalize_error := NetworkManager.finalize_host_restore()
+	if finalize_error != OK:
+		_rollback_host_restore(NetworkManager.last_error)
+		return
+	_set_host_restore_busy(false)
+	menu.visible = false
+	error_label.visible = false
+	SceneRouter.go_to_settlement()
+
+func _rollback_host_restore(message: String) -> void:
+	NetworkManager.abort_host_restore()
+	var fallback_ok := GameSession.activate_offline_local_identity()
+	var detail := message
+	if not fallback_ok:
+		detail += "; offline identity fallback failed: %s" % GameSession.last_message
+	_finish_host_restore_failure(detail)
+
+func _finish_host_restore_failure(message: String) -> void:
+	_set_host_restore_busy(false)
+	menu.visible = true
+	_show_error(message)
+
+func _set_host_restore_busy(busy: bool) -> void:
+	_host_restore_pending = busy
+	new_game_button.disabled = busy or identity_gate_state != IdentityGateState.READY
+	load_game_button.disabled = busy or identity_gate_state != IdentityGateState.READY
+	multiplayer_panel.set_host_restore_busy(busy)
 
 func _join_game(address: String) -> void:
 	if not _identity_actions_allowed():

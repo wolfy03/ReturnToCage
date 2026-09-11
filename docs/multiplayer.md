@@ -21,8 +21,9 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 ## Start a host
 
 1. Run the project normally.
-2. In **Experimental Multiplayer**, select **Host**.
-3. The host listens on UDP port `7777`, creates the authoritative session, and enters the shared settlement test map.
+2. In **Experimental Multiplayer**, select **Host** for a fresh session or **Host Save** for the primary saved session.
+3. A fresh Host creates the authoritative session. Host Save first performs full detached Save staging, opens ENet with handshakes gated, applies the canonical snapshot, attaches only the local profile as peer `1`, and enables remote handshakes only after the restored session is ready.
+4. The host listens on UDP port `7777` and enters the shared settlement test map.
 
 ## Join a host
 
@@ -88,6 +89,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Offline single-player compatibility
 - Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
 - Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
+- Host Saved Game orchestration with pre-transport Save staging and a restoring-state handshake gate
 
 `inventory_changed` remains a local-player UI compatibility signal. `quest_changed` is a compatibility notification; `quest_state_changed` carries scope and logical owner for replication. Peer-specific health/life presentation remains separate.
 
@@ -115,7 +117,9 @@ The startup `AppRoot` identity gate treats valid, newly created, and backup-reco
 
 The backend validates the selected candidate through the complete detached staging path before requesting identity commit through `NetworkManager`. `LocalPlayerProfile` remains the profile-file persistence implementation but is not exposed as a mutable general service. Recovery does not apply the staged Save session or use legacy saves or the game-save `.bak` as identity sources. After profile persistence succeeds, `AppRoot` explicitly activates one fresh offline `GameSession` local identity and verifies that it matches the profile before enabling session actions. Activation failure can be retried without recommitting the profile.
 
-Known P2/deferred work is limited to the next persistence phase: Host Saved Game orchestration, gated restored-registry server opening, and process-restart client reattachment are not yet implemented. Identity recovery intentionally returns to a fresh Main Menu domain state; the user must invoke Load separately.
+Host Saved Game is distinct from offline Load followed by Host. `SaveManager.prepare_load()` migrates and fully stages without live mutation, `NetworkManager.begin_host_restore()` opens only gated transport, `GameSession.apply_persistent_snapshot()` restores all canonical records with only the host attached, and `NetworkManager.finalize_host_restore()` builds the peer-1 roster, opens the handshake gate, then emits the session-ready `hosting_started` signal. A peer that submits its handshake before readiness is explicitly disconnected with `Server is restoring session` and may reconnect after the host is ready; it never receives a partial attachment. Saved remote players remain detached under persistent `player_id` until their identity reconnects; no old peer ID or fake attachment is restored. Invalid staging opens no server, bind failure applies no snapshot, and post-open failure closes transport before restoring one offline local identity.
+
+Known P2/deferred work is the remaining process-restart synchronization phase: protocol v9 does not yet mirror the complete owner-private base stats, survival, effects, or last-safe position after a new-process remote reconnect. `PlayerPrivateStateSnapshot` and protocol v10 are intentionally deferred.
 
 ## Not synchronized yet
 
