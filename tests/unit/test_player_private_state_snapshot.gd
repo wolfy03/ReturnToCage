@@ -8,6 +8,7 @@ func run(t: Node) -> void:
 	_test_malformed_payloads(t)
 	_test_client_sync_gate(t)
 	_test_private_sync_failure_blocks_readiness(t)
+	_test_spawn_sync_failure_blocks_readiness(t)
 	_test_owner_scope(t)
 	NetworkManager.leave_game()
 	GameSession.activate_offline_local_identity()
@@ -106,11 +107,18 @@ func _test_client_sync_gate(t: Node) -> void:
 	server_state.last_safe_position = Vector2(91, 123)
 	var private_snapshot := PlayerPrivateStateSnapshot.from_state(local_id, server_state)
 	NetworkManager._receive_private_player_state(private_snapshot.to_payload())
-	t.assert_true(NetworkManager._received_private_player_state and NetworkManager._session_entered, "private apply completes the client synchronization gate")
-	t.assert_equal(synchronized[0], 1, "session_synchronized emits once after both snapshots")
+	t.assert_true(NetworkManager._received_private_player_state and not NetworkManager._session_entered, "private apply still waits for authoritative spawn")
+	t.assert_equal(synchronized[0], 0, "session_synchronized waits for the spawn assignment")
 	t.assert_equal(GameSession.player.stats.to_dict(), server_state.stats.to_dict(), "sync gate installs authoritative private base stats")
 	t.assert_equal(GameSession.player.survival.to_dict(), server_state.survival.to_dict(), "sync gate installs authoritative private survival")
 	t.assert_equal(GameSession.player.last_safe_position, server_state.last_safe_position, "sync gate installs authoritative private safe position")
+	var spawn := PlayerSpawnAssignment.create(
+		"private-sync-test", local_id, PlayerSpawnAssignment.SpawnKind.RETURNING_SAFE_POSITION,
+		Vector2(91, 123)
+	)
+	NetworkManager._receive_spawn_assignment(spawn.to_payload())
+	t.assert_true(NetworkManager._received_spawn_assignment and NetworkManager._session_entered, "spawn assignment completes the client synchronization gate")
+	t.assert_equal(synchronized[0], 1, "session_synchronized emits once after all three snapshots")
 	NetworkManager._receive_private_player_state(private_snapshot.to_payload())
 	t.assert_equal(synchronized[0], 1, "duplicate private RPC cannot emit duplicate session readiness")
 	NetworkManager.session_synchronized.disconnect(callback)
@@ -151,8 +159,35 @@ func _test_private_sync_failure_blocks_readiness(t: Node) -> void:
 	NetworkManager._receive_private_player_state(invalid)
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "malformed private snapshot closes the incomplete client session")
 	t.assert_true(not NetworkManager._session_entered and not NetworkManager._received_session_snapshot \
-			and not NetworkManager._received_private_player_state, "private validation failure cannot leave any readiness gate open")
+			and not NetworkManager._received_private_player_state and not NetworkManager._received_spawn_assignment, "private validation failure cannot leave any readiness gate open")
 	t.assert_true(NetworkManager.last_error.contains("Invalid player private snapshot"), "private synchronization failure exposes a concrete validation error")
+
+func _test_spawn_sync_failure_blocks_readiness(t: Node) -> void:
+	NetworkManager.leave_game()
+	var local_id := NetworkManager.local_profile_player_id()
+	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
+	NetworkManager._local_peer_id = 42
+	NetworkManager._receive_session_snapshot({
+		"protocol_version": NetworkProtocol.VERSION,
+		"session_id": "spawn-sync-failure-test",
+		"phase": GameSession.Phase.SETTLEMENT,
+		"difficulty_id": "normal",
+		"players": [
+			{"peer_id": 1, "player_id": "player_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			{"peer_id": 42, "player_id": String(local_id)},
+		],
+	})
+	var private_snapshot := PlayerPrivateStateSnapshot.from_state(
+		local_id, _make_state(GameSession.get_start_definition())
+	)
+	NetworkManager._receive_private_player_state(private_snapshot.to_payload())
+	var stale_spawn := PlayerSpawnAssignment.create(
+		"stale-session", local_id, PlayerSpawnAssignment.SpawnKind.FRESH_SLOT,
+		Vector2(160, 520)
+	)
+	NetworkManager._receive_spawn_assignment(stale_spawn.to_payload())
+	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "stale-session spawn assignment closes the incomplete client session")
+	t.assert_true(not NetworkManager._received_spawn_assignment and NetworkManager._spawn_assignments.is_empty(), "invalid spawn assignment cannot poison the next session cache")
 
 func _make_state(start: GameStartDefinition) -> PlayerState:
 	var state := PlayerState.new(Callable(ContentRegistry, "get_item"))

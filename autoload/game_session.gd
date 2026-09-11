@@ -155,6 +155,12 @@ func has_player(peer_id: int) -> bool:
 func get_player(peer_id: int) -> PlayerState:
 	return players.get(peer_id)
 
+func update_player_last_safe_position(peer_id: int, position: Vector2) -> bool:
+	if not can_mutate_authoritative_state() or not position.is_finite():
+		return false
+	var state := get_player(peer_id)
+	return state != null and state.update_last_safe_position(position)
+
 func attach_player(peer_id: int, player_id: StringName) -> PlayerState:
 	if peer_id <= 0 or player_id.is_empty():
 		return null

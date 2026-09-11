@@ -31,8 +31,11 @@ var _local_peer_id: int = 1
 var _session_entered: bool = false
 var _received_session_snapshot: bool = false
 var _received_private_player_state: bool = false
+var _received_spawn_assignment: bool = false
 var _accepting_handshakes: bool = false
 var _pending_host_port: int = 0
+var _returning_peers: Dictionary[int, bool] = {}
+var _spawn_assignments: Dictionary[int, PlayerSpawnAssignment] = {}
 # Narrow one-shot debug seam for deterministic bind-failure lifecycle tests.
 var _host_transport_error_for_test: Error = OK
 var _local_profile: LocalPlayerProfile
@@ -158,6 +161,28 @@ func peer_id_for_player(player_id: StringName) -> int:
 func has_player_id(player_id: StringName) -> bool:
 	return not player_id.is_empty() and player_to_peer.has(player_id)
 
+func is_returning_peer(peer_id: int) -> bool:
+	return bool(_returning_peers.get(peer_id, false))
+
+func register_authoritative_spawn_assignment(peer_id: int, assignment: PlayerSpawnAssignment) -> bool:
+	if not is_authoritative_simulation() or assignment == null or not assignment.error_message.is_empty() \
+			or not players.has(peer_id) or not GameSession.has_player(peer_id) \
+			or assignment.player_id != player_id_for_peer(peer_id) \
+			or assignment.session_id != GameSession.session_id:
+		return false
+	_spawn_assignments[peer_id] = assignment
+	return true
+
+func spawn_assignment_for_peer(peer_id: int) -> PlayerSpawnAssignment:
+	return _spawn_assignments.get(peer_id)
+
+func consume_local_spawn_assignment() -> PlayerSpawnAssignment:
+	if is_server() or not _session_entered:
+		return null
+	var result: PlayerSpawnAssignment = _spawn_assignments.get(local_peer_id())
+	_spawn_assignments.erase(local_peer_id())
+	return result
+
 func local_profile_player_id() -> StringName:
 	return _local_profile.get_player_id() if _local_profile != null and _local_profile.is_valid() else &""
 
@@ -263,10 +288,15 @@ func _on_transport_peer_connected(peer_id: int) -> void:
 func _on_transport_peer_disconnected(peer_id: int) -> void:
 	if not is_server():
 		return
-	if players.erase(peer_id):
-		world_ready_peers.erase(peer_id)
+	var was_active := players.has(peer_id) or peer_to_player.has(peer_id) or GameSession.has_player(peer_id)
+	if GameSession.has_player(peer_id):
 		GameSession.detach_player(peer_id)
-		_remove_identity(peer_id)
+	players.erase(peer_id)
+	world_ready_peers.erase(peer_id)
+	_spawn_assignments.erase(peer_id)
+	_returning_peers.erase(peer_id)
+	_remove_identity(peer_id)
+	if was_active:
 		for remaining_peer_id in multiplayer.get_peers():
 			if can_send_to_peer(remaining_peer_id):
 				_client_remove_peer.rpc_id(remaining_peer_id, peer_id)
@@ -318,12 +348,15 @@ func _reset_transport_only() -> void:
 	_session_entered = false
 	_received_session_snapshot = false
 	_received_private_player_state = false
+	_received_spawn_assignment = false
 	_accepting_handshakes = false
 	_pending_host_port = 0
 	players.clear()
 	peer_to_player.clear()
 	player_to_peer.clear()
 	world_ready_peers.clear()
+	_returning_peers.clear()
+	_spawn_assignments.clear()
 
 func _open_host_transport(port: int, max_players: int) -> Error:
 	_accepting_handshakes = false
@@ -363,6 +396,7 @@ func _finalize_host_session(require_restored_session: bool) -> Error:
 		return ERR_INVALID_DATA
 	players[1] = NetworkPlayerInfo.new(1, host_player_id, local_profile_display_name(), true)
 	world_ready_peers[1] = true
+	_returning_peers[1] = require_restored_session
 	_accepting_handshakes = true
 	state = ConnectionState.HOSTING
 	_session_entered = true
@@ -391,32 +425,35 @@ func _request_handshake(protocol_version: int, player_id: StringName, display_na
 		_reject_remote_handshake(sender, identity_error)
 		return
 	var safe_name := display_name.strip_edges().left(24)
+	var was_persistent := GameSession.has_persistent_player(player_id)
 	if not _set_identity(sender, player_id):
 		_reject_remote_handshake(sender, "Cannot attach persistent player identity")
 		return
 	players[sender] = NetworkPlayerInfo.new(sender, player_id, safe_name if not safe_name.is_empty() else "Player", true)
+	_returning_peers[sender] = was_persistent
 	# Existing clients must register the peer before PlayerSpawnManager reacts to
 	# the domain attachment and sends that actor's spawn RPC.
 	_client_add_peer.rpc(sender, player_id, players[sender].display_name)
 	var attached_state := GameSession.attach_player(sender, player_id)
 	if attached_state == null:
-		players.erase(sender)
-		_client_remove_peer.rpc(sender)
-		_remove_identity(sender)
+		_rollback_peer_attachment(sender, player_id, was_persistent)
 		_reject_remote_handshake(sender, "Cannot attach persistent player state")
 		return
 	# Resolve the owner from the accepted sender mapping. Clients never request
 	# another identity's private state and this payload is never broadcast.
 	var private_snapshot := GameSession.make_player_private_snapshot(sender)
 	if private_snapshot == null or not private_snapshot.error_message.is_empty():
-		players.erase(sender)
-		_client_remove_peer.rpc(sender)
-		GameSession.detach_player(sender)
-		_remove_identity(sender)
+		_rollback_peer_attachment(sender, player_id, was_persistent)
 		_reject_remote_handshake(sender, "Cannot build owner-private player state")
+		return
+	var spawn_assignment := spawn_assignment_for_peer(sender)
+	if spawn_assignment == null or not spawn_assignment.error_message.is_empty():
+		_rollback_peer_attachment(sender, player_id, was_persistent)
+		_reject_remote_handshake(sender, "Cannot build authoritative spawn assignment")
 		return
 	_receive_session_snapshot.rpc_id(sender, GameSession.to_network_snapshot(NETWORK_PROTOCOL_VERSION))
 	_receive_private_player_state.rpc_id(sender, private_snapshot.to_payload())
+	_receive_spawn_assignment.rpc_id(sender, spawn_assignment.to_payload())
 	print("[NET] Connected peer %d" % sender)
 	peer_joined.emit(sender)
 
@@ -491,8 +528,28 @@ func _receive_private_player_state(payload: Dictionary) -> void:
 	_received_private_player_state = true
 	_try_complete_client_sync()
 
+@rpc("authority", "call_remote", "reliable")
+func _receive_spawn_assignment(payload: Dictionary) -> void:
+	if is_server() or _received_spawn_assignment or _session_entered:
+		return
+	if not _received_session_snapshot or not _received_private_player_state:
+		_fail_client_sync("Spawn assignment arrived before private state synchronization")
+		return
+	var local_player_id := local_profile_player_id()
+	var assignment := PlayerSpawnAssignment.from_payload(payload, GameSession.session_id, local_player_id)
+	if not assignment.error_message.is_empty() or GameSession.get_local_player_id() != assignment.player_id:
+		_fail_client_sync(
+			assignment.error_message if not assignment.error_message.is_empty() \
+			else "Authoritative spawn assignment owner mismatch"
+		)
+		return
+	_spawn_assignments[local_peer_id()] = assignment
+	_received_spawn_assignment = true
+	_try_complete_client_sync()
+
 func _try_complete_client_sync() -> void:
-	if _session_entered or not _received_session_snapshot or not _received_private_player_state:
+	if _session_entered or not _received_session_snapshot or not _received_private_player_state \
+			or not _received_spawn_assignment:
 		return
 	_session_entered = true
 	print("[NET] Session synchronized with %d players" % players.size())
@@ -519,14 +576,40 @@ func _client_add_peer(peer_id: int, player_id: StringName, display_name: String)
 @rpc("authority", "call_remote", "reliable")
 func _client_remove_peer(peer_id: int) -> void:
 	var player_id := player_id_for_peer(peer_id)
-	if players.erase(peer_id):
+	var was_active := players.has(peer_id) or peer_to_player.has(peer_id) or GameSession.has_player(peer_id)
+	if GameSession.has_player(peer_id):
 		GameSession.detach_player(peer_id)
-		# A client owns no reconnect-authoritative private state for remote players.
-		# The server retains its canonical state; clients discard this placeholder.
-		if peer_id != local_peer_id() and not player_id.is_empty():
-			GameSession.remove_player_state(player_id)
-		_remove_identity(peer_id)
+	# A client owns no reconnect-authoritative private state for remote players.
+	# The server retains its canonical state; clients discard this placeholder.
+	if peer_id != local_peer_id() and not player_id.is_empty():
+		GameSession.remove_player_state(player_id)
+	players.erase(peer_id)
+	_remove_identity(peer_id)
+	_spawn_assignments.erase(peer_id)
+	_returning_peers.erase(peer_id)
+	if was_active:
 		peer_left.emit(peer_id)
+
+func _rollback_peer_attachment(
+	peer_id: int,
+	player_id: StringName,
+	was_persistent: bool,
+	notify_clients: bool = true
+) -> void:
+	# Network/scene attachment is transactional. A returning canonical state is
+	# detached and retained; a newly-created state is removed on preparation
+	# failure so a rejected handshake cannot leave a ghost persistent player.
+	if GameSession.has_player(peer_id):
+		GameSession.detach_player(peer_id)
+	if not was_persistent and GameSession.has_persistent_player(player_id):
+		GameSession.remove_player_state(player_id)
+	players.erase(peer_id)
+	world_ready_peers.erase(peer_id)
+	_spawn_assignments.erase(peer_id)
+	_returning_peers.erase(peer_id)
+	_remove_identity(peer_id)
+	if notify_clients and is_server():
+		_client_remove_peer.rpc(peer_id)
 
 func _ensure_local_profile() -> Error:
 	if _local_profile != null:

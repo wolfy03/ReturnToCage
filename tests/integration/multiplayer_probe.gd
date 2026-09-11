@@ -880,6 +880,13 @@ func _build_world() -> void:
 	add_child(world)
 	ladder = world.get_node("EmergencyLadder") as ClimbableArea2D
 	spawner = world.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	if not NetworkManager.is_server():
+		var spawn_assignment := spawner.local_spawn_assignment()
+		if spawn_assignment == null or spawn_assignment.player_id != GameSession.get_local_player_id() \
+				or spawn_assignment.session_id != GameSession.session_id:
+			_fail("client world did not consume its session-bound authoritative spawn assignment")
+			return
+		print("PROBE AUTHORITATIVE SPAWN %d %s" % [spawn_assignment.spawn_kind, spawn_assignment.position])
 	(world.get_node("LootSpawnManager") as LootSpawnManager).pickup_result.connect(_on_probe_pickup_result)
 	for enemy in get_tree().get_nodes_in_group(&"enemy"):
 		enemy.set_physics_process(false)

@@ -24,6 +24,8 @@ script = ExtResource("3")
 spawn_index = 3
 [node name="PlayerSpawnManager" type="Node" parent="."]
 script = ExtResource("2")
+settlement_spawn_policy = true
+settlement_safe_bounds = Rect2(0, 0, 1400, 570)
 [node name="QuestReplicationService" type="Node" parent="."]
 script = ExtResource("4")
 [node name="SettlementReplicationService" type="Node" parent="."]

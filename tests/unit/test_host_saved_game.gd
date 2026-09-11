@@ -190,10 +190,16 @@ func _test_app_root_orchestration(t: Node, path: String, corrupt_path: String, l
 	t.assert_equal(normalized_export, expected_export, "immediate export is semantically identical to the staged Save")
 
 	var restored_b := GameSession.get_player_state_by_player_id(REMOTE_B)
+	var restored_c := GameSession.get_player_state_by_player_id(REMOTE_C)
+	var spawn_manager := app.world_layer.get_child(0).get_node("PlayerSpawnManager") as PlayerSpawnManager
 	t.assert_true(restored_b.effects.paused, "saved remote B keeps detach pause as host runtime state only")
 	t.assert_true(NetworkManager._set_identity(77, REMOTE_B), "returning B receives a new active peer mapping")
 	NetworkManager.players[77] = NetworkPlayerInfo.new(77, REMOTE_B, "B", true)
+	NetworkManager._returning_peers[77] = true
 	t.assert_true(GameSession.attach_player(77, REMOTE_B) == restored_b, "returning B attaches the exact restored canonical object")
+	var spawn_b := NetworkManager.spawn_assignment_for_peer(77)
+	t.assert_true(spawn_b != null and spawn_b.spawn_kind == PlayerSpawnAssignment.SpawnKind.RETURNING_SAFE_POSITION, "saved returning B receives the validated safe-position spawn kind")
+	t.assert_equal(spawn_manager.get_actor(77).position, Vector2(345, 456), "saved returning B spawns at its own valid safe position")
 	t.assert_equal(GameSession.get_player(77).inventory.count(&"berry"), 4, "returning B retains saved private items")
 	var private_b := GameSession.make_player_private_snapshot(77)
 	t.assert_true(private_b != null and private_b.player_id == REMOTE_B, "returning B owner-private payload derives from its active sender mapping")
@@ -209,13 +215,31 @@ func _test_app_root_orchestration(t: Node, path: String, corrupt_path: String, l
 	t.assert_equal(NetworkManager._handshake_identity_error(88, REMOTE_B), "Player identity is already connected", "duplicate active B identity remains rejected")
 	t.assert_equal(NetworkManager._handshake_identity_error(88, local_id), "Player identity is already connected", "remote host identity forgery remains rejected")
 
+	restored_c.last_safe_position = Vector2(2000, 500)
+	t.assert_true(NetworkManager._set_identity(76, REMOTE_C), "returning C receives a new active peer mapping")
+	NetworkManager.players[76] = NetworkPlayerInfo.new(76, REMOTE_C, "C", true)
+	NetworkManager._returning_peers[76] = true
+	t.assert_true(GameSession.attach_player(76, REMOTE_C) == restored_c, "world-invalid returning C keeps its restored canonical object")
+	var spawn_c := NetworkManager.spawn_assignment_for_peer(76)
+	t.assert_true(spawn_c != null and spawn_c.spawn_kind == PlayerSpawnAssignment.SpawnKind.SETTLEMENT_FALLBACK, "out-of-bounds returning C uses Settlement fallback")
+	t.assert_true(spawn_c.fallback_used and spawn_c.reason == "OUT_OF_BOUNDS", "returning fallback records the world-validation reason")
+	t.assert_equal(restored_c.last_safe_position, spawn_c.position, "successful fallback heals the canonical safe position")
+	t.assert_true(spawn_c.position != spawn_b.position, "returning B and fallback C do not overlap")
+
 	t.assert_true(NetworkManager._set_identity(78, FRESH_D), "fresh player receives an active identity mapping")
 	NetworkManager.players[78] = NetworkPlayerInfo.new(78, FRESH_D, "D", true)
+	NetworkManager._returning_peers[78] = false
 	var fresh_d := GameSession.attach_player(78, FRESH_D)
 	t.assert_true(fresh_d != null and GameSession.get_player_state_by_player_id(FRESH_D) == fresh_d, "unknown identity follows the existing fresh-player path")
-	t.assert_true(not NetworkManager.world_ready_peers.has(77) and not NetworkManager.world_ready_peers.has(78), "new attachments are not world-ready before scene confirmation")
+	var spawn_d := NetworkManager.spawn_assignment_for_peer(78)
+	t.assert_true(spawn_d != null and spawn_d.spawn_kind == PlayerSpawnAssignment.SpawnKind.FRESH_SLOT, "fresh D uses a deterministic configured slot")
+	t.assert_true(spawn_d.position != spawn_b.position and spawn_d.position != spawn_c.position, "fresh D does not overlap returning/fallback players")
+	t.assert_equal(fresh_d.last_safe_position, spawn_d.position, "fresh Settlement spawn initializes canonical safe position")
+	t.assert_true(not NetworkManager.world_ready_peers.has(76) and not NetworkManager.world_ready_peers.has(77) \
+			and not NetworkManager.world_ready_peers.has(78), "new attachments are not world-ready before scene confirmation")
+	GameSession.detach_player(76)
 	var exported_with_detached := GameSession.export_persistent_state()
-	t.assert_true(exported_with_detached.players.has(String(REMOTE_C)), "still-detached C remains in canonical Save export")
+	t.assert_true(exported_with_detached.players.has(String(REMOTE_C)), "re-detached C remains in canonical Save export")
 
 	NetworkManager.hosting_started.disconnect(ready_callback)
 	NetworkManager.leave_game()

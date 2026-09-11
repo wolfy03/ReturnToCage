@@ -14,7 +14,12 @@ var equipment: EquipmentModel
 var protected_inventory: InventoryModel
 var survival: SurvivalState = SurvivalState.new()
 var health: float = 0.0
-var last_safe_position: Vector2 = Vector2.ZERO
+var _last_safe_position: Vector2 = Vector2.ZERO
+var last_safe_position: Vector2:
+	get:
+		return _last_safe_position
+	set(value):
+		update_last_safe_position(value)
 var _item_state_revision: int = 0
 var item_state_revision: int:
 	get:
@@ -45,7 +50,7 @@ func reset(start: GameStartDefinition, registry: Node) -> void:
 	survival = SurvivalState.new()
 	survival.reset(start)
 	health = start.player_health
-	last_safe_position = start.last_safe_position
+	_last_safe_position = start.last_safe_position
 	inventory.capacity = start.inventory_capacity
 	protected_inventory.capacity = start.protected_capacity
 	inventory.initialize(start.create_stacks(start.inventory_items, registry))
@@ -84,7 +89,7 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 	survival = SurvivalState.new()
 	survival.reset(start)
 	errors.append_array(survival.restore(SaveData.dictionary(data, "survival_state", errors)))
-	last_safe_position = SaveData.position(data, "last_safe_position", start.last_safe_position, errors)
+	_last_safe_position = SaveData.position(data, "last_safe_position", start.last_safe_position, errors)
 	errors.append_array(effects.restore(SaveData.array(data, "active_effects", errors), Callable(ContentRegistry, "get_definition")))
 	sync_equipment()
 	set_health(SaveData.clamped_number(data, "player_health", stats.value(&"max_health"), 0.0, maxf(1.0, stats.value(&"max_health")), errors))
@@ -172,7 +177,7 @@ func apply_private_network_mirror(
 	stats = next_stats
 	survival = next_survival
 	effects = next_effects
-	last_safe_position = snapshot.last_safe_position
+	_last_safe_position = snapshot.last_safe_position
 	_gear_sources.clear()
 	effects.periodic.connect(_on_periodic)
 	stats.stat_changed.connect(_on_persistent_stat_changed)
@@ -182,6 +187,12 @@ func apply_private_network_mirror(
 	effects.paused = false
 	set_health(health)
 	private_state_changed.emit()
+	return true
+
+func update_last_safe_position(value: Vector2) -> bool:
+	if not value.is_finite() or not _can_mutate_domain():
+		return false
+	_last_safe_position = value
 	return true
 
 func _on_equipment_changed() -> void:
@@ -201,7 +212,10 @@ func _commit_item_change() -> void:
 	item_state_changed.emit(_item_state_revision)
 
 func _can_mutate_items() -> bool:
-	return _applying_item_snapshot or not _item_mutation_guard.is_valid() or bool(_item_mutation_guard.call())
+	return _applying_item_snapshot or _can_mutate_domain()
+
+func _can_mutate_domain() -> bool:
+	return not _item_mutation_guard.is_valid() or bool(_item_mutation_guard.call())
 
 func _reset_effects() -> void:
 	# A scene/test may retain the retired model. Disconnect before dropping it;

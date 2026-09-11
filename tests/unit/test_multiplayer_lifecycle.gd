@@ -240,7 +240,9 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 func _assert_clean_menu_state(t: Node, context: String) -> void:
 	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.OFFLINE, "%s resets network state" % context)
 	t.assert_true(NetworkManager.players.is_empty() and NetworkManager.world_ready_peers.is_empty(), "%s clears network registries" % context)
-	t.assert_true(not NetworkManager._received_session_snapshot and not NetworkManager._received_private_player_state, "%s clears client synchronization gates" % context)
+	t.assert_true(not NetworkManager._received_session_snapshot and not NetworkManager._received_private_player_state \
+			and not NetworkManager._received_spawn_assignment, "%s clears client synchronization gates" % context)
+	t.assert_true(NetworkManager._spawn_assignments.is_empty() and NetworkManager._returning_peers.is_empty(), "%s clears runtime spawn caches" % context)
 	t.assert_true(GameSession.players.size() == 1 and GameSession.phase == GameSession.Phase.MENU, "%s leaves one offline player in menu phase" % context)
 	t.assert_equal(GameSession.session_id, "", "%s clears session id" % context)
 
