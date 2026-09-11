@@ -28,7 +28,17 @@ godot --headless --path . --quit-after 60
 
 실제 localhost ENet 연결은 기본 CI에서 socket 대기로 인한 hang을 피하기 위해 별도 timeout helper로 검증한다. 상세 범위와 명령은 `docs/multiplayer.md`를 참고한다.
 
-러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리를 받아 같은 명령을 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
+프로세스 재시작 회귀는 각 역할에 독립된 native `user://` root를 할당하고 phase 1과 phase 2에서 같은 역할의 root만 재사용한다. Host와 client는 서로 다른 Godot OS process이며 phase 1의 ENet 객체나 singleton을 공유하지 않는다. 정상 종료 시 임시 파일을 지우고, 실패/timeout/process crash 시 JSON status와 각 process log를 보존한다.
+
+```powershell
+python tools/test_multiplayer_restart.py --godot $godotExe --players 2 --scenario valid
+python tools/test_multiplayer_restart.py --godot $godotExe --players 2 --scenario invalid
+python tools/test_multiplayer_restart.py --godot $godotExe --players 3 --scenario valid
+```
+
+`valid`는 Save v4의 returning safe position과 owner-private/item/quest 상태를 재시작 전후 비교한다. `invalid`는 finite이지만 Settlement bounds 밖인 위치가 deterministic fallback으로 치유되고, 같은 세션의 다음 reconnect와 후속 Save에서 그 위치가 유지되는지 검사한다. 3-player mode는 B/C의 protected inventory, PERSONAL quest, effects, survival, spawn assignment가 서로 교차 노출되지 않는지 함께 확인한다. 고정 sleep 대신 atomic JSON sentinel을 사용하며, 기본 port는 실행마다 사용 가능한 UDP port를 선택한다. 성공 아티팩트가 필요하면 `--keep-artifacts`를 추가한다.
+
+러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리로 같은 project check와 위 2-player valid/invalid, 3-player valid process-restart E2E를 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
 
 ## 테스트 구성
 
@@ -36,7 +46,7 @@ godot --headless --path . --quit-after 60
 
 등반 통합 테스트는 실제 플레이어·하수구 씬과 Input Action을 사용한다. 영역 밖 입력, 진입·정렬·정지·하강·점프·피격·귀환 차단, 사다리 상단 플랫폼 착지와 E 탈출, 밧줄 속도와 하단 이탈을 확인한다. 테스트용 변경 Resource는 복제하거나 임시 등록하고 종료 시 제거한다.
 
-재시작 검증은 첫 프로세스에서 테스트 전용 user://return_to_cage_restart_test.json을 기록하고, 다음 프로세스에서 읽어 전체 저장 필드를 비교한다. 일반 플레이 저장은 사용하지 않는다.
+단일-process 저장 writer/reader 검증은 첫 프로세스에서 테스트 전용 `user://return_to_cage_restart_test.json`을 기록하고 다음 프로세스에서 읽는다. 위 multiplayer restart probe는 이 테스트와 별도로 production local profile, production Save v4, Host Saved Game, Join 경로를 실제 child process에서 사용한다.
 
 ## 렌더링 자동 점검
 

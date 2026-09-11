@@ -36,6 +36,7 @@ var _accepting_handshakes: bool = false
 var _pending_host_port: int = 0
 var _returning_peers: Dictionary[int, bool] = {}
 var _spawn_assignments: Dictionary[int, PlayerSpawnAssignment] = {}
+var _rejected_handshake_peers: Dictionary[int, bool] = {}
 # Narrow one-shot debug seam for deterministic bind-failure lifecycle tests.
 var _host_transport_error_for_test: Error = OK
 var _local_profile: LocalPlayerProfile
@@ -176,10 +177,15 @@ func register_authoritative_spawn_assignment(peer_id: int, assignment: PlayerSpa
 func spawn_assignment_for_peer(peer_id: int) -> PlayerSpawnAssignment:
 	return _spawn_assignments.get(peer_id)
 
-func consume_local_spawn_assignment() -> PlayerSpawnAssignment:
+func peek_local_spawn_assignment() -> PlayerSpawnAssignment:
 	if is_server() or not _session_entered:
 		return null
-	var result: PlayerSpawnAssignment = _spawn_assignments.get(local_peer_id())
+	return _spawn_assignments.get(local_peer_id())
+
+func consume_local_spawn_assignment() -> PlayerSpawnAssignment:
+	var result := peek_local_spawn_assignment()
+	if result == null:
+		return null
 	_spawn_assignments.erase(local_peer_id())
 	return result
 
@@ -281,6 +287,38 @@ func ready_remote_peer_ids() -> Array[int]:
 			result.append(peer_id)
 	return result
 
+# Read-only lifecycle audit used by integration probes and debug diagnostics.
+# Detached canonical players intentionally have no entry in these runtime maps.
+func validate_runtime_invariants() -> PackedStringArray:
+	var errors := PackedStringArray()
+	for peer_id in players:
+		var player_id := player_id_for_peer(peer_id)
+		if player_id.is_empty():
+			errors.append("active peer %d has no player identity" % peer_id)
+		elif player_to_peer.get(player_id, 0) != peer_id:
+			errors.append("active peer %d has an asymmetric reverse identity mapping" % peer_id)
+		if not GameSession.has_player(peer_id):
+			errors.append("active peer %d has no GameSession attachment" % peer_id)
+		elif GameSession.get_player_id(peer_id) != player_id:
+			errors.append("active peer %d differs from its GameSession identity" % peer_id)
+	for peer_id in peer_to_player:
+		if not players.has(peer_id):
+			errors.append("identity mapping references inactive peer %d" % peer_id)
+	for player_id in player_to_peer:
+		var peer_id: int = player_to_peer[player_id]
+		if peer_to_player.get(peer_id, &"") != player_id:
+			errors.append("player identity %s has an asymmetric peer mapping" % player_id)
+	for peer_id in world_ready_peers:
+		if not players.has(peer_id):
+			errors.append("world-ready cache references inactive peer %d" % peer_id)
+	for peer_id in _spawn_assignments:
+		var assignment: PlayerSpawnAssignment = _spawn_assignments[peer_id]
+		if not players.has(peer_id) or assignment == null \
+				or assignment.player_id != player_id_for_peer(peer_id) \
+				or assignment.session_id != GameSession.session_id:
+			errors.append("spawn assignment cache is stale for peer %d" % peer_id)
+	return errors
+
 func _on_transport_peer_connected(peer_id: int) -> void:
 	if is_server():
 		print("[NET] Transport connected peer %d; awaiting protocol handshake" % peer_id)
@@ -295,6 +333,7 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 	world_ready_peers.erase(peer_id)
 	_spawn_assignments.erase(peer_id)
 	_returning_peers.erase(peer_id)
+	_rejected_handshake_peers.erase(peer_id)
 	_remove_identity(peer_id)
 	if was_active:
 		for remaining_peer_id in multiplayer.get_peers():
@@ -357,6 +396,7 @@ func _reset_transport_only() -> void:
 	world_ready_peers.clear()
 	_returning_peers.clear()
 	_spawn_assignments.clear()
+	_rejected_handshake_peers.clear()
 
 func _open_host_transport(port: int, max_players: int) -> Error:
 	_accepting_handshakes = false
@@ -411,6 +451,8 @@ func _request_handshake(protocol_version: int, player_id: StringName, display_na
 	if not is_server():
 		return
 	var sender := multiplayer.get_remote_sender_id()
+	if _rejected_handshake_peers.has(sender):
+		return
 	if not _accepting_handshakes:
 		_reject_remote_handshake(sender, "Server is restoring session")
 		return
@@ -458,11 +500,20 @@ func _request_handshake(protocol_version: int, player_id: StringName, display_na
 	peer_joined.emit(sender)
 
 func _reject_remote_handshake(peer_id: int, message: String) -> void:
-	if peer_id <= 1 or _peer == null:
+	if peer_id <= 1 or _peer == null or _rejected_handshake_peers.has(peer_id):
 		return
+	_rejected_handshake_peers[peer_id] = true
 	if can_send_to_peer(peer_id):
 		_reject_handshake.rpc_id(peer_id, message)
-	_peer.disconnect_peer(peer_id)
+	# Allow one network poll to flush the reliable rejection before transport
+	# teardown. The peer is quarantined above and owns no identity/session state.
+	get_tree().create_timer(0.1).timeout.connect(
+		_disconnect_rejected_peer.bind(peer_id), CONNECT_ONE_SHOT
+	)
+
+func _disconnect_rejected_peer(peer_id: int) -> void:
+	if _peer != null and multiplayer.get_peers().has(peer_id):
+		_peer.disconnect_peer(peer_id, false)
 
 @rpc("authority", "call_remote", "reliable")
 func _reject_handshake(message: String) -> void:

@@ -22,3 +22,8 @@ jobs:
           echo "GODOT=$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64" >> "$GITHUB_ENV"
       - name: Import, validate, test and restart
         run: python tools/check_project.py --godot "$GODOT"
+      - name: Process-restart multiplayer E2E
+        run: |
+          python tools/test_multiplayer_restart.py --godot "$GODOT" --players 2 --scenario valid
+          python tools/test_multiplayer_restart.py --godot "$GODOT" --players 2 --scenario invalid
+          python tools/test_multiplayer_restart.py --godot "$GODOT" --players 3 --scenario valid

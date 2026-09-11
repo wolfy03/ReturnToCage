@@ -8,6 +8,7 @@ func run(t: Node) -> void:
 	_test_assignment_validation(t)
 	_test_policy_decisions(t)
 	_test_attach_rollback(t)
+	await _test_initialization_retry(t)
 	await _test_settlement_runtime_validation(t)
 	_test_safe_position_authority(t)
 
@@ -72,6 +73,7 @@ func _test_attach_rollback(t: Node) -> void:
 	NetworkManager._rollback_peer_attachment(85, PLAYER_C, false, false)
 	t.assert_true(not GameSession.has_persistent_player(PLAYER_C) and not GameSession.has_player(85), "fresh preparation failure removes ghost canonical state")
 	t.assert_true(NetworkManager.peer_id_for_player(PLAYER_C) == 0 and NetworkManager.spawn_assignment_for_peer(85) == null, "fresh rollback removes all runtime mappings")
+	t.assert_true(NetworkManager.validate_runtime_invariants().is_empty(), "attachment rollback leaves runtime mappings symmetric")
 	NetworkManager.leave_game()
 
 func _test_settlement_runtime_validation(t: Node) -> void:
@@ -82,6 +84,11 @@ func _test_settlement_runtime_validation(t: Node) -> void:
 	await t.get_tree().physics_frame
 	var manager := world.get_node("PlayerSpawnManager") as PlayerSpawnManager
 	t.assert_equal(manager._position_issue(Vector2(350, 456)), "", "configured Settlement world accepts a walkable collision-safe position")
+	manager.spawn_validation_collision_mask = 0
+	t.assert_equal(manager._position_issue(Vector2(350, 456)), "INVALID_COLLISION_MASK", "zero spawn-validation collision mask is an explicit configuration error")
+	manager.spawn_validation_collision_mask = 2
+	t.assert_equal(manager._position_issue(Vector2(350, 456)), "NO_WALKABLE_SUPPORT", "clearance and support queries honor the configured collision mask")
+	manager.spawn_validation_collision_mask = 1
 	t.assert_equal(manager._position_issue(Vector2(1600, 520)), "OUT_OF_BOUNDS", "finite out-of-bounds safe position is rejected")
 	var blocker := StaticBody2D.new()
 	blocker.position = Vector2(400, 500)
@@ -93,6 +100,26 @@ func _test_settlement_runtime_validation(t: Node) -> void:
 	world.add_child(blocker)
 	await t.get_tree().physics_frame
 	t.assert_equal(manager._position_issue(Vector2(400, 500)), "BLOCKED", "collision-blocked safe position is rejected")
+	world.queue_free()
+	await t.get_tree().process_frame
+
+func _test_initialization_retry(t: Node) -> void:
+	NetworkManager.leave_game()
+	t.assert_true(GameSession.start_new_game(), "spawn initialization retry fixture starts an offline session")
+	var port := 26000 + randi_range(0, 1200)
+	t.assert_equal(NetworkManager.begin_host_restore(port, 2), OK, "spawn initialization retry fixture opens a restoring transport")
+	var world := (load("res://world/settlement/settlement.tscn") as PackedScene).instantiate() as Node2D
+	t.add_child(world)
+	await t.get_tree().process_frame
+	var manager := world.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	manager.initialize_spawns()
+	t.assert_true(not manager._initialized and manager.get_actor(1) == null, "restoring host does not permanently commit early spawn initialization")
+	NetworkManager.abort_host_restore()
+	manager.initialize_spawns()
+	await t.get_tree().process_frame
+	t.assert_true(manager._initialized and manager.get_actor(1) != null, "spawn initialization succeeds when retried after authority becomes available")
+	manager.initialize_spawns()
+	t.assert_equal(manager._actors.size(), 1, "successful spawn initialization remains idempotent")
 	world.queue_free()
 	await t.get_tree().process_frame
 

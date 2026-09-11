@@ -7,6 +7,7 @@ const PLAYER_SCENE := preload("res://gameplay/actors/player/player.tscn")
 @export var settlement_safe_bounds := Rect2(0, 0, 1400, 570)
 @export_range(1.0, 24.0, 1.0) var clearance_radius: float = 8.0
 @export_range(1.0, 160.0, 1.0) var support_distance: float = 100.0
+@export_flags_2d_physics var spawn_validation_collision_mask: int = 1
 
 var _actors: Dictionary[int, PlayerActor] = {}
 var _slots: Dictionary[int, int] = {}
@@ -29,28 +30,40 @@ func _ready() -> void:
 func initialize_spawns() -> void:
 	if _initialized or not is_inside_tree():
 		return
-	_initialized = true
+	# A restoring host owns an ENet server but cannot initialize gameplay actors.
+	# Keep this retryable: readiness is a precondition, not an initialized state.
+	if NetworkManager.is_server() and not NetworkManager.is_authoritative_simulation():
+		return
+	var initialized := true
 	if not NetworkManager.is_multiplayer_active():
-		_prepare_authoritative_spawn(GameSession.get_local_peer_id(), false)
+		initialized = _prepare_authoritative_spawn(
+			GameSession.get_local_peer_id(), false
+		).error_message.is_empty()
 	elif NetworkManager.is_server():
-		if not NetworkManager.is_authoritative_simulation():
-			push_error("Cannot initialize player spawns before the host session is ready")
-			return
 		NetworkManager.begin_world_sync()
 		_world_ready_peers[1] = true
 		var peer_ids: Array[int] = []
 		peer_ids.assign(GameSession.players.keys())
 		peer_ids.sort()
 		for peer_id in peer_ids:
-			_prepare_authoritative_spawn(peer_id, NetworkManager.is_returning_peer(peer_id))
+			var assignment := _prepare_authoritative_spawn(
+				peer_id, NetworkManager.is_returning_peer(peer_id)
+			)
+			if not assignment.error_message.is_empty():
+				initialized = false
 	else:
-		var assignment := NetworkManager.consume_local_spawn_assignment()
+		# Do not consume the one-shot assignment until actor placement succeeds.
+		# A scene/configuration failure can then be corrected and retried.
+		var assignment := NetworkManager.peek_local_spawn_assignment()
 		_local_spawn_assignment = assignment
 		if assignment == null or not assignment.error_message.is_empty() \
 				or not _spawn_local(GameSession.get_local_peer_id(), assignment.position):
 			push_error("Cannot apply the authoritative local spawn assignment")
-			return
-		_request_world_roster.rpc_id(1)
+			initialized = false
+		else:
+			NetworkManager.consume_local_spawn_assignment()
+			_request_world_roster.rpc_id(1)
+	_initialized = initialized
 
 func _exit_tree() -> void:
 	if GameSession.player_registered.is_connected(_on_player_registered):
@@ -67,6 +80,15 @@ func _prepare_authoritative_spawn(peer_id: int, returning: bool) -> PlayerSpawnA
 	var state := GameSession.get_player(peer_id)
 	if state == null:
 		return _failed_assignment("Cannot spawn an unknown player")
+	# A prior pass may have initialized some peers before another peer failed.
+	# Treat an already coherent actor/assignment pair as complete on retry.
+	var existing_actor := get_actor(peer_id)
+	var existing_assignment := NetworkManager.spawn_assignment_for_peer(peer_id) \
+			if NetworkManager.is_server() else null
+	if existing_actor != null and existing_assignment != null \
+			and existing_assignment.player_id == GameSession.get_player_id(peer_id) \
+			and existing_assignment.session_id == GameSession.session_id:
+		return existing_assignment
 	var points := _spawn_points()
 	if points.size() < NetworkManager.MAX_PLAYERS:
 		push_warning("Player spawn configuration has %d slots for %d players" % [points.size(), NetworkManager.MAX_PLAYERS])
@@ -154,6 +176,8 @@ func _remember_slot(peer_id: int, position: Vector2, points: Array[PlayerSpawnPo
 func _position_issue(position: Vector2) -> String:
 	if not position.is_finite():
 		return "NON_FINITE"
+	if spawn_validation_collision_mask == 0:
+		return "INVALID_COLLISION_MASK"
 	if settlement_spawn_policy and not settlement_safe_bounds.has_point(position):
 		return "OUT_OF_BOUNDS"
 	var world_root := get_parent() as Node2D
@@ -165,13 +189,15 @@ func _position_issue(position: Vector2) -> String:
 	var shape_query := PhysicsShapeQueryParameters2D.new()
 	shape_query.shape = clearance
 	shape_query.transform = Transform2D(0.0, world_root.to_global(position))
-	shape_query.collision_mask = 1
+	shape_query.collision_mask = spawn_validation_collision_mask
 	shape_query.collide_with_areas = false
 	shape_query.collide_with_bodies = true
 	if not space.intersect_shape(shape_query, 1).is_empty():
 		return "BLOCKED"
 	var origin := world_root.to_global(position)
-	var ray := PhysicsRayQueryParameters2D.create(origin, origin + Vector2.DOWN * support_distance, 1)
+	var ray := PhysicsRayQueryParameters2D.create(
+		origin, origin + Vector2.DOWN * support_distance, spawn_validation_collision_mask
+	)
 	ray.collide_with_areas = false
 	ray.collide_with_bodies = true
 	if space.intersect_ray(ray).is_empty():

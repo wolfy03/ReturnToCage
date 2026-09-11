@@ -46,6 +46,14 @@ python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win6
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --host-disconnect
 ```
 
+The process-restart probe uses separate native `user://` roots for A, B, and C and reuses only the same player's directory after terminating every phase-one Godot process. It seeds a production Save v4, launches a new Host Saved Game process, reconnects newly launched client processes by persistent `player_id`, and compares canonical/private/shared state plus authoritative actor placement. It also performs a same-session reconnect after the process restart, duplicate-active-identity rejection, and final host-loss cleanup. Failure artifacts retain bounded logs and JSON phase/status diagnostics.
+
+```powershell
+python tools/test_multiplayer_restart.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --scenario valid
+python tools/test_multiplayer_restart.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --scenario invalid
+python tools/test_multiplayer_restart.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 3 --scenario valid
+```
+
 For a visual same-machine test, each process needs its own installation-profile identity. Launch each development instance with a different `--local-profile-path=<absolute-json-path>` user argument (after Godot's `--` separator); the automated helper configures this automatically. An override `X` derives `X.bak` and `X.tmp` without a special-case path policy. Two ordinary instances sharing the default `user://` profile are intentionally rejected as a duplicate active identity. Verify that each accepted instance reads input only for its own hamster, all actors occupy distinct spawn points, remote transforms interpolate, closing a client removes its actor on the host and remaining clients, and closing the host returns clients to the menu with a disconnect message.
 
 ## Supported now
@@ -128,7 +136,7 @@ Host Saved Game is distinct from offline Load followed by Host. `SaveManager.pre
 
 `HOSTING_RESTORING` distinguishes transport ownership from gameplay authority. In that state ENet is open and `is_server()` is true for server-side transport/RPC validation, while `is_session_connected()`, `is_host_session_ready()`, and `is_authoritative_simulation()` are false. Consequently New Game, gameplay commands, play-time/effect ticks, and other authoritative simulation remain blocked even after the detached snapshot has been installed. Only successful `finalize_host_restore()` enters `HOSTING`, marks the session entered, opens handshakes, and enables gameplay authority. Offline single-player remains locally authoritative.
 
-Known P2/deferred work is now limited to full end-to-end process-restart orchestration and its 2/3-player probes in 7/7. Protocol v10 mirrors complete owner-private state and gates world entry on an authoritative spawn assignment; Settlement returning/fresh/fallback placement and runtime cache cleanup are implemented.
+The 4-D process-restart lifecycle is covered by independent 2-player and 3-player OS-process probes. They verify profile primary/backup reuse, production Host Saved Game staging, detached canonical restoration, same-object reattachment, owner-private and revisioned item/quest synchronization, returning/fallback actor placement before readiness, B/C privacy isolation, symmetric runtime mappings, duplicate-active-identity rejection, repeated reconnect, and host-loss cache cleanup. Protocol v10 and Save v4 remain unchanged. Deferred work is product infrastructure such as authenticated account identity, cloud saves, NAT traversal, dedicated servers, host migration, and active-Adventure persistence.
 
 ## Not synchronized yet
 
@@ -136,7 +144,6 @@ Known P2/deferred work is now limited to full end-to-end process-restart orchest
 - Unsecured-loot item use
 - Resident runtime movement and animation (resident persistent/domain state is mirrored)
 - Party scene transitions and coordinated expedition start/return
-- End-to-end process-restart reconnect UX (Save v4 restores detached records, but lobby/load orchestration is deferred)
 - Host migration
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration

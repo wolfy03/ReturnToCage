@@ -171,10 +171,16 @@ func refresh_all() -> void:
 		if difficulty.get_item_metadata(index) == GameSession.difficulty.id:
 			difficulty.select(index)
 	no_loss.set_pressed_no_signal(GameSession.difficulty.overrides.get(&"inventory_loss", -1) == DifficultyDefinition.InventoryLoss.NONE)
-	var carried := _format_inventory(GameSession.player.inventory)
+	# NetworkSessionSnapshot applies by replacing the canonical registry. Shared
+	# model signals can fire during the brief staging interval before the local
+	# player is attached; the final session_reset refreshes the HUD afterward.
+	var local_state := GameSession.player
+	if local_state == null:
+		return
+	var carried := _format_inventory(local_state.inventory)
 	var storage := _format_inventory(GameSession.settlement.storage)
 	var loot := _format_inventory(GameSession.adventure.active_session.unsecured_loot) if GameSession.adventure.active_session != null else "none"
-	var main_hand := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+	var main_hand := local_state.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 	var equipment_text := ContentRegistry.get_item(main_hand.item_id).display_name if main_hand != null else "none"
 	inventory_label.text = "CARRIED (I to toggle)\n%s\nEQUIPMENT: %s\nSTORAGE\n%s\nUNSECURED\n%s" % [carried, equipment_text, storage, loot]
 	var pending_items: Array[String] = []
@@ -191,7 +197,7 @@ func refresh_all() -> void:
 			lines.append("  %s  %d/%d" % [definition.objectives[index].description, state.progress[index], definition.objectives[index].required_amount])
 	if lines.is_empty(): lines.append("Talk to Milo to start the sample quest")
 	quest_label.text = "\n".join(lines)
-	var buffs := ", ".join(GameSession.player.effects.descriptions())
+	var buffs := ", ".join(local_state.effects.descriptions())
 	status_label.text = "%s | Difficulty: %s | Workbench Lv.%d | Buffs: %s" % [GameSession.last_message, GameSession.difficulty.id, GameSession.settlement.facility_levels.get(&"workbench", 0), buffs]
 
 func _format_inventory(inventory: InventoryModel) -> String:

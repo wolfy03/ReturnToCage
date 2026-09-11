@@ -86,6 +86,15 @@ Persistent registry는 `_player_states_by_id[player_id]`, active attachment는
 canonical 객체를 연결하고, `detach_player`는 연결만 해제하며, `remove_player_state`만
 persistent state를 삭제한다. Client의 remote placeholder는 disconnect 때 제거한다.
 
+프로세스 재시작 뒤에도 Save v4는 canonical registry를 `player_id`로 복원하고 runtime
+`peer_id`는 복원하지 않는다. Host Saved Game 직후 local profile만 peer 1에 attach되며
+remote records는 detached canonical state다. 새 ENet peer의 handshake가 같은 inactive
+`player_id`를 제출하면 그 객체를 재사용한다. NetworkManager의 peer/player mapping,
+world-ready, private/session receive flags, spawn assignment는 현재 transport/session 전용
+cache이며 disconnect와 transport reset에서 제거된다. `validate_runtime_invariants()`는 active
+mapping의 양방향 대칭과 GameSession attachment, owner/session-bound spawn cache를 점검하되
+detached canonical player 자체는 오류로 취급하지 않는다.
+
 PlayerState는 reset/restore 시 이전 EffectRuntimeModel의 periodic과 이전 StatBlock의
 stat_changed 연결을 명시적으로 해제한다. 외부에서 이전 RefCounted를 보관해도 현재
 PlayerState에 콜백하지 않는다. 이전 효과 모델은 paused 상태로 폐기된다.
