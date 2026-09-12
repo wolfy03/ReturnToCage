@@ -126,7 +126,7 @@ func _on_target_changed(target: InteractionTarget) -> void:
 func _on_quick_item() -> void:
 	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled:
 		return
-	if GameSession.adventure.active_session == null:
+	if not GameSession.is_peer_in_adventure(peer_id):
 		var item_service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
 		if item_service != null:
 			item_service.request_use_item(&"berry")
@@ -137,7 +137,9 @@ func _on_quick_item() -> void:
 		return
 	if _bound_state.inventory.count(&"return_seed") <= 0 or return_channel > 0.0:
 		return
-	var region := ContentRegistry.get_definition(GameSession.adventure.active_session.context.region_id) as RegionDefinition
+	var local_world := GameSession.get_peer_world(peer_id)
+	var region := ContentRegistry.get_definition(local_world.region_id) as RegionDefinition \
+			if local_world != null else null
 	if region == null or not region.allow_return_item:
 		GameSession.last_message = "Return items cannot be used in this area"
 		return
@@ -148,8 +150,7 @@ func _on_quick_item() -> void:
 
 func _complete_return_channel() -> void:
 	if _bound_state.inventory.remove_item(&"return_seed", 1).changed == 1:
-		GameSession.finish_adventure(AdventureSession.Result.RETURN_ITEM_ESCAPE)
-		SceneRouter.go_to_settlement()
+		NetworkManager.request_return_to_settlement(AdventureSession.Result.RETURN_ITEM_ESCAPE)
 	_cancel_return_channel()
 
 func _cancel_return_channel() -> void:

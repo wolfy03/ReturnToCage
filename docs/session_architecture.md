@@ -95,6 +95,14 @@ cache이며 disconnect와 transport reset에서 제거된다. `validate_runtime_
 mapping의 양방향 대칭과 GameSession attachment, owner/session-bound spawn cache를 점검하되
 detached canonical player 자체는 오류로 취급하지 않는다.
 
+현재 world 참여는 별도의 `_player_world_states[player_id]` canonical registry가 담당한다.
+`PlayerState`는 stats/items/effects 등 개인 상태이고 `PlayerWorldState`는 Settlement 또는
+`adventure:<region_id>` 참여만 나타낸다. Active peer 조회는 기존 양방향 identity mapping을
+통해 player world를 해석한다. 외부 query는 복사본을 반환하며, host/offline mutation만
+revision을 증가시킨다. `GameSession.phase`와 `AdventureState.active_session`은 offline/기존 UI
+호환 facade로 남지만 multiplayer player 위치의 source of truth가 아니다. World assignment,
+pending transition, `(world_id, revision)` ready state는 Save에 포함되지 않는 runtime cache다.
+
 PlayerState는 reset/restore 시 이전 EffectRuntimeModel의 periodic과 이전 StatBlock의
 stat_changed 연결을 명시적으로 해제한다. 외부에서 이전 RefCounted를 보관해도 현재
 PlayerState에 콜백하지 않는다. 이전 효과 모델은 paused 상태로 폐기된다.

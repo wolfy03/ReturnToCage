@@ -36,6 +36,8 @@ func _ready() -> void:
 	multiplayer_panel.join_requested.connect(_join_game)
 	multiplayer_panel.disconnect_requested.connect(_leave_game)
 	NetworkManager.session_synchronized.connect(_enter_network_session)
+	NetworkManager.local_world_assignment_received.connect(_apply_local_world_assignment)
+	NetworkManager.world_transition_failed.connect(_show_error)
 	NetworkManager.connection_failed.connect(_on_network_failure)
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
 	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
@@ -183,7 +185,10 @@ func _host_game() -> void:
 		return
 	menu.visible = false
 	error_label.visible = false
-	SceneRouter.go_to_settlement()
+	if not _present_local_world_assignment():
+		NetworkManager.leave_game()
+		_return_to_menu()
+		_show_error("Cannot enter the host world")
 
 func _host_saved_game(
 	path: String = "",
@@ -217,7 +222,10 @@ func _host_saved_game(
 	_set_host_restore_busy(false)
 	menu.visible = false
 	error_label.visible = false
-	SceneRouter.go_to_settlement()
+	if not _present_local_world_assignment():
+		NetworkManager.leave_game()
+		_return_to_menu()
+		_show_error("Cannot enter the restored host world")
 
 func _rollback_host_restore(message: String) -> void:
 	NetworkManager.abort_host_restore()
@@ -250,7 +258,16 @@ func _join_game(address: String) -> void:
 func _enter_network_session() -> void:
 	menu.visible = false
 	error_label.visible = false
-	SceneRouter.go_to_settlement()
+	if not _present_local_world_assignment():
+		_show_error("Cannot enter the assigned world")
+
+func _present_local_world_assignment() -> bool:
+	var assignment := NetworkManager.world_assignment_for_peer(NetworkManager.local_peer_id())
+	return SceneRouter.apply_world_assignment(assignment)
+
+func _apply_local_world_assignment(assignment: PlayerWorldAssignment) -> void:
+	if not SceneRouter.apply_world_assignment(assignment):
+		_show_error("Cannot enter the assigned world")
 
 func _leave_game() -> void:
 	NetworkManager.leave_game()

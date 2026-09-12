@@ -84,7 +84,7 @@ func _broadcast_snapshot(reliable: bool) -> void:
 	var snapshot := make_snapshot()
 	if snapshot == null:
 		return
-	for peer_id in NetworkManager.ready_remote_peer_ids():
+	for peer_id in NetworkManager.replication_ready_remote_peer_ids():
 		if not NetworkManager.can_send_to_peer(peer_id):
 			continue
 		if reliable:

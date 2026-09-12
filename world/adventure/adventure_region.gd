@@ -4,6 +4,9 @@ var context: AdventureContext
 
 func configure(p_context: AdventureContext) -> void:
 	context = p_context
+	var manager := get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
+	if manager != null and context != null:
+		manager.configure_world(PlayerWorldState.adventure_world_id(context.region_id))
 
 func _ready() -> void:
 	if context == null:
@@ -90,5 +93,5 @@ func _create_gather(id: StringName, item_id: StringName, amount: int, position: 
 	)
 
 func _escape(result: AdventureSession.Result) -> void:
-	GameSession.finish_adventure(result)
-	SceneRouter.go_to_settlement()
+	var transition := NetworkManager.request_return_to_settlement(result)
+	GameSession.last_message = transition.message

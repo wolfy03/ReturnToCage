@@ -4,6 +4,7 @@ extends Node
 const PLAYER_SCENE := preload("res://gameplay/actors/player/player.tscn")
 
 @export var settlement_spawn_policy: bool = false
+@export var world_id: StringName = &""
 @export var settlement_safe_bounds := Rect2(0, 0, 1400, 570)
 @export_range(1.0, 24.0, 1.0) var clearance_radius: float = 8.0
 @export_range(1.0, 160.0, 1.0) var support_distance: float = 100.0
@@ -23,9 +24,19 @@ func local_spawn_assignment() -> PlayerSpawnAssignment:
 	return _local_spawn_assignment
 
 func _ready() -> void:
+	add_to_group(&"player_spawn_manager")
 	GameSession.player_registered.connect(_on_player_registered)
 	GameSession.player_unregistered.connect(_on_player_unregistered)
+	GameSession.player_world_changed.connect(_on_player_world_changed)
+	NetworkManager.world_roster_player_received.connect(_on_world_roster_player_received)
+	NetworkManager.world_roster_player_removed.connect(_on_world_roster_player_removed)
+	NetworkManager.local_world_roster_complete.connect(_on_world_roster_complete)
+	NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
 	call_deferred("initialize_spawns")
+
+func configure_world(p_world_id: StringName) -> void:
+	if not _initialized and not p_world_id.is_empty():
+		world_id = p_world_id
 
 func initialize_spawns() -> void:
 	if _initialized or not is_inside_tree():
@@ -33,6 +44,11 @@ func initialize_spawns() -> void:
 	# A restoring host owns an ENet server but cannot initialize gameplay actors.
 	# Keep this retryable: readiness is a precondition, not an initialized state.
 	if NetworkManager.is_server() and not NetworkManager.is_authoritative_simulation():
+		return
+	if world_id.is_empty():
+		world_id = PlayerWorldState.SETTLEMENT_WORLD_ID if settlement_spawn_policy \
+				else GameSession.get_peer_world_id(GameSession.get_local_peer_id())
+	if world_id.is_empty() or GameSession.get_peer_world_id(GameSession.get_local_peer_id()) != world_id:
 		return
 	var initialized := true
 	if not NetworkManager.is_multiplayer_active():
@@ -43,26 +59,28 @@ func initialize_spawns() -> void:
 		NetworkManager.begin_world_sync()
 		_world_ready_peers[1] = true
 		var peer_ids: Array[int] = []
-		peer_ids.assign(GameSession.players.keys())
-		peer_ids.sort()
+		peer_ids = GameSession.peer_ids_in_world(world_id)
 		for peer_id in peer_ids:
 			var assignment := _prepare_authoritative_spawn(
 				peer_id, NetworkManager.is_returning_peer(peer_id)
 			)
 			if not assignment.error_message.is_empty():
 				initialized = false
+		if initialized:
+			NetworkManager.confirm_local_world_ready()
 	else:
 		# Do not consume the one-shot assignment until actor placement succeeds.
 		# A scene/configuration failure can then be corrected and retried.
 		var assignment := NetworkManager.peek_local_spawn_assignment()
 		_local_spawn_assignment = assignment
 		if assignment == null or not assignment.error_message.is_empty() \
+				or GameSession.get_peer_world_id(GameSession.get_local_peer_id()) != world_id \
 				or not _spawn_local(GameSession.get_local_peer_id(), assignment.position):
 			push_error("Cannot apply the authoritative local spawn assignment")
 			initialized = false
 		else:
 			NetworkManager.consume_local_spawn_assignment()
-			_request_world_roster.rpc_id(1)
+			NetworkManager.request_local_world_roster()
 	_initialized = initialized
 
 func _exit_tree() -> void:
@@ -70,11 +88,60 @@ func _exit_tree() -> void:
 		GameSession.player_registered.disconnect(_on_player_registered)
 	if GameSession.player_unregistered.is_connected(_on_player_unregistered):
 		GameSession.player_unregistered.disconnect(_on_player_unregistered)
+	if GameSession.player_world_changed.is_connected(_on_player_world_changed):
+		GameSession.player_world_changed.disconnect(_on_player_world_changed)
+	if NetworkManager.world_roster_player_received.is_connected(_on_world_roster_player_received):
+		NetworkManager.world_roster_player_received.disconnect(_on_world_roster_player_received)
+	if NetworkManager.world_roster_player_removed.is_connected(_on_world_roster_player_removed):
+		NetworkManager.world_roster_player_removed.disconnect(_on_world_roster_player_removed)
+	if NetworkManager.local_world_roster_complete.is_connected(_on_world_roster_complete):
+		NetworkManager.local_world_roster_complete.disconnect(_on_world_roster_complete)
+	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
+		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
 
 func _on_player_registered(peer_id: int, _state: PlayerState) -> void:
 	if not _initialized or not NetworkManager.is_server() or not NetworkManager.is_authoritative_simulation():
 		return
-	_prepare_authoritative_spawn(peer_id, NetworkManager.is_returning_peer(peer_id))
+	if GameSession.get_peer_world_id(peer_id) == world_id:
+		_prepare_authoritative_spawn(peer_id, NetworkManager.is_returning_peer(peer_id))
+
+func _on_player_world_changed(player_id: StringName, state: PlayerWorldState) -> void:
+	if not _initialized:
+		return
+	var peer_id := NetworkManager.peer_id_for_player(player_id)
+	if peer_id <= 0:
+		return
+	if state.world_id != world_id:
+		var actor := get_actor(peer_id)
+		if actor != null:
+			actor.visible = false
+			actor.process_mode = Node.PROCESS_MODE_DISABLED
+
+func _on_peer_world_ready(peer_id: int) -> void:
+	reconcile_peer_world(peer_id)
+
+func reconcile_peer_world(peer_id: int) -> void:
+	if GameSession.get_peer_world_id(peer_id) != world_id:
+		_despawn_local(peer_id)
+		_slots.erase(peer_id)
+
+func apply_authoritative_world_arrival(peer_id: int, assignment: PlayerSpawnAssignment) -> bool:
+	if not _initialized or not NetworkManager.is_server() or assignment == null \
+			or GameSession.get_peer_world_id(peer_id) != world_id:
+		return false
+	var existing := get_actor(peer_id)
+	if existing != null:
+		existing.position = assignment.position
+		existing.visible = true
+		existing.process_mode = Node.PROCESS_MODE_INHERIT
+		return true
+	var points := _spawn_points()
+	_remember_slot(peer_id, assignment.position, points)
+	if not _spawn_local(peer_id, assignment.position):
+		return false
+	if settlement_spawn_policy:
+		GameSession.update_player_last_safe_position(peer_id, assignment.position)
+	return true
 
 func _prepare_authoritative_spawn(peer_id: int, returning: bool) -> PlayerSpawnAssignment:
 	var state := GameSession.get_player(peer_id)
@@ -131,20 +198,12 @@ func _prepare_authoritative_spawn(peer_id: int, returning: bool) -> PlayerSpawnA
 			return _failed_assignment("Cannot register the authoritative spawn assignment")
 	if settlement_spawn_policy and NetworkManager.is_authoritative_simulation():
 		GameSession.update_player_last_safe_position(peer_id, assignment.position)
-	if NetworkManager.is_server():
-		for ready_peer_id in _world_ready_peers:
-			if ready_peer_id != 1 and NetworkManager.can_send_to_peer(ready_peer_id):
-				_spawn_player.rpc_id(ready_peer_id, peer_id, assignment.position)
 	return assignment
 
 func _on_player_unregistered(peer_id: int) -> void:
 	_despawn_local(peer_id)
 	_slots.erase(peer_id)
 	_world_ready_peers.erase(peer_id)
-	if NetworkManager.is_server():
-		for ready_peer_id in _world_ready_peers:
-			if ready_peer_id != 1 and NetworkManager.can_send_to_peer(ready_peer_id):
-				_despawn_player.rpc_id(ready_peer_id, peer_id)
 
 func _assign_slot(peer_id: int) -> bool:
 	if _slots.has(peer_id):
@@ -205,7 +264,8 @@ func _position_issue(position: Vector2) -> String:
 	return ""
 
 func _spawn_local(peer_id: int, spawn_position: Vector2) -> bool:
-	if _actors.has(peer_id) or not GameSession.has_player(peer_id) or not spawn_position.is_finite():
+	if _actors.has(peer_id) or not GameSession.has_player(peer_id) or not spawn_position.is_finite() \
+			or GameSession.get_peer_world_id(peer_id) != world_id:
 		return false
 	var actor := PLAYER_SCENE.instantiate() as PlayerActor
 	actor.name = "Player_%d" % peer_id if NetworkManager.is_multiplayer_active() else "Player"
@@ -230,7 +290,7 @@ func respawn_player(peer_id: int) -> bool:
 	if not _position_issue(spawn_position).is_empty():
 		return false
 	_replace_actor_local(peer_id, spawn_position)
-	for ready_peer_id in _world_ready_peers:
+	for ready_peer_id in NetworkManager.ready_remote_peer_ids(world_id):
 		if ready_peer_id != 1 and NetworkManager.can_send_to_peer(ready_peer_id):
 			_respawn_player.rpc_id(ready_peer_id, peer_id, spawn_position)
 	return true
@@ -243,32 +303,23 @@ func _replace_actor_local(peer_id: int, spawn_position: Vector2) -> void:
 		actor.queue_free()
 	_spawn_local(peer_id, spawn_position)
 
-@rpc("any_peer", "call_remote", "reliable")
-func _request_world_roster() -> void:
-	if not NetworkManager.is_server():
+func _on_world_roster_player_received(
+	peer_id: int,
+	assignment: PlayerWorldAssignment,
+	spawn_position: Vector2
+) -> void:
+	if not _initialized or assignment == null or assignment.world_id != world_id:
 		return
-	var sender := multiplayer.get_remote_sender_id()
-	if not GameSession.has_player(sender) or not NetworkManager.has_peer(sender):
-		return
-	for peer_id in _actors:
-		var actor: PlayerActor = _actors[peer_id]
-		if is_instance_valid(actor):
-			_spawn_player.rpc_id(sender, peer_id, actor.position)
-	_world_roster_complete.rpc_id(sender)
+	if get_actor(peer_id) == null:
+		_spawn_local(peer_id, spawn_position)
 
-@rpc("authority", "call_remote", "reliable")
-func _world_roster_complete() -> void:
-	_confirm_world_ready.rpc_id(1)
+func _on_world_roster_player_removed(peer_id: int) -> void:
+	_despawn_local(peer_id)
+	_slots.erase(peer_id)
 
-@rpc("any_peer", "call_remote", "reliable")
-func _confirm_world_ready() -> void:
-	if not NetworkManager.is_server():
-		return
-	var sender := multiplayer.get_remote_sender_id()
-	if not GameSession.has_player(sender) or not NetworkManager.has_peer(sender):
-		return
-	_world_ready_peers[sender] = true
-	NetworkManager.mark_peer_world_ready(sender)
+func _on_world_roster_complete(p_world_id: StringName, _revision: int) -> void:
+	if _initialized and p_world_id == world_id:
+		NetworkManager.confirm_local_world_ready()
 
 @rpc("authority", "call_remote", "reliable")
 func _spawn_player(peer_id: int, spawn_position: Vector2) -> void:

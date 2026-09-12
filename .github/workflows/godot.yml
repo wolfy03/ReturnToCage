@@ -27,3 +27,7 @@ jobs:
           python tools/test_multiplayer_restart.py --godot "$GODOT" --players 2 --scenario valid
           python tools/test_multiplayer_restart.py --godot "$GODOT" --players 2 --scenario invalid
           python tools/test_multiplayer_restart.py --godot "$GODOT" --players 3 --scenario valid
+      - name: Individual-world multiplayer E2E
+        run: |
+          python tools/test_multiplayer_worlds.py --godot "$GODOT" --players 2
+          python tools/test_multiplayer_worlds.py --godot "$GODOT" --players 3

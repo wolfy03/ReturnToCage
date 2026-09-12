@@ -18,7 +18,7 @@ func can_save() -> CommandResult:
 		return CommandResult.make(false, "Save is unavailable while the host session is restoring")
 	if NetworkManager.is_multiplayer_active() and not NetworkManager.is_server():
 		return CommandResult.make(false, "Only the host can save a multiplayer session")
-	if GameSession.phase != GameSession.Phase.SETTLEMENT or GameSession.adventure.active_session != null:
+	if GameSession.phase != GameSession.Phase.SETTLEMENT or GameSession.has_active_player_adventures():
 		return CommandResult.make(false, "Save is only available in the settlement")
 	return CommandResult.make(true)
 

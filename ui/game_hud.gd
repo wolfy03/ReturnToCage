@@ -30,6 +30,7 @@ func _ready() -> void:
 	GameSession.facility_changed.connect(func(_id: StringName, _level: int) -> void: refresh_all())
 	GameSession.quest_changed.connect(func(_id: StringName) -> void: refresh_all())
 	GameSession.phase_changed.connect(refresh_all)
+	GameSession.player_world_changed.connect(func(_player_id: StringName, _state: PlayerWorldState) -> void: refresh_all())
 	GameSession.difficulty_changed.connect(func(_id: StringName) -> void: refresh_all())
 	GameSession.adventure_finished.connect(func(_result: AdventureSession.Result, _summary: String) -> void: refresh_all())
 	SaveManager.save_finished.connect(_on_persistence_result)
@@ -154,16 +155,20 @@ func refresh_all() -> void:
 	save_button.tooltip_text = SaveManager.can_save().message
 	load_button.tooltip_text = SaveManager.can_load().message
 	var read_only_client := NetworkManager.is_multiplayer_active() and not NetworkManager.is_server()
+	var local_in_settlement := GameSession.is_local_player_in_settlement() \
+			if NetworkManager.is_multiplayer_active() else GameSession.phase == GameSession.Phase.SETTLEMENT
+	var local_in_adventure := GameSession.is_local_player_in_adventure() \
+			if NetworkManager.is_multiplayer_active() else GameSession.phase == GameSession.Phase.ADVENTURE
 	for button in direct_player_buttons:
 		button.disabled = read_only_client
 		button.tooltip_text = "Not synchronized in multiplayer yet" if read_only_client else ""
-	difficulty.disabled = read_only_client or GameSession.phase == GameSession.Phase.ADVENTURE or GameSession.phase == GameSession.Phase.RESPAWNING
+	difficulty.disabled = read_only_client or local_in_adventure or GameSession.phase == GameSession.Phase.RESPAWNING
 	no_loss.disabled = difficulty.disabled
 	for button in settlement_buttons:
-		button.disabled = read_only_client or GameSession.phase != GameSession.Phase.SETTLEMENT
+		button.disabled = read_only_client or not local_in_settlement
 		button.tooltip_text = "Available in the settlement" if button.disabled else ""
 	for button in network_settlement_buttons:
-		button.disabled = GameSession.phase != GameSession.Phase.SETTLEMENT
+		button.disabled = not local_in_settlement
 		button.tooltip_text = "Available in the settlement" if button.disabled else ""
 	difficulty.tooltip_text = "Expedition rules are fixed until return" if difficulty.disabled else "Difficulty for the next expedition"
 	no_loss.tooltip_text = difficulty.tooltip_text

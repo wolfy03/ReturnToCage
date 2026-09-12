@@ -5,7 +5,7 @@ const PLAYER_TWO := "player_22222222222222222222222222222222"
 const PLAYER_TEST: StringName = &"player_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func run(t: Node) -> void:
-	t.assert_equal(NetworkProtocol.VERSION, 10, "owner-private handshake contract uses protocol v10")
+	t.assert_equal(NetworkProtocol.VERSION, 11, "individual-world assignment handshake contract uses protocol v11")
 	var valid := PlayerMoveCommand.new(1, 1.0, -1.0, true)
 	t.assert_true(valid.is_valid_after(0), "bounded movement command is accepted")
 	t.assert_true(not valid.is_valid_after(1), "duplicate movement sequence is rejected")
@@ -54,7 +54,7 @@ func run(t: Node) -> void:
 		t.assert_true(not LocalPlayerProfile.is_valid_player_id(invalid_id), "malformed persistent player identity is rejected: %s" % invalid_id)
 	NetworkManager.players.erase(77)
 	NetworkManager._remove_identity(77)
-	payload["protocol_version"] = 9
-	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "v9 session snapshot is rejected by protocol v10")
+	payload["protocol_version"] = 10
+	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "v10 session snapshot is rejected by protocol v11")
 	payload["protocol_version"] = NetworkProtocol.VERSION + 1
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "protocol mismatch is rejected explicitly")

@@ -1,8 +1,8 @@
 class_name ExitService
 extends RefCounted
 
-static func check(exit_id: StringName, region_id: StringName, progression: ProgressionState, settlement: SettlementState, adventure: AdventureState, registry: Node) -> CommandResult:
-	if adventure.active_session != null:
+static func check(exit_id: StringName, region_id: StringName, progression: ProgressionState, settlement: SettlementState, adventure: AdventureState, registry: Node, allow_parallel_player_world: bool = false) -> CommandResult:
+	if adventure.active_session != null and not allow_parallel_player_world:
 		return CommandResult.make(false, "An expedition is already active")
 	var exit := registry.get_definition(exit_id) as SettlementExitDefinition
 	var region := registry.get_definition(region_id) as RegionDefinition

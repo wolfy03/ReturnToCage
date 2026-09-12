@@ -34,11 +34,19 @@ godot --headless --path . --quit-after 60
 python tools/test_multiplayer_restart.py --godot $godotExe --players 2 --scenario valid
 python tools/test_multiplayer_restart.py --godot $godotExe --players 2 --scenario invalid
 python tools/test_multiplayer_restart.py --godot $godotExe --players 3 --scenario valid
+python tools/test_multiplayer_worlds.py --godot $godotExe --players 2
+python tools/test_multiplayer_worlds.py --godot $godotExe --players 3
 ```
 
 `valid`는 Save v4의 returning safe position과 owner-private/item/quest 상태를 재시작 전후 비교한다. `invalid`는 finite이지만 Settlement bounds 밖인 위치가 deterministic fallback으로 치유되고, 같은 세션의 다음 reconnect와 후속 Save에서 그 위치가 유지되는지 검사한다. 3-player mode는 B/C의 protected inventory, PERSONAL quest, effects, survival, spawn assignment가 서로 교차 노출되지 않는지 함께 확인한다. 고정 sleep 대신 atomic JSON sentinel을 사용하며, 기본 port는 실행마다 사용 가능한 UDP port를 선택한다. 성공 아티팩트가 필요하면 `--keep-artifacts`를 추가한다.
 
-러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리로 같은 project check와 위 2-player valid/invalid, 3-player valid process-restart E2E를 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
+`test_multiplayer_worlds.py`는 역할별 profile 파일을 분리한 실제 ENet process로 individual
+world routing을 검사한다. 2-player mode는 host A가 Settlement에 남는 동안 B만 Sewer로
+이동하고 다시 혼자 돌아오는지 확인한다. 3-player mode는 C가 Settlement에 남는 split과
+B/C가 함께 Sewer roster를 구성하는 경우를 모두 확인하며, 각 전환에서 old-world actor와
+다른-world roster가 남지 않는지 검사한다.
+
+러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리로 같은 project check, 2-player valid/invalid 및 3-player valid process-restart E2E, 2/3-player individual-world E2E를 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
 
 ## 테스트 구성
 

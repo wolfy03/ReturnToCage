@@ -83,6 +83,8 @@ func _server_execute(
 		result = CommandResult.make(false, "Unknown settlement command player")
 	elif not _has_player_actor(peer_id):
 		result = CommandResult.make(false, "Settlement command player actor is unavailable")
+	elif not GameSession.is_peer_in_settlement(peer_id) or not NetworkManager.is_peer_world_ready(peer_id):
+		result = CommandResult.make(false, "Settlement command player is not ready in the settlement")
 	elif runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
 		result = CommandResult.make(false, "Only a living player can use settlement commands")
 	elif GameSession.phase != GameSession.Phase.SETTLEMENT:
@@ -148,7 +150,8 @@ func _broadcast_current_state() -> void:
 		_send_current_to_peer(peer_id, settlement_snapshot, progression_snapshot)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.is_server() or not NetworkManager.can_send_to_peer(peer_id):
+	if not NetworkManager.is_server() or not NetworkManager.can_send_to_peer(peer_id) \
+			or not GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
 		return
 	var settlement_snapshot := GameSession.make_settlement_snapshot()
 	var progression_snapshot := GameSession.make_shared_progression_snapshot()

@@ -93,7 +93,8 @@ func _despawn_authoritative(entity_id: int) -> void:
 				_despawn_enemy.rpc_id(peer_id, entity_id)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.can_send_to_peer(peer_id):
+	if not NetworkManager.can_send_to_peer(peer_id) \
+			or not GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
 		return
 	for actor in _enemies.values():
 		if is_instance_valid(actor):

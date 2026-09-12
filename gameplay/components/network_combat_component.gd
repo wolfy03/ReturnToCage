@@ -20,7 +20,8 @@ func _on_attack_requested() -> void:
 	_local_sequence += 1
 	if NetworkManager.is_authoritative_simulation():
 		_server_execute_attack(actor.peer_id, _local_sequence)
-	elif NetworkManager.is_session_connected():
+	elif NetworkManager.is_session_connected() and NetworkManager.is_local_world_ready() \
+			and GameSession.are_peers_in_same_world(actor.peer_id, 1):
 		_request_attack.rpc_id(1, _local_sequence)
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -28,7 +29,8 @@ func _request_attack(sequence: int) -> void:
 	if not NetworkManager.is_server() or actor == null:
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	if not NetworkProtocol.valid_command_sender(sender, actor.peer_id, GameSession.has_player(sender) and NetworkManager.has_peer(sender)):
+	if not NetworkProtocol.valid_command_sender(sender, actor.peer_id, GameSession.has_player(sender) \
+			and NetworkManager.has_peer(sender) and NetworkManager.is_peer_world_ready(sender)):
 		return
 	_server_execute_attack(sender, sequence)
 
@@ -54,7 +56,7 @@ func _server_execute_attack(peer_id: int, sequence: int) -> CombatResult:
 	actor.cancel_return_channel_for_combat()
 	attack_presented.emit(peer_id, sequence, actor.facing)
 	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
-		for remote_peer_id in NetworkManager.ready_remote_peer_ids():
+		for remote_peer_id in NetworkManager.ready_remote_peer_ids(GameSession.get_peer_world_id(actor.peer_id)):
 			if NetworkManager.can_send_to_peer(remote_peer_id):
 				_present_attack.rpc_id(remote_peer_id, peer_id, sequence, actor.facing)
 	return result

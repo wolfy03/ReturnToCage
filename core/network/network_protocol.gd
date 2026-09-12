@@ -1,8 +1,9 @@
 class_name NetworkProtocol
 extends RefCounted
 
-# v10 gates client session readiness on an owner-only private state snapshot.
-const VERSION := 10
+# v11 adds owner-only player-world assignments and revision-bound world-ready
+# acknowledgement. v10 clients cannot safely interpret independent routing.
+const VERSION := 11
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

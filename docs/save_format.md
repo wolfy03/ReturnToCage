@@ -23,7 +23,7 @@ players
 
 ## 저장 및 로드 권위
 
-Offline은 동일한 v4 schema에 local profile player 하나를 저장한다. Multiplayer client는 파일을 쓸 수 없다. Host는 SETTLEMENT에서 canonical registry의 attached 및 detached PlayerState를 모두 저장할 수 있다. Load는 offline 또는 remote peer가 아직 없는 host에서만 허용하며, ADVENTURE/RESPAWNING 중에는 거부한다.
+Offline은 동일한 v4 schema에 local profile player 하나를 저장한다. Multiplayer client는 파일을 쓸 수 없다. Host는 모든 active player가 Settlement safe boundary에 있을 때 canonical registry의 attached 및 detached PlayerState를 모두 저장할 수 있다. 어느 한 player라도 Adventure world에 참여 중이면 runtime world state와 unsecured loot가 Save v4에 포함되지 않으므로 Save를 거부한다. Load는 offline 또는 remote peer가 아직 없는 host에서만 허용하며, ADVENTURE/RESPAWNING 중에는 거부한다.
 
 `Host Save`는 offline `Load Game` 뒤에 fresh Host를 실행하지 않는다. Primary Save를 read/migrate/full-stage한 뒤에만 ENet transport를 `HOSTING_RESTORING` 상태로 열며, 이 상태에서는 protocol handshake가 canonical state를 변경할 수 없다. Transport bind가 성공한 뒤 staged snapshot을 적용하여 모든 `players[player_id]`를 복원하고 local profile player만 peer `1`에 attach한다. Network roster와 host world-ready invariant가 확인된 후에만 handshake gate를 열고 `hosting_started`를 emit한다. Saved remote records는 peer ID 없이 detached 상태로 남는다. Staging 실패는 transport를 열지 않고, bind 실패는 live session을 변경하지 않으며, post-open 실패는 transport를 닫고 offline local identity로 복귀한다.
 
@@ -55,7 +55,9 @@ Identity recovery backend는 primary `return_to_cage_save.json`이 정확한 Sav
 
 Startup에서는 `AppRoot`가 profile load status를 검사한다. 정상 primary, 신규 생성, backup 복구는 즉시 ready다. `IDENTITY_RECOVERY_REQUIRED`만 modal selection UI를 열며 single candidate도 사용자 확인이 필요하고 multiple candidate는 full player ID를 selection key로 명시 선택한다. 표시는 ID 마지막 12자리 fingerprint와 optional root `saved_at`만 사용한다. Cancel은 파일과 session을 변경하지 않고 모든 session action을 계속 잠그며, Create New Player는 별도 경고 확인 뒤 동일 transactional profile writer로 새 ID를 만든다.
 
-Candidate recovery 또는 새 ID commit이 성공하면 Save snapshot을 apply하지 않는다. 대신 `GameSession.activate_offline_local_identity()`가 fresh menu-domain local state를 하나만 만들고 profile ID와 일치하는지 확인한다. 그 검증 후에만 New Game, Load, Host Save, Host, Join이 활성화된다. Profile commit 이후 activation만 실패한 경우 dialog는 candidate recovery와 분리된 activation-only mode/signal을 사용한다. 따라서 candidate 선택이 없는 Create New 경로에서도 profile이나 Save를 다시 검증·기록하지 않고 activation만 반복 재시도한다. Save v4 schema는 그대로 유지되며, Protocol v10의 owner-private network DTO는 Save의 player-state Dictionary를 그대로 전송하지 않는다.
+Candidate recovery 또는 새 ID commit이 성공하면 Save snapshot을 apply하지 않는다. 대신 `GameSession.activate_offline_local_identity()`가 fresh menu-domain local state를 하나만 만들고 profile ID와 일치하는지 확인한다. 그 검증 후에만 New Game, Load, Host Save, Host, Join이 활성화된다. Profile commit 이후 activation만 실패한 경우 dialog는 candidate recovery와 분리된 activation-only mode/signal을 사용한다. 따라서 candidate 선택이 없는 Create New 경로에서도 profile이나 Save를 다시 검증·기록하지 않고 activation만 반복 재시도한다. Save v4 schema는 그대로 유지되며, Protocol v11의 owner-private/network-world DTO는 Save의 player-state Dictionary를 그대로 전송하지 않는다.
+
+`PlayerWorldState`는 active runtime participation이며 Save v4에 기록하지 않는다. Save와 Saved Host는 Settlement safe boundary에서 모든 canonical player의 world state를 `settlement`로 다시 초기화한다. Persistent identity/state는 `player_id`와 Save v4가 담당하고, 현재 scene/world revision/readiness는 transport lifetime에만 존재한다.
 
 `last_safe_position`은 서버 또는 offline authority가 승인한 마지막 Settlement-domain 위치다. 매 프레임 transform이나 Adventure 좌표를 기록하지 않는다. Reconnect 때 이 값은 후보일 뿐이며 live Settlement spawn policy가 bounds, collision clearance, walkable support를 다시 검증한다. World-invalid 값은 configured fallback으로 대체되어 self-heal된다. Fresh spawn slot 배정은 runtime-only라 Save v4 schema에 추가되지 않는다.
 

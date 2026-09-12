@@ -855,7 +855,22 @@ func _on_session_synchronized() -> void:
 				or reconnect_vest == null or not reconnect_vest.instance_id.begins_with("reconnect_vest_") \
 				or reconnect_vest.durability != 33 \
 				or reconnect_weapon == null or reconnect_weapon.item_id != &"twig_sword":
-			_fail("fresh reconnect did not receive current settlement snapshot")
+			_fail("fresh reconnect did not receive current settlement snapshot peer=%s/%s identity=%s/%s facility=%s storage=%s flag=%s pending=%s health=%s actor_health=%s water=%s item_rev=%s quest=%s/%s vest=%s/%s/%s weapon=%s" % [
+				NetworkManager.local_peer_id(), initial_local_peer_id,
+				GameSession.get_local_player_id(), initial_local_player_id,
+				GameSession.settlement.facility_levels.get(&"workbench", 0),
+				GameSession.settlement.storage.count(&"mushroom_stew"),
+				GameSession.progression.unlocked_flags.has(&"basic_crafting"),
+				GameSession.settlement.pending_loot.size(), GameSession.player.health,
+				local_actor.health.current_health, GameSession.player.inventory.count(&"water_drop"),
+				GameSession.player.item_state_revision,
+				reconnect_kill_state.progress[0] if reconnect_kill_state != null else -1,
+				expected_personal_kills,
+				reconnect_vest.instance_id if reconnect_vest != null else "missing",
+				reconnect_vest.durability if reconnect_vest != null else -1,
+				GameSession.get_local_player_id(),
+				reconnect_weapon.item_id if reconnect_weapon != null else &"missing",
+			])
 			return
 		print("PROBE CLIENT FRESH RECONNECT OK")
 		_confirm_reconnect.rpc_id(1)
@@ -877,6 +892,9 @@ func _build_world() -> void:
 	world = (load("res://world/adventure/sewer_region.tscn") as PackedScene).instantiate() as Node2D
 	world.name = "NetworkProbeWorld"
 	world.call("configure", AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id))
+	# The legacy combat probe deliberately presents Sewer while retaining the
+	# safe-boundary session model. Split-world routing has its own process probe.
+	(world.get_node("PlayerSpawnManager") as PlayerSpawnManager).configure_world(&"settlement")
 	add_child(world)
 	ladder = world.get_node("EmergencyLadder") as ClimbableArea2D
 	spawner = world.get_node("PlayerSpawnManager") as PlayerSpawnManager

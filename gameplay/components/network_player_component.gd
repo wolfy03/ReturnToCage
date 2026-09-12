@@ -41,6 +41,14 @@ func _exit_tree() -> void:
 func _process(_delta: float) -> void:
 	if actor == null or not NetworkManager.is_multiplayer_active() or not actor.is_local_player():
 		return
+	if not NetworkManager.is_local_world_ready():
+		input.take_jump_pressed()
+		return
+	# 1/2 foundation: a client whose local world differs from the host's
+	# presentation waits for the 2/2 background authoritative world runtime.
+	if not NetworkManager.is_server() and not GameSession.are_peers_in_same_world(actor.peer_id, 1):
+		input.take_jump_pressed()
+		return
 	if NetworkManager.is_server():
 		input.take_jump_pressed()
 		return
@@ -52,12 +60,14 @@ func _process(_delta: float) -> void:
 func server_snapshot_tick(delta: float) -> void:
 	if actor == null or not NetworkManager.is_multiplayer_active() or not NetworkManager.is_server():
 		return
+	if not NetworkManager.is_peer_replication_ready(actor.peer_id):
+		return
 	_snapshot_accumulator += delta
 	if _snapshot_accumulator < SNAPSHOT_INTERVAL:
 		return
 	_snapshot_accumulator = fmod(_snapshot_accumulator, SNAPSHOT_INTERVAL)
 	_snapshot_sequence += 1
-	for peer_id in NetworkManager.ready_remote_peer_ids():
+	for peer_id in NetworkManager.replication_ready_remote_peer_ids(GameSession.get_peer_world_id(actor.peer_id)):
 		_receive_transform_snapshot.rpc_id(peer_id, actor.global_position, actor.velocity, actor.facing, int(movement.mode), _snapshot_sequence)
 
 func presentation_tick(delta: float) -> void:
@@ -81,6 +91,13 @@ func _on_player_life_changed(peer_id: int, _life_id: int, _life_phase: int) -> v
 		_broadcast_runtime_snapshot()
 
 func _on_peer_world_ready(peer_id: int) -> void:
+	# The central reliable roster RPC is queued before peer_world_ready. This
+	# reliable health/life snapshot therefore cannot target a missing actor;
+	# unreliable transforms remain behind the replication grace below.
+	if not is_inside_tree() or actor == null or not actor.visible \
+			or actor.process_mode == Node.PROCESS_MODE_DISABLED \
+			or not GameSession.are_peers_in_same_world(actor.peer_id, peer_id):
+		return
 	_send_runtime_snapshot(peer_id)
 
 func _runtime_snapshot() -> PlayerRuntimeSnapshot:
@@ -100,9 +117,11 @@ func _runtime_snapshot() -> PlayerRuntimeSnapshot:
 	return snapshot
 
 func _broadcast_runtime_snapshot() -> void:
-	if not NetworkManager.is_server():
+	if not NetworkManager.is_server() or actor == null or not actor.visible \
+			or actor.process_mode == Node.PROCESS_MODE_DISABLED \
+			or not NetworkManager.is_peer_replication_ready(actor.peer_id):
 		return
-	for peer_id in NetworkManager.ready_remote_peer_ids():
+	for peer_id in NetworkManager.replication_ready_remote_peer_ids(GameSession.get_peer_world_id(actor.peer_id)):
 		_send_runtime_snapshot(peer_id)
 
 func _send_runtime_snapshot(peer_id: int) -> void:
@@ -117,7 +136,8 @@ func _submit_move_input(sequence: int, move_axis: float, vertical_axis: float, j
 	if not NetworkManager.is_server() or actor == null:
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	if not NetworkProtocol.valid_command_sender(sender, actor.peer_id, GameSession.has_player(sender) and NetworkManager.has_peer(sender)):
+	if not NetworkProtocol.valid_command_sender(sender, actor.peer_id, GameSession.has_player(sender) \
+			and NetworkManager.has_peer(sender) and NetworkManager.is_peer_world_ready(sender)):
 		return
 	var command := PlayerMoveCommand.new(sequence, move_axis, vertical_axis, jump_pressed)
 	if not command.is_valid_after(_last_received_sequence):

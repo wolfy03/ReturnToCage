@@ -8,6 +8,11 @@ signal peer_joined(peer_id: int)
 signal peer_left(peer_id: int)
 signal session_synchronized
 signal peer_world_ready(peer_id: int)
+signal local_world_assignment_received(assignment: PlayerWorldAssignment)
+signal world_roster_player_received(peer_id: int, assignment: PlayerWorldAssignment, position: Vector2)
+signal world_roster_player_removed(peer_id: int)
+signal local_world_roster_complete(world_id: StringName, revision: int)
+signal world_transition_failed(message: String)
 signal multiplayer_session_ended(reason: String)
 
 enum ConnectionState { OFFLINE, HOSTING_RESTORING, HOSTING, CONNECTING, CONNECTED }
@@ -19,23 +24,29 @@ const END_REASON_MANUAL := "manual_leave"
 const END_REASON_CONNECTION_FAILED := "connection_failed"
 const END_REASON_SERVER_DISCONNECTED := "server_disconnected"
 const PROFILE_PATH_ARGUMENT := "--local-profile-path="
+const REPLICATION_ACTOR_GRACE_MSEC := 150
 
 var state: ConnectionState = ConnectionState.OFFLINE
 var last_error: String = ""
 var players: Dictionary[int, NetworkPlayerInfo] = {}
 var peer_to_player: Dictionary[int, StringName] = {}
 var player_to_peer: Dictionary[StringName, int] = {}
-var world_ready_peers: Dictionary[int, bool] = {}
+var world_ready_peers: Dictionary[int, PeerWorldReadyState] = {}
 var _peer: ENetMultiplayerPeer
 var _local_peer_id: int = 1
 var _session_entered: bool = false
 var _received_session_snapshot: bool = false
 var _received_private_player_state: bool = false
 var _received_spawn_assignment: bool = false
+var _received_world_assignment: bool = false
 var _accepting_handshakes: bool = false
 var _pending_host_port: int = 0
 var _returning_peers: Dictionary[int, bool] = {}
 var _spawn_assignments: Dictionary[int, PlayerSpawnAssignment] = {}
+var _pending_world_transitions: Dictionary[int, PlayerWorldAssignment] = {}
+# A reliable world-roster actor creation is sent before scene-node snapshots.
+# Unreliable transforms are admitted only after this short transport grace.
+var _replication_ready_after_msec: Dictionary[int, int] = {}
 # A rejected peer belongs only to the current transport generation. SceneTree
 # timers cannot be cancelled by clearing this cache, so delayed callbacks also
 # capture and validate the generation that scheduled them.
@@ -171,6 +182,21 @@ func has_player_id(player_id: StringName) -> bool:
 func is_returning_peer(peer_id: int) -> bool:
 	return bool(_returning_peers.get(peer_id, false))
 
+func world_assignment_for_peer(peer_id: int) -> PlayerWorldAssignment:
+	return PlayerWorldAssignment.from_world_state(GameSession.session_id, GameSession.get_peer_world(peer_id))
+
+func is_peer_world_ready(peer_id: int) -> bool:
+	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	return ready != null and ready.matches(GameSession.get_peer_world(peer_id))
+
+func is_peer_replication_ready(peer_id: int) -> bool:
+	if not is_peer_world_ready(peer_id):
+		return false
+	return Time.get_ticks_msec() >= int(_replication_ready_after_msec.get(peer_id, 0))
+
+func is_local_world_ready() -> bool:
+	return is_peer_world_ready(local_peer_id()) if is_server() else _session_entered and is_peer_world_ready(local_peer_id())
+
 func register_authoritative_spawn_assignment(peer_id: int, assignment: PlayerSpawnAssignment) -> bool:
 	if not is_authoritative_simulation() or assignment == null or not assignment.error_message.is_empty() \
 			or not players.has(peer_id) or not GameSession.has_player(peer_id) \
@@ -184,7 +210,7 @@ func spawn_assignment_for_peer(peer_id: int) -> PlayerSpawnAssignment:
 	return _spawn_assignments.get(peer_id)
 
 func peek_local_spawn_assignment() -> PlayerSpawnAssignment:
-	if is_server() or not _session_entered:
+	if is_server() or not _session_entered and not _received_spawn_assignment:
 		return null
 	return _spawn_assignments.get(local_peer_id())
 
@@ -277,21 +303,356 @@ func can_send_to_peer(peer_id: int) -> bool:
 	return packet_peer != null and packet_peer.is_active() and packet_peer.get_state() == ENetPacketPeer.STATE_CONNECTED
 
 func mark_peer_world_ready(peer_id: int) -> void:
-	if is_server() and players.has(peer_id) and not world_ready_peers.has(peer_id):
-		world_ready_peers[peer_id] = true
+	if not is_server() or not players.has(peer_id):
+		return
+	var world := GameSession.get_peer_world(peer_id)
+	if world == null:
+		return
+	var pending: PlayerWorldAssignment = _pending_world_transitions.get(peer_id)
+	if pending != null and (pending.world_id != world.world_id or pending.revision != world.revision):
+		return
+	var previous: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	if previous != null and previous.matches(world):
+		return
+	world_ready_peers[peer_id] = PeerWorldReadyState.new(world.world_id, world.revision)
+	_replication_ready_after_msec[peer_id] = Time.get_ticks_msec() + REPLICATION_ACTOR_GRACE_MSEC \
+			if peer_id != local_peer_id() else 0
+	_pending_world_transitions.erase(peer_id)
+	for node in get_tree().get_nodes_in_group(&"player_spawn_manager"):
+		var manager := node as PlayerSpawnManager
+		if manager != null:
+			manager.reconcile_peer_world(peer_id)
+	# Existing same-world clients must instantiate the actor before scene-bound
+	# runtime/item/quest components send follow-up RPCs for this ready peer.
+	_broadcast_world_arrival(peer_id)
+	get_tree().create_timer(0.05).timeout.connect(
+		_emit_peer_world_ready.bind(peer_id, world.world_id, world.revision, _transport_generation),
+		CONNECT_ONE_SHOT
+	)
+
+func _emit_peer_world_ready(peer_id: int, world_id: StringName, revision: int, generation: int) -> void:
+	if generation != _transport_generation:
+		return
+	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	if ready != null and ready.world_id == world_id and ready.revision == revision:
 		peer_world_ready.emit(peer_id)
 
 func begin_world_sync() -> void:
 	if is_server():
-		world_ready_peers.clear()
-		world_ready_peers[1] = true
+		world_ready_peers.erase(1)
+		_replication_ready_after_msec.erase(1)
 
-func ready_remote_peer_ids() -> Array[int]:
+func ready_remote_peer_ids(world_id: StringName = &"") -> Array[int]:
+	if world_id.is_empty() and is_server():
+		world_id = GameSession.get_peer_world_id(local_peer_id())
 	var result: Array[int] = []
 	for peer_id in world_ready_peers:
-		if peer_id != 1 and players.has(peer_id):
+		var ready: PeerWorldReadyState = world_ready_peers[peer_id]
+		if peer_id != 1 and players.has(peer_id) and is_peer_world_ready(peer_id) \
+				and (world_id.is_empty() or ready.world_id == world_id):
+			result.append(peer_id)
+	result.sort()
+	return result
+
+func replication_ready_remote_peer_ids(world_id: StringName = &"") -> Array[int]:
+	var result: Array[int] = []
+	for peer_id in ready_remote_peer_ids(world_id):
+		if is_peer_replication_ready(peer_id):
 			result.append(peer_id)
 	return result
+
+func request_enter_region(exit_id: StringName, region_id: StringName) -> CommandResult:
+	if not is_multiplayer_active():
+		var context := GameSession.request_adventure_from_exit(exit_id, region_id)
+		if context == null:
+			return CommandResult.make(false, GameSession.last_message)
+		return CommandResult.make(true, "World transition assigned") \
+				if SceneRouter.go_to_adventure(context) else CommandResult.make(false, "Cannot load adventure world")
+	if is_authoritative_simulation():
+		return _begin_player_world_transition(local_peer_id(), exit_id, region_id)
+	if not is_session_connected() or not is_local_world_ready():
+		return CommandResult.make(false, "Local world is not ready")
+	_request_enter_region.rpc_id(1, exit_id, region_id)
+	return CommandResult.make(true, "World transition requested")
+
+func request_return_to_settlement(
+	result: AdventureSession.Result = AdventureSession.Result.NORMAL_ESCAPE
+) -> CommandResult:
+	if not is_multiplayer_active():
+		var message := GameSession.finish_adventure(result)
+		if GameSession.phase != GameSession.Phase.SETTLEMENT:
+			return CommandResult.make(false, message)
+		return CommandResult.make(true, message) \
+				if SceneRouter.go_to_settlement() else CommandResult.make(false, "Cannot load Settlement")
+	if is_authoritative_simulation():
+		return _return_player_to_settlement(local_peer_id(), result)
+	if not is_session_connected() or not is_local_world_ready():
+		return CommandResult.make(false, "Local world is not ready")
+	_request_return_to_settlement.rpc_id(1, int(result))
+	return CommandResult.make(true, "Settlement return requested")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_enter_region(exit_id: StringName, region_id: StringName) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var result := _begin_player_world_transition(sender, exit_id, region_id)
+	if not result.success:
+		_send_world_transition_failure(sender, result.message)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_return_to_settlement(result_value: int) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if result_value < AdventureSession.Result.NORMAL_ESCAPE \
+			or result_value > AdventureSession.Result.RETURN_ITEM_ESCAPE:
+		_send_world_transition_failure(sender, "Invalid adventure return result")
+		return
+	var result := _return_player_to_settlement(sender, result_value as AdventureSession.Result)
+	if not result.success:
+		_send_world_transition_failure(sender, result.message)
+
+func _begin_player_world_transition(
+	peer_id: int,
+	exit_id: StringName,
+	region_id: StringName
+) -> CommandResult:
+	if not is_authoritative_simulation() or not players.has(peer_id) or not is_peer_world_ready(peer_id):
+		return CommandResult.make(false, "Player world is not ready for transition")
+	if _pending_world_transitions.has(peer_id):
+		return CommandResult.make(false, "A world transition is already pending")
+	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
+	var region := ContentRegistry.get_definition(region_id) as RegionDefinition
+	var check := GameSession.can_peer_use_exit(peer_id, exit_id, region_id)
+	if not check.success or exit == null or region == null:
+		return check if not check.success else CommandResult.make(false, "Unknown world destination")
+	var destination_world := PlayerWorldState.adventure_world_id(region_id)
+	var position := _configured_world_spawn(region.scene_path, exit.entry_point_id, GameSession.peer_ids_in_world(destination_world).size())
+	if not position.is_finite():
+		return CommandResult.make(false, "Adventure entry spawn is unavailable")
+	var old_world := GameSession.get_peer_world_id(peer_id)
+	var spawn := PlayerSpawnAssignment.create(
+		GameSession.session_id, player_id_for_peer(peer_id), PlayerSpawnAssignment.SpawnKind.FRESH_SLOT, position
+	)
+	var previous_spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+	if not register_authoritative_spawn_assignment(peer_id, spawn):
+		return CommandResult.make(false, "Cannot prepare the destination spawn")
+	var moved := GameSession.begin_player_adventure(peer_id, exit_id, region_id)
+	if not moved.success:
+		_restore_spawn_assignment(peer_id, previous_spawn)
+		return moved
+	_place_player_in_loaded_host_world(peer_id, spawn)
+	return _dispatch_world_assignment(peer_id, old_world)
+
+func _return_player_to_settlement(peer_id: int, result: AdventureSession.Result) -> CommandResult:
+	if not is_authoritative_simulation() or not players.has(peer_id) or not is_peer_world_ready(peer_id):
+		return CommandResult.make(false, "Player world is not ready for transition")
+	if _pending_world_transitions.has(peer_id):
+		return CommandResult.make(false, "A world transition is already pending")
+	var player_state := GameSession.get_player(peer_id)
+	var position := player_state.last_safe_position if player_state != null else Vector2.INF
+	if not position.is_finite():
+		position = _configured_world_spawn(SceneRouter.SETTLEMENT_SCENE, &"", 0)
+	if not position.is_finite():
+		return CommandResult.make(false, "Settlement return spawn is unavailable")
+	var old_world := GameSession.get_peer_world_id(peer_id)
+	var spawn := PlayerSpawnAssignment.create(
+		GameSession.session_id,
+		player_id_for_peer(peer_id),
+		PlayerSpawnAssignment.SpawnKind.RETURNING_SAFE_POSITION,
+		position
+	)
+	var previous_spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+	if not register_authoritative_spawn_assignment(peer_id, spawn):
+		return CommandResult.make(false, "Cannot prepare the Settlement spawn")
+	var finished := GameSession.finish_player_adventure(peer_id, result)
+	if not finished.success:
+		_restore_spawn_assignment(peer_id, previous_spawn)
+		return finished
+	_place_player_in_loaded_host_world(peer_id, spawn)
+	return _dispatch_world_assignment(peer_id, old_world)
+
+func _restore_spawn_assignment(peer_id: int, previous: PlayerSpawnAssignment) -> void:
+	if previous == null:
+		_spawn_assignments.erase(peer_id)
+	else:
+		_spawn_assignments[peer_id] = previous
+
+func _dispatch_world_assignment(peer_id: int, old_world_id: StringName) -> CommandResult:
+	var assignment := world_assignment_for_peer(peer_id)
+	if not assignment.error_message.is_empty():
+		return CommandResult.make(false, assignment.error_message)
+	_pending_world_transitions[peer_id] = assignment
+	world_ready_peers.erase(peer_id)
+	_replication_ready_after_msec.erase(peer_id)
+	for ready_peer_id in ready_remote_peer_ids(old_world_id):
+		if ready_peer_id != peer_id and can_send_to_peer(ready_peer_id):
+			_receive_world_roster_remove.rpc_id(ready_peer_id, peer_id, assignment.to_payload())
+	# Destination peers can instantiate the committed actor while the owner is
+	# loading. Scene-bound follow-up RPCs then cannot outrun roster creation.
+	_broadcast_world_arrival(peer_id)
+	if peer_id == local_peer_id():
+		local_world_assignment_received.emit(assignment)
+	elif can_send_to_peer(peer_id):
+		var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+		_receive_spawn_assignment.rpc_id(peer_id, spawn.to_payload())
+		_receive_world_assignment.rpc_id(peer_id, assignment.to_payload())
+	return CommandResult.make(true, "World transition assigned")
+
+func request_local_world_roster() -> void:
+	if is_server():
+		mark_peer_world_ready(local_peer_id())
+	elif is_session_connected():
+		_request_world_roster.rpc_id(1)
+
+func confirm_local_world_ready() -> void:
+	var local_world := GameSession.get_local_player_world()
+	if local_world == null:
+		return
+	if is_server():
+		mark_peer_world_ready(local_peer_id())
+	elif is_session_connected():
+		world_ready_peers[local_peer_id()] = PeerWorldReadyState.new(local_world.world_id, local_world.revision)
+		_confirm_world_ready.rpc_id(1, local_world.world_id, local_world.revision)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_world_roster() -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var sender_world := GameSession.get_peer_world(sender)
+	var pending: PlayerWorldAssignment = _pending_world_transitions.get(sender)
+	if sender_world == null or pending == null or pending.world_id != sender_world.world_id \
+			or pending.revision != sender_world.revision:
+		return
+	for peer_id in GameSession.peer_ids_in_world(sender_world.world_id):
+		var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+		var assignment := world_assignment_for_peer(peer_id)
+		if spawn != null and spawn.position.is_finite() and assignment.error_message.is_empty():
+			_receive_world_roster_player.rpc_id(sender, peer_id, assignment.to_payload(), [spawn.position.x, spawn.position.y])
+	_receive_world_roster_complete.rpc_id(sender, sender_world.world_id, sender_world.revision)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_roster_player(peer_id: int, world_payload: Dictionary, coordinates: Array) -> void:
+	if is_server() or coordinates.size() != 2 \
+			or not coordinates[0] is float and not coordinates[0] is int \
+			or not coordinates[1] is float and not coordinates[1] is int:
+		return
+	var position := Vector2(float(coordinates[0]), float(coordinates[1]))
+	var assignment := PlayerWorldAssignment.from_payload(world_payload, GameSession.session_id)
+	var local_world := GameSession.get_local_player_world()
+	if not position.is_finite() or not assignment.error_message.is_empty() or local_world == null \
+			or assignment.world_id != local_world.world_id:
+		return
+	if assignment.player_id != GameSession.get_player_id(peer_id):
+		return
+	if peer_id != local_peer_id():
+		GameSession.apply_remote_player_world_mirror(assignment)
+	world_roster_player_received.emit(peer_id, assignment, position)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_roster_remove(peer_id: int, world_payload: Dictionary) -> void:
+	if is_server():
+		return
+	var assignment := PlayerWorldAssignment.from_payload(world_payload, GameSession.session_id)
+	if not assignment.error_message.is_empty() or assignment.player_id != GameSession.get_player_id(peer_id):
+		return
+	if peer_id != local_peer_id():
+		GameSession.apply_remote_player_world_mirror(assignment)
+	world_roster_player_removed.emit(peer_id)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_roster_complete(world_id: StringName, revision: int) -> void:
+	if is_server():
+		return
+	var local_world := GameSession.get_local_player_world()
+	if local_world != null and local_world.world_id == world_id and local_world.revision == revision:
+		local_world_roster_complete.emit(world_id, revision)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_world_ready(world_id: StringName, revision: int) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var world := GameSession.get_peer_world(sender)
+	if world != null and world.world_id == world_id and world.revision == revision \
+			and _pending_world_transitions.has(sender):
+		mark_peer_world_ready(sender)
+
+func _broadcast_world_arrival(peer_id: int) -> void:
+	var world := GameSession.get_peer_world(peer_id)
+	var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+	var assignment := world_assignment_for_peer(peer_id)
+	if world == null or spawn == null or not spawn.position.is_finite() or not assignment.error_message.is_empty():
+		return
+	for ready_peer_id in ready_remote_peer_ids(world.world_id):
+		if ready_peer_id != peer_id and can_send_to_peer(ready_peer_id):
+			_receive_world_roster_player.rpc_id(
+				ready_peer_id, peer_id, assignment.to_payload(), [spawn.position.x, spawn.position.y]
+			)
+
+func _send_world_transition_failure(peer_id: int, message: String) -> void:
+	if can_send_to_peer(peer_id):
+		_receive_world_transition_failure.rpc_id(peer_id, message)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_transition_failure(message: String) -> void:
+	if not is_server():
+		world_transition_failed.emit(message.left(256))
+
+func _configured_world_spawn(scene_path: String, entry_point_id: StringName, slot_index: int) -> Vector2:
+	var packed := ResourceLoader.load(scene_path) as PackedScene if ResourceLoader.exists(scene_path) else null
+	if packed == null:
+		return Vector2.INF
+	var scene := packed.instantiate()
+	var result := Vector2.INF
+	if not entry_point_id.is_empty():
+		var region_points: Array[RegionPoint] = []
+		RegionPoint.collect(scene, region_points)
+		for point in region_points:
+			if point.kind == RegionPoint.Kind.ENTRY and point.point_id == entry_point_id:
+				result = point.position
+				break
+	if not result.is_finite():
+		var spawn_points: Array[PlayerSpawnPoint] = []
+		for child in scene.get_children():
+			if child is PlayerSpawnPoint:
+				spawn_points.append(child)
+		spawn_points.sort_custom(func(a: PlayerSpawnPoint, b: PlayerSpawnPoint) -> bool: return a.spawn_index < b.spawn_index)
+		if not spawn_points.is_empty():
+			result = spawn_points[slot_index % spawn_points.size()].position
+	scene.free()
+	return result
+
+func _make_spawn_assignment_for_current_world(peer_id: int, returning: bool) -> PlayerSpawnAssignment:
+	var world := GameSession.get_peer_world(peer_id)
+	var player_state := GameSession.get_player(peer_id)
+	if world == null or player_state == null:
+		return null
+	var position := Vector2.INF
+	var kind := PlayerSpawnAssignment.SpawnKind.FRESH_SLOT
+	var world_peers := GameSession.peer_ids_in_world(world.world_id)
+	var slot_index := maxi(0, world_peers.find(peer_id))
+	if world.world_kind == PlayerWorldState.WorldKind.SETTLEMENT:
+		if returning and player_state.last_safe_position.is_finite():
+			position = player_state.last_safe_position
+			kind = PlayerSpawnAssignment.SpawnKind.RETURNING_SAFE_POSITION
+		else:
+			position = _configured_world_spawn(SceneRouter.SETTLEMENT_SCENE, &"", slot_index)
+	elif world.world_kind == PlayerWorldState.WorldKind.ADVENTURE:
+		var region := ContentRegistry.get_definition(world.region_id) as RegionDefinition
+		if region != null:
+			position = _configured_world_spawn(region.scene_path, world.entry_point_id, slot_index)
+	return PlayerSpawnAssignment.create(GameSession.session_id, world.player_id, kind, position)
+
+func _place_player_in_loaded_host_world(peer_id: int, assignment: PlayerSpawnAssignment) -> void:
+	var world_id := GameSession.get_peer_world_id(peer_id)
+	for node in get_tree().get_nodes_in_group(&"player_spawn_manager"):
+		var manager := node as PlayerSpawnManager
+		if manager != null and manager.world_id == world_id:
+			manager.apply_authoritative_world_arrival(peer_id, assignment)
+			return
 
 # Read-only lifecycle audit used by integration probes and debug diagnostics.
 # Detached canonical players intentionally have no entry in these runtime maps.
@@ -317,6 +678,8 @@ func validate_runtime_invariants() -> PackedStringArray:
 	for peer_id in world_ready_peers:
 		if not players.has(peer_id):
 			errors.append("world-ready cache references inactive peer %d" % peer_id)
+		elif not is_peer_world_ready(peer_id):
+			errors.append("world-ready cache differs from peer %d assignment" % peer_id)
 	for peer_id in _spawn_assignments:
 		var assignment: PlayerSpawnAssignment = _spawn_assignments[peer_id]
 		if not players.has(peer_id) or assignment == null \
@@ -340,7 +703,9 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 		GameSession.detach_player(peer_id)
 	players.erase(peer_id)
 	world_ready_peers.erase(peer_id)
+	_replication_ready_after_msec.erase(peer_id)
 	_spawn_assignments.erase(peer_id)
+	_pending_world_transitions.erase(peer_id)
 	_returning_peers.erase(peer_id)
 	_remove_identity(peer_id)
 	if was_active:
@@ -400,14 +765,17 @@ func _reset_transport_only() -> void:
 	_received_session_snapshot = false
 	_received_private_player_state = false
 	_received_spawn_assignment = false
+	_received_world_assignment = false
 	_accepting_handshakes = false
 	_pending_host_port = 0
 	players.clear()
 	peer_to_player.clear()
 	player_to_peer.clear()
 	world_ready_peers.clear()
+	_replication_ready_after_msec.clear()
 	_returning_peers.clear()
 	_spawn_assignments.clear()
+	_pending_world_transitions.clear()
 	_rejected_handshake_peers.clear()
 
 func _open_host_transport(port: int, max_players: int) -> Error:
@@ -447,7 +815,13 @@ func _finalize_host_session(require_restored_session: bool) -> Error:
 		last_error = "Cannot initialize the host network roster"
 		return ERR_INVALID_DATA
 	players[1] = NetworkPlayerInfo.new(1, host_player_id, local_profile_display_name(), true)
-	world_ready_peers[1] = true
+	var host_world := GameSession.get_peer_world(1)
+	if host_world == null:
+		last_error = "Cannot initialize the host world state"
+		_remove_identity(1)
+		players.clear()
+		return ERR_INVALID_DATA
+	world_ready_peers[1] = PeerWorldReadyState.new(host_world.world_id, host_world.revision)
 	_returning_peers[1] = require_restored_session
 	_accepting_handshakes = true
 	state = ConnectionState.HOSTING
@@ -501,13 +875,24 @@ func _request_handshake(protocol_version: int, player_id: StringName, display_na
 		_reject_remote_handshake(sender, "Cannot build owner-private player state")
 		return
 	var spawn_assignment := spawn_assignment_for_peer(sender)
+	if spawn_assignment == null:
+		spawn_assignment = _make_spawn_assignment_for_current_world(sender, was_persistent)
+		if spawn_assignment != null and spawn_assignment.error_message.is_empty():
+			register_authoritative_spawn_assignment(sender, spawn_assignment)
 	if spawn_assignment == null or not spawn_assignment.error_message.is_empty():
 		_rollback_peer_attachment(sender, player_id, was_persistent)
 		_reject_remote_handshake(sender, "Cannot build authoritative spawn assignment")
 		return
+	var world_assignment := world_assignment_for_peer(sender)
+	if not world_assignment.error_message.is_empty():
+		_rollback_peer_attachment(sender, player_id, was_persistent)
+		_reject_remote_handshake(sender, "Cannot build player world assignment")
+		return
+	_pending_world_transitions[sender] = world_assignment
 	_receive_session_snapshot.rpc_id(sender, GameSession.to_network_snapshot(NETWORK_PROTOCOL_VERSION))
 	_receive_private_player_state.rpc_id(sender, private_snapshot.to_payload())
 	_receive_spawn_assignment.rpc_id(sender, spawn_assignment.to_payload())
+	_receive_world_assignment.rpc_id(sender, world_assignment.to_payload())
 	print("[NET] Connected peer %d" % sender)
 	peer_joined.emit(sender)
 
@@ -604,9 +989,9 @@ func _receive_private_player_state(payload: Dictionary) -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_spawn_assignment(payload: Dictionary) -> void:
-	if is_server() or _received_spawn_assignment or _session_entered:
+	if is_server():
 		return
-	if not _received_session_snapshot or not _received_private_player_state:
+	if not _session_entered and (not _received_session_snapshot or not _received_private_player_state):
 		_fail_client_sync("Spawn assignment arrived before private state synchronization")
 		return
 	var local_player_id := local_profile_player_id()
@@ -618,12 +1003,37 @@ func _receive_spawn_assignment(payload: Dictionary) -> void:
 		)
 		return
 	_spawn_assignments[local_peer_id()] = assignment
-	_received_spawn_assignment = true
+	if not _session_entered:
+		_received_spawn_assignment = true
+		_try_complete_client_sync()
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_assignment(payload: Dictionary) -> void:
+	if is_server() or not _received_session_snapshot:
+		return
+	var assignment := PlayerWorldAssignment.from_payload(
+		payload, GameSession.session_id, local_profile_player_id()
+	)
+	if not assignment.error_message.is_empty() \
+			or not GameSession.apply_player_world_assignment(assignment):
+		if not _session_entered:
+			_fail_client_sync(
+				assignment.error_message if not assignment.error_message.is_empty() \
+				else "Cannot apply player world assignment"
+			)
+		else:
+			world_transition_failed.emit(
+				assignment.error_message if not assignment.error_message.is_empty() \
+				else "Cannot apply player world assignment"
+			)
+		return
+	_received_world_assignment = true
+	local_world_assignment_received.emit(assignment)
 	_try_complete_client_sync()
 
 func _try_complete_client_sync() -> void:
 	if _session_entered or not _received_session_snapshot or not _received_private_player_state \
-			or not _received_spawn_assignment:
+			or not _received_spawn_assignment or not _received_world_assignment:
 		return
 	_session_entered = true
 	print("[NET] Session synchronized with %d players" % players.size())
@@ -659,7 +1069,10 @@ func _client_remove_peer(peer_id: int) -> void:
 		GameSession.remove_player_state(player_id)
 	players.erase(peer_id)
 	_remove_identity(peer_id)
+	world_ready_peers.erase(peer_id)
 	_spawn_assignments.erase(peer_id)
+	_pending_world_transitions.erase(peer_id)
+	_replication_ready_after_msec.erase(peer_id)
 	_returning_peers.erase(peer_id)
 	if was_active:
 		peer_left.emit(peer_id)
@@ -679,7 +1092,9 @@ func _rollback_peer_attachment(
 		GameSession.remove_player_state(player_id)
 	players.erase(peer_id)
 	world_ready_peers.erase(peer_id)
+	_replication_ready_after_msec.erase(peer_id)
 	_spawn_assignments.erase(peer_id)
+	_pending_world_transitions.erase(peer_id)
 	_returning_peers.erase(peer_id)
 	_remove_identity(peer_id)
 	if notify_clients and is_server():

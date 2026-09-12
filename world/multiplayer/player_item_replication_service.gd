@@ -101,7 +101,7 @@ func _server_execute(
 		result = CommandResult.make(false, "Item command player actor is unavailable")
 	elif runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE or actor.is_death_handled():
 		result = CommandResult.make(false, "Only a living player can use item commands")
-	elif command_type == CommandType.TRANSFER and GameSession.phase != GameSession.Phase.SETTLEMENT:
+	elif command_type == CommandType.TRANSFER and not GameSession.is_peer_in_settlement(peer_id):
 		result = CommandResult.make(false, "Storage transfer requires settlement state")
 	elif GameSession.phase not in [GameSession.Phase.SETTLEMENT, GameSession.Phase.ADVENTURE]:
 		result = CommandResult.make(false, "Item commands are unavailable in this phase")
@@ -132,11 +132,12 @@ func _on_player_item_state_changed(player_id: StringName, _revision: int) -> voi
 	if not NetworkManager.is_server():
 		return
 	var peer_id := NetworkManager.peer_id_for_player(player_id)
-	if peer_id > 1 and NetworkManager.world_ready_peers.has(peer_id):
+	if peer_id > 1 and NetworkManager.is_peer_world_ready(peer_id):
 		_send_owner_snapshot(peer_id)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if NetworkManager.is_server():
+	if NetworkManager.is_server() \
+			and GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
 		_send_owner_snapshot(peer_id, true)
 
 func _send_owner_snapshot(peer_id: int, force: bool = false) -> void:

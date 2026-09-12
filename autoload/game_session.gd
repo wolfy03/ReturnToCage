@@ -24,6 +24,7 @@ signal player_health_changed(peer_id: int, health: float, max_health: float)
 signal player_life_changed(peer_id: int, life_id: int, life_phase: int)
 signal player_registered(peer_id: int, state: PlayerState)
 signal player_unregistered(peer_id: int)
+signal player_world_changed(player_id: StringName, state: PlayerWorldState)
 # RESPAWNING remains only for the offline scene-transition compatibility path.
 enum Phase { MENU, SETTLEMENT, ADVENTURE, RESPAWNING }
 var _phase: Phase = Phase.MENU
@@ -48,6 +49,8 @@ var last_message: String = ""
 var players: Dictionary[int, PlayerState] = {}
 var _player_states_by_id: Dictionary[StringName, PlayerState] = {}
 var _attached_player_ids: Dictionary[int, StringName] = {}
+var _player_world_states: Dictionary[StringName, PlayerWorldState] = {}
+var _adventure_sessions_by_world: Dictionary[StringName, AdventureSession] = {}
 var _player_vitals_callbacks: Dictionary[int, Callable] = {}
 var _player_item_callbacks: Dictionary[int, Callable] = {}
 var player: PlayerState:
@@ -149,6 +152,112 @@ func persistent_player_ids() -> Array[StringName]:
 	result.sort()
 	return result
 
+func get_player_world(player_id: StringName) -> PlayerWorldState:
+	var state: PlayerWorldState = _player_world_states.get(player_id)
+	return state.copy() if state != null else null
+
+func get_peer_world(peer_id: int) -> PlayerWorldState:
+	return get_player_world(get_player_id(peer_id))
+
+func get_player_world_id(player_id: StringName) -> StringName:
+	var state: PlayerWorldState = _player_world_states.get(player_id)
+	return state.world_id if state != null else &""
+
+func get_peer_world_id(peer_id: int) -> StringName:
+	return get_player_world_id(get_player_id(peer_id))
+
+func get_local_player_world() -> PlayerWorldState:
+	return get_peer_world(get_local_peer_id())
+
+func player_ids_in_world(world_id: StringName) -> Array[StringName]:
+	var result: Array[StringName] = []
+	for player_id in _player_world_states:
+		var state: PlayerWorldState = _player_world_states[player_id]
+		if state.world_id == world_id:
+			result.append(player_id)
+	result.sort()
+	return result
+
+func peer_ids_in_world(world_id: StringName) -> Array[int]:
+	var result: Array[int] = []
+	for peer_id in players:
+		if get_peer_world_id(peer_id) == world_id:
+			result.append(peer_id)
+	result.sort()
+	return result
+
+func are_peers_in_same_world(a: int, b: int) -> bool:
+	var a_world := get_peer_world_id(a)
+	return not a_world.is_empty() and a_world == get_peer_world_id(b)
+
+func is_peer_in_settlement(peer_id: int) -> bool:
+	return get_peer_world_id(peer_id) == PlayerWorldState.SETTLEMENT_WORLD_ID
+
+func is_peer_in_adventure(peer_id: int) -> bool:
+	var state: PlayerWorldState = _player_world_states.get(get_player_id(peer_id))
+	return state != null and state.world_kind == PlayerWorldState.WorldKind.ADVENTURE
+
+func is_local_player_in_settlement() -> bool:
+	return is_peer_in_settlement(get_local_peer_id())
+
+func is_local_player_in_adventure() -> bool:
+	return is_peer_in_adventure(get_local_peer_id())
+
+func has_active_player_adventures() -> bool:
+	for state in _player_world_states.values():
+		if (state as PlayerWorldState).world_kind == PlayerWorldState.WorldKind.ADVENTURE:
+			return true
+	return false
+
+func move_player_to_world(
+	peer_id: int,
+	world_kind: PlayerWorldState.WorldKind,
+	world_id: StringName,
+	region_id: StringName = &"",
+	entry_point_id: StringName = &""
+) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can move a player between worlds")
+	var player_id := get_player_id(peer_id)
+	var current: PlayerWorldState = _player_world_states.get(player_id)
+	if player_id.is_empty() or current == null or not players.has(peer_id):
+		return CommandResult.make(false, "Unknown world-transition player")
+	var candidate := PlayerWorldState.create(
+		player_id, world_kind, world_id, region_id, entry_point_id, current.revision + 1
+	)
+	if not candidate.is_valid():
+		return CommandResult.make(false, "Invalid player world destination")
+	if current.world_kind == candidate.world_kind and current.world_id == candidate.world_id \
+			and current.region_id == candidate.region_id and current.entry_point_id == candidate.entry_point_id:
+		return CommandResult.make(false, "Player is already in that world")
+	_player_world_states[player_id] = candidate
+	player_world_changed.emit(player_id, candidate.copy())
+	return CommandResult.make(true, "Player world changed")
+
+# Client-side mirror application. Equal revisions are an idempotent no-op; older
+# revisions can never overwrite the currently accepted assignment.
+func apply_player_world_assignment(assignment: PlayerWorldAssignment) -> bool:
+	if NetworkManager.is_server() or assignment == null or not assignment.error_message.is_empty() \
+			or assignment.session_id != session_id:
+		return false
+	var current: PlayerWorldState = _player_world_states.get(assignment.player_id)
+	if current != null and assignment.revision < current.revision:
+		return false
+	var candidate := assignment.to_world_state()
+	if not candidate.is_valid():
+		return false
+	if current != null and assignment.revision == current.revision:
+		return current.world_id == candidate.world_id and current.region_id == candidate.region_id \
+				and current.entry_point_id == candidate.entry_point_id
+	_player_world_states[assignment.player_id] = candidate
+	player_world_changed.emit(assignment.player_id, candidate.copy())
+	return true
+
+func apply_remote_player_world_mirror(assignment: PlayerWorldAssignment) -> bool:
+	if NetworkManager.is_server() or assignment == null or assignment.player_id == get_local_player_id():
+		return false
+	return apply_player_world_assignment(assignment)
+
 func has_player(peer_id: int) -> bool:
 	return players.has(peer_id)
 
@@ -177,6 +286,7 @@ func attach_player(peer_id: int, player_id: StringName) -> PlayerState:
 		if NetworkManager.is_session_connected() and not NetworkManager.is_server():
 			state.prepare_network_item_mirror()
 		_player_states_by_id[player_id] = state
+	_ensure_player_world_state(player_id)
 	_add_player_state(peer_id, player_id, state)
 	state.effects.paused = false
 	progression.ensure_personal_progression(player_id)
@@ -191,6 +301,8 @@ func detach_player(peer_id: int) -> void:
 	if not players.has(peer_id):
 		return
 	var state: PlayerState = players[peer_id]
+	var player_id := get_player_id(peer_id)
+	var world_state: PlayerWorldState = _player_world_states.get(player_id)
 	_disconnect_player_state_signals(peer_id, state)
 	state.effects.paused = true
 	players.erase(peer_id)
@@ -201,6 +313,16 @@ func detach_player(peer_id: int) -> void:
 		# expedition participation does not: disconnect forfeits this peer's
 		# unsecured loot and reconnect creates an empty adventure state.
 		adventure.active_session.discard_player_adventure(peer_id)
+	if world_state != null and world_state.world_kind == PlayerWorldState.WorldKind.ADVENTURE:
+		var session: AdventureSession = _adventure_sessions_by_world.get(world_state.world_id)
+		if session != null:
+			session.discard_player_adventure(peer_id)
+			if peer_id == get_local_peer_id() and adventure.active_session == session:
+				adventure.active_session = null
+			if session.player_adventures.is_empty():
+				_adventure_sessions_by_world.erase(world_state.world_id)
+		_player_world_states[player_id] = PlayerWorldState.settlement(player_id, world_state.revision + 1)
+		player_world_changed.emit(player_id, (_player_world_states[player_id] as PlayerWorldState).copy())
 	player_unregistered.emit(peer_id)
 
 func remove_player_state(player_id: StringName) -> void:
@@ -215,6 +337,7 @@ func remove_player_state(player_id: StringName) -> void:
 		detach_player(peer_id)
 	state.effects.paused = true
 	_player_states_by_id.erase(player_id)
+	_player_world_states.erase(player_id)
 
 func _add_player_state(peer_id: int, player_id: StringName, state: PlayerState) -> void:
 	if peer_id <= 0 or player_id.is_empty() or state == null:
@@ -222,6 +345,7 @@ func _add_player_state(peer_id: int, player_id: StringName, state: PlayerState) 
 	players[peer_id] = state
 	_attached_player_ids[peer_id] = player_id
 	_player_states_by_id[player_id] = state
+	_ensure_player_world_state(player_id)
 	_player_runtime[peer_id] = PlayerRuntimeState.new(peer_id)
 	_connect_player_state_signals(peer_id, state)
 
@@ -232,9 +356,18 @@ func _clear_player_state_registry() -> void:
 	players.clear()
 	_attached_player_ids.clear()
 	_player_states_by_id.clear()
+	_player_world_states.clear()
+	_adventure_sessions_by_world.clear()
 	_player_runtime.clear()
 	_player_vitals_callbacks.clear()
 	_player_item_callbacks.clear()
+
+func _ensure_player_world_state(player_id: StringName) -> PlayerWorldState:
+	var state: PlayerWorldState = _player_world_states.get(player_id)
+	if state == null:
+		state = PlayerWorldState.settlement(player_id)
+		_player_world_states[player_id] = state
+	return state
 
 func _connect_player_state_signals(peer_id: int, state: PlayerState) -> void:
 	if _player_vitals_callbacks.has(peer_id) or _player_item_callbacks.has(peer_id):
@@ -337,6 +470,12 @@ func _reset_states(start: GameStartDefinition) -> void:
 		progression.ensure_personal_progression(get_player_id(peer_id))
 	difficulty.reset(start)
 	adventure.reset()
+	_adventure_sessions_by_world.clear()
+	for player_id in _player_states_by_id:
+		var previous: PlayerWorldState = _player_world_states.get(player_id)
+		_player_world_states[player_id] = PlayerWorldState.settlement(
+			player_id, previous.revision + 1 if previous != null else 1
+		)
 
 func start_new_game() -> bool:
 	if not NetworkManager.is_authoritative_simulation():
@@ -513,6 +652,12 @@ func begin_adventure(exit_id: StringName, region_id: StringName, entry_id: Strin
 	var runtime := get_player_runtime(get_local_peer_id())
 	if runtime != null:
 		runtime.death_result = null
+	var local_world := get_local_player_world()
+	if local_world != null and local_world.world_kind != PlayerWorldState.WorldKind.ADVENTURE:
+		move_player_to_world(
+			get_local_peer_id(), PlayerWorldState.WorldKind.ADVENTURE,
+			PlayerWorldState.adventure_world_id(region_id), region_id, entry_id
+		)
 	set_phase(Phase.ADVENTURE)
 	adventure_started.emit(context)
 	return context
@@ -566,6 +711,12 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 		progression.mark_shared_changed()
 	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success else "Storage full: %d loot stacks retained in pending storage" % loot.size()
 	adventure.active_session = null
+	var local_world := get_local_player_world()
+	if local_world != null and local_world.world_kind == PlayerWorldState.WorldKind.ADVENTURE:
+		move_player_to_world(
+			get_local_peer_id(), PlayerWorldState.WorldKind.SETTLEMENT,
+			PlayerWorldState.SETTLEMENT_WORLD_ID
+		)
 	set_phase(Phase.SETTLEMENT)
 	adventure_finished.emit(result, last_message)
 	return last_message
@@ -614,8 +765,15 @@ func complete_respawn(peer_id: int) -> void:
 	var state := get_player(peer_id)
 	if state == null:
 		return
-	if not NetworkManager.is_multiplayer_active() and phase == Phase.RESPAWNING and set_phase(Phase.SETTLEMENT):
-		state.effects.paused = false
+	if not NetworkManager.is_multiplayer_active() and phase == Phase.RESPAWNING:
+		var world := get_peer_world(peer_id)
+		if world != null and world.world_kind != PlayerWorldState.WorldKind.SETTLEMENT:
+			move_player_to_world(
+				peer_id, PlayerWorldState.WorldKind.SETTLEMENT,
+				PlayerWorldState.SETTLEMENT_WORLD_ID
+			)
+		if set_phase(Phase.SETTLEMENT):
+			state.effects.paused = false
 
 func arm_player_life(peer_id: int) -> int:
 	# Each actor receives a transient generation token; late signals from a retired
@@ -662,9 +820,87 @@ func apply_player_runtime_snapshot(snapshot: PlayerRuntimeSnapshot) -> bool:
 	return true
 
 func can_use_exit(exit_id: StringName, region_id: StringName) -> CommandResult:
+	if NetworkManager.is_multiplayer_active():
+		return can_peer_use_exit(get_local_peer_id(), exit_id, region_id)
 	if phase != Phase.SETTLEMENT:
 		return CommandResult.make(false, "Exit use requires settlement state")
 	return ExitService.check(exit_id, region_id, progression, settlement, adventure, ContentRegistry)
+
+func can_peer_use_exit(peer_id: int, exit_id: StringName, region_id: StringName) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can authorize a world transition")
+	if not has_player(peer_id) or not is_peer_in_settlement(peer_id):
+		return CommandResult.make(false, "Exit use requires this player to be in the settlement")
+	var runtime := get_player_runtime(peer_id)
+	if runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
+		return CommandResult.make(false, "Only a living player can enter an adventure")
+	# ExitService's phase check is satisfied by the safe-boundary compatibility
+	# phase while multiplayer player location comes from PlayerWorldState.
+	return ExitService.check(exit_id, region_id, progression, settlement, adventure, ContentRegistry, true)
+
+func begin_player_adventure(peer_id: int, exit_id: StringName, region_id: StringName) -> CommandResult:
+	var check := can_peer_use_exit(peer_id, exit_id, region_id)
+	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
+	var region := ContentRegistry.get_definition(region_id) as RegionDefinition
+	if not check.success or exit == null or region == null \
+			or not region.entry_point_ids.has(exit.entry_point_id):
+		return check if not check.success else CommandResult.make(false, "Invalid adventure entry point")
+	var world_id := PlayerWorldState.adventure_world_id(region_id)
+	var session: AdventureSession = _adventure_sessions_by_world.get(world_id)
+	if session == null:
+		var context := AdventureContext.new(region_id, exit_id, exit.entry_point_id, difficulty.id, session_id)
+		var owner_state := get_player(peer_id)
+		context.prepared_inventory = owner_state.inventory.to_array() if owner_state != null else []
+		session = AdventureSession.new(context, Callable(ContentRegistry, "get_item"))
+		session.player_adventures.clear()
+		session.rules = AdventureRulesSnapshot.new(difficulty.effective(ContentRegistry))
+		_adventure_sessions_by_world[world_id] = session
+	session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
+	var moved := move_player_to_world(
+		peer_id, PlayerWorldState.WorldKind.ADVENTURE, world_id, region_id, exit.entry_point_id
+	)
+	if not moved.success:
+		session.discard_player_adventure(peer_id)
+		if session.player_adventures.is_empty():
+			_adventure_sessions_by_world.erase(world_id)
+		return moved
+	if peer_id == get_local_peer_id():
+		adventure.active_session = session
+	# Multiplayer keeps the compatibility phase at the safe-boundary value. The
+	# per-player world registry is authoritative for location.
+	if not NetworkManager.is_multiplayer_active():
+		set_phase(Phase.ADVENTURE)
+	adventure_started.emit(session.context)
+	return CommandResult.make(true, "Entering %s" % region.display_name)
+
+func finish_player_adventure(peer_id: int, result: AdventureSession.Result) -> CommandResult:
+	if not can_mutate_authoritative_state():
+		return CommandResult.make(false, "Only the server can finish a player adventure")
+	var world_state: PlayerWorldState = _player_world_states.get(get_player_id(peer_id))
+	if world_state == null or world_state.world_kind != PlayerWorldState.WorldKind.ADVENTURE:
+		return CommandResult.make(false, "Player is not in an adventure")
+	if result != AdventureSession.Result.NORMAL_ESCAPE and result != AdventureSession.Result.RETURN_ITEM_ESCAPE:
+		return CommandResult.make(false, "An expedition must end through an escape")
+	var session: AdventureSession = _adventure_sessions_by_world.get(world_state.world_id)
+	var personal := session.get_player_adventure(peer_id) if session != null else null
+	if personal == null:
+		return CommandResult.make(false, "Adventure participation is unavailable")
+	var loot := personal.unsecured_loot.stacks()
+	var secured: CommandResult = settlement.secure_loot(loot)
+	session.discard_player_adventure(peer_id)
+	if peer_id == get_local_peer_id() and adventure.active_session == session:
+		adventure.active_session = null
+	if session.player_adventures.is_empty():
+		_adventure_sessions_by_world.erase(world_state.world_id)
+	var moved := move_player_to_world(
+		peer_id, PlayerWorldState.WorldKind.SETTLEMENT, PlayerWorldState.SETTLEMENT_WORLD_ID
+	)
+	if not moved.success:
+		return moved
+	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success \
+			else "Storage full: %d loot stacks retained in pending storage" % loot.size()
+	adventure_finished.emit(result, last_message)
+	return CommandResult.make(true, last_message)
 
 func request_adventure_from_exit(exit_id: StringName, region_id: StringName) -> AdventureContext:
 	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
@@ -1033,6 +1269,7 @@ func apply_persistent_snapshot(snapshot: SessionSnapshot) -> bool:
 		state.set_item_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 		state.effects.paused = true
 		_player_states_by_id[player_id] = state
+		_ensure_player_world_state(player_id)
 	var local_peer_id := get_local_peer_id()
 	_add_player_state(local_peer_id, snapshot.local_player_id, snapshot.player)
 	snapshot.player.effects.paused = false
