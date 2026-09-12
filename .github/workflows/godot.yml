@@ -31,3 +31,7 @@ jobs:
         run: |
           python tools/test_multiplayer_worlds.py --godot "$GODOT" --players 2
           python tools/test_multiplayer_worlds.py --godot "$GODOT" --players 3
+      - name: World-scoped runtime multiplayer E2E
+        run: |
+          python tools/test_multiplayer_world_runtime.py --godot "$GODOT" --players 2
+          python tools/test_multiplayer_world_runtime.py --godot "$GODOT" --players 3

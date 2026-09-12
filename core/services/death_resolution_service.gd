@@ -1,12 +1,13 @@
 class_name DeathResolutionService
 extends RefCounted
 
-static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable, finish_adventure: bool = true, player_adventure: PlayerAdventureState = null, owner_peer_id: int = 0, owner_player_id: StringName = &"") -> RespawnResult:
+static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable, finish_adventure: bool = true, player_adventure: PlayerAdventureState = null, owner_peer_id: int = 0, owner_player_id: StringName = &"", world_session: AdventureSession = null) -> RespawnResult:
 	var result := RespawnResult.new()
-	result.in_adventure = adventure.active_session != null
+	var active_session := world_session if world_session != null else adventure.active_session
+	result.in_adventure = active_session != null
 	if result.in_adventure:
 		var carried := DeathLossPolicy.apply(player.inventory.stacks(), rules, resolver)
-		var loot_source := player_adventure if player_adventure != null else adventure.active_session.get_player_adventure(owner_peer_id if owner_peer_id > 0 else 1)
+		var loot_source := player_adventure if player_adventure != null else active_session.get_player_adventure(owner_peer_id if owner_peer_id > 0 else 1)
 		var loot := DeathLossPolicy.apply(loot_source.unsecured_loot.stacks(), rules, resolver) if loot_source != null else DeathLossResult.new()
 		var gear := DeathLossPolicy.apply_equipment(player.equipment.all_equipped(), rules)
 		result.inventory_lost = carried.lost + loot.lost
@@ -31,7 +32,7 @@ static func resolve(player: PlayerState, settlement: SettlementState, adventure:
 				var record := DeathDropRecord.new()
 				record.id = "%s-%s-%s" % [session_id, Time.get_ticks_usec(), randi()]
 				record.session_id = session_id
-				record.region_id = adventure.active_session.context.region_id
+				record.region_id = active_session.context.region_id
 				record.position = death_position
 				record.owner_peer_id = owner_peer_id
 				record.owner_player_id = owner_player_id

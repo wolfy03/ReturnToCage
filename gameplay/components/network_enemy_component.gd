@@ -15,9 +15,14 @@ var _target_velocity: Vector2
 
 func configure(p_actor: EnemyAgent) -> void:
 	actor = p_actor
+	NetworkManager.enemy_snapshot_received.connect(_on_network_snapshot_received)
 	if actor.is_simulation_authority():
 		actor.health.health_changed.connect(_on_health_changed)
 		actor.state_changed.connect(_on_state_changed)
+
+func _exit_tree() -> void:
+	if NetworkManager.enemy_snapshot_received.is_connected(_on_network_snapshot_received):
+		NetworkManager.enemy_snapshot_received.disconnect(_on_network_snapshot_received)
 
 func _process(delta: float) -> void:
 	if actor == null:
@@ -84,23 +89,10 @@ func _broadcast_snapshot(reliable: bool) -> void:
 	var snapshot := make_snapshot()
 	if snapshot == null:
 		return
-	for peer_id in NetworkManager.replication_ready_remote_peer_ids():
-		if not NetworkManager.can_send_to_peer(peer_id):
-			continue
-		if reliable:
-			_receive_runtime_snapshot.rpc_id(peer_id, snapshot.to_payload())
-		else:
-			_receive_transform_snapshot.rpc_id(peer_id, snapshot.to_payload())
+	NetworkManager.broadcast_enemy_snapshot(actor.world_id, snapshot.to_payload(), reliable)
 
-@rpc("authority", "call_remote", "unreliable_ordered", 2)
-func _receive_transform_snapshot(payload: Dictionary) -> void:
-	if NetworkManager.is_server():
-		return
-	apply_snapshot(EnemyRuntimeSnapshot.from_payload(payload))
-
-@rpc("authority", "call_remote", "reliable")
-func _receive_runtime_snapshot(payload: Dictionary) -> void:
-	if NetworkManager.is_server():
+func _on_network_snapshot_received(world_id: StringName, payload: Dictionary, _reliable: bool) -> void:
+	if actor == null or actor.is_simulation_authority() or actor.world_id != world_id:
 		return
 	apply_snapshot(EnemyRuntimeSnapshot.from_payload(payload))
 

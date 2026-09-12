@@ -15,6 +15,9 @@ signal attack_presented(sequence: int, facing: float)
 @onready var network: NetworkPlayerComponent = %Network
 @onready var network_combat: NetworkCombatComponent = %NetworkCombat
 @export var peer_id: int = GameSession.LOCAL_SINGLEPLAYER_PEER_ID
+var simulation_enabled: bool = true
+var presentation_enabled: bool = true
+var world_id: StringName = &""
 var _death_handled: bool = false
 var _life_id: int = -1
 var _bound_state: PlayerState
@@ -23,20 +26,29 @@ var return_channel: float = 0.0
 var return_channel_required: float = 3.0
 var return_channel_origin: Vector2
 
-func setup_player(p_peer_id: int) -> void:
+func setup_player(
+	p_peer_id: int,
+	p_simulation_enabled: bool = true,
+	p_presentation_enabled: bool = true,
+	p_world_id: StringName = &""
+) -> void:
 	peer_id = p_peer_id
+	simulation_enabled = p_simulation_enabled
+	presentation_enabled = p_presentation_enabled
+	world_id = p_world_id
 
 func is_local_player() -> bool:
-	return peer_id == NetworkManager.local_peer_id()
+	return presentation_enabled and peer_id == NetworkManager.local_peer_id()
 
 func is_simulation_authority() -> bool:
-	return NetworkManager.is_authoritative_simulation()
+	return simulation_enabled and NetworkManager.is_authoritative_simulation()
 
 func player_state() -> PlayerState:
 	return _bound_state
 
 func _ready() -> void:
 	add_to_group(&"player")
+	add_to_group(&"authoritative_player" if is_simulation_authority() else &"presentation_player")
 	if is_local_player():
 		add_to_group(&"local_player")
 	_bound_state = GameSession.get_player(peer_id)
@@ -74,7 +86,7 @@ func _ready() -> void:
 		survival.set_process(false)
 		combat.set_process(false)
 		effects.set_process(false)
-		interaction.set_process(false)
+		interaction.set_process(is_local_player())
 		var client_hurtbox := get_node_or_null("Hurtbox") as HurtboxComponent
 		if client_hurtbox != null:
 			client_hurtbox.monitoring = false
@@ -114,6 +126,8 @@ func _on_interact() -> void:
 		var loot := interaction.current_target as LootActor
 		if loot != null:
 			loot.request_local_pickup()
+		elif interaction.current_target != null and interaction.current_target.can_interact(self):
+			interaction.try_interact(self)
 		return
 	if interaction.current_target != null and interaction.current_target.can_interact(self):
 		interaction.try_interact(self)

@@ -136,8 +136,7 @@ func _on_player_item_state_changed(player_id: StringName, _revision: int) -> voi
 		_send_owner_snapshot(peer_id)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if NetworkManager.is_server() \
-			and GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
+	if NetworkManager.is_server():
 		_send_owner_snapshot(peer_id, true)
 
 func _send_owner_snapshot(peer_id: int, force: bool = false) -> void:

@@ -8,6 +8,12 @@ const PICKUP_RANGE := 82.0
 
 var _registry: NetworkEntityRegistry
 var _loot: Dictionary[int, LootActor] = {}
+var world_id: StringName = &""
+var authoritative_runtime: bool = false
+
+func configure_world(p_world_id: StringName, p_authoritative_runtime: bool = true) -> void:
+	world_id = p_world_id
+	authoritative_runtime = p_authoritative_runtime
 
 func get_loot(entity_id: int) -> LootActor:
 	var actor: LootActor = _loot.get(entity_id)
@@ -22,10 +28,26 @@ func _ready() -> void:
 	_registry = get_parent().get_node_or_null("NetworkEntityRegistry") as NetworkEntityRegistry
 	if _registry == null:
 		push_error("LootSpawnManager requires NetworkEntityRegistry")
-	if NetworkManager.is_server():
+	if world_id.is_empty():
+		world_id = GameSession.get_peer_world_id(GameSession.get_local_peer_id())
+	if _registry != null:
+		_registry.configure_world(world_id)
+	NetworkManager.loot_spawn_received.connect(_on_loot_spawn_received)
+	NetworkManager.loot_despawn_received.connect(_on_loot_despawn_received)
+	NetworkManager.loot_pickup_result_received.connect(_on_loot_pickup_result_received)
+	if authoritative_runtime and NetworkManager.is_server():
 		NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
+		NetworkManager.loot_pickup_requested.connect(_on_loot_pickup_requested)
 
 func _exit_tree() -> void:
+	if NetworkManager.loot_spawn_received.is_connected(_on_loot_spawn_received):
+		NetworkManager.loot_spawn_received.disconnect(_on_loot_spawn_received)
+	if NetworkManager.loot_despawn_received.is_connected(_on_loot_despawn_received):
+		NetworkManager.loot_despawn_received.disconnect(_on_loot_despawn_received)
+	if NetworkManager.loot_pickup_result_received.is_connected(_on_loot_pickup_result_received):
+		NetworkManager.loot_pickup_result_received.disconnect(_on_loot_pickup_result_received)
+	if NetworkManager.loot_pickup_requested.is_connected(_on_loot_pickup_requested):
+		NetworkManager.loot_pickup_requested.disconnect(_on_loot_pickup_requested)
 	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
 		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
 
@@ -47,23 +69,23 @@ func spawn_loot(stack: ItemStack, position: Vector2) -> int:
 	_loot[entity_id] = actor
 	print("[LOOT] Spawn %d (%s x%d)" % [entity_id, stack.item_id, stack.quantity])
 	if NetworkManager.is_server():
-		var snapshot := _snapshot(actor)
-		for peer_id in NetworkManager.ready_remote_peer_ids():
-			if NetworkManager.can_send_to_peer(peer_id):
-				_spawn_loot.rpc_id(peer_id, snapshot.to_payload())
+		NetworkManager.broadcast_loot_spawn(world_id, _snapshot(actor).to_payload())
 	return entity_id
 
 func request_pickup(entity_id: int) -> void:
 	if entity_id <= 0:
 		return
 	if NetworkManager.is_authoritative_simulation():
-		server_try_pickup(NetworkManager.local_peer_id(), entity_id)
+		NetworkManager.request_loot_pickup(entity_id)
 	elif NetworkManager.is_session_connected():
-		_request_pickup.rpc_id(1, entity_id)
+		NetworkManager.request_loot_pickup(entity_id)
 
 func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 	if not NetworkManager.is_authoritative_simulation() or entity_id <= 0:
 		return CommandResult.make(false, "Invalid pickup authority or entity")
+	var effective_world := world_id if not world_id.is_empty() else GameSession.get_peer_world_id(peer_id)
+	if not world_id.is_empty() and GameSession.get_peer_world_id(peer_id) != world_id:
+		return CommandResult.make(false, "Loot belongs to another world")
 	var loot: LootActor = _loot.get(entity_id)
 	var player_manager := get_parent().get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
 	var player := player_manager.get_actor(peer_id) if player_manager != null else null
@@ -74,9 +96,12 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 		return CommandResult.make(false, "Player cannot pick up loot")
 	if player.global_position.distance_to(loot.global_position) > PICKUP_RANGE:
 		return CommandResult.make(false, "Loot is out of range")
-	if loot.claim_state != LootActor.ClaimState.AVAILABLE or GameSession.adventure.active_session == null:
+	var adventure_session := GameSession.adventure_session_for_world(effective_world)
+	if adventure_session == null:
+		adventure_session = GameSession.adventure.active_session
+	if loot.claim_state != LootActor.ClaimState.AVAILABLE or adventure_session == null:
 		return CommandResult.make(false, "Loot is already claimed")
-	var personal := GameSession.adventure.active_session.get_player_adventure(peer_id)
+	var personal := adventure_session.get_player_adventure(peer_id)
 	if personal == null:
 		return CommandResult.make(false, "Adventure player is unavailable")
 	loot.claim_state = LootActor.ClaimState.CLAIMING
@@ -90,25 +115,17 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 	GameSession.report_gameplay_event(GameplayEvent.collect_item(GameSession.get_player_id(peer_id), item_id, quantity))
 	print("[LOOT] Claimed entity %d by peer %d" % [entity_id, peer_id])
 	_despawn_authoritative(entity_id)
-	if NetworkManager.is_server() and peer_id != 1 and NetworkManager.can_send_to_peer(peer_id):
-		_receive_pickup_result.rpc_id(peer_id, true, item_id, quantity, "Picked up")
-	else:
-		pickup_result.emit(true, item_id, quantity, "Picked up")
+	NetworkManager.send_loot_pickup_result(peer_id, true, item_id, quantity, "Picked up")
 	return CommandResult.make(true, "Picked up")
 
-@rpc("any_peer", "call_remote", "reliable")
-func _request_pickup(entity_id: int) -> void:
-	if not NetworkManager.is_server():
+func _on_loot_pickup_requested(peer_id: int, p_world_id: StringName, entity_id: int) -> void:
+	if not authoritative_runtime or p_world_id != world_id:
 		return
-	var sender := multiplayer.get_remote_sender_id()
-	if sender <= 1 or not NetworkManager.has_peer(sender) or not GameSession.has_player(sender):
-		return
-	var result := server_try_pickup(sender, entity_id)
-	if not result.success and NetworkManager.can_send_to_peer(sender):
-		_receive_pickup_result.rpc_id(sender, false, &"", 0, result.message)
+	var result := server_try_pickup(peer_id, entity_id)
+	if not result.success:
+		NetworkManager.send_loot_pickup_result(peer_id, false, &"", 0, result.message)
 
-@rpc("authority", "call_remote", "reliable")
-func _receive_pickup_result(success: bool, item_id: StringName, quantity: int, message: String) -> void:
+func _on_loot_pickup_result_received(success: bool, item_id: StringName, quantity: int, message: String) -> void:
 	pickup_result.emit(success, item_id, quantity, message)
 
 func _despawn_authoritative(entity_id: int) -> void:
@@ -119,9 +136,7 @@ func _despawn_authoritative(entity_id: int) -> void:
 		actor.claim_state = LootActor.ClaimState.DESPAWNED
 		actor.queue_free()
 	if NetworkManager.is_server():
-		for peer_id in NetworkManager.ready_remote_peer_ids():
-			if NetworkManager.can_send_to_peer(peer_id):
-				_despawn_loot.rpc_id(peer_id, entity_id)
+		NetworkManager.broadcast_loot_despawn(world_id, entity_id)
 
 func _snapshot(actor: LootActor) -> LootEntitySnapshot:
 	var snapshot := LootEntitySnapshot.new()
@@ -131,16 +146,16 @@ func _snapshot(actor: LootActor) -> LootEntitySnapshot:
 	return snapshot
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.can_send_to_peer(peer_id) \
-			or not GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
+	if not NetworkManager.can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
 		return
+	var payloads: Array[Dictionary] = []
 	for actor in _loot.values():
 		if is_instance_valid(actor):
-			_spawn_loot.rpc_id(peer_id, _snapshot(actor).to_payload())
+			payloads.append(_snapshot(actor).to_payload())
+	NetworkManager.send_loot_roster(peer_id, world_id, payloads)
 
-@rpc("authority", "call_remote", "reliable")
-func _spawn_loot(payload: Dictionary) -> void:
-	if NetworkManager.is_server() or _registry == null:
+func _on_loot_spawn_received(p_world_id: StringName, payload: Dictionary) -> void:
+	if authoritative_runtime or p_world_id != world_id or _registry == null:
 		return
 	var snapshot := LootEntitySnapshot.from_payload(payload)
 	if not snapshot.error_message.is_empty() or _loot.has(snapshot.entity_id):
@@ -155,9 +170,8 @@ func _spawn_loot(payload: Dictionary) -> void:
 	get_parent().add_child(actor, true)
 	_loot[snapshot.entity_id] = actor
 
-@rpc("authority", "call_remote", "reliable")
-func _despawn_loot(entity_id: int) -> void:
-	if entity_id <= 0:
+func _on_loot_despawn_received(p_world_id: StringName, entity_id: int) -> void:
+	if authoritative_runtime or p_world_id != world_id or entity_id <= 0:
 		return
 	var actor: LootActor = _loot.get(entity_id)
 	_loot.erase(entity_id)

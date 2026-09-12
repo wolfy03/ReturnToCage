@@ -14,6 +14,21 @@ signal world_roster_player_removed(peer_id: int)
 signal local_world_roster_complete(world_id: StringName, revision: int)
 signal world_transition_failed(message: String)
 signal multiplayer_session_ended(reason: String)
+signal player_move_command_received(peer_id: int, sequence: int, move_axis: float, vertical_axis: float, jump_pressed: bool)
+signal player_transform_snapshot_received(peer_id: int, position: Vector2, velocity: Vector2, facing: float, movement_mode: int, sequence: int)
+signal player_runtime_snapshot_received(payload: Dictionary)
+signal player_attack_command_received(peer_id: int, sequence: int)
+signal player_attack_presented_received(peer_id: int, sequence: int, facing: float)
+signal player_respawn_received(world_id: StringName, peer_id: int, position: Vector2)
+signal enemy_spawn_received(world_id: StringName, payload: Dictionary)
+signal enemy_despawn_received(world_id: StringName, entity_id: int)
+signal enemy_snapshot_received(world_id: StringName, payload: Dictionary, reliable: bool)
+signal loot_spawn_received(world_id: StringName, payload: Dictionary)
+signal loot_despawn_received(world_id: StringName, entity_id: int)
+signal loot_pickup_requested(peer_id: int, world_id: StringName, entity_id: int)
+signal loot_pickup_result_received(success: bool, item_id: StringName, quantity: int, message: String)
+signal gather_requested(peer_id: int, world_id: StringName, interaction_id: StringName)
+signal gather_consumed_received(world_id: StringName, interaction_id: StringName)
 
 enum ConnectionState { OFFLINE, HOSTING_RESTORING, HOSTING, CONNECTING, CONNECTED }
 
@@ -209,6 +224,18 @@ func register_authoritative_spawn_assignment(peer_id: int, assignment: PlayerSpa
 func spawn_assignment_for_peer(peer_id: int) -> PlayerSpawnAssignment:
 	return _spawn_assignments.get(peer_id)
 
+func ensure_authoritative_spawn_assignment(peer_id: int) -> PlayerSpawnAssignment:
+	if not is_authoritative_simulation() or not players.has(peer_id) or not GameSession.has_player(peer_id):
+		return null
+	var existing: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+	if existing != null and existing.session_id == GameSession.session_id \
+			and existing.player_id == player_id_for_peer(peer_id) and existing.position.is_finite():
+		return existing
+	var assignment := _make_spawn_assignment_for_current_world(peer_id, is_returning_peer(peer_id))
+	if assignment != null and assignment.error_message.is_empty():
+		register_authoritative_spawn_assignment(peer_id, assignment)
+	return assignment
+
 func peek_local_spawn_assignment() -> PlayerSpawnAssignment:
 	if is_server() or not _session_entered and not _received_spawn_assignment:
 		return null
@@ -354,12 +381,306 @@ func ready_remote_peer_ids(world_id: StringName = &"") -> Array[int]:
 	result.sort()
 	return result
 
+func all_ready_remote_peer_ids() -> Array[int]:
+	var result: Array[int] = []
+	for peer_id in world_ready_peers:
+		if peer_id != local_peer_id() and players.has(peer_id) and is_peer_world_ready(peer_id):
+			result.append(peer_id)
+	result.sort()
+	return result
+
 func replication_ready_remote_peer_ids(world_id: StringName = &"") -> Array[int]:
 	var result: Array[int] = []
 	for peer_id in ready_remote_peer_ids(world_id):
 		if is_peer_replication_ready(peer_id):
 			result.append(peer_id)
 	return result
+
+func world_revision_for_peer(peer_id: int) -> int:
+	var world := GameSession.get_peer_world(peer_id)
+	return world.revision if world != null else 0
+
+func submit_player_move_input(
+	peer_id: int,
+	sequence: int,
+	move_axis: float,
+	vertical_axis: float,
+	jump_pressed: bool
+) -> void:
+	if is_server():
+		if peer_id == local_peer_id() and is_peer_world_ready(peer_id):
+			player_move_command_received.emit(peer_id, sequence, move_axis, vertical_axis, jump_pressed)
+	elif is_session_connected() and peer_id == local_peer_id() and is_local_world_ready():
+		_request_player_move_input.rpc_id(1, sequence, move_axis, vertical_axis, jump_pressed)
+
+@rpc("any_peer", "call_remote", "unreliable_ordered", 0)
+func _request_player_move_input(sequence: int, move_axis: float, vertical_axis: float, jump_pressed: bool) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkProtocol.valid_command_sender(sender, sender, has_peer(sender) and GameSession.has_player(sender) \
+			and is_peer_world_ready(sender)):
+		player_move_command_received.emit(sender, sequence, move_axis, vertical_axis, jump_pressed)
+
+func broadcast_player_transform(
+	source_peer_id: int,
+	position: Vector2,
+	velocity: Vector2,
+	facing: float,
+	movement_mode: int,
+	sequence: int
+) -> void:
+	if not is_host_session_ready():
+		return
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	if world_id.is_empty():
+		return
+	for peer_id in replication_ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_transform.rpc_id(
+			peer_id, world_id, ready.revision, source_peer_id,
+			position, velocity, facing, movement_mode, sequence
+		)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		player_transform_snapshot_received.emit(source_peer_id, position, velocity, facing, movement_mode, sequence)
+
+@rpc("authority", "call_remote", "unreliable_ordered", 1)
+func _receive_player_transform(
+	world_id: StringName,
+	world_revision: int,
+	peer_id: int,
+	position: Vector2,
+	velocity: Vector2,
+	facing: float,
+	movement_mode: int,
+	sequence: int
+) -> void:
+	if _accept_current_world_packet(world_id, world_revision):
+		player_transform_snapshot_received.emit(peer_id, position, velocity, facing, movement_mode, sequence)
+
+func broadcast_player_runtime(source_peer_id: int, payload: Dictionary) -> void:
+	if not is_host_session_ready():
+		return
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_runtime.rpc_id(peer_id, world_id, ready.revision, payload)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		player_runtime_snapshot_received.emit(payload)
+
+func send_player_runtime_to_peer(source_peer_id: int, target_peer_id: int, payload: Dictionary) -> void:
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	if target_peer_id == local_peer_id() and GameSession.get_peer_world_id(target_peer_id) == world_id:
+		player_runtime_snapshot_received.emit(payload)
+	elif can_send_to_peer(target_peer_id) and GameSession.get_peer_world_id(target_peer_id) == world_id:
+		var ready: PeerWorldReadyState = world_ready_peers.get(target_peer_id)
+		if ready != null:
+			_receive_player_runtime.rpc_id(target_peer_id, world_id, ready.revision, payload)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_player_runtime(world_id: StringName, world_revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, world_revision):
+		player_runtime_snapshot_received.emit(payload)
+
+func submit_player_attack(peer_id: int, sequence: int) -> void:
+	if is_server():
+		if peer_id == local_peer_id() and is_peer_world_ready(peer_id):
+			player_attack_command_received.emit(peer_id, sequence)
+	elif is_session_connected() and peer_id == local_peer_id() and is_local_world_ready():
+		_request_player_attack.rpc_id(1, sequence)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_player_attack(sequence: int) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender > 1 and has_peer(sender) and GameSession.has_player(sender) and is_peer_world_ready(sender):
+		player_attack_command_received.emit(sender, sequence)
+
+func broadcast_player_attack(source_peer_id: int, sequence: int, facing: float) -> void:
+	if not is_host_session_ready():
+		return
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_attack.rpc_id(peer_id, world_id, ready.revision, source_peer_id, sequence, facing)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		player_attack_presented_received.emit(source_peer_id, sequence, facing)
+
+func broadcast_player_respawn(world_id: StringName, source_peer_id: int, position: Vector2) -> void:
+	if not is_host_session_ready() or world_id.is_empty() or not position.is_finite():
+		return
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_respawn.rpc_id(peer_id, world_id, ready.revision, source_peer_id, position)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		player_respawn_received.emit(world_id, source_peer_id, position)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_player_respawn(
+	world_id: StringName, world_revision: int, peer_id: int, position: Vector2
+) -> void:
+	if position.is_finite() and _accept_current_world_packet(world_id, world_revision):
+		player_respawn_received.emit(world_id, peer_id, position)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_player_attack(
+	world_id: StringName, world_revision: int, peer_id: int, sequence: int, facing: float
+) -> void:
+	if _accept_current_world_packet(world_id, world_revision):
+		player_attack_presented_received.emit(peer_id, sequence, facing)
+
+func broadcast_enemy_spawn(world_id: StringName, payload: Dictionary) -> void:
+	_broadcast_world_payload(world_id, &"enemy_spawn", payload)
+
+func broadcast_enemy_snapshot(world_id: StringName, payload: Dictionary, reliable: bool) -> void:
+	if not is_host_session_ready():
+		return
+	for peer_id in (ready_remote_peer_ids(world_id) if reliable else replication_ready_remote_peer_ids(world_id)):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		if reliable:
+			_receive_enemy_runtime.rpc_id(peer_id, world_id, ready.revision, payload)
+		else:
+			_receive_enemy_transform.rpc_id(peer_id, world_id, ready.revision, payload)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		enemy_snapshot_received.emit(world_id, payload, reliable)
+
+func broadcast_enemy_despawn(world_id: StringName, entity_id: int) -> void:
+	_broadcast_world_payload(world_id, &"enemy_despawn", {"entity_id": entity_id})
+
+func send_enemy_roster(peer_id: int, world_id: StringName, payloads: Array[Dictionary]) -> void:
+	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+		return
+	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	for payload in payloads:
+		_receive_enemy_spawn.rpc_id(peer_id, world_id, ready.revision, payload)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_enemy_spawn(world_id: StringName, revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		enemy_spawn_received.emit(world_id, payload)
+
+@rpc("authority", "call_remote", "unreliable_ordered", 2)
+func _receive_enemy_transform(world_id: StringName, revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		enemy_snapshot_received.emit(world_id, payload, false)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_enemy_runtime(world_id: StringName, revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		enemy_snapshot_received.emit(world_id, payload, true)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_enemy_despawn(world_id: StringName, revision: int, entity_id: int) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		enemy_despawn_received.emit(world_id, entity_id)
+
+func broadcast_loot_spawn(world_id: StringName, payload: Dictionary) -> void:
+	_broadcast_world_payload(world_id, &"loot_spawn", payload)
+
+func broadcast_loot_despawn(world_id: StringName, entity_id: int) -> void:
+	_broadcast_world_payload(world_id, &"loot_despawn", {"entity_id": entity_id})
+
+func send_loot_roster(peer_id: int, world_id: StringName, payloads: Array[Dictionary]) -> void:
+	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+		return
+	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	for payload in payloads:
+		_receive_loot_spawn.rpc_id(peer_id, world_id, ready.revision, payload)
+
+func request_loot_pickup(entity_id: int) -> void:
+	if entity_id <= 0 or not is_local_world_ready():
+		return
+	if is_server():
+		loot_pickup_requested.emit(local_peer_id(), GameSession.get_peer_world_id(local_peer_id()), entity_id)
+	elif is_session_connected():
+		_request_world_loot_pickup.rpc_id(1, entity_id)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_world_loot_pickup(entity_id: int) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if is_host_session_ready() and entity_id > 0 and has_peer(sender) and is_peer_world_ready(sender):
+		loot_pickup_requested.emit(sender, GameSession.get_peer_world_id(sender), entity_id)
+
+func send_loot_pickup_result(peer_id: int, success: bool, item_id: StringName, quantity: int, message: String) -> void:
+	if peer_id == local_peer_id():
+		loot_pickup_result_received.emit(success, item_id, quantity, message)
+	elif can_send_to_peer(peer_id):
+		_receive_world_loot_pickup_result.rpc_id(peer_id, success, item_id, quantity, message)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_world_loot_pickup_result(success: bool, item_id: StringName, quantity: int, message: String) -> void:
+	loot_pickup_result_received.emit(success, item_id, quantity, message)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_loot_spawn(world_id: StringName, revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		loot_spawn_received.emit(world_id, payload)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_loot_despawn(world_id: StringName, revision: int, entity_id: int) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		loot_despawn_received.emit(world_id, entity_id)
+
+func request_gather(interaction_id: StringName) -> void:
+	if interaction_id.is_empty() or not is_local_world_ready():
+		return
+	if is_server():
+		gather_requested.emit(local_peer_id(), GameSession.get_peer_world_id(local_peer_id()), interaction_id)
+	elif is_session_connected():
+		_request_world_gather.rpc_id(1, interaction_id)
+
+func broadcast_gather_consumed(world_id: StringName, interaction_id: StringName) -> void:
+	if not is_host_session_ready() or world_id.is_empty() or interaction_id.is_empty():
+		return
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_gather_consumed.rpc_id(peer_id, world_id, ready.revision, interaction_id)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		gather_consumed_received.emit(world_id, interaction_id)
+
+func send_gather_state(peer_id: int, world_id: StringName, consumed_ids: Array[StringName]) -> void:
+	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+		return
+	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	if ready == null:
+		return
+	for interaction_id in consumed_ids:
+		_receive_gather_consumed.rpc_id(peer_id, world_id, ready.revision, interaction_id)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_gather_consumed(world_id: StringName, revision: int, interaction_id: StringName) -> void:
+	if not interaction_id.is_empty() and _accept_current_world_packet(world_id, revision):
+		gather_consumed_received.emit(world_id, interaction_id)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_world_gather(interaction_id: StringName) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if is_host_session_ready() and not interaction_id.is_empty() and has_peer(sender) and is_peer_world_ready(sender):
+		gather_requested.emit(sender, GameSession.get_peer_world_id(sender), interaction_id)
+
+func _broadcast_world_payload(world_id: StringName, kind: StringName, payload: Dictionary) -> void:
+	if not is_host_session_ready() or world_id.is_empty():
+		return
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		match kind:
+			&"enemy_spawn": _receive_enemy_spawn.rpc_id(peer_id, world_id, ready.revision, payload)
+			&"enemy_despawn": _receive_enemy_despawn.rpc_id(peer_id, world_id, ready.revision, int(payload.get("entity_id", 0)))
+			&"loot_spawn": _receive_loot_spawn.rpc_id(peer_id, world_id, ready.revision, payload)
+			&"loot_despawn": _receive_loot_despawn.rpc_id(peer_id, world_id, ready.revision, int(payload.get("entity_id", 0)))
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		match kind:
+			&"enemy_spawn": enemy_spawn_received.emit(world_id, payload)
+			&"enemy_despawn": enemy_despawn_received.emit(world_id, int(payload.get("entity_id", 0)))
+			&"loot_spawn": loot_spawn_received.emit(world_id, payload)
+			&"loot_despawn": loot_despawn_received.emit(world_id, int(payload.get("entity_id", 0)))
+
+func _accept_current_world_packet(world_id: StringName, revision: int) -> bool:
+	if is_server() or not _session_entered or not is_local_world_ready():
+		return false
+	var local_world := GameSession.get_local_player_world()
+	return local_world != null and local_world.world_id == world_id and local_world.revision == revision
 
 func request_enter_region(exit_id: StringName, region_id: StringName) -> CommandResult:
 	if not is_multiplayer_active():
@@ -501,9 +822,18 @@ func _dispatch_world_assignment(peer_id: int, old_world_id: StringName) -> Comma
 	return CommandResult.make(true, "World transition assigned")
 
 func request_local_world_roster() -> void:
+	var local_world := GameSession.get_local_player_world()
 	if is_server():
-		mark_peer_world_ready(local_peer_id())
-	elif is_session_connected():
+		if local_world == null:
+			return
+		for peer_id in GameSession.peer_ids_in_world(local_world.world_id):
+			var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+			var assignment := world_assignment_for_peer(peer_id)
+			if spawn != null and spawn.position.is_finite() and assignment.error_message.is_empty():
+				if peer_id != local_peer_id():
+					world_roster_player_received.emit(peer_id, assignment, spawn.position)
+		local_world_roster_complete.emit(local_world.world_id, local_world.revision)
+	elif is_session_connected() and multiplayer.get_unique_id() != 1:
 		_request_world_roster.rpc_id(1)
 
 func confirm_local_world_ready() -> void:
@@ -607,7 +937,16 @@ func _configured_world_spawn(scene_path: String, entry_point_id: StringName, slo
 		return Vector2.INF
 	var scene := packed.instantiate()
 	var result := Vector2.INF
-	if not entry_point_id.is_empty():
+	var spawn_points: Array[PlayerSpawnPoint] = []
+	for child in scene.get_children():
+		if child is PlayerSpawnPoint:
+			spawn_points.append(child)
+	spawn_points.sort_custom(func(a: PlayerSpawnPoint, b: PlayerSpawnPoint) -> bool: return a.spawn_index < b.spawn_index)
+	# The first arrival uses the authored entry marker. Additional arrivals use
+	# deterministic world-local slots so two peers never enter on one collider.
+	if slot_index > 0 and not spawn_points.is_empty():
+		result = spawn_points[slot_index % spawn_points.size()].position
+	elif not entry_point_id.is_empty():
 		var region_points: Array[RegionPoint] = []
 		RegionPoint.collect(scene, region_points)
 		for point in region_points:
@@ -615,11 +954,6 @@ func _configured_world_spawn(scene_path: String, entry_point_id: StringName, slo
 				result = point.position
 				break
 	if not result.is_finite():
-		var spawn_points: Array[PlayerSpawnPoint] = []
-		for child in scene.get_children():
-			if child is PlayerSpawnPoint:
-				spawn_points.append(child)
-		spawn_points.sort_custom(func(a: PlayerSpawnPoint, b: PlayerSpawnPoint) -> bool: return a.spawn_index < b.spawn_index)
 		if not spawn_points.is_empty():
 			result = spawn_points[slot_index % spawn_points.size()].position
 	scene.free()
@@ -650,7 +984,7 @@ func _place_player_in_loaded_host_world(peer_id: int, assignment: PlayerSpawnAss
 	var world_id := GameSession.get_peer_world_id(peer_id)
 	for node in get_tree().get_nodes_in_group(&"player_spawn_manager"):
 		var manager := node as PlayerSpawnManager
-		if manager != null and manager.world_id == world_id:
+		if manager != null and manager.authoritative_runtime and manager.world_id == world_id:
 			manager.apply_authoritative_world_arrival(peer_id, assignment)
 			return
 

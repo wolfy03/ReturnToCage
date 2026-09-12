@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3]
+[gd_scene load_steps=14 format=3]
 [ext_resource path="res://world/adventure/adventure_region.gd" type="Script" id="1"]
 [ext_resource path="res://world/region_point.gd" type="Script" id="2"]
 [ext_resource path="res://gameplay/components/climbable_area_2d.gd" type="Script" id="3"]
@@ -9,9 +9,6 @@
 [ext_resource path="res://world/multiplayer/network_entity_registry.gd" type="Script" id="8"]
 [ext_resource path="res://world/multiplayer/loot_spawn_manager.gd" type="Script" id="9"]
 [ext_resource path="res://world/multiplayer/enemy_spawn_manager.gd" type="Script" id="10"]
-[ext_resource path="res://world/multiplayer/quest_replication_service.gd" type="Script" id="11"]
-[ext_resource path="res://world/multiplayer/settlement_replication_service.gd" type="Script" id="12"]
-[ext_resource path="res://world/multiplayer/player_item_replication_service.gd" type="Script" id="13"]
 [sub_resource type="RectangleShape2D" id="LadderShape"]
 size = Vector2(56, 340)
 [sub_resource type="RectangleShape2D" id="RopeShape"]
@@ -26,12 +23,6 @@ script = ExtResource("8")
 script = ExtResource("9")
 [node name="EnemySpawnManager" type="Node" parent="."]
 script = ExtResource("10")
-[node name="QuestReplicationService" type="Node" parent="."]
-script = ExtResource("11")
-[node name="SettlementReplicationService" type="Node" parent="."]
-script = ExtResource("12")
-[node name="PlayerItemReplicationService" type="Node" parent="."]
-script = ExtResource("13")
 [node name="Entry" type="Marker2D" parent="."]
 position = Vector2(150, 520)
 script = ExtResource("2")

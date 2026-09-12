@@ -4,16 +4,32 @@ extends Node
 var _registry: NetworkEntityRegistry
 var _loot_manager: LootSpawnManager
 var _enemies: Dictionary[int, EnemyAgent] = {}
+var world_id: StringName = &""
+var authoritative_runtime: bool = false
+
+func configure_world(p_world_id: StringName, p_authoritative_runtime: bool = true) -> void:
+	world_id = p_world_id
+	authoritative_runtime = p_authoritative_runtime
 
 func _ready() -> void:
 	_registry = get_parent().get_node_or_null("NetworkEntityRegistry") as NetworkEntityRegistry
 	_loot_manager = get_parent().get_node_or_null("LootSpawnManager") as LootSpawnManager
 	if _registry == null or _loot_manager == null:
 		push_error("EnemySpawnManager requires entity and loot managers")
-	if NetworkManager.is_server():
+	if world_id.is_empty():
+		world_id = GameSession.get_peer_world_id(GameSession.get_local_peer_id())
+	if _registry != null:
+		_registry.configure_world(world_id)
+	NetworkManager.enemy_spawn_received.connect(_on_enemy_spawn_received)
+	NetworkManager.enemy_despawn_received.connect(_on_enemy_despawn_received)
+	if authoritative_runtime and NetworkManager.is_server():
 		NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
 
 func _exit_tree() -> void:
+	if NetworkManager.enemy_spawn_received.is_connected(_on_enemy_spawn_received):
+		NetworkManager.enemy_spawn_received.disconnect(_on_enemy_spawn_received)
+	if NetworkManager.enemy_despawn_received.is_connected(_on_enemy_despawn_received):
+		NetworkManager.enemy_despawn_received.disconnect(_on_enemy_despawn_received)
 	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
 		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
 
@@ -40,16 +56,14 @@ func _spawn_definition(definition: EnemyDefinition, position: Vector2, report_wa
 		actor.free()
 		return 0
 	actor.name = "Enemy_%d" % entity_id
-	actor.setup_enemy(definition, entity_id, true)
+	actor.setup_enemy(definition, entity_id, true, world_id)
 	actor.global_position = position
 	get_parent().add_child(actor, true)
 	actor.finished.connect(_on_enemy_finished)
 	_enemies[entity_id] = actor
 	print("[ENEMY] Spawn %d (%s)" % [entity_id, definition.id])
 	if NetworkManager.is_server():
-		for peer_id in NetworkManager.ready_remote_peer_ids():
-			if NetworkManager.can_send_to_peer(peer_id):
-				_spawn_enemy.rpc_id(peer_id, actor.network.make_snapshot().to_payload())
+		NetworkManager.broadcast_enemy_spawn(world_id, actor.network.make_snapshot().to_payload())
 	return entity_id
 
 func _instantiate_enemy_actor(definition: EnemyDefinition, report_warning: bool = true) -> EnemyAgent:
@@ -74,9 +88,9 @@ func get_enemy(entity_id: int) -> EnemyAgent:
 func _on_enemy_finished(actor: EnemyAgent) -> void:
 	if actor == null or _enemies.get(actor.network_entity_id) != actor:
 		return
-	GameSession.record_enemy_kill(actor.definition.id, actor.last_damage_player_id)
+	GameSession.record_enemy_kill_for_world(world_id, actor.definition.id, actor.last_damage_player_id)
 	var table := ContentRegistry.get_definition(actor.definition.loot_table_id) as LootTableDefinition
-	for stack in LootRollService.roll(table, Callable(ContentRegistry, "get_item"), GameSession.current_difficulty().loot_multiplier):
+	for stack in LootRollService.roll(table, Callable(ContentRegistry, "get_item"), GameSession.current_difficulty_for_world(world_id).loot_multiplier):
 		_loot_manager.spawn_loot(stack, actor.global_position)
 	print("[ENEMY] Death %d" % actor.network_entity_id)
 	_despawn_authoritative(actor.network_entity_id)
@@ -88,21 +102,19 @@ func _despawn_authoritative(entity_id: int) -> void:
 	if is_instance_valid(actor):
 		actor.queue_free()
 	if NetworkManager.is_server():
-		for peer_id in NetworkManager.ready_remote_peer_ids():
-			if NetworkManager.can_send_to_peer(peer_id):
-				_despawn_enemy.rpc_id(peer_id, entity_id)
+		NetworkManager.broadcast_enemy_despawn(world_id, entity_id)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.can_send_to_peer(peer_id) \
-			or not GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
+	if not NetworkManager.can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
 		return
+	var payloads: Array[Dictionary] = []
 	for actor in _enemies.values():
 		if is_instance_valid(actor):
-			_spawn_enemy.rpc_id(peer_id, (actor as EnemyAgent).network.make_snapshot().to_payload())
+			payloads.append((actor as EnemyAgent).network.make_snapshot().to_payload())
+	NetworkManager.send_enemy_roster(peer_id, world_id, payloads)
 
-@rpc("authority", "call_remote", "reliable")
-func _spawn_enemy(payload: Dictionary) -> void:
-	if NetworkManager.is_server() or _registry == null:
+func _on_enemy_spawn_received(p_world_id: StringName, payload: Dictionary) -> void:
+	if authoritative_runtime or p_world_id != world_id or _registry == null:
 		return
 	var snapshot := EnemyRuntimeSnapshot.from_payload(payload)
 	if not snapshot.error_message.is_empty() or _enemies.has(snapshot.entity_id):
@@ -115,15 +127,14 @@ func _spawn_enemy(payload: Dictionary) -> void:
 		actor.free()
 		return
 	actor.name = "Enemy_%d" % snapshot.entity_id
-	actor.setup_enemy(definition, snapshot.entity_id, false)
+	actor.setup_enemy(definition, snapshot.entity_id, false, world_id)
 	actor.global_position = snapshot.position
 	get_parent().add_child(actor, true)
 	_enemies[snapshot.entity_id] = actor
 	actor.network.apply_snapshot(snapshot)
 
-@rpc("authority", "call_remote", "reliable")
-func _despawn_enemy(entity_id: int) -> void:
-	if entity_id <= 0:
+func _on_enemy_despawn_received(p_world_id: StringName, entity_id: int) -> void:
+	if authoritative_runtime or p_world_id != world_id or entity_id <= 0:
 		return
 	var actor: EnemyAgent = _enemies.get(entity_id)
 	_enemies.erase(entity_id)

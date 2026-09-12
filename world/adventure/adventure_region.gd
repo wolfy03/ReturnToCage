@@ -1,17 +1,49 @@
 extends Node2D
 
 var context: AdventureContext
+var server_runtime_mode: bool = false
+var _gather_targets: Dictionary[StringName, InteractionTarget] = {}
+var _gather_items: Dictionary[StringName, Dictionary] = {}
+var _consumed_gather: Dictionary[StringName, bool] = {}
 
 func configure(p_context: AdventureContext) -> void:
 	context = p_context
+	var configured_world := PlayerWorldState.adventure_world_id(context.region_id) if context != null else &""
 	var manager := get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
 	if manager != null and context != null:
-		manager.configure_world(PlayerWorldState.adventure_world_id(context.region_id))
+		manager.configure_world(configured_world)
+	var enemy_manager := get_node_or_null("EnemySpawnManager") as EnemySpawnManager
+	if enemy_manager != null:
+		enemy_manager.configure_world(configured_world, false)
+	var loot_manager := get_node_or_null("LootSpawnManager") as LootSpawnManager
+	if loot_manager != null:
+		loot_manager.configure_world(configured_world, false)
+
+func configure_server_runtime(p_world_id: StringName, p_region_id: StringName) -> void:
+	server_runtime_mode = true
+	var definition := ContentRegistry.get_definition(p_region_id) as RegionDefinition
+	var entry_id: StringName = definition.entry_point_ids[0] if definition != null and not definition.entry_point_ids.is_empty() else &""
+	context = AdventureContext.new(p_region_id, &"", entry_id, GameSession.difficulty.id, GameSession.session_id)
+	var manager := get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
+	if manager != null:
+		manager.world_id = p_world_id
+		manager.authoritative_runtime = true
+	var enemy_manager := get_node_or_null("EnemySpawnManager") as EnemySpawnManager
+	if enemy_manager != null:
+		enemy_manager.configure_world(p_world_id)
+	var loot_manager := get_node_or_null("LootSpawnManager") as LootSpawnManager
+	if loot_manager != null:
+		loot_manager.configure_world(p_world_id)
+	_remove_runtime_duplicate_services()
 
 func _ready() -> void:
 	if context == null:
 		push_error("AdventureRegion requires AdventureContext")
 		return
+	NetworkManager.gather_consumed_received.connect(_on_gather_consumed_received)
+	if server_runtime_mode:
+		NetworkManager.gather_requested.connect(_on_gather_requested)
+		NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
 	RenderingServer.set_default_clear_color(Color("091a24"))
 	WorldHelpers.add_platform(self, Vector2(750, 570), Vector2(1600, 70), Color("263c3f"))
 	WorldHelpers.add_platform(self, Vector2(420, 440), Vector2(240, 22), Color("37565a"))
@@ -25,7 +57,7 @@ func _ready() -> void:
 	_create_gather(&"scrap_cache_a", &"rusty_scrap", 2, Vector2(430, 395))
 	_create_gather(&"scrap_cache_b", &"rusty_scrap", 2, Vector2(760, 305))
 	_create_gather(&"berry_drop", &"berry", 1, Vector2(1070, 405))
-	if NetworkManager.is_authoritative_simulation():
+	if server_runtime_mode or not NetworkManager.is_multiplayer_active() and NetworkManager.is_authoritative_simulation():
 		(get_node("EnemySpawnManager") as EnemySpawnManager).spawn_enemy(&"sewer_beetle", Vector2(970, 525))
 	var points: Array[RegionPoint] = []
 	RegionPoint.collect(self, points)
@@ -37,6 +69,21 @@ func _ready() -> void:
 		push_error("Missing region entry marker: %s" % context.entry_point_id)
 		return
 	(get_node("PlayerSpawnManager") as PlayerSpawnManager).initialize_spawns()
+
+func _exit_tree() -> void:
+	if NetworkManager.gather_consumed_received.is_connected(_on_gather_consumed_received):
+		NetworkManager.gather_consumed_received.disconnect(_on_gather_consumed_received)
+	if NetworkManager.gather_requested.is_connected(_on_gather_requested):
+		NetworkManager.gather_requested.disconnect(_on_gather_requested)
+	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
+		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
+
+func _remove_runtime_duplicate_services() -> void:
+	for child_name in ["QuestReplicationService", "SettlementReplicationService", "PlayerItemReplicationService"]:
+		var service := get_node_or_null(child_name)
+		if service != null:
+			remove_child(service)
+			service.free()
 
 func _create_escape_points() -> void:
 	var points: Array[RegionPoint] = []
@@ -84,13 +131,64 @@ func _create_death_drops() -> void:
 func _create_gather(id: StringName, item_id: StringName, amount: int, position: Vector2) -> void:
 	var definition := ContentRegistry.get_item(item_id)
 	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, amount], position, Vector2(42, 42), Color("8b6f47"), 2)
+	target.add_to_group(&"world_gather")
+	_gather_targets[id] = target
+	_gather_items[id] = {"item_id": item_id, "amount": amount}
 	target.activated.connect(func(actor: Node) -> void:
 		var peer_id := (actor as PlayerActor).peer_id if actor is PlayerActor else GameSession.get_local_peer_id()
-		var result := GameSession.collect_adventure_loot(item_id, amount, peer_id)
-		if result.changed > 0:
-			GameSession.last_message = "Unsecured loot: %s x%d" % [definition.display_name, result.changed]
-			target.queue_free()
+		if server_runtime_mode:
+			_try_gather(peer_id, id)
+		else:
+			NetworkManager.request_gather(id)
 	)
+
+func _on_gather_requested(peer_id: int, world_id: StringName, interaction_id: StringName) -> void:
+	if server_runtime_mode and context != null \
+			and world_id == PlayerWorldState.adventure_world_id(context.region_id):
+		_try_gather(peer_id, interaction_id)
+
+func _try_gather(peer_id: int, interaction_id: StringName) -> bool:
+	if not server_runtime_mode or _consumed_gather.has(interaction_id) \
+			or GameSession.get_peer_world_id(peer_id) != PlayerWorldState.adventure_world_id(context.region_id):
+		return false
+	var target: InteractionTarget = _gather_targets.get(interaction_id)
+	var data: Dictionary = _gather_items.get(interaction_id, {})
+	var player_manager := get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
+	var actor := player_manager.get_actor(peer_id) if player_manager != null else null
+	var runtime := GameSession.get_player_runtime(peer_id)
+	if target == null or actor == null or runtime == null \
+			or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE \
+			or actor.global_position.distance_to(target.global_position) > 90.0:
+		return false
+	var result := GameSession.collect_adventure_loot_for_peer(
+		data.get("item_id", &""), int(data.get("amount", 0)), peer_id
+	)
+	if result.changed <= 0:
+		return false
+	_consumed_gather[interaction_id] = true
+	GameSession.last_message = "Unsecured loot: %s x%d" % [data.get("item_id", &""), result.changed]
+	_gather_targets.erase(interaction_id)
+	target.enabled = false
+	target.queue_free()
+	NetworkManager.broadcast_gather_consumed(PlayerWorldState.adventure_world_id(context.region_id), interaction_id)
+	return true
+
+func _on_gather_consumed_received(world_id: StringName, interaction_id: StringName) -> void:
+	if server_runtime_mode or context == null \
+			or world_id != PlayerWorldState.adventure_world_id(context.region_id):
+		return
+	var target: Variant = _gather_targets.get(interaction_id)
+	_gather_targets.erase(interaction_id)
+	if is_instance_valid(target) and target is InteractionTarget:
+		target.enabled = false
+		target.queue_free()
+
+func _on_peer_world_ready(peer_id: int) -> void:
+	var world_id := PlayerWorldState.adventure_world_id(context.region_id) if context != null else &""
+	if server_runtime_mode and GameSession.get_peer_world_id(peer_id) == world_id:
+		var ids: Array[StringName] = []
+		ids.assign(_consumed_gather.keys())
+		NetworkManager.send_gather_state(peer_id, world_id, ids)
 
 func _escape(result: AdventureSession.Result) -> void:
 	var transition := NetworkManager.request_return_to_settlement(result)

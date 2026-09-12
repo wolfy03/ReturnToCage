@@ -1,9 +1,9 @@
 class_name NetworkProtocol
 extends RefCounted
 
-# v11 adds owner-only player-world assignments and revision-bound world-ready
-# acknowledgement. v10 clients cannot safely interpret independent routing.
-const VERSION := 11
+# v12 adds world/revision-bound gameplay replication for player movement,
+# enemies, loot, combat presentation, and shared field interactions.
+const VERSION := 12
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

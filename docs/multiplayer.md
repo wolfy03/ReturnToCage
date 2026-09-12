@@ -98,7 +98,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
 - Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
 - Host Saved Game orchestration with pre-transport Save staging and a restoring-state handshake gate
-- Protocol v11 synchronization: v10 owner-private state plus owner-only world assignment and revision-bound world readiness
+- Protocol v12 synchronization: v11 world assignment plus world/revision-bound gameplay replication
 
 `inventory_changed` remains a local-player UI compatibility signal. `quest_changed` is a compatibility notification; `quest_state_changed` carries scope and logical owner for replication. Peer-specific health/life presentation remains separate.
 
@@ -140,19 +140,29 @@ Host Saved Game is distinct from offline Load followed by Host. `SaveManager.pre
 
 The 4-D process-restart lifecycle is covered by independent 2-player and 3-player OS-process probes. They verify profile primary/backup reuse, production Host Saved Game staging, detached canonical restoration, same-object reattachment, owner-private and revisioned item/quest synchronization, returning/fallback actor placement before readiness, B/C privacy isolation, symmetric runtime mappings, duplicate-active-identity rejection, repeated reconnect, and host-loss cache cleanup. Save v4 and Profile v1 remain unchanged. Deferred work is product infrastructure such as authenticated account identity, cloud saves, NAT traversal, dedicated servers, host migration, and active-Adventure persistence.
 
-## Per-player world participation (Protocol v11)
+## Independent world participation and runtime (Protocol v12)
 
 `GameSession.phase` remains an offline and compatibility facade, but multiplayer location authority is `player_id -> PlayerWorldState`. A stable state identifies `settlement` or `adventure:<region_id>` and carries an incrementing revision. `peer_id` is used only to attach the active transport peer to that canonical state. Fresh joins and reconnects begin in Settlement; disconnecting from Adventure forfeits unsecured loot and resets the detached world state to Settlement without deleting the canonical `PlayerState`.
 
 Clients request a region or Settlement return; the host derives the sender identity, validates life/current world/content entry/pending state, commits one player's world state, and sends only that owner a `PlayerWorldAssignment`. The assignment contains no scene path. `SceneRouter` resolves the authoritative region through `ContentRegistry`, rejects wrong session/player/stale revisions, and changes only the local process presentation. After the destination `PlayerSpawnManager` consumes its authoritative spawn and world-filtered roster, the client acknowledges `(world_id, revision)`. Commands remain blocked while that acknowledgement is pending.
 
-Each `PlayerSpawnManager` declares its world identity and creates actors only for peers whose canonical assignment matches it. Destination roster delivery is hosted by the stable `NetworkManager` autoload rather than scene-relative RPC paths, so Settlement and Sewer clients can have different scene trees. A leaving actor is removed from the old roster, while same-world peers are added deterministically. The current 1/2 foundation intentionally does not provide background Adventure simulation when the host's local presentation is in another world; movement/enemy/loot/combat interest and independent server world runtimes are the 2/2 scope.
+Each `PlayerSpawnManager` declares its world identity and creates actors only for peers whose canonical assignment matches it. Destination roster delivery is hosted by the stable `NetworkManager` autoload rather than scene-relative RPC paths, so Settlement and Sewer clients can have different scene trees. A leaving actor is removed from the old roster, while same-world peers are added deterministically.
+
+Protocol v12 completes the independent runtime boundary. `ServerWorldRoot` is persistent beside the host's presentation `WorldLayer`; each occupied world owns one `ServerWorldRuntime` under a rendering-disabled `SubViewport` with its own `World2D`. The host can therefore present Settlement while `adventure:sewer_region` continues authoritative player physics, enemy AI, combat, loot, gather state, and its world-local clock; conversely, the host may present Sewer while a remote client continues independently in Settlement. The first participant creates the runtime, additional participants reuse it, and the last participant leaving removes it. Re-entry creates one fresh runtime; empty-field persistence remains intentionally unsupported.
+
+Authoritative actors and presentation mirrors are distinct roles of the existing actor scenes. Runtime actors simulate and presentation actors consume snapshots. Stable `NetworkManager` RPC brokers carry `world_id` and the receiving peer's current world revision for player transform/runtime/attack presentation, enemy spawn/state/despawn, loot spawn/despawn, respawn, and gather consumption. Recipients are selected from ready peers in the same world, and a client rejects packets whose world or revision no longer matches its local assignment. Owner-private item, equipment, quest, and v10 private-state snapshots remain owner-only and are not world filtered; shared settlement/progression mirrors retain their prior global contract.
+
+Enemy and loot managers own an explicit world ID. Entity registration is scoped by `(world_id, entity_id)`, so equal numeric IDs in different worlds do not alias. Combat uses actors in the isolated physics world; enemy targeting additionally requires an authoritative player actor in the same world root. Loot and gather requests derive the sender's current world on the server, validate the world, living runtime, distance, and availability, and broadcast results only to ready peers in that world. Settlement craft, facility, and storage-transfer commands retain server-side Settlement readiness checks.
+
+Adventure sessions are indexed by Adventure world and tick independently of the host camera. An individual return removes only that player's authoritative and presentation actor; the shared runtime and the other participants' adventure/loot state remain. Adventure disconnect retains canonical `PlayerState`, forfeits unsecured participation, removes runtime mappings, and resets the reconnect assignment to Settlement.
 
 Run the independent process checks with:
 
 ```text
 python tools/test_multiplayer_worlds.py --godot <godot> --players 2
 python tools/test_multiplayer_worlds.py --godot <godot> --players 3
+python tools/test_multiplayer_world_runtime.py --godot <godot> --players 2
+python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 ```
 
 ## Not synchronized yet

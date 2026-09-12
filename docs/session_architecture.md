@@ -103,6 +103,20 @@ revision을 증가시킨다. `GameSession.phase`와 `AdventureState.active_sessi
 호환 facade로 남지만 multiplayer player 위치의 source of truth가 아니다. World assignment,
 pending transition, `(world_id, revision)` ready state는 Save에 포함되지 않는 runtime cache다.
 
+멀티플레이 Host의 presentation scene은 authoritative simulation owner가 아니다.
+`ServerWorldRoot`가 현재 active `PlayerWorldState`에서 필요한 world 집합을 파생하고, occupied
+world마다 하나의 `ServerWorldRuntime`을 유지한다. 각 runtime은 별도 `SubViewport.World2D`에
+player/enemy/loot/interaction simulation을 두므로 좌표나 collision layer가 같아도 다른
+world와 물리 query가 교차하지 않는다. 참가자 registry를 복제하지 않고
+`GameSession.peer_ids_in_world()`를 source of truth로 사용한다.
+
+Network entity cache는 `(world_id, entity_id)`로 scoped되고 movement/enemy/loot/combat/gather
+replication은 same-world ready peers만 대상으로 한다. 모든 world payload는 current assignment
+revision과 결합되어 전환 전 delayed packet을 무시한다. owner-private state는 identity owner
+경계, shared progression은 기존 session-wide 경계를 유지한다. Save v4에는 runtime world,
+runtime entity, ready revision을 기록하지 않으며 active Adventure save/resume도 계속 지원하지
+않는다.
+
 PlayerState는 reset/restore 시 이전 EffectRuntimeModel의 periodic과 이전 StatBlock의
 stat_changed 연결을 명시적으로 해제한다. 외부에서 이전 RefCounted를 보관해도 현재
 PlayerState에 콜백하지 않는다. 이전 효과 모델은 paused 상태로 폐기된다.

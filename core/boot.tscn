@@ -1,13 +1,32 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource path="res://core/app_root.gd" type="Script" id="1"]
 [ext_resource path="res://ui/game_hud.gd" type="Script" id="2"]
 [ext_resource path="res://devtools/debug_panel.gd" type="Script" id="3"]
 [ext_resource path="res://ui/multiplayer/multiplayer_panel.gd" type="Script" id="4"]
 [ext_resource path="res://ui/identity_recovery_dialog.tscn" type="PackedScene" id="5"]
+[ext_resource path="res://world/runtime/server_world_root.gd" type="Script" id="6"]
+[ext_resource path="res://world/multiplayer/quest_replication_service.gd" type="Script" id="7"]
+[ext_resource path="res://world/multiplayer/settlement_replication_service.gd" type="Script" id="8"]
+[ext_resource path="res://world/multiplayer/player_item_replication_service.gd" type="Script" id="9"]
 
 [node name="Boot" type="Node"]
 script = ExtResource("1")
+
+[node name="ServerWorldRoot" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("6")
+
+[node name="NetworkServices" type="Node" parent="."]
+
+[node name="QuestReplicationService" type="Node" parent="NetworkServices"]
+script = ExtResource("7")
+
+[node name="SettlementReplicationService" type="Node" parent="NetworkServices"]
+script = ExtResource("8")
+
+[node name="PlayerItemReplicationService" type="Node" parent="NetworkServices"]
+script = ExtResource("9")
 
 [node name="WorldLayer" type="Node" parent="."]
 unique_name_in_owner = true

@@ -9,6 +9,7 @@ signal finished(agent: EnemyAgent)
 @onready var hurtbox: HurtboxComponent = %Hurtbox
 @onready var network: NetworkEnemyComponent = %NetworkEnemy
 var network_entity_id: int = 0
+var world_id: StringName = &""
 var simulation_enabled: bool = true
 var effects: EffectController
 var effect_stats: StatBlock
@@ -23,10 +24,16 @@ var last_damage_player_id: StringName = &""
 var facing := 1.0
 var _death_resolved: bool = false
 
-func setup_enemy(p_definition: EnemyDefinition, entity_id: int, p_simulation_enabled: bool) -> void:
+func setup_enemy(
+	p_definition: EnemyDefinition,
+	entity_id: int,
+	p_simulation_enabled: bool,
+	p_world_id: StringName = &""
+) -> void:
 	definition = p_definition
 	network_entity_id = entity_id
 	simulation_enabled = p_simulation_enabled
+	world_id = p_world_id
 
 func is_simulation_authority() -> bool:
 	return simulation_enabled and NetworkManager.is_authoritative_simulation()
@@ -38,11 +45,12 @@ func _ready() -> void:
 		set_physics_process(false)
 		return
 	patrol_origin = global_position
-	health.max_health = definition.max_health * GameSession.current_difficulty().enemy_health_multiplier
+	var difficulty := GameSession.current_difficulty_for_world(world_id) if not world_id.is_empty() else GameSession.current_difficulty()
+	health.max_health = definition.max_health * difficulty.enemy_health_multiplier
 	health.current_health = health.max_health
 	effect_stats = StatBlock.new()
 	effect_stats.set_base(&"move_speed", definition.move_speed)
-	effect_stats.set_base(&"attack_power", definition.attack_damage * GameSession.current_difficulty().enemy_damage_multiplier)
+	effect_stats.set_base(&"attack_power", definition.attack_damage * difficulty.enemy_damage_multiplier)
 	effect_stats.set_base(&"max_health", health.max_health)
 	effect_stats.stat_changed.connect(_on_effect_stat_changed)
 	effects = EffectController.new()
@@ -95,11 +103,20 @@ func _select_target() -> void:
 			nearest_distance = distance
 			player = candidate
 
-func _valid_target(candidate: PlayerActor) -> bool:
-	if candidate == null or not is_instance_valid(candidate) or candidate.get_parent() != get_parent():
+func _valid_target(candidate: Variant) -> bool:
+	# A world transition can free the previously targeted actor before the next
+	# physics tick. Validate the Object lifetime before applying a typed cast.
+	if not is_instance_valid(candidate):
 		return false
-	var runtime := GameSession.get_player_runtime(candidate.peer_id)
-	return runtime != null and runtime.life_phase == PlayerRuntimeState.LifePhase.ALIVE and not candidate.is_death_handled()
+	if not candidate is PlayerActor:
+		return false
+	var player_candidate := candidate as PlayerActor
+	if not player_candidate.is_simulation_authority() or player_candidate.world_id != world_id \
+			or player_candidate.get_parent() != get_parent():
+		return false
+	var runtime := GameSession.get_player_runtime(player_candidate.peer_id)
+	return runtime != null and runtime.life_phase == PlayerRuntimeState.LifePhase.ALIVE \
+			and not player_candidate.is_death_handled()
 
 func change_state(id: StringName) -> void:
 	if not states.has(id):

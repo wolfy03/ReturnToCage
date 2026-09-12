@@ -21,8 +21,7 @@ func request_reward(quest_id: StringName) -> void:
 		_request_reward.rpc_id(1, quest_id)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.is_server() or not NetworkManager.can_send_to_peer(peer_id) \
-			or not GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
+	if not NetworkManager.is_server() or not NetworkManager.can_send_to_peer(peer_id):
 		return
 	var player_id := NetworkManager.player_id_for_peer(peer_id)
 	for snapshot in GameSession.quest_snapshots_for_player(player_id):
@@ -39,7 +38,7 @@ func _on_quest_state_changed(quest_id: StringName, scope: int, owner_player_id: 
 		if peer_id > 1 and NetworkManager.can_send_to_peer(peer_id) and NetworkManager.is_peer_world_ready(peer_id):
 			_receive_snapshot.rpc_id(peer_id, snapshot.to_payload())
 		return
-	for peer_id in NetworkManager.ready_remote_peer_ids():
+	for peer_id in NetworkManager.all_ready_remote_peer_ids():
 		if NetworkManager.can_send_to_peer(peer_id):
 			_receive_snapshot.rpc_id(peer_id, snapshot.to_payload())
 

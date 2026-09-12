@@ -13,29 +13,31 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent) -> void:
 	input = p_input
 	input.network_intents_enabled = actor.is_local_player() and NetworkManager.is_multiplayer_active()
 	input.attack_requested.connect(_on_attack_requested)
+	NetworkManager.player_attack_presented_received.connect(_on_attack_presented_received)
+	if actor.is_simulation_authority() and NetworkManager.is_server():
+		NetworkManager.player_attack_command_received.connect(_on_attack_command_received)
+
+func _exit_tree() -> void:
+	if NetworkManager.player_attack_presented_received.is_connected(_on_attack_presented_received):
+		NetworkManager.player_attack_presented_received.disconnect(_on_attack_presented_received)
+	if NetworkManager.player_attack_command_received.is_connected(_on_attack_command_received):
+		NetworkManager.player_attack_command_received.disconnect(_on_attack_command_received)
 
 func _on_attack_requested() -> void:
 	if actor == null or not actor.is_local_player():
 		return
 	_local_sequence += 1
-	if NetworkManager.is_authoritative_simulation():
+	if actor.is_simulation_authority() and not NetworkManager.is_multiplayer_active():
 		_server_execute_attack(actor.peer_id, _local_sequence)
-	elif NetworkManager.is_session_connected() and NetworkManager.is_local_world_ready() \
-			and GameSession.are_peers_in_same_world(actor.peer_id, 1):
-		_request_attack.rpc_id(1, _local_sequence)
+	elif NetworkManager.is_session_connected() and NetworkManager.is_local_world_ready():
+		NetworkManager.submit_player_attack(actor.peer_id, _local_sequence)
 
-@rpc("any_peer", "call_remote", "reliable")
-func _request_attack(sequence: int) -> void:
-	if not NetworkManager.is_server() or actor == null:
-		return
-	var sender := multiplayer.get_remote_sender_id()
-	if not NetworkProtocol.valid_command_sender(sender, actor.peer_id, GameSession.has_player(sender) \
-			and NetworkManager.has_peer(sender) and NetworkManager.is_peer_world_ready(sender)):
-		return
-	_server_execute_attack(sender, sequence)
+func _on_attack_command_received(peer_id: int, sequence: int) -> void:
+	if actor != null and actor.is_simulation_authority() and actor.peer_id == peer_id:
+		_server_execute_attack(peer_id, sequence)
 
 func _server_execute_attack(peer_id: int, sequence: int) -> CombatResult:
-	if not NetworkManager.is_authoritative_simulation() or actor == null or actor.peer_id != peer_id:
+	if actor == null or not actor.is_simulation_authority() or actor.peer_id != peer_id:
 		return CombatResult.make(false, peer_id, "Invalid attack authority")
 	var command := PlayerAttackCommand.new(sequence)
 	if not command.is_valid_after(_last_server_sequence):
@@ -56,14 +58,11 @@ func _server_execute_attack(peer_id: int, sequence: int) -> CombatResult:
 	actor.cancel_return_channel_for_combat()
 	attack_presented.emit(peer_id, sequence, actor.facing)
 	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
-		for remote_peer_id in NetworkManager.ready_remote_peer_ids(GameSession.get_peer_world_id(actor.peer_id)):
-			if NetworkManager.can_send_to_peer(remote_peer_id):
-				_present_attack.rpc_id(remote_peer_id, peer_id, sequence, actor.facing)
+		NetworkManager.broadcast_player_attack(peer_id, sequence, actor.facing)
 	return result
 
-@rpc("authority", "call_remote", "reliable")
-func _present_attack(peer_id: int, sequence: int, replicated_facing: float) -> void:
-	if NetworkManager.is_server() or actor == null or peer_id != actor.peer_id \
+func _on_attack_presented_received(peer_id: int, sequence: int, replicated_facing: float) -> void:
+	if actor == null or actor.is_simulation_authority() or peer_id != actor.peer_id \
 		or sequence < 0 or not is_finite(replicated_facing):
 		return
 	actor.facing = replicated_facing

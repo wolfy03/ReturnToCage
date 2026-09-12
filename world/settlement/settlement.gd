@@ -1,5 +1,15 @@
 extends Node2D
 
+var server_runtime_mode: bool = false
+
+func configure_server_runtime(p_world_id: StringName, _region_id: StringName = &"") -> void:
+	server_runtime_mode = true
+	var manager := get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
+	if manager != null:
+		manager.world_id = p_world_id
+		manager.authoritative_runtime = true
+	_remove_runtime_duplicate_services()
+
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color("162133"))
 	WorldHelpers.add_platform(self, Vector2(700, 570), Vector2(1500, 70), Color("435047"))
@@ -14,6 +24,13 @@ func _ready() -> void:
 	_create_exits()
 	_create_save_post()
 	(get_node("PlayerSpawnManager") as PlayerSpawnManager).initialize_spawns()
+
+func _remove_runtime_duplicate_services() -> void:
+	for child_name in ["QuestReplicationService", "SettlementReplicationService", "PlayerItemReplicationService"]:
+		var service := get_node_or_null(child_name)
+		if service != null:
+			remove_child(service)
+			service.free()
 
 func _create_npc() -> void:
 	var target := WorldHelpers.add_interaction(self, &"milo", "Talk to Milo", Vector2(300, 525), Vector2(42, 62), Color("a8b37b"), 3)

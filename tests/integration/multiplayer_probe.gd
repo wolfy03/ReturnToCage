@@ -129,7 +129,11 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	if Time.get_ticks_msec() > deadline_msec:
-		_fail("probe timed out in state %s" % ProbeState.keys()[state])
+		_fail("probe timed out in state %s players=%d actors=%d enemy_roster=%d quest_sync=%d" % [
+			ProbeState.keys()[state], GameSession.players.size(),
+			get_tree().get_nodes_in_group(&"player").size(), enemy_roster_confirmations.size(),
+			quest_sync_confirmations.size(),
+		])
 		return
 	if role == "client" and world != null:
 		if not _remote_private_placeholders_are_empty():
@@ -893,8 +897,19 @@ func _build_world() -> void:
 	world.name = "NetworkProbeWorld"
 	world.call("configure", AdventureContext.new(&"sewer_region", &"sewer_gate", &"sewer_entrance", &"normal", GameSession.session_id))
 	# The legacy combat probe deliberately presents Sewer while retaining the
-	# safe-boundary session model. Split-world routing has its own process probe.
-	(world.get_node("PlayerSpawnManager") as PlayerSpawnManager).configure_world(&"settlement")
+	# safe-boundary session model. It runs without Boot's ServerWorldRoot, so its
+	# single host scene is also the explicit authoritative runtime fixture.
+	var probe_player_spawner := world.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	probe_player_spawner.configure_world(&"settlement")
+	(world.get_node("EnemySpawnManager") as EnemySpawnManager).configure_world(
+		&"settlement", NetworkManager.is_server()
+	)
+	(world.get_node("LootSpawnManager") as LootSpawnManager).configure_world(
+		&"settlement", NetworkManager.is_server()
+	)
+	if NetworkManager.is_server():
+		probe_player_spawner.authoritative_runtime = true
+		world.set("server_runtime_mode", true)
 	add_child(world)
 	ladder = world.get_node("EmergencyLadder") as ClimbableArea2D
 	spawner = world.get_node("PlayerSpawnManager") as PlayerSpawnManager
@@ -943,6 +958,10 @@ func _ensure_probe_adventure() -> void:
 	GameSession.adventure.active_session.set_compatibility_peer_id(GameSession.get_local_peer_id(), Callable(ContentRegistry, "get_item"))
 	for peer_id in GameSession.players:
 		GameSession.adventure.active_session.register_player(peer_id, Callable(ContentRegistry, "get_item"))
+	# This legacy probe keeps its participants in the Settlement world while it
+	# exercises the old combat/loot fixture. Bind that fixture explicitly to the
+	# authoritative world registry used by current gameplay services.
+	GameSession._adventure_sessions_by_world[&"settlement"] = GameSession.adventure.active_session
 
 func _actor(peer_id: int) -> PlayerActor:
 	return world.get_node_or_null("Player_%d" % peer_id) as PlayerActor

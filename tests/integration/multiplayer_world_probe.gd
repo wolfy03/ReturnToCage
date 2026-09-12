@@ -24,6 +24,10 @@ func _ready() -> void:
 	world_layer.name = "WorldLayer"
 	add_child(world_layer)
 	SceneRouter.register_world_layer(world_layer)
+	if role == "host":
+		var server_world_root := ServerWorldRoot.new()
+		server_world_root.name = "ServerWorldRoot"
+		add_child(server_world_root)
 	NetworkManager.local_world_assignment_received.connect(_on_world_assignment)
 	NetworkManager.connection_failed.connect(func() -> void: _fail(NetworkManager.last_error))
 	if role == "host":

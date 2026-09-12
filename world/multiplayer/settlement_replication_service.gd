@@ -146,12 +146,11 @@ func _broadcast_current_state() -> void:
 		return
 	_last_settlement_revision = settlement_snapshot.revision
 	_last_progression_revision = progression_snapshot.revision
-	for peer_id in NetworkManager.ready_remote_peer_ids():
+	for peer_id in NetworkManager.all_ready_remote_peer_ids():
 		_send_current_to_peer(peer_id, settlement_snapshot, progression_snapshot)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.is_server() or not NetworkManager.can_send_to_peer(peer_id) \
-			or not GameSession.are_peers_in_same_world(NetworkManager.local_peer_id(), peer_id):
+	if not NetworkManager.is_server() or not NetworkManager.can_send_to_peer(peer_id):
 		return
 	var settlement_snapshot := GameSession.make_settlement_snapshot()
 	var progression_snapshot := GameSession.make_shared_progression_snapshot()
