@@ -9,6 +9,7 @@ signal attack_presented(sequence: int, facing: float)
 @onready var movement: MovementComponent = %Movement
 @onready var health: HealthComponent = %Health
 @onready var survival: SurvivalComponent = %Survival
+@onready var combat_action: CombatActionController = %CombatAction
 @onready var combat: CombatComponent = %Combat
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
@@ -59,7 +60,7 @@ func _ready() -> void:
 	_life_id = GameSession.arm_player_life(peer_id) if is_simulation_authority() else -1
 	movement.configure(self, input, _bound_state.stats)
 	var runtime := GameSession.get_player_runtime(peer_id)
-	combat.configure(self, _bound_state.stats, runtime.combat if runtime != null else null)
+	combat.configure(self, _bound_state.stats, runtime.combat if runtime != null else null, combat_action)
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
 	network_combat.configure(self, input)
@@ -197,6 +198,9 @@ func _on_died(_context: DamageContext) -> void:
 	if _death_handled or not is_simulation_authority() or not GameSession.is_current_life(peer_id, _life_id):
 		return
 	_death_handled = true
+	# A dead actor must not linger in an attack recovery; the action axis is
+	# scene-local, so this is the only cleanup point it needs.
+	combat_action.reset()
 	movement.exit_climb()
 	movement.enabled = false
 	survival.drain_paused = true

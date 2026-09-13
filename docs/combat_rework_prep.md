@@ -8,7 +8,8 @@
 ```
 완료  1차  CombatRuntimeState 로 stamina ownership 이전
 완료  2차  authoritative stamina replication (Protocol v13) + runtime-mirror HUD
-예정  3차  Combat Action State Machine (IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY)
+완료  3차  Combat Action State Machine (IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY)
+예정  4차  AttackDefinition + 실제 attack timeline
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -152,7 +153,9 @@ Movement / Locomotion State        Combat Action State
 ```
 
 `MovementComponent.Mode` 는 현재의 `GROUND / AIR / CLIMB` 를 유지한다. `ATTACK`, `DODGE`,
-`HURT`, `DEAD` 는 3차에서 도입할 별도의 Combat Action State 가 담당한다.
+`HURT`, `DEAD` 는 모두 Combat Action State 축에 속한다. 3차에서 그 축(`CombatActionController`)을
+도입하면서 `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 네 상태만 구현했고,
+`DODGE` / `HURT` / `DEAD` 는 후속 단계다.
 
 무적 프레임은 `HealthComponent.invulnerable_remaining` 을 그대로 재사용하지 않는 편이 안전하다.
 현재 이 값은 "피격 후 무적"이라 의미가 다르다. `receive_periodic_damage()` 가 접촉 무적을
@@ -190,8 +193,8 @@ hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하�
 |---|---|---|
 | 1차 | Combat Runtime State — `CombatRuntimeState` 로 stamina ownership 이전 | 완료 |
 | 2차 | Stamina authoritative replication (Protocol v13) + runtime-mirror HUD | 완료 |
-| 3차 | **Combat Action State Machine** — `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 만 | 예정 |
-| 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 예정 |
+| 3차 | **Combat Action State Machine** — `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 만 | 완료 |
+| 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 다음 |
 | 5차 | Hitbox 데이터화 + Knockback 실제 적용 | 예정 |
 | 6차 | HURT (플레이어 피격 경직) | 예정 |
 | 7차 이후 | Dodge/i-frame, Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
@@ -202,28 +205,52 @@ hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하�
 이벤트 기반 reliable 스냅샷과 throttled unreliable combat 스냅샷으로 복제한 뒤 HUD 가
 runtime mirror 를 읽게 했다(2차). 상세는 3-1 과 `docs/multiplayer.md` 를 본다.
 
-### 3차 — Combat Action State Machine
+### 3차 — Combat Action State Machine (완료)
 
-이 단계에서는 **상태 머신 골격만** 만든다. `IDLE`, `ATTACK_STARTUP`, `ATTACK_ACTIVE`,
-`ATTACK_RECOVERY` 네 상태와 그 사이의 전이·타이밍 소유권만 다루고, `DODGE`/`HURT`/`DEAD`,
-`AttackDefinition`, 넉백, 콤보, 입력 버퍼는 넣지 않는다.
+`gameplay/components/combat_action_controller.gd` 의 `CombatActionController` 가 combat action
+축을 소유한다. PlayerActor 의 `%CombatAction` 노드이며 `CombatComponent.action` 이 참조한다.
 
-지켜야 할 경계:
-- locomotion(`MovementComponent.Mode = GROUND/AIR/CLIMB`)과 독립이다. Movement Mode 에
-  전투 상태를 추가하지 않는다(3-2).
-- 상태는 호스트가 소유한다. 클라이언트는 표현만 한다.
-- 상태 값을 네트워크 payload 에 싣게 되는 시점에 payload shape 가 바뀌는지 확인하고,
-  바뀐다면 `NetworkProtocol.VERSION` 을 함께 올린다(5절).
-- 상태 지속시간을 Scene Node 가 소유할지, `CombatRuntimeState` 로 올릴지는 착수 시 정한다.
-  씬 이동을 넘어 유지돼야 하는 값이면 runtime state 로 올린다.
+```
+IDLE            → ATTACK_STARTUP
+ATTACK_STARTUP  → ATTACK_ACTIVE | IDLE      (취소)
+ATTACK_ACTIVE   → ATTACK_RECOVERY | IDLE    (취소)
+ATTACK_RECOVERY → IDLE
+```
+
+- 상태 저장·전이 검증·`state_changed` 시그널만 담당한다. 데미지·스태미나·무기·히트박스·
+  애니메이션·네트워크를 모른다. 실제 상태가 바뀔 때만 시그널을 발생시킨다.
+- **scene-local** 이다. 공격이 월드 전환을 넘어 유지될 이유가 없으므로 새 액터는 `IDLE` 로
+  시작한다. 씬을 넘어 유지돼야 하는 값(스태미나)은 계속 `CombatRuntimeState` 에 있다.
+- 권위 변경은 서버 시뮬레이션에서만 일어난다. 비권위 액터는 `combat.set_process(false)` 라
+  action 이 스스로 진행하지 않는다. **네트워크로 복제하지 않으며 프로토콜은 v13 그대로다.**
+- **타이밍 상수를 새로 만들지 않았다.** 아직 startup/active 길이의 authoritative source 가
+  없기 때문이다. 현재 공격은 여전히 즉발이고 데미지 타이밍은 3차 이전과 동일하다.
+  성공한 공격은 `enter_recovery_from_immediate_attack()` 이라는 명시적 임시 edge 로
+  `ATTACK_RECOVERY` 에 들어가고, 기존 `WeaponDefinition.attack_cooldown` 이 그대로 recovery
+  창 역할을 한다. 쿨다운이 끝나는 프레임에 `finish_attack()` 으로 `IDLE` 에 복귀한다.
+  이 edge 는 일반 전이표에 없다 — `transition_to(ATTACK_RECOVERY)` 는 `IDLE` 에서 계속 실패하며,
+  4차에서 실제 타임라인이 생기면 삭제한다.
+- 공격 시작 조건에 `action.is_idle()` 이 추가됐다. 쿨다운과 역할이 일부 겹치지만 둘 다
+  유지한다. 쿨다운은 무기 공격 속도 규칙이고, action state 는 앞으로 타임라인과 캔슬 규칙을
+  담당할 축이다. 4차 이후 역할을 점진적으로 정리한다.
+- 실패한 공격(쿨다운·스태미나 부족·무기 없음·내구도 0·등반 중·귀환 채널링·strategy 실패)은
+  action state 를 **전혀 바꾸지 않는다**.
 
 ### 4차 이후 메모
 
 무기마다 선딜/후딜/히트박스 모양/콤보 단계가 달라지므로, 지금처럼 `WeaponDefinition` 에
 스칼라만 두는 구조로는 부족하다. `AttackDefinition`(windup / active / recovery /
 hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하위 Resource 배열이 필요하다.
-새 Resource 는 `data/definitions/` 에 `ContentDefinition` 으로 넣고
-`validate_definition()` 을 반드시 구현한다(`CLAUDE.md` 4절).
+
+`AttackDefinition` 이 `WeaponDefinition` 안에 들어가는 sub-resource 라면 먼저 평범한
+`extends Resource` 를 검토한다. 반드시 `ContentDefinition` 일 필요는 없다 —
+`ContentDefinition` 은 ContentRegistry 에 독립적으로 등록되는 ID 기반 콘텐츠용이다.
+실제 데이터 ownership 은 4차에서 재검토한다.
+
+4차의 연결 지점은 이미 준비돼 있다. `begin_attack()` → startup 타이머 →
+`enter_attack_active()` → 히트박스 arm → active 타이머 → `enter_attack_recovery()` →
+recovery 타이머 → `finish_attack()` 으로 자연스럽게 이어지며, 그 시점에 위의 임시 edge 를
+삭제한다.
 
 적 공격은 아직 `EnemyAgent.perform_attack()` 이 대상 `HealthComponent.receive_damage()` 를
 직접 호출한다. 히트박스 파이프라인으로 옮기는 것은 적 패턴 개편 단계의 일이다.

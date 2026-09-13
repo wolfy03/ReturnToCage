@@ -57,13 +57,17 @@ func _test_actor_binding_attack_and_regen(t: Node) -> void:
 	t.assert_equal(runtime.combat.stamina, before - weapon.stamina_cost, "attack spends stamina_cost from the runtime state")
 	t.assert_equal(actor.combat.cooldown_remaining, weapon.attack_cooldown, "cooldown stays on the component")
 
+	# Clear both gates so this case actually exercises the stamina rejection and
+	# not the combat action state left in recovery by the attack above.
 	actor.combat.cooldown_remaining = 0.0
+	actor.combat_action.reset()
 	runtime.combat.stamina = weapon.stamina_cost - 0.5
 	var low := runtime.combat.stamina
 	t.assert_true(not actor.combat.attack(1.0), "attack is rejected without enough stamina")
 	t.assert_equal(runtime.combat.stamina, low, "rejected attack leaves stamina unchanged")
 	t.assert_equal(actor.combat.cooldown_remaining, 0.0, "rejected attack starts no cooldown")
 
+	actor.combat_action.reset()
 	runtime.combat.stamina = 50.0
 	actor.combat.stamina_regen_multiplier = 1.0
 	actor.combat._process(1.0)

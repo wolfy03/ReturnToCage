@@ -100,6 +100,12 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
 - unit/test_combat_runtime_state.gd: `CombatRuntimeState` reset/spend/regenerate/max 클램프, 실제 Settlement actor의 `CombatComponent`가 `PlayerRuntimeState.combat`을 참조하는지, 공격 성공 시 stamina_cost 차감·부족 시 거절과 값 유지·cooldown 미시작, `_process` 재생과 survival multiplier, stat modifier에 따른 max 변화, unbound component의 null 안전성, 월드 전환 시 유지와 respawn 시 max로 refill.
+- unit/test_combat_action_controller.gd: combat action 상태 머신의 초기 IDLE, 정상 전이
+  (`IDLE → STARTUP → ACTIVE → RECOVERY → IDLE`)와 취소, 불법 전이 거절 및 거절 후 상태 유지,
+  실제 변경 시에만 발생하는 signal, reset 정책, legacy 즉발 공격 bridge. 실제 PlayerActor
+  통합으로 wiring, 성공 공격 후 RECOVERY(가짜 phase 진행 없이 1회 signal), recovery 중
+  재공격 거절(스태미나·쿨다운·히트박스 불변), 기존 쿨다운 종료 시 IDLE 복귀(별도 타이머 없음),
+  모든 실패 경로에서 IDLE 유지, 월드 전환·사망·부활 후 IDLE.
 - unit/test_combat_runtime_replication.gd: `CombatRuntimeState.apply_values` 검증,
   `PlayerRuntimeSnapshot`/`PlayerCombatRuntimeSnapshot`의 payload 왕복과 누락·타입·음수·
   초과·NaN/INF 거절, sequence 최신/중복/역행 처리, 값이 변하지 않을 때의 패킷 억제,

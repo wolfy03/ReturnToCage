@@ -89,7 +89,8 @@ Save v4 에 포함되지 않는다.
 `quest_changed`, `quest_state_changed`, `player_item_state_changed`,
 `adventure_started`, `adventure_finished`, `difficulty_changed`, `phase_changed`,
 `player_died`, `player_respawned`, `player_health_changed`, `player_life_changed`,
-`player_registered`, `player_unregistered`, `player_world_changed`.
+`player_registered`, `player_unregistered`, `player_world_changed`,
+`player_combat_runtime_changed`.
 
 Phase: `MENU → SETTLEMENT → ADVENTURE → SETTLEMENT`, 사망 시 `RESPAWNING` 경유.
 멀티플레이에서 phase 와 `adventure.active_session` 은 **오프라인/구 UI 호환 facade**일 뿐,
@@ -114,6 +115,7 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
   `_receive_player_runtime`, `_receive_player_attack`, `_receive_player_respawn`,
   `_receive_enemy_spawn/_transform(ch2)/_runtime/_despawn`,
   `_receive_loot_spawn/_despawn/_pickup_result`, `_receive_gather_consumed`,
+  `_receive_player_combat_runtime`(unreliable_ordered ch3),
   `_receive_world_roster_player/_remove/_complete`, `_receive_world_transition_failure`,
   `_receive_session_snapshot`, `_receive_private_player_state`,
   `_receive_spawn_assignment`, `_receive_world_assignment`, `_client_add_peer/_remove_peer`,
@@ -145,7 +147,18 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
 
 `PlayerActor`(CharacterBody2D) 자식:
 `%Input` `%Movement` `%Network` `%NetworkCombat` `%Health` `%Survival` `%Effects`
-`%Combat` `Hitbox` `Hurtbox` `%Interaction` `Camera2D`.
+`%CombatAction` `%Combat` `Hitbox` `Hurtbox` `%Interaction` `Camera2D`.
+
+두 상태 축은 분리돼 있다.
+
+```
+PlayerActor
+├─ MovementComponent      locomotion : GROUND / AIR / CLIMB
+├─ CombatActionController combat action : IDLE / ATTACK_STARTUP /
+│                                         ATTACK_ACTIVE / ATTACK_RECOVERY
+└─ CombatComponent        공격 실행 · 쿨다운 · 스태미나 로직
+     └─ CombatRuntimeState 참조 (stamina / max_stamina)
+```
 
 권위가 아닌(= 원격 표현용) 액터는 `_ready()` 에서 Health/Survival/Combat/Effects 의
 `_process` 를 끄고 Hurtbox 의 monitoring/monitorable 을 내린다. Camera2D 는 로컬
@@ -164,6 +177,10 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
   `speed` 는 `move_speed` 스탯을 따라간다.
 - `HealthComponent` — `receive_damage(DamageContext)`, 접촉 무적 `invulnerability_seconds`
   (기본 0.35), `receive_periodic_damage()` 는 무적을 무시한다.
+- `CombatActionController` — combat action 축(`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE /
+  ATTACK_RECOVERY`). 상태 저장·전이 검증·시그널만 담당하며 데미지·스태미나·무기·히트박스·
+  네트워크를 모른다. scene-local 이라 월드 전환 시 새 액터는 `IDLE` 로 시작한다.
+  locomotion(`MovementComponent.Mode`)과 **독립된 축**이다.
 - `CombatComponent` — 공격 실행, 쿨다운, 스태미나 **소비/재생 로직**, 무기별 전략 dispatch.
   스태미나 값 자체는 소유하지 않고 `combat_runtime`(`CombatRuntimeState`) 참조를 통해 읽고
   쓴다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.
