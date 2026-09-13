@@ -49,8 +49,16 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다. 멜리 히트박스가
   열려 있는 시간도 `active_seconds` 하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 —
   재공격 가능 여부의 유일한 기준은 action state 가 `IDLE` 인지다.
-- **공격은 `ATTACK_ACTIVE` 진입 순간에만 commit 된다.** 히트박스 arm·투사체 생성·스태미나
+- **공격은 `ATTACK_ACTIVE` 진입 순간에만 commit 된다.** 히트박스 활성화·투사체 생성·스태미나
   차감이 전부 거기서 한 번 일어난다. 요청 프레임에는 아무것도 발생하지 않는다.
+- **phase 시간의 소유자는 `CombatComponent` 하나다.** `HitboxComponent` 는 자체 duration
+  타이머를 갖지 않는다 — 지금 살아 있는지(`active`)와 이번 공격에서 이미 맞힌 대상만 안다.
+  멜리 히트박스는 `ATTACK_ACTIVE` 동안에만 활성이며 `IDLE`/`STARTUP`/`RECOVERY` 에서는 꺼져
+  있다. `abort_attack()` 은 히트박스까지 내린다(사망 포함).
+- **긴 프레임에서 공격이 증발하면 안 된다.** 한 프레임이 ACTIVE 구간을 통째로 삼켜도
+  판정 기회가 0 이 되지 않도록, 히트박스는 활성화되는 순간 direct space query 로 즉시
+  한 번 훑는다(`monitoring` 은 다음 physics step 에야 켜지기 때문). 중복 타격은
+  공격 단위 `_hit_targets` 가 막는다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.

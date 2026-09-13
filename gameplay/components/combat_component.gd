@@ -111,9 +111,12 @@ func attack(facing: float) -> bool:
 	_phase_remaining = attack_definition.startup_seconds
 	return true
 
-## Cancels any in-flight attack and returns the action axis to IDLE. Used by
-## lifecycle cleanup (death, teardown); this stage has no gameplay cancel window.
+## Cancels any in-flight attack and returns the action axis to IDLE, taking the
+## hitbox down with it. Used by lifecycle cleanup (death, teardown); this stage
+## has no gameplay cancel window. Safe to call repeatedly and from any phase.
 func abort_attack() -> void:
+	if hitbox != null:
+		hitbox.deactivate()
 	if action != null:
 		action.reset()
 	_clear_pending()
@@ -155,6 +158,10 @@ func _enter_next_phase() -> bool:
 		CombatActionController.State.ATTACK_STARTUP:
 			return _commit_attack()
 		CombatActionController.State.ATTACK_ACTIVE:
+			# Leaving ACTIVE ends the live window; the hitbox never bleeds into
+			# recovery because this component, not the hitbox, times the phase.
+			if hitbox != null:
+				hitbox.deactivate()
 			if not action.enter_attack_recovery():
 				abort_attack()
 				return false
@@ -166,8 +173,9 @@ func _enter_next_phase() -> bool:
 			return false
 	return false
 
-## The single commit point of an attack: entering ATTACK_ACTIVE arms the hitbox
-## or spawns the projectile, exactly once, and only then is stamina spent.
+## The single commit point of an attack: entering ATTACK_ACTIVE makes the hitbox
+## live (or spawns the projectile), exactly once, and only then is stamina spent.
+## The hitbox stays live until this component leaves the ACTIVE phase.
 func _commit_attack() -> bool:
 	var weapon := _pending_weapon
 	var attack_definition := _pending_attack

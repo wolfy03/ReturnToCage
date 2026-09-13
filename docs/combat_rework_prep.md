@@ -227,8 +227,15 @@ ATTACK_RECOVERY → IDLE
   이 그 결과를 합쳐 콘텐츠 검증에서 실패시킨다. `attack_definition` 이 null 인 무기도 실패한다.
 - `twig_sword` 는 `0.10 / 0.12 / 0.33` 으로 이관했다. 합 0.55초로 **기존 공격 cadence 를
   유지**하되 판정은 입력 직후가 아니라 0.10초 뒤에 발생한다. `active_seconds = 0.12` 는
-  기존 히트박스 arm 시간을 그대로 옮긴 값이며, 이제 이 값이 유일한 source 다
-  (`HitboxComponent.arm()` 의 기본값 인자도 제거했다).
+  기존 히트박스 활성 시간을 그대로 옮긴 값이며, 이제 이 값이 유일한 source 다
+  (`HitboxComponent` 의 `arm()` 과 기본값 인자, 자체 카운트다운은 모두 제거했다).
+- **phase 시간의 소유자는 `CombatComponent` 하나다.** `HitboxComponent` 는 자체 duration
+  타이머를 갖지 않고 `activate()` / `deactivate()` 만 노출한다. 멜리 히트박스는 ACTIVE 동안만
+  활성이며 ACTIVE 를 벗어나는 즉시 꺼진다. 활성화 순간 direct space query 로 이미 겹쳐 있는
+  대상을 한 번 훑기 때문에, 한 프레임이 ACTIVE 구간을 통째로 삼켜도 commit 된 공격이 판정
+  없이 증발하지 않는다(`monitoring` 은 다음 physics step 에야 켜진다). 중복 타격은 공격 단위
+  `_hit_targets` 가 막는다. `abort_attack()` 은 히트박스까지 내리며 반복 호출해도 안전하다 —
+  ACTIVE 도중 사망해도 잔존 히트박스가 남지 않는다(이미 commit 된 스태미나는 환불하지 않는다).
 - `CombatComponent` 가 pending attack(weapon/context/facing)과 phase timer 를 소유한다.
   scene-local 이고 Save 대상이 아니므로 `CombatRuntimeState` 로 올리지 않는다. 공격 도중
   장비나 스탯이 바뀌어도 이미 시작된 공격의 의미는 스냅샷으로 고정된다.

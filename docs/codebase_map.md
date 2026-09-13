@@ -170,9 +170,19 @@ WeaponDefinition
 
 ```
 attack(facing)  →  검증 + context/weapon 스냅샷  →  ATTACK_STARTUP (startup_seconds)
-  →  ATTACK_ACTIVE 진입 = commit (전략 실행 · 히트박스 arm · 스태미나 차감 · attacked)
-  →  active_seconds  →  ATTACK_RECOVERY (recovery_seconds)  →  IDLE
+  →  ATTACK_ACTIVE 진입 = commit (전략 실행 · 히트박스 활성 · 스태미나 차감 · attacked)
+  →  active_seconds  →  히트박스 비활성 + ATTACK_RECOVERY (recovery_seconds)  →  IDLE
 ```
+
+phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다음과 같다.
+
+| action state | 멜리 히트박스 |
+|---|---|
+| IDLE | inactive |
+| ATTACK_STARTUP | inactive |
+| ATTACK_ACTIVE | **active** |
+| ATTACK_RECOVERY | inactive |
+| `abort_attack()` / 사망 | inactive (즉시) |
 
 권위가 아닌(= 원격 표현용) 액터는 `_ready()` 에서 Health/Survival/Combat/Effects 의
 `_process` 를 끄고 Hurtbox 의 monitoring/monitorable 을 내린다. Camera2D 는 로컬
@@ -200,7 +210,9 @@ attack(facing)  →  검증 + context/weapon 스냅샷  →  ATTACK_STARTUP (sta
   스태미나 값 자체는 소유하지 않고 `combat_runtime`(`CombatRuntimeState`) 참조를 통해 읽고
   쓴다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.
 - `HitboxComponent`(Area2D) / `HurtboxComponent`(Area2D) — 팩션·target_factions 검사 후
-  `hit_effects` 적용.
+  `hit_effects` 적용. Hitbox 는 **duration 을 모른다**: `activate()`/`deactivate()` 로만
+  켜지고 꺼지며, 활성화 순간 direct space query 로 이미 겹친 대상을 즉시 한 번 훑는다.
+  중복 타격은 공격 단위 `_hit_targets` 가 막는다.
 - `EffectController` — `PlayerState.effects` 모델의 어댑터. 시간은 모델이 소유.
 - `SurvivalComponent` — 허기/갈증. `GameSession.player.survival` 과 같은 객체를 공유.
 

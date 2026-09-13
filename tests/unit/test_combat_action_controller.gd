@@ -146,7 +146,7 @@ func _test_actor_integration(t: Node) -> void:
 	t.assert_true(actor.combat.attack(1.0), "an attack request starts the wind-up")
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "a successful request enters startup")
 	t.assert_equal(runtime.combat.stamina, stamina_before, "the wind-up spends no stamina")
-	t.assert_equal(actor.combat.hitbox.remaining, 0.0, "the hitbox stays inactive during the wind-up")
+	t.assert_true(not actor.combat.hitbox.active, "the hitbox stays inactive during the wind-up")
 
 	# Re-attacking mid-attack is rejected without touching anything.
 	t.assert_true(not actor.combat.attack(1.0), "a second attack during the wind-up is rejected")

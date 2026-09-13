@@ -9,9 +9,9 @@ extends Node
 ##
 ## This controller only stores the current state, validates transitions and
 ## reports changes. It calculates no damage or stamina, looks up no weapon,
-## drives no hitbox or animation, and knows nothing about the network. Attack
-## timing is not here either — durations arrive with AttackDefinition in a later
-## stage, so this stage adds no timers and no hard-coded phase lengths.
+## drives no hitbox or animation, and knows nothing about the network. It does
+## not own timing either: [CombatComponent] drives the phase durations from the
+## weapon's [AttackDefinition] and calls the transitions below.
 ##
 ## Scene-local by design: an attack has no reason to survive a world transition,
 ## so a new actor simply starts at IDLE. Values that must outlive the scene

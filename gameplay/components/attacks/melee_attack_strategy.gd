@@ -4,9 +4,8 @@ extends AttackStrategy
 func execute(weapon: WeaponDefinition, context: DamageContext, _actor: CharacterBody2D, hitbox: HitboxComponent, facing: float) -> bool:
 	if hitbox == null:
 		return false
-	if weapon.attack_definition == null:
-		return false
+	# Shape and facing only. How long the hitbox stays live is the ACTIVE phase,
+	# which CombatComponent owns — this strategy never reads attack timing.
 	hitbox.configure_range(weapon.attack_range, facing)
-	# The armed window is the weapon's ACTIVE phase; there is no default here.
-	hitbox.arm(context, weapon.attack_definition.active_seconds)
+	hitbox.activate(context)
 	return true

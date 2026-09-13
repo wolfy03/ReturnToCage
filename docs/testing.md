@@ -105,7 +105,12 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   0.55초 cadence, STARTUP 동안 히트박스 비활성·commit 없음, ACTIVE 진입 시 1회 commit과
   `active_seconds` 만큼의 히트박스 window·스태미나 1회 차감, RECOVERY 중 재공격 거절,
   전체 사이클 후 IDLE과 재공격 허용, 전체 timeline보다 큰 delta에서도 4회 전이·1회 commit,
-  phase 경계를 걸친 delta의 잉여 이월, projectile이 commit 시 정확히 1회 spawn.
+  phase 경계를 걸친 delta의 잉여 이월. 히트박스 lifecycle(IDLE/STARTUP/RECOVERY에서 비활성,
+  ACTIVE에서만 활성, 자체 타이머 없음)과 STARTUP/ACTIVE/RECOVERY 각각에서의 `abort_attack()`
+  정리(ACTIVE 이후 abort는 스태미나를 환불하지 않음, 반복 호출 안전). 실제 적을 사거리에 두고
+  전체 timeline을 삼키는 큰 delta에서도 melee 판정이 정확히 1회 발생하는지, ACTIVE 도중 사망 시
+  즉시 히트박스가 꺼지고 추가 피해가 없는지. projectile은 strategy 직접 호출이 아니라 실제
+  `CombatComponent` timeline을 통해 ACTIVE 진입에서 정확히 1개만 spawn되는지 검증한다.
 - unit/test_combat_action_controller.gd: combat action 상태 머신의 초기 IDLE, 정상 전이
   (`IDLE → STARTUP → ACTIVE → RECOVERY → IDLE`)와 취소, 불법 전이 거절 및 거절 후 상태 유지,
   실제 변경 시에만 발생하는 signal, reset 정책, legacy 즉발 공격 bridge. 실제 PlayerActor
