@@ -15,6 +15,10 @@ var _finished := false
 var _deadline_msec := 0
 var _sewer_enemy_events := 0
 var _sewer_loot_events := 0
+## Lowest stamina this client ever mirrored from the server. Sampling on demand
+## would race with regeneration, so the replicated signal records the minimum.
+var _min_mirrored_stamina := INF
+var _mirrored_max_stamina := 0.0
 
 func _ready() -> void:
 	_parse_arguments()
@@ -33,6 +37,8 @@ func _ready() -> void:
 		if role == "host" and world_id == SEWER:
 			_sewer_loot_events += 1
 	)
+	if role != "host":
+		GameSession.player_combat_runtime_changed.connect(_on_combat_runtime_changed)
 	if role == "host":
 		_server_root = ServerWorldRoot.new()
 		_server_root.name = "ServerWorldRoot"
@@ -171,6 +177,31 @@ func _run_host_scenario() -> void:
 			previous_health = enemy.health.current_health
 		attack_sequence += 1
 		await get_tree().create_timer(0.55).timeout
+	# Authoritative stamina replication: B spent stamina attacking above, so B's
+	# mirrored runtime state must show the drop and then converge back up as the
+	# server regenerates. The client never simulates stamina itself.
+	var b_combat: CombatRuntimeState = GameSession.get_player_runtime(b_peer).combat
+	if b_combat == null or b_combat.max_stamina <= 0.0:
+		_fail("authoritative B combat runtime is unavailable")
+		return
+	_command.rpc_id(b_peer, "REPORT_STAMINA_SPENT", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_STAMINA_SPENT", b_peer), 4.0):
+		_fail("client did not mirror the authoritative stamina spend")
+		return
+	var spent: Dictionary = _confirmation("REPORT_STAMINA_SPENT", b_peer)
+	var mirrored_low := float(spent.get("stamina", -1.0))
+	if mirrored_low < 0.0 or mirrored_low >= b_combat.max_stamina \
+			or not is_equal_approx(float(spent.get("max_stamina", -1.0)), b_combat.max_stamina):
+		_fail("client stamina mirror diverged from the server: %s vs max %.2f" % [spent, b_combat.max_stamina])
+		return
+	if not await _wait_until(func() -> bool: return is_equal_approx(b_combat.stamina, b_combat.max_stamina), 8.0):
+		_fail("authoritative B stamina did not regenerate back to max")
+		return
+	_command.rpc_id(b_peer, "REPORT_STAMINA_REGEN", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_STAMINA_REGEN", b_peer), 6.0):
+		_fail("client did not mirror authoritative stamina regeneration")
+		return
+
 	if not await _wait_until(func() -> bool: return not runtime.loot_manager().entity_ids().is_empty(), 3.0):
 		_fail("enemy death did not create world-local loot")
 		return
@@ -349,6 +380,25 @@ func _command(command: String, value: int) -> void:
 		"PICKUP":
 			NetworkManager.request_loot_pickup(value)
 			_confirm.rpc_id(1, command, {"entity_id": value})
+		"REPORT_STAMINA_SPENT":
+			var peer_id := NetworkManager.local_peer_id()
+			if not await _wait_until(func() -> bool:
+				return _min_mirrored_stamina < GameSession.get_player_max_stamina(peer_id)
+			, 4.0):
+				_fail("client stamina mirror never fell below maximum")
+				return
+			_confirm.rpc_id(1, command, {
+				"stamina": _min_mirrored_stamina,
+				"max_stamina": _mirrored_max_stamina,
+			})
+		"REPORT_STAMINA_REGEN":
+			var peer_id := NetworkManager.local_peer_id()
+			if not await _wait_until(func() -> bool:
+				return is_equal_approx(GameSession.get_player_stamina(peer_id), GameSession.get_player_max_stamina(peer_id))
+			, 6.0):
+				_fail("client stamina mirror did not converge back to the server maximum")
+				return
+			_confirm.rpc_id(1, command, {"stamina": GameSession.get_player_stamina(peer_id)})
 		"REPORT_EMPTY_LOOT":
 			if not await _wait_until(func() -> bool:
 				var manager := _loot_manager()
@@ -383,6 +433,12 @@ func _confirm_when_world_ready(command: String, world_id: StringName) -> void:
 			_fail("Sewer enemy roster was not replicated")
 			return
 	_confirm.rpc_id(1, command, {"roster": _presentation_roster()})
+
+func _on_combat_runtime_changed(peer_id: int, stamina: float, max_stamina: float) -> void:
+	if peer_id != NetworkManager.local_peer_id():
+		return
+	_min_mirrored_stamina = minf(_min_mirrored_stamina, stamina)
+	_mirrored_max_stamina = max_stamina
 
 @rpc("any_peer", "call_remote", "reliable")
 func _confirm(command: String, data: Dictionary) -> void:

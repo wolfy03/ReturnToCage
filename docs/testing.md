@@ -109,5 +109,9 @@ SurvivalConfig 같은 외부 Resource는 명시적으로 복제해 원본 콘텐
 notification during pending/quest reward claims, then loads and retries the claim
 to check quantity conservation. It also exercises fractional, oversized,
 non-finite, negative and mistyped quest progress. These regressions failed on the
-previous implementation. The updated full run passes 759 main assertions plus
-1 restart-write and 25 restart-read assertions (785 total).
+previous implementation.
+
+전체 실행은 `TEST PASS: <n> assertions` 를 출력하고 러너가 실패 시 1을 반환한다.
+assertion 총계는 테스트가 늘 때마다 바뀌므로 이 문서에 고정 숫자를 적지 않는다.
+판단 기준은 `tools/check_project.py` 의 `ALL PROJECT CHECKS PASS` 와 각 멀티플레이
+하네스의 종료 코드다.

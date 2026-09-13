@@ -3,9 +3,13 @@ extends RefCounted
 ## Transient, per-life combat state owned by [PlayerRuntimeState].
 ##
 ## This is the single canonical owner of a player's stamina. Scene components
-## (CombatComponent) only reference it; nothing here is saved to disk and, in
-## this stage, nothing is replicated. Rates and costs stay in StatBlock and
-## WeaponDefinition — this object only holds the current values.
+## (CombatComponent) only reference it and nothing here is saved to disk. Rates
+## and costs stay in StatBlock and WeaponDefinition — this object only holds the
+## current values.
+##
+## The authoritative server owns these values; a client mirrors them through
+## [method apply_values]. This model deliberately knows nothing about
+## NetworkManager, RPCs or peer routing — replication lives in the network layer.
 
 var stamina: float = 0.0
 var max_stamina: float = 0.0
@@ -21,6 +25,18 @@ func set_max_stamina(value: float) -> void:
 		return
 	max_stamina = maxf(0.0, value)
 	stamina = minf(stamina, max_stamina)
+
+## Applies an externally authoritative pair at once. Callers that mirror another
+## simulation must use this instead of [method set_max_stamina] plus a direct
+## assignment, so the clamp order never leaks outside this model. Returns false
+## and changes nothing when the pair is not a valid combat state.
+func apply_values(p_stamina: float, p_max_stamina: float) -> bool:
+	if not is_finite(p_stamina) or not is_finite(p_max_stamina) \
+		or p_max_stamina < 0.0 or p_stamina < 0.0 or p_stamina > p_max_stamina:
+		return false
+	max_stamina = p_max_stamina
+	stamina = p_stamina
+	return true
 
 func can_spend(amount: float) -> bool:
 	return is_finite(amount) and amount >= 0.0 and stamina >= amount

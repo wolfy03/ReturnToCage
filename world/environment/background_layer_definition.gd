@@ -35,8 +35,9 @@ enum FitMode {
 @export var scale: Vector2 = Vector2.ONE
 
 @export_group("Placed sprites")
-## Individually placed sprites (atlas regions). Positions are in
-## reference-viewport coordinates.
+## Individually placed sprites (atlas regions). Positions are in reference
+## coordinates. On a repeating axis they use the authored repeat canvas;
+## otherwise they follow the viewport-centered reference layout.
 @export var sprites: Array[BackgroundSpriteDefinition] = []
 
 @export_group("Parallax")
@@ -45,7 +46,8 @@ enum FitMode {
 ## Parallax2D.autoscroll in reference pixels per second (camera independent).
 @export var autoscroll: Vector2 = Vector2.ZERO
 ## Parallax2D.repeat_size in reference pixels; zero disables repetition on that
-## axis. Only meaningful when the layer content is periodic over that size.
+## axis. Placed sprite coordinates on an enabled axis are relative to this
+## authored repeat canvas and are not shifted by viewport centering.
 @export var repeat_size: Vector2 = Vector2.ZERO
 @export_range(1, 8, 1) var repeat_times: int = 1
 

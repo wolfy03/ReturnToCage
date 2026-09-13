@@ -17,6 +17,7 @@ signal multiplayer_session_ended(reason: String)
 signal player_move_command_received(peer_id: int, sequence: int, move_axis: float, vertical_axis: float, jump_pressed: bool)
 signal player_transform_snapshot_received(peer_id: int, position: Vector2, velocity: Vector2, facing: float, movement_mode: int, sequence: int)
 signal player_runtime_snapshot_received(payload: Dictionary)
+signal player_combat_runtime_snapshot_received(payload: Dictionary)
 signal player_attack_command_received(peer_id: int, sequence: int)
 signal player_attack_presented_received(peer_id: int, sequence: int, facing: float)
 signal player_respawn_received(world_id: StringName, peer_id: int, position: Vector2)
@@ -481,6 +482,25 @@ func send_player_runtime_to_peer(source_peer_id: int, target_peer_id: int, paylo
 func _receive_player_runtime(world_id: StringName, world_revision: int, payload: Dictionary) -> void:
 	if _accept_current_world_packet(world_id, world_revision):
 		player_runtime_snapshot_received.emit(payload)
+
+## Throttled stamina mirror. Unlike the reliable runtime snapshot above this is
+## sent continuously while stamina changes, so it uses its own unreliable ordered
+## channel and is never emitted locally: the host reads its authoritative
+## CombatRuntimeState directly and needs no round trip.
+func broadcast_player_combat_runtime(source_peer_id: int, payload: Dictionary) -> void:
+	if not is_host_session_ready():
+		return
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	if world_id.is_empty():
+		return
+	for peer_id in replication_ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_combat_runtime.rpc_id(peer_id, world_id, ready.revision, payload)
+
+@rpc("authority", "call_remote", "unreliable_ordered", 3)
+func _receive_player_combat_runtime(world_id: StringName, world_revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, world_revision):
+		player_combat_runtime_snapshot_received.emit(payload)
 
 func submit_player_attack(peer_id: int, sequence: int) -> void:
 	if is_server():

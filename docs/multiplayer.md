@@ -98,7 +98,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
 - Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
 - Host Saved Game orchestration with pre-transport Save staging and a restoring-state handshake gate
-- Protocol v12 synchronization: v11 world assignment plus world/revision-bound gameplay replication
+- Protocol v13 synchronization: v12 world/revision-bound gameplay replication plus authoritative stamina
 
 `inventory_changed` remains a local-player UI compatibility signal. `quest_changed` is a compatibility notification; `quest_state_changed` carries scope and logical owner for replication. Peer-specific health/life presentation remains separate.
 
@@ -164,6 +164,39 @@ python tools/test_multiplayer_worlds.py --godot <godot> --players 3
 python tools/test_multiplayer_world_runtime.py --godot <godot> --players 2
 python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 ```
+
+## Authoritative stamina replication (Protocol v13)
+
+`CombatRuntimeState`(`PlayerRuntimeState.combat`)가 스태미나의 유일한 권위 소유자다. 이
+모델은 네트워크를 전혀 모르며, 복제는 두 경로로 나뉜다.
+
+- **신뢰 경로 (이벤트 기반).** 기존 `PlayerRuntimeSnapshot` 에 `stamina` 와 `max_stamina`
+  를 추가했다. world-ready, life 변경, 부활, 체력 변경처럼 이미 존재하던 이벤트에서만
+  전송되며, 스태미나 때문에 이 reliable RPC 의 빈도를 올리지 않는다. payload 검증은
+  `0 <= stamina <= max_stamina`, `max_stamina >= 0`, 유한값을 요구하고 위반 시 스냅샷
+  전체를 거절한다.
+- **지속 경로 (throttled).** 재생으로 계속 변하는 값은 `PlayerCombatRuntimeSnapshot`
+  (`peer_id`, `stamina`, `max_stamina`, `sequence`)이 전담한다.
+  `NetworkPlayerComponent.combat_snapshot_tick()` 이
+  `COMBAT_STATE_INTERVAL = 0.1`(10 Hz) 주기로만 확인하고, 마지막으로 보낸 값과
+  `is_equal_approx` 로 같으면 아예 전송하지 않는다. 따라서 최대치에서 대기 중인
+  플레이어는 패킷을 만들지 않는다. 전송은 `unreliable_ordered` 채널 3
+  (`_receive_player_combat_runtime`)이며, 다른 월드 페이로드와 같이
+  `(world_id, revision)` 과 `replication_ready_remote_peer_ids(world_id)` 를 따른다.
+
+클라이언트는 `GameSession.apply_player_combat_runtime_snapshot()` 으로 기존
+`CombatRuntimeState` 객체의 값만 갱신한다. 객체를 교체하면 각 `CombatComponent` 가 들고
+있는 참조가 끊어지기 때문이다. 수신 측은 `sequence` 가 마지막으로 적용한 값보다 클 때만
+적용하므로 늦게 도착한 패킷이 최신 값을 덮어쓰지 않는다. 신뢰 스냅샷이 스태미나를 교정하면
+서버는 다음 throttle tick 을 강제로 한 번 보내, 다른 채널에 떠 있던 오래된 값이 부활/최대치
+교정을 되돌리지 못하게 한다.
+
+호스트는 왕복이 필요 없다. 로컬 플레이어는 권위 `CombatRuntimeState` 를 직접 읽으므로
+combat 스냅샷을 자기 자신에게 emit 하지 않는다. 클라이언트의 `CombatComponent` 는 계속
+`set_process(false)` 이며 스태미나를 스스로 재생하지 않는다(예측 없음). HUD 는
+`GameSession.get_player_stamina()` / `get_player_max_stamina()` 로 런타임 미러를 읽고,
+`player_combat_runtime_changed` 시그널로 갱신된다. 스태미나는 여전히 transient 이며
+Save v4 에 포함되지 않는다.
 
 ## Not synchronized yet
 

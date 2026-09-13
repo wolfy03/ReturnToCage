@@ -306,12 +306,28 @@ func _layout_layer(
 			continue
 		if sprite.has_meta(&"sprite_definition"):
 			var sprite_definition: BackgroundSpriteDefinition = sprite.get_meta(&"sprite_definition")
-			sprite.position = sprite_definition.position * layout_scale + layout_offset
+			sprite.position = _placed_sprite_position(sprite_definition, layer, layout_scale, layout_offset)
 			sprite.scale = sprite_definition.scale * layout_scale
 		else:
 			var fit := _fit_scale(layer, sprite.texture.get_size(), viewport_size, layout_scale)
 			sprite.scale = Vector2(fit, fit) * layer.scale
 			sprite.position = viewport_size * 0.5 + layer.position_offset * layout_scale
+
+## Keeps placed sprites in the authored repeat canvas on repeating axes. A
+## non-repeating axis remains viewport-centered using the normal layout offset.
+func _placed_sprite_position(
+	sprite_definition: BackgroundSpriteDefinition,
+	layer: BackgroundLayerDefinition,
+	layout_scale: float,
+	layout_offset: Vector2
+) -> Vector2:
+	var sprite_position := sprite_definition.position * layout_scale
+	var repeat_size := layer.sanitized_repeat_size()
+	if is_zero_approx(repeat_size.x):
+		sprite_position.x += layout_offset.x
+	if is_zero_approx(repeat_size.y):
+		sprite_position.y += layout_offset.y
+	return sprite_position
 
 func _fit_scale(layer: BackgroundLayerDefinition, texture_size: Vector2, viewport_size: Vector2, layout_scale: float) -> float:
 	if texture_size.x <= 0.0 or texture_size.y <= 0.0:

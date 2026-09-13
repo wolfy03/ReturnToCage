@@ -22,6 +22,10 @@ signal player_died(peer_id: int, result: RespawnResult)
 signal player_respawned(peer_id: int, result: RespawnResult)
 signal player_health_changed(peer_id: int, health: float, max_health: float)
 signal player_life_changed(peer_id: int, life_id: int, life_phase: int)
+# Emitted when a replicated combat snapshot changes a mirrored PlayerRuntimeState.
+# The authoritative simulation mutates CombatRuntimeState directly and does not
+# emit this per regeneration step.
+signal player_combat_runtime_changed(peer_id: int, stamina: float, max_stamina: float)
 signal player_registered(peer_id: int, state: PlayerState)
 signal player_unregistered(peer_id: int)
 signal player_world_changed(player_id: StringName, state: PlayerWorldState)
@@ -420,6 +424,17 @@ func get_player_life_phase(peer_id: int) -> int:
 func get_player_death_result(peer_id: int) -> RespawnResult:
 	var runtime := get_player_runtime(peer_id)
 	return runtime.death_result if runtime != null else null
+
+## Read-only stamina accessors for presentation code. UI must read the runtime
+## mirror through these instead of a scene component, so a client shows the
+## authoritative value rather than a locally simulated one.
+func get_player_stamina(peer_id: int) -> float:
+	var runtime := get_player_runtime(peer_id)
+	return runtime.combat.stamina if runtime != null and runtime.combat != null else 0.0
+
+func get_player_max_stamina(peer_id: int) -> float:
+	var runtime := get_player_runtime(peer_id)
+	return runtime.combat.max_stamina if runtime != null and runtime.combat != null else 0.0
 
 func _connect_model_signals() -> void:
 	if player != null and player.inventory != null and not player.inventory.changed.is_connected(inventory_changed.emit):
@@ -862,8 +877,34 @@ func apply_player_runtime_snapshot(snapshot: PlayerRuntimeSnapshot) -> bool:
 	_applying_runtime_snapshot = false
 	if not applied:
 		return false
+	_mirror_combat_runtime(runtime, snapshot.peer_id, snapshot.stamina, snapshot.max_stamina)
 	player_life_changed.emit(snapshot.peer_id, runtime.life_id, runtime.life_phase)
 	player_health_changed.emit(snapshot.peer_id, snapshot.health, snapshot.max_health)
+	return true
+
+## Applies the throttled combat mirror on a client. The existing
+## CombatRuntimeState object is updated in place because scene components hold a
+## reference to it; replacing it would silently detach every CombatComponent.
+func apply_player_combat_runtime_snapshot(snapshot: PlayerCombatRuntimeSnapshot) -> bool:
+	if NetworkManager.is_server() or snapshot == null or not snapshot.error_message.is_empty() \
+		or not has_player(snapshot.peer_id):
+		return false
+	var runtime := get_player_runtime(snapshot.peer_id)
+	if runtime == null or runtime.combat == null:
+		return false
+	return _mirror_combat_runtime(runtime, snapshot.peer_id, snapshot.stamina, snapshot.max_stamina)
+
+func _mirror_combat_runtime(
+	runtime: PlayerRuntimeState, peer_id: int, stamina: float, max_stamina: float
+) -> bool:
+	if runtime == null or runtime.combat == null:
+		return false
+	var changed := not is_equal_approx(runtime.combat.stamina, stamina) \
+		or not is_equal_approx(runtime.combat.max_stamina, max_stamina)
+	if not runtime.combat.apply_values(stamina, max_stamina):
+		return false
+	if changed:
+		player_combat_runtime_changed.emit(peer_id, stamina, max_stamina)
 	return true
 
 func can_use_exit(exit_id: StringName, region_id: StringName) -> CommandResult:

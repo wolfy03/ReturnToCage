@@ -99,16 +99,19 @@ func _test_runtime_snapshot_validation(t: Node) -> void:
 	var valid := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": 40.0, "max_health": 100.0,
 		"life_id": 7, "life_phase": PlayerRuntimeState.LifePhase.ALIVE, "facing": -1.0,
+		"stamina": 60.0, "max_stamina": 100.0,
 	})
 	t.assert_true(valid.error_message.is_empty() and valid.health == 40.0, "runtime snapshot accepts validated presentation state")
 	var nan_health := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": NAN, "max_health": 100.0,
 		"life_id": 7, "life_phase": PlayerRuntimeState.LifePhase.ALIVE, "facing": 1.0,
+		"stamina": 60.0, "max_stamina": 100.0,
 	})
 	t.assert_true(not nan_health.error_message.is_empty(), "runtime snapshot rejects NaN health")
 	var invalid_phase := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": 40.0, "max_health": 100.0,
 		"life_id": 7, "life_phase": 99, "facing": 1.0,
+		"stamina": 60.0, "max_stamina": 100.0,
 	})
 	t.assert_true(not invalid_phase.error_message.is_empty(), "runtime snapshot rejects invalid life phase")
 
@@ -130,6 +133,7 @@ func _test_remote_health_presentation(t: Node) -> void:
 	var snapshot := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": 40.0, "max_health": 100.0,
 		"life_id": 1, "life_phase": PlayerRuntimeState.LifePhase.ALIVE, "facing": -1.0,
+		"stamina": 70.0, "max_stamina": 100.0,
 	})
 	var health_events: Array[Array] = []
 	var health_callback := func(peer_id: int, current: float, maximum: float) -> void: health_events.append([peer_id, current, maximum])
@@ -142,6 +146,7 @@ func _test_remote_health_presentation(t: Node) -> void:
 	var dead_snapshot := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": 45.0, "max_health": 100.0,
 		"life_id": 1, "life_phase": PlayerRuntimeState.LifePhase.DEAD, "facing": -1.0,
+		"stamina": 70.0, "max_stamina": 100.0,
 	})
 	t.assert_true(GameSession.apply_player_runtime_snapshot(dead_snapshot), "client mirrors dead-life server health")
 	actor.apply_runtime_presentation(dead_snapshot)
@@ -150,6 +155,7 @@ func _test_remote_health_presentation(t: Node) -> void:
 	var respawning_snapshot := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": 75.0, "max_health": 100.0,
 		"life_id": 1, "life_phase": PlayerRuntimeState.LifePhase.RESPAWNING, "facing": 1.0,
+		"stamina": 70.0, "max_stamina": 100.0,
 	})
 	t.assert_true(GameSession.apply_player_runtime_snapshot(respawning_snapshot), "client mirrors respawning server health")
 	actor.apply_runtime_presentation(respawning_snapshot)
@@ -158,6 +164,7 @@ func _test_remote_health_presentation(t: Node) -> void:
 	var alive_snapshot := PlayerRuntimeSnapshot.from_payload({
 		"peer_id": 42, "health": 75.0, "max_health": 100.0,
 		"life_id": 2, "life_phase": PlayerRuntimeState.LifePhase.ALIVE, "facing": 1.0,
+		"stamina": 100.0, "max_stamina": 100.0,
 	})
 	t.assert_true(GameSession.apply_player_runtime_snapshot(alive_snapshot), "new life snapshot is accepted")
 	actor.apply_runtime_presentation(alive_snapshot)

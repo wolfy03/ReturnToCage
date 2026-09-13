@@ -111,6 +111,7 @@ func _physics_process(delta: float) -> void:
 		facing = signf(input.move_axis)
 	movement.physics_tick(delta)
 	network.server_snapshot_tick(delta)
+	network.combat_snapshot_tick(delta)
 	if return_channel > 0.0:
 		if input.move_vector.length() > 0.01 or global_position.distance_to(return_channel_origin) > 3.0:
 			_cancel_return_channel()

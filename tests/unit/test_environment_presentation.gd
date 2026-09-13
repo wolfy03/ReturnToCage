@@ -12,9 +12,11 @@ func run(t: Node) -> void:
 	_test_resources(t)
 	await _test_presenter_layers_and_layout(t)
 	await _test_aspect_ratio_layout(t)
+	await _test_repeat_axis_layout(t)
 	await _test_presenter_failure_paths(t)
 	await _test_pending_load_handoff(t)
 	await _test_real_presets(t)
+	await _test_real_cloud_repeat_layout(t)
 	_test_region_definition_environment_path(t)
 	await _test_settlement_presentation_boundary(t)
 	await _test_adventure_presentation_boundary(t)
@@ -140,6 +142,53 @@ func _test_aspect_ratio_layout(t: Node) -> void:
 	viewport.queue_free()
 	await t.get_tree().process_frame
 
+func _test_repeat_axis_layout(t: Node) -> void:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(1280, 720)
+	t.add_child(viewport)
+	var presenter := EnvironmentPresenter.new()
+	viewport.add_child(presenter)
+	var environment := EnvironmentDefinition.new()
+	environment.reference_size = Vector2(1280, 720)
+	var repeating := BackgroundLayerDefinition.new()
+	repeating.layer_name = &"repeating"
+	repeating.repeat_size = Vector2(1000, 0)
+	var repeated_sprite := BackgroundSpriteDefinition.new()
+	repeated_sprite.texture = _texture(20, 10)
+	repeated_sprite.position = Vector2(100, 100)
+	repeating.sprites = [repeated_sprite]
+	var fixed := BackgroundLayerDefinition.new()
+	fixed.layer_name = &"fixed"
+	var fixed_sprite := BackgroundSpriteDefinition.new()
+	fixed_sprite.texture = _texture(20, 10)
+	fixed_sprite.position = Vector2(100, 100)
+	fixed.sprites = [fixed_sprite]
+	environment.layers = [repeating, fixed]
+	t.assert_true(presenter.configure(environment), "repeat-axis layout probe configures")
+	for size: Vector2i in [Vector2i(1024, 768), Vector2i(1280, 720), Vector2i(2560, 1080)]:
+		viewport.size = size
+		presenter.relayout()
+		var layout_scale := size.y / 720.0
+		var layout_offset_x := (size.x - 1280.0 * layout_scale) * 0.5
+		var repeated_node := presenter.get_layer_node(&"repeating")
+		var repeated_child := repeated_node.get_node("Sprite0") as Sprite2D
+		var fixed_child := presenter.get_layer_node(&"fixed").get_node("Sprite0") as Sprite2D
+		t.assert_true(
+			is_equal_approx(repeated_child.position.x, 100.0 * layout_scale),
+			"repeating X keeps authored canvas coordinate at %s" % size
+		)
+		t.assert_true(
+			is_equal_approx(fixed_child.position.x, 100.0 * layout_scale + layout_offset_x),
+			"non-repeating X keeps viewport centering at %s" % size
+		)
+		t.assert_true(
+			is_equal_approx(repeated_child.position.y, 100.0 * layout_scale) \
+				and is_equal_approx(fixed_child.position.y, 100.0 * layout_scale),
+			"non-repeating Y keeps the reference layout at %s" % size
+		)
+	viewport.queue_free()
+	await t.get_tree().process_frame
+
 func _test_presenter_failure_paths(t: Node) -> void:
 	var presenter := EnvironmentPresenter.new()
 	presenter.report_warnings = false
@@ -207,6 +256,46 @@ func _test_real_presets(t: Node) -> void:
 		await presenter.environment_applied
 	t.assert_true(not presenter.is_loading() and presenter.layer_count() >= 3 and presenter.environment_path == SETTLEMENT_PRESET, "threaded preset load builds the same layers without blocking the caller")
 	presenter.queue_free()
+	await t.get_tree().process_frame
+
+func _test_real_cloud_repeat_layout(t: Node) -> void:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(1280, 720)
+	t.add_child(viewport)
+	var presenter := EnvironmentPresenter.new()
+	viewport.add_child(presenter)
+	t.assert_true(presenter.configure_from_path(SETTLEMENT_PRESET, true), "real cloud repeat probe loads settlement preset")
+	for size: Vector2i in [
+		Vector2i(1024, 768),
+		Vector2i(1280, 720),
+		Vector2i(1440, 900),
+		Vector2i(2560, 1080),
+	]:
+		viewport.size = size
+		presenter.relayout()
+		var layout_scale := size.y / 720.0
+		for layer_name: StringName in [&"clouds_far", &"clouds_near"]:
+			var layer := presenter.definition.find_layer(layer_name)
+			var node := presenter.get_layer_node(layer_name)
+			var repeat_width := layer.sanitized_repeat_size().x * layout_scale
+			t.assert_true(repeat_width > 0.0 and is_equal_approx(node.repeat_size.x, repeat_width), "%s repeat width matches its authored canvas at %s" % [layer_name, size])
+			for child in node.get_children():
+				var sprite := child as Sprite2D
+				if sprite == null or not sprite.has_meta(&"sprite_definition"):
+					continue
+				var sprite_definition: BackgroundSpriteDefinition = sprite.get_meta(&"sprite_definition")
+				var half_size := sprite.texture.get_size() * sprite.scale.abs() * 0.5
+				var left := sprite.position.x - half_size.x
+				var right := sprite.position.x + half_size.x
+				t.assert_true(
+					is_equal_approx(sprite.position.x, sprite_definition.position.x * layout_scale),
+					"%s sprite keeps repeat-canvas X at %s" % [layer_name, size]
+				)
+				t.assert_true(
+					left >= -0.01 and right <= repeat_width + 0.01,
+					"%s sprite bounds stay inside repeat canvas at %s" % [layer_name, size]
+				)
+	viewport.queue_free()
 	await t.get_tree().process_frame
 
 func _test_region_definition_environment_path(t: Node) -> void:

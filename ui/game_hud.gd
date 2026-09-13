@@ -33,6 +33,7 @@ func _ready() -> void:
 	GameSession.player_world_changed.connect(func(_player_id: StringName, _state: PlayerWorldState) -> void: refresh_all())
 	GameSession.difficulty_changed.connect(func(_id: StringName) -> void: refresh_all())
 	GameSession.adventure_finished.connect(func(_result: AdventureSession.Result, _summary: String) -> void: refresh_all())
+	GameSession.player_combat_runtime_changed.connect(_on_player_combat_runtime_changed)
 	SaveManager.save_finished.connect(_on_persistence_result)
 	SaveManager.load_finished.connect(_on_persistence_result)
 	refresh_all()
@@ -134,22 +135,44 @@ func _bind_player(player: PlayerActor) -> void:
 	)
 	player.health.health_changed.connect(_on_health_changed)
 	player.survival.survival_changed.connect(_on_survival_changed)
-	_on_health_changed(player.health.current_health, player.health.max_health)
-	_on_survival_changed(player.survival.hunger, player.survival.thirst, 0, 0)
+	_update_vitals_label()
 
-func _on_health_changed(current: float, maximum: float) -> void:
-	var hunger := bound_player.survival.hunger if is_instance_valid(bound_player) else 0.0
-	var thirst := bound_player.survival.thirst if is_instance_valid(bound_player) else 0.0
-	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f   Hunger %.0f   Thirst %.0f" % [current, maximum, bound_player.combat.current_stamina() if is_instance_valid(bound_player) else 0.0, hunger, thirst]
+## Stamina is read from the authoritative runtime mirror, never from the bound
+## actor's CombatComponent: on a client that component does not simulate, so its
+## values would drift away from the server.
+func hud_stamina() -> float:
+	return GameSession.get_player_stamina(bound_player.peer_id) if is_instance_valid(bound_player) else 0.0
 
-func _on_survival_changed(hunger: float, thirst: float, _hunger_stage: int, _thirst_stage: int) -> void:
+func hud_max_stamina() -> float:
+	return GameSession.get_player_max_stamina(bound_player.peer_id) if is_instance_valid(bound_player) else 0.0
+
+func _update_vitals_label() -> void:
+	if vitals_label == null:
+		return
 	var current := bound_player.health.current_health if is_instance_valid(bound_player) else 0.0
 	var maximum := bound_player.health.max_health if is_instance_valid(bound_player) else 0.0
-	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f   Hunger %.0f   Thirst %.0f" % [current, maximum, bound_player.combat.current_stamina() if is_instance_valid(bound_player) else 0.0, hunger, thirst]
+	var hunger := bound_player.survival.hunger if is_instance_valid(bound_player) else 0.0
+	var thirst := bound_player.survival.thirst if is_instance_valid(bound_player) else 0.0
+	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f/%.0f   Hunger %.0f   Thirst %.0f" % [
+		current, maximum, hud_stamina(), hud_max_stamina(), hunger, thirst
+	]
+
+func _on_health_changed(_current: float, _maximum: float) -> void:
+	_update_vitals_label()
+
+func _on_survival_changed(_hunger: float, _thirst: float, _hunger_stage: int, _thirst_stage: int) -> void:
+	_update_vitals_label()
+
+func _on_player_combat_runtime_changed(peer_id: int, _stamina: float, _max_stamina: float) -> void:
+	if is_instance_valid(bound_player) and bound_player.peer_id == peer_id:
+		_update_vitals_label()
 
 func refresh_all() -> void:
 	if inventory_label == null:
 		return
+	# The authoritative host regenerates stamina continuously without emitting a
+	# per-step signal, so the periodic refresh keeps its own bar current.
+	_update_vitals_label()
 	save_button.disabled = not SaveManager.can_save().success
 	load_button.disabled = not SaveManager.can_load().success
 	save_button.tooltip_text = SaveManager.can_save().message

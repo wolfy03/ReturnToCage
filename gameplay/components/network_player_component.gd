@@ -2,6 +2,10 @@ class_name NetworkPlayerComponent
 extends Node
 
 const SNAPSHOT_INTERVAL := 1.0 / 20.0
+## Stamina changes slowly compared to position, so the combat mirror runs at a
+## lower rate on its own unreliable channel instead of riding the reliable
+## runtime snapshot.
+const COMBAT_STATE_INTERVAL := 0.1
 const INTERPOLATION_SPEED := 14.0
 const TELEPORT_DISTANCE := 500.0
 
@@ -12,6 +16,11 @@ var _local_sequence: int = 0
 var _last_received_sequence: int = -1
 var _snapshot_sequence: int = 0
 var _snapshot_accumulator: float = 0.0
+var _combat_sequence: int = 0
+var _combat_accumulator: float = 0.0
+var _has_sent_combat: bool = false
+var _last_sent_stamina: float = 0.0
+var _last_sent_max_stamina: float = 0.0
 var _has_snapshot: bool = false
 var _target_position: Vector2
 var _target_velocity: Vector2
@@ -26,6 +35,7 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent, p_movement: 
 	input.configure_input(reads_local_input, actor.is_simulation_authority())
 	NetworkManager.player_transform_snapshot_received.connect(_on_transform_snapshot_received)
 	NetworkManager.player_runtime_snapshot_received.connect(_on_runtime_snapshot_received)
+	NetworkManager.player_combat_runtime_snapshot_received.connect(_on_combat_runtime_snapshot_received)
 	if actor.is_simulation_authority() and NetworkManager.is_server():
 		NetworkManager.player_move_command_received.connect(_on_move_command_received)
 		GameSession.player_health_changed.connect(_on_player_health_changed)
@@ -38,6 +48,8 @@ func _exit_tree() -> void:
 		NetworkManager.player_transform_snapshot_received.disconnect(_on_transform_snapshot_received)
 	if NetworkManager.player_runtime_snapshot_received.is_connected(_on_runtime_snapshot_received):
 		NetworkManager.player_runtime_snapshot_received.disconnect(_on_runtime_snapshot_received)
+	if NetworkManager.player_combat_runtime_snapshot_received.is_connected(_on_combat_runtime_snapshot_received):
+		NetworkManager.player_combat_runtime_snapshot_received.disconnect(_on_combat_runtime_snapshot_received)
 	if NetworkManager.player_move_command_received.is_connected(_on_move_command_received):
 		NetworkManager.player_move_command_received.disconnect(_on_move_command_received)
 	if GameSession.player_health_changed.is_connected(_on_player_health_changed):
@@ -76,6 +88,43 @@ func server_snapshot_tick(delta: float) -> void:
 	NetworkManager.broadcast_player_transform(
 		actor.peer_id, actor.global_position, actor.velocity, actor.facing, int(movement.mode), _snapshot_sequence
 	)
+
+## Throttled combat mirror, driven from the same authoritative tick as the
+## transform snapshot. A packet is only produced when the authoritative pair
+## actually moved, so a player standing at full stamina sends nothing.
+func combat_snapshot_tick(delta: float) -> bool:
+	if actor == null or not NetworkManager.is_multiplayer_active() or not NetworkManager.is_server():
+		return false
+	if not NetworkManager.is_peer_replication_ready(actor.peer_id):
+		return false
+	_combat_accumulator += delta
+	if _combat_accumulator < COMBAT_STATE_INTERVAL:
+		return false
+	_combat_accumulator = fmod(_combat_accumulator, COMBAT_STATE_INTERVAL)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	if runtime == null or runtime.combat == null:
+		return false
+	if not combat_state_changed(runtime.combat.stamina, runtime.combat.max_stamina):
+		return false
+	_combat_sequence += 1
+	var snapshot := PlayerCombatRuntimeSnapshot.new()
+	snapshot.peer_id = actor.peer_id
+	snapshot.stamina = runtime.combat.stamina
+	snapshot.max_stamina = runtime.combat.max_stamina
+	snapshot.sequence = _combat_sequence
+	NetworkManager.broadcast_player_combat_runtime(actor.peer_id, snapshot.to_payload())
+	mark_combat_sent(runtime.combat.stamina, runtime.combat.max_stamina)
+	return true
+
+func combat_state_changed(stamina: float, maximum: float) -> bool:
+	return not _has_sent_combat \
+		or not is_equal_approx(stamina, _last_sent_stamina) \
+		or not is_equal_approx(maximum, _last_sent_max_stamina)
+
+func mark_combat_sent(stamina: float, maximum: float) -> void:
+	_has_sent_combat = true
+	_last_sent_stamina = stamina
+	_last_sent_max_stamina = maximum
 
 func presentation_tick(delta: float) -> void:
 	if actor == null or actor.is_simulation_authority() or not _has_snapshot:
@@ -121,6 +170,8 @@ func _runtime_snapshot() -> PlayerRuntimeSnapshot:
 	snapshot.life_id = runtime.life_id
 	snapshot.life_phase = runtime.life_phase
 	snapshot.facing = actor.facing
+	snapshot.stamina = runtime.combat.stamina
+	snapshot.max_stamina = runtime.combat.max_stamina
 	return snapshot
 
 func _broadcast_runtime_snapshot() -> void:
@@ -131,6 +182,10 @@ func _broadcast_runtime_snapshot() -> void:
 	var snapshot := _runtime_snapshot()
 	if snapshot != null:
 		NetworkManager.broadcast_player_runtime(actor.peer_id, snapshot.to_payload())
+		# Respawn and max-stamina corrections must not be undone by a combat packet
+		# that was already in flight on the other channel. Forcing the next throttled
+		# tick to send republishes the corrected pair under a newer sequence.
+		_has_sent_combat = false
 
 func _send_runtime_snapshot(peer_id: int) -> void:
 	if not NetworkManager.can_send_to_peer(peer_id):
@@ -179,3 +234,12 @@ func _on_runtime_snapshot_received(payload: Dictionary) -> void:
 		return
 	if GameSession.apply_player_runtime_snapshot(snapshot):
 		actor.apply_runtime_presentation(snapshot)
+
+func _on_combat_runtime_snapshot_received(payload: Dictionary) -> void:
+	if actor == null or actor.is_simulation_authority():
+		return
+	var snapshot := PlayerCombatRuntimeSnapshot.from_payload(payload)
+	if snapshot.peer_id != actor.peer_id or not snapshot.is_valid_after(_combat_sequence):
+		return
+	if GameSession.apply_player_combat_runtime_snapshot(snapshot):
+		_combat_sequence = snapshot.sequence
