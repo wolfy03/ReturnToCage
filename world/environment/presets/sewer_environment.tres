@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="EnvironmentDefinition" format=3]
+
+[ext_resource type="Script" path="res://world/environment/background_layer_definition.gd" id="1_ihamt"]
+[ext_resource type="Script" path="res://world/environment/environment_definition.gd" id="2_y5vuc"]
+
+[resource]
+script = ExtResource("2_y5vuc")
+fallback_color = Color(0.03529412, 0.101960786, 0.14117648, 1)

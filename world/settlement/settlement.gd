@@ -1,6 +1,11 @@
 extends Node2D
 
+## Presentation-only background preset. Kept as a plain path so the scene never
+## references background textures directly and the server runtime never loads them.
+@export_file("*.tres") var environment_path: String = "res://world/environment/presets/settlement_environment.tres"
+@export var environment_loading_color: Color = Color("162133")
 var server_runtime_mode: bool = false
+var environment_presenter: EnvironmentPresenter
 
 func configure_server_runtime(p_world_id: StringName, _region_id: StringName = &"") -> void:
 	server_runtime_mode = true
@@ -11,7 +16,10 @@ func configure_server_runtime(p_world_id: StringName, _region_id: StringName = &
 	_remove_runtime_duplicate_services()
 
 func _ready() -> void:
-	RenderingServer.set_default_clear_color(Color("162133"))
+	# Client visual environment only. ServerWorldRuntime instantiates this same
+	# scene with server_runtime_mode set, and must never build or load backgrounds.
+	if not server_runtime_mode:
+		_create_environment()
 	WorldHelpers.add_platform(self, Vector2(700, 570), Vector2(1500, 70), Color("435047"))
 	WorldHelpers.add_platform(self, Vector2(650, 425), Vector2(240, 24), Color("596451"))
 	WorldHelpers.add_label(self, "MOSS-HOLLOW SETTLEMENT", Vector2(38, 38), Color("e8d6a2"))
@@ -24,6 +32,12 @@ func _ready() -> void:
 	_create_exits()
 	_create_save_post()
 	(get_node("PlayerSpawnManager") as PlayerSpawnManager).initialize_spawns()
+
+func _create_environment() -> void:
+	environment_presenter = EnvironmentPresenter.new()
+	environment_presenter.name = "EnvironmentPresenter"
+	add_child(environment_presenter)
+	environment_presenter.configure_from_path(environment_path, false, environment_loading_color)
 
 func _remove_runtime_duplicate_services() -> void:
 	for child_name in ["QuestReplicationService", "SettlementReplicationService", "PlayerItemReplicationService"]:

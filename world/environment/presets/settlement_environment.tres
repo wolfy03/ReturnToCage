@@ -1,0 +1,212 @@
+[gd_resource type="Resource" script_class="EnvironmentDefinition" format=3]
+
+[ext_resource type="Script" path="res://world/environment/background_layer_definition.gd" id="1_6tpy6"]
+[ext_resource type="Script" path="res://world/environment/background_sprite_definition.gd" id="2_4mfvv"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/sky_gradient_day_3840x2160.png" id="3_v5uxv"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/sun_moon_atlas_2048x1152.png" id="4_vnrf7"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/clouds_far_atlas_2048x1152.png" id="5_urijf"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/clouds_near_atlas_2048x1152.png" id="6_os18d"]
+[ext_resource type="Script" path="res://world/environment/environment_definition.gd" id="7_hwoqs"]
+
+[sub_resource type="Resource" id="Resource_owwl3"]
+script = ExtResource("1_6tpy6")
+layer_name = &"sky"
+texture = ExtResource("3_v5uxv")
+fit_mode = 1
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_tcpl5"]
+atlas = ExtResource("4_vnrf7")
+region = Rect2(80, 85, 866, 952)
+
+[sub_resource type="Resource" id="Resource_o5n52"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_tcpl5")
+position = Vector2(1000, 190)
+scale = Vector2(0.22, 0.22)
+
+[sub_resource type="Resource" id="Resource_25pvb"]
+script = ExtResource("1_6tpy6")
+layer_name = &"sun"
+sprites = Array[ExtResource("2_4mfvv")]([SubResource("Resource_o5n52")])
+scroll_scale = Vector2(0.03, 0.02)
+z_index = -900
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_slxwe"]
+atlas = ExtResource("4_vnrf7")
+region = Rect2(1185, 134, 774, 871)
+
+[sub_resource type="Resource" id="Resource_7hh6d"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_slxwe")
+position = Vector2(220, 150)
+scale = Vector2(0.2, 0.2)
+
+[sub_resource type="Resource" id="Resource_wrt61"]
+script = ExtResource("1_6tpy6")
+layer_name = &"moon"
+enabled = false
+sprites = Array[ExtResource("2_4mfvv")]([SubResource("Resource_7hh6d")])
+scroll_scale = Vector2(0.03, 0.02)
+z_index = -900
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_rxk44"]
+atlas = ExtResource("5_urijf")
+region = Rect2(33, 203, 469, 218)
+
+[sub_resource type="Resource" id="Resource_knuj8"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_rxk44")
+position = Vector2(180, 120)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_ggoxv"]
+atlas = ExtResource("5_urijf")
+region = Rect2(517, 192, 499, 238)
+
+[sub_resource type="Resource" id="Resource_4rdhh"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_ggoxv")
+position = Vector2(620, 90)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_qu4hu"]
+atlas = ExtResource("5_urijf")
+region = Rect2(1039, 184, 494, 240)
+
+[sub_resource type="Resource" id="Resource_ditv7"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_qu4hu")
+position = Vector2(1020, 150)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_byidq"]
+atlas = ExtResource("5_urijf")
+region = Rect2(1550, 258, 478, 139)
+
+[sub_resource type="Resource" id="Resource_dkq16"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_byidq")
+position = Vector2(1400, 80)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_rcgrf"]
+atlas = ExtResource("5_urijf")
+region = Rect2(11, 737, 497, 247)
+
+[sub_resource type="Resource" id="Resource_k0qal"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_rcgrf")
+position = Vector2(1780, 130)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_atkug"]
+atlas = ExtResource("5_urijf")
+region = Rect2(521, 799, 493, 116)
+
+[sub_resource type="Resource" id="Resource_dgjmq"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_atkug")
+position = Vector2(2150, 70)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_kluih"]
+atlas = ExtResource("5_urijf")
+region = Rect2(1031, 742, 502, 238)
+
+[sub_resource type="Resource" id="Resource_ch3v5"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_kluih")
+position = Vector2(2450, 140)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_yarhe"]
+atlas = ExtResource("5_urijf")
+region = Rect2(1552, 731, 483, 260)
+
+[sub_resource type="Resource" id="Resource_qi4wv"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_yarhe")
+position = Vector2(2300, 230)
+scale = Vector2(0.3, 0.3)
+
+[sub_resource type="Resource" id="Resource_6ax00"]
+script = ExtResource("1_6tpy6")
+layer_name = &"clouds_far"
+sprites = Array[ExtResource("2_4mfvv")]([SubResource("Resource_knuj8"), SubResource("Resource_4rdhh"), SubResource("Resource_ditv7"), SubResource("Resource_dkq16"), SubResource("Resource_k0qal"), SubResource("Resource_dgjmq"), SubResource("Resource_ch3v5"), SubResource("Resource_qi4wv")])
+scroll_scale = Vector2(0.08, 0.04)
+autoscroll = Vector2(-5, 0)
+repeat_size = Vector2(2560, 0)
+z_index = -800
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_kw87g"]
+atlas = ExtResource("6_os18d")
+region = Rect2(25, 120, 843, 410)
+
+[sub_resource type="Resource" id="Resource_brgt0"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_kw87g")
+position = Vector2(300, 170)
+scale = Vector2(0.42, 0.42)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_8qb0p"]
+atlas = ExtResource("6_os18d")
+region = Rect2(899, 191, 537, 338)
+
+[sub_resource type="Resource" id="Resource_2gpc3"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_8qb0p")
+position = Vector2(900, 110)
+scale = Vector2(0.42, 0.42)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_s5g7u"]
+atlas = ExtResource("6_os18d")
+region = Rect2(1425, 19, 614, 595)
+
+[sub_resource type="Resource" id="Resource_60iow"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_s5g7u")
+position = Vector2(1500, 200)
+scale = Vector2(0.42, 0.42)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_8lobd"]
+atlas = ExtResource("6_os18d")
+region = Rect2(10, 664, 752, 424)
+
+[sub_resource type="Resource" id="Resource_0ylkq"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_8lobd")
+position = Vector2(2100, 140)
+scale = Vector2(0.42, 0.42)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_n54ld"]
+atlas = ExtResource("6_os18d")
+region = Rect2(780, 730, 587, 326)
+
+[sub_resource type="Resource" id="Resource_8d0rx"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_n54ld")
+position = Vector2(2650, 90)
+scale = Vector2(0.42, 0.42)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_43ycm"]
+atlas = ExtResource("6_os18d")
+region = Rect2(1379, 799, 663, 221)
+
+[sub_resource type="Resource" id="Resource_b517q"]
+script = ExtResource("2_4mfvv")
+texture = SubResource("AtlasTexture_43ycm")
+position = Vector2(3000, 230)
+scale = Vector2(0.42, 0.42)
+
+[sub_resource type="Resource" id="Resource_7t7o1"]
+script = ExtResource("1_6tpy6")
+layer_name = &"clouds_near"
+sprites = Array[ExtResource("2_4mfvv")]([SubResource("Resource_brgt0"), SubResource("Resource_2gpc3"), SubResource("Resource_60iow"), SubResource("Resource_0ylkq"), SubResource("Resource_8d0rx"), SubResource("Resource_b517q")])
+scroll_scale = Vector2(0.18, 0.08)
+autoscroll = Vector2(-12, 0)
+repeat_size = Vector2(3200, 0)
+z_index = -700
+
+[resource]
+script = ExtResource("7_hwoqs")
+layers = Array[ExtResource("1_6tpy6")]([SubResource("Resource_owwl3"), SubResource("Resource_25pvb"), SubResource("Resource_wrt61"), SubResource("Resource_6ax00"), SubResource("Resource_7t7o1")])

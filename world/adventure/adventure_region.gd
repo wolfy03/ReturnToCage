@@ -2,6 +2,7 @@ extends Node2D
 
 var context: AdventureContext
 var server_runtime_mode: bool = false
+var environment_presenter: EnvironmentPresenter
 var _gather_targets: Dictionary[StringName, InteractionTarget] = {}
 var _gather_items: Dictionary[StringName, Dictionary] = {}
 var _consumed_gather: Dictionary[StringName, bool] = {}
@@ -44,7 +45,9 @@ func _ready() -> void:
 	if server_runtime_mode:
 		NetworkManager.gather_requested.connect(_on_gather_requested)
 		NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
-	RenderingServer.set_default_clear_color(Color("091a24"))
+	# Client visual environment only; never built for ServerWorldRuntime.
+	if not server_runtime_mode:
+		_create_environment()
 	WorldHelpers.add_platform(self, Vector2(750, 570), Vector2(1600, 70), Color("263c3f"))
 	WorldHelpers.add_platform(self, Vector2(420, 440), Vector2(240, 22), Color("37565a"))
 	WorldHelpers.add_platform(self, Vector2(760, 350), Vector2(210, 22), Color("37565a"))
@@ -77,6 +80,28 @@ func _exit_tree() -> void:
 		NetworkManager.gather_requested.disconnect(_on_gather_requested)
 	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
 		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
+
+## Background preset path resolved from the region content of this context
+## (never from global session phase), so each player's world picks its own visuals.
+func environment_path_for_context() -> String:
+	if context == null:
+		return ""
+	var definition := ContentRegistry.get_definition(context.region_id) as RegionDefinition
+	return definition.environment_path if definition != null else ""
+
+func environment_loading_color_for_context() -> Color:
+	if context == null:
+		return Color("091a24")
+	var definition := ContentRegistry.get_definition(context.region_id) as RegionDefinition
+	return definition.environment_loading_color if definition != null else Color("091a24")
+
+func _create_environment() -> void:
+	environment_presenter = EnvironmentPresenter.new()
+	environment_presenter.name = "EnvironmentPresenter"
+	add_child(environment_presenter)
+	environment_presenter.configure_from_path(
+		environment_path_for_context(), false, environment_loading_color_for_context()
+	)
 
 func _remove_runtime_duplicate_services() -> void:
 	for child_name in ["QuestReplicationService", "SettlementReplicationService", "PlayerItemReplicationService"]:

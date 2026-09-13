@@ -12,3 +12,5 @@ escape_point_ids = Array[StringName]([&"sewer_entrance", &"sewer_ladder"])
 major_resource_ids = Array[StringName]([&"rusty_scrap", &"moss_fiber"])
 enemy_ids = Array[StringName]([&"sewer_beetle"])
 recommended_gear = "Sharpened Twig, berries, clean water"
+environment_path = "res://world/environment/presets/sewer_environment.tres"
+environment_loading_color = Color(0.03529412, 0.101960786, 0.14117648, 1)

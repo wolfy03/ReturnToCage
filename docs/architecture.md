@@ -58,3 +58,34 @@ rollback하지 않는다. 해당 퀘스트의 선행 조건이 충족되면 기�
 사망은 설정과 좌표를 먼저 검증한다. 실패한 RespawnResult는 phase/pause/소지품을
 변경하지 않는다. 씬 로드 실패 시 respawn은 재시도 가능하게 남고 stale paused 플래그는
 해제한다. RESPAWNING에서는 tick을 유예해 새 월드가 준비될 때까지 추가 피해를 막는다.
+
+## 배경 환경 표현
+
+배경은 gameplay 상태가 아니라 client presentation이다. `world/environment/`의
+`EnvironmentDefinition`(fallback 색, 기준 viewport 크기, 레이어 목록)과
+`BackgroundLayerDefinition`(texture 또는 atlas 영역 sprite 목록, fit 모드, `scroll_scale`,
+`autoscroll`, `repeat_size`, `z_index`)은 일반 `Resource`이며 `ContentDefinition`을 상속하지
+않는다. Preset은 `world/environment/presets/*.tres`에 두고 `res://data/content` 아래에 두지
+않는다. ContentRegistry가 시작 시 모든 콘텐츠를 로드하므로 배경 Texture가 headless/server
+런타임에 딸려 들어가지 않게 하기 위해서다. 새 Autoload는 없다.
+
+흐름은 `World scene → environment_path(문자열) → EnvironmentPresenter → EnvironmentDefinition →
+Parallax2D(레이어마다 하나) → Sprite2D`다. Settlement는 `settlement.gd`의 `environment_path`
+export를, AdventureRegion은 `context.region_id → RegionDefinition.environment_path`를 사용한다.
+`RegionDefinition.validate_definition()`은 경로 존재 여부와 EnvironmentDefinition script dependency를
+확인하되 Preset을 load하지 않는다.
+SceneRouter는 배경을 관리하지 않으며 각 world scene이 presenter의 생명주기를 소유한다.
+
+`server_runtime_mode`인 scene(ServerWorldRuntime이 instantiate하는 Settlement/AdventureRegion)은
+`_create_environment()`를 호출하지 않으므로 EnvironmentPresenter도, 배경 Texture 로드도 없다.
+이전에 `_ready()`가 호출하던 `RenderingServer.set_default_clear_color()`는 제거했고, fallback 색은
+presenter가 소유한 Backdrop(Parallax2D + Polygon2D, z -1100)이 화면 뒤에 그린다.
+
+Presenter는 Preset을 `ResourceLoader.load_threaded_request`로 비동기 로드해 월드 전환 프레임에서
+이미지 디코딩이 일어나지 않게 한다. 로드 중 scene이 제거되면 callback만 해제하고, SceneTree
+root 아래에 지연 생성되는 client-only `EnvironmentLoadCoordinator`가 완료된 결과와 loader token을
+회수한다. 따라서 빠른 재전환도 메인 스레드를 기다리게 하지 않는다. Preset 자체의 fallback을
+읽기 전에는 Settlement/RegionDefinition의 `environment_loading_color`를 즉시 그린다. Viewport
+`size_changed`마다 fit scale과 sprite 배치를 다시 계산한다. `set_time_normalized()`는 향후
+authoritative 낮/밤 값의 입력 지점이며 presenter는 자체 시계를 돌리지 않는다. z-index 범위:
+Backdrop -1100, 배경 -1000..-100, gameplay 0, 전경(미구현) 100..900.

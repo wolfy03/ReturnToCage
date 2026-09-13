@@ -12,9 +12,30 @@ extends ContentDefinition
 @export var unlock_flags: Array[StringName] = []
 @export var recommended_gear: String = ""
 @export var allow_return_item: bool = true
+## Presentation-only EnvironmentDefinition path (res://world/environment/presets/...).
+## Stored as a string on purpose: ContentRegistry loads every region at startup,
+## including on headless servers, and must not pull background textures with it.
+## Empty means the region shows only the presenter's fallback color.
+@export_file("*.tres") var environment_path: String = ""
+## Solid color shown before the environment preset finishes loading.
+@export var environment_loading_color: Color = Color("091a24")
 
 func validate_definition(registry: Node) -> PackedStringArray:
 	var errors: PackedStringArray = super.validate_definition(registry)
+	# Inspect existence and dependency metadata only; loading the preset here
+	# would import its textures during headless/server content validation.
+	if not environment_path.is_empty() and not ResourceLoader.exists(environment_path):
+		errors.append("%s: region environment missing: %s" % [id, environment_path])
+	elif not environment_path.is_empty():
+		var expected_script := "res://world/environment/environment_definition.gd"
+		var dependencies := ResourceLoader.get_dependencies(environment_path)
+		var has_environment_script := false
+		for dependency in dependencies:
+			if dependency.contains(expected_script):
+				has_environment_script = true
+				break
+		if not has_environment_script:
+			errors.append("%s: region environment must be EnvironmentDefinition: %s" % [id, environment_path])
 	for reference in major_resource_ids:
 		if not registry.get_definition(reference) is ItemDefinition:
 			errors.append("%s: region resource must be ItemDefinition: %s" % [id, reference])

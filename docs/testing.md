@@ -74,6 +74,9 @@ GPU/디스플레이가 있는 환경에서 실행한다. headless 물리 테스�
 godot --path . --rendering-method gl_compatibility res://tests/visual_smoke.tscn
 ```
 
+Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 기다린 뒤 이미지를
+캡처하므로 단색 loading fallback이 아니라 실제 sky/cloud 레이어를 검증한다.
+
 메인 씬의 New Game, 정착지, 실제 등반 후 상단 화면, HUD 경계를 확인하며 스크린샷은 user://validation에 저장한다. 자동 입력 테스트이며 사람의 수동 플레이를 대체했다고 표시하지 않는다.
 
 ## 수동 플레이 절차
@@ -96,6 +99,7 @@ godot --path . --rendering-method gl_compatibility res://tests/visual_smoke.tscn
 - unit/test_settlement_state_restore.gd: unknown pending, storage overflow 합병, 세션 전체 중복, 보상·pending 재진입/원자성.
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
+- unit/test_environment_presentation.gd: EnvironmentDefinition/BackgroundLayerDefinition 저장·필터, presenter의 cover fit·parallax·autoscroll·repeat·z 클램프, 4:3·16:10·21:9 viewport coverage, 빈/누락/잘못된 타입 경로의 안전한 fallback, 로딩 중 즉시 fallback 색, 비동기 Preset 로드와 scene 제거 후 non-blocking token 회수, Settlement/Adventure visible presentation에는 EnvironmentPresenter가 생성되고 `server_runtime_mode` 및 ServerWorldRuntime scene에는 생성되지 않는 경계.
 
 Resource.duplicate(true) 이후에도 외부 Resource는 공유될 수 있다. 테스트가 변경할
 SurvivalConfig 같은 외부 Resource는 명시적으로 복제해 원본 콘텐츠를 오염시키지 않는다.

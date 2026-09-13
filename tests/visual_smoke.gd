@@ -12,6 +12,8 @@ func _ready() -> void:
 	await frames(3)
 	boot.get_node("%NewGameButton").pressed.emit()
 	await frames(8)
+	var settlement: Node = boot.get_node("%WorldLayer").get_child(0)
+	await wait_for_environment(settlement)
 	await capture("settlement")
 	var hud: CanvasLayer = get_tree().get_first_node_in_group(&"hud")
 	check(hud.load_button.get_global_rect().end.x <= get_viewport().get_visible_rect().end.x, "HUD fits viewport")
@@ -54,3 +56,14 @@ func frames(count: int) -> void:
 	for index in count:
 		await get_tree().physics_frame
 	await get_tree().process_frame
+
+func wait_for_environment(world: Node, max_frames: int = 300) -> void:
+	var presenter := world.get_node_or_null("EnvironmentPresenter") as EnvironmentPresenter
+	check(presenter != null, "visible world owns an environment presenter")
+	if presenter == null:
+		return
+	for frame in max_frames:
+		if not presenter.is_loading():
+			break
+		await get_tree().process_frame
+	check(not presenter.is_loading() and presenter.layer_count() > 0, "settlement background finishes loading before capture")
