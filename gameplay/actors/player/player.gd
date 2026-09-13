@@ -58,7 +58,8 @@ func _ready() -> void:
 		return
 	_life_id = GameSession.arm_player_life(peer_id) if is_simulation_authority() else -1
 	movement.configure(self, input, _bound_state.stats)
-	combat.configure(self, _bound_state.stats)
+	var runtime := GameSession.get_player_runtime(peer_id)
+	combat.configure(self, _bound_state.stats, runtime.combat if runtime != null else null)
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
 	network_combat.configure(self, input)

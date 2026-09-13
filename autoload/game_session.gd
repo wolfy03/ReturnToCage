@@ -349,7 +349,9 @@ func _add_player_state(peer_id: int, player_id: StringName, state: PlayerState) 
 	_attached_player_ids[peer_id] = player_id
 	_player_states_by_id[player_id] = state
 	_ensure_player_world_state(player_id)
-	_player_runtime[peer_id] = PlayerRuntimeState.new(peer_id)
+	var runtime := PlayerRuntimeState.new(peer_id)
+	runtime.combat.reset(state.stats.value(&"max_stamina"))
+	_player_runtime[peer_id] = runtime
 	_connect_player_state_signals(peer_id, state)
 
 func _clear_player_state_registry() -> void:
@@ -829,6 +831,10 @@ func arm_player_life(peer_id: int) -> int:
 		runtime.life_phase = PlayerRuntimeState.LifePhase.ALIVE
 		runtime.death_result = null
 		state.effects.paused = false
+		if completed_result != null:
+			# Respawn policy: a new life starts with full stamina. World transitions
+			# without a death keep the current value.
+			runtime.combat.reset(state.stats.value(&"max_stamina"))
 		player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
 		if completed_result != null:
 			player_respawned.emit(peer_id, completed_result)

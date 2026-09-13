@@ -44,6 +44,14 @@ production 저장은 `GameSession.export_persistent_state()`가 Save v4의 `shar
 도메인만 직렬화·검증한다. v1–v3 flat snapshot builder는 migration regression test 전용으로
 유지하며 live load 경로에서 직접 적용하지 않는다.
 
+`PlayerRuntimeState`(peer 단위, transient)는 `life_id`/`life_phase`/`death_result`와 함께
+`combat: CombatRuntimeState`(`stamina`, `max_stamina`)를 소유한다. 스태미나의 canonical
+owner는 이 runtime state 하나뿐이며 `CombatComponent`는 참조만 갖고 소비·재생 로직을
+수행한다. `_add_player_state()`에서 `max_stamina` stat으로 초기화하고, respawn으로 새 life를
+arm할 때(`arm_player_life`, 완료된 death result가 있을 때)만 다시 가득 채운다. 사망 없는
+월드 전환은 현재 값을 유지한다. Save v4에 저장하지 않으며 이 단계에서는 복제하지 않는다
+(client 표시 값은 아직 authoritative하지 않다).
+
 save format은 **4**이다. `peer_id`와 network/runtime revision은 저장하지 않으며, Host의
 attached/detached canonical PlayerState와 personal progression은 persistent `player_id`로
 저장한다. v1 → v2 → v3 → v4 migration을 거치며 진행 중 원정은 재개하지 않는다.

@@ -140,12 +140,12 @@ func _bind_player(player: PlayerActor) -> void:
 func _on_health_changed(current: float, maximum: float) -> void:
 	var hunger := bound_player.survival.hunger if is_instance_valid(bound_player) else 0.0
 	var thirst := bound_player.survival.thirst if is_instance_valid(bound_player) else 0.0
-	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f   Hunger %.0f   Thirst %.0f" % [current, maximum, bound_player.combat.stamina if is_instance_valid(bound_player) else 0.0, hunger, thirst]
+	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f   Hunger %.0f   Thirst %.0f" % [current, maximum, bound_player.combat.current_stamina() if is_instance_valid(bound_player) else 0.0, hunger, thirst]
 
 func _on_survival_changed(hunger: float, thirst: float, _hunger_stage: int, _thirst_stage: int) -> void:
 	var current := bound_player.health.current_health if is_instance_valid(bound_player) else 0.0
 	var maximum := bound_player.health.max_health if is_instance_valid(bound_player) else 0.0
-	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f   Hunger %.0f   Thirst %.0f" % [current, maximum, bound_player.combat.stamina if is_instance_valid(bound_player) else 0.0, hunger, thirst]
+	vitals_label.text = "HP %.0f/%.0f   Stamina %.0f   Hunger %.0f   Thirst %.0f" % [current, maximum, bound_player.combat.current_stamina() if is_instance_valid(bound_player) else 0.0, hunger, thirst]
 
 func refresh_all() -> void:
 	if inventory_label == null:

@@ -12,6 +12,7 @@ python tools/check_project.py --godot godot
 
 엔진 버전은 `.godot-version`에 고정되어 있다. 실행 파일 지정, CI 및 수동 점검 절차는 [테스트](docs/testing.md)를 참고한다.
 
+- [작업 규칙(CLAUDE.md)](CLAUDE.md) · [코드베이스 지도](docs/codebase_map.md)
 - [아키텍처](docs/architecture.md) · [상태 소유권](docs/session_architecture.md)
 - [콘텐츠 제작](docs/content_authoring_guide.md) · [저장 형식](docs/save_format.md)
-- [조작](docs/controls.md)
+- [조작](docs/controls.md) · [전투 개편 사전 분석](docs/combat_rework_prep.md)

@@ -99,6 +99,7 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 - unit/test_settlement_state_restore.gd: unknown pending, storage overflow 합병, 세션 전체 중복, 보상·pending 재진입/원자성.
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
+- unit/test_combat_runtime_state.gd: `CombatRuntimeState` reset/spend/regenerate/max 클램프, 실제 Settlement actor의 `CombatComponent`가 `PlayerRuntimeState.combat`을 참조하는지, 공격 성공 시 stamina_cost 차감·부족 시 거절과 값 유지·cooldown 미시작, `_process` 재생과 survival multiplier, stat modifier에 따른 max 변화, unbound component의 null 안전성, 월드 전환 시 유지와 respawn 시 max로 refill.
 - unit/test_environment_presentation.gd: EnvironmentDefinition/BackgroundLayerDefinition 저장·필터, presenter의 cover fit·parallax·autoscroll·repeat·z 클램프, 4:3·16:10·21:9 viewport coverage, 빈/누락/잘못된 타입 경로의 안전한 fallback, 로딩 중 즉시 fallback 색, 비동기 Preset 로드와 scene 제거 후 non-blocking token 회수, Settlement/Adventure visible presentation에는 EnvironmentPresenter가 생성되고 `server_runtime_mode` 및 ServerWorldRuntime scene에는 생성되지 않는 경계.
 
 Resource.duplicate(true) 이후에도 외부 Resource는 공유될 수 있다. 테스트가 변경할
