@@ -49,8 +49,15 @@ production 저장은 `GameSession.export_persistent_state()`가 Save v4의 `shar
 owner는 이 runtime state 하나뿐이며 `CombatComponent`는 참조만 갖고 소비·재생 로직을
 수행한다. `_add_player_state()`에서 `max_stamina` stat으로 초기화하고, respawn으로 새 life를
 arm할 때(`arm_player_life`, 완료된 death result가 있을 때)만 다시 가득 채운다. 사망 없는
-월드 전환은 현재 값을 유지한다. Save v4에 저장하지 않으며 이 단계에서는 복제하지 않는다
-(client 표시 값은 아직 authoritative하지 않다).
+월드 전환은 현재 값을 유지한다.
+
+`PlayerState`(영속, Save v4 대상: stats·inventory·equipment·survival·effects)와
+`PlayerRuntimeState`(transient, 저장하지 않음: life_id·life_phase·death_result·combat)는
+서로 다른 영역이다. **스태미나는 Save v4의 persistent field가 아니다.** 대신 Protocol v13부터
+서버가 authoritative 값을 클라이언트에 복제하며, client의 `PlayerRuntimeState.combat`은 그
+값을 담는 runtime mirror다. 클라이언트는 스태미나를 스스로 재생하지 않고 HUD도 이 mirror를
+읽는다. 복제 경로는 [멀티플레이](multiplayer.md)의 "Authoritative stamina replication
+(Protocol v13)"을 따른다.
 
 save format은 **4**이다. `peer_id`와 network/runtime revision은 저장하지 않으며, Host의
 attached/detached canonical PlayerState와 personal progression은 persistent `player_id`로

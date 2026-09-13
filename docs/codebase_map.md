@@ -56,6 +56,23 @@ autoload 5개 (`project.godot`):
 | `AdventureState` | `active_session`, `death_drops` |
 | `DifficultyState` | 프리셋 id + override, 원정 시작 시 `AdventureRulesSnapshot` 으로 확정 |
 
+`PlayerState`(영속, Save v4 대상)와 `PlayerRuntimeState`(transient, 저장하지 않음)는
+서로 다른 것이다. 런타임 쪽은 다음을 소유한다.
+
+```
+PlayerRuntimeState            (peer 단위, transient)
+├─ life_id
+├─ life_phase
+├─ death_result
+└─ combat: CombatRuntimeState
+     ├─ stamina               ← 스태미나의 유일한 canonical owner
+     └─ max_stamina
+```
+
+`CombatComponent` 는 이 객체를 참조만 한다. 클라이언트에서는 이 runtime state 가 서버
+값을 담는 **runtime mirror** 이며 클라이언트가 스스로 값을 굴리지 않는다. 스태미나는
+Save v4 에 포함되지 않는다.
+
 플레이어 레지스트리는 3층이다. 이걸 헷갈리면 멀티플레이가 조용히 깨진다.
 
 - `_player_states_by_id[player_id]` — **영속 canonical** PlayerState. 접속 여부와 무관.
@@ -80,7 +97,12 @@ Phase: `MENU → SETTLEMENT → ADVENTURE → SETTLEMENT`, 사망 시 `RESPAWNIN
 
 ## 4. 멀티플레이 축
 
-`NetworkManager` (ENet, 기본 포트 7777, 최대 4인, `NetworkProtocol.VERSION = 12`).
+`NetworkManager` (ENet, 기본 포트 7777, 최대 4인, `NetworkProtocol.VERSION = 13`).
+
+프로토콜 이력: v11 이 월드 배정, v12 가 월드/revision 에 묶인 게임플레이 복제(이동·적·전리품·
+전투 표현·필드 상호작용)를 도입했고, **v13 이 authoritative 스태미나 복제**를 추가했다.
+v13 의 내용은 `PlayerRuntimeSnapshot` 에 `stamina`/`max_stamina` 포함, 지속 스태미나용
+`PlayerCombatRuntimeSnapshot` 신설, `unreliable_ordered` 채널 3 이다.
 
 RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 받는다. 이 구조를 깨지 말 것.
 
@@ -96,6 +118,17 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
   `_receive_session_snapshot`, `_receive_private_player_state`,
   `_receive_spawn_assignment`, `_receive_world_assignment`, `_client_add_peer/_remove_peer`,
   `_reject_handshake`.
+
+복제 경로별 성격:
+
+| 경로 | 빈도 | 신뢰성 | 계기 |
+|---|---|---|---|
+| Player Transform | 20 Hz | `unreliable_ordered` ch1 | 권위 tick |
+| Combat Runtime (`PlayerCombatRuntimeSnapshot`) | 최대 10 Hz, 값이 변했을 때만 | `unreliable_ordered` ch3 | 권위 tick |
+| Player Runtime Full (`PlayerRuntimeSnapshot`) | 이벤트 | `reliable` | world-ready / life / respawn / health |
+| Enemy Transform | 권위 tick | `unreliable_ordered` ch2 | 권위 tick |
+
+지속적으로 변하는 combat state 를 reliable RPC 로 매 tick 보내지 않는다는 것이 이 표의 요점이다.
 
 월드 스코핑: `ServerWorldRoot.reconcile()` 이 `GameSession.get_peer_world()` 집합에서
 필요한 월드를 뽑아 `ServerWorldRuntime` 을 만들고 없어지면 지운다. 각 런타임은
@@ -131,7 +164,9 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
   `speed` 는 `move_speed` 스탯을 따라간다.
 - `HealthComponent` — `receive_damage(DamageContext)`, 접촉 무적 `invulnerability_seconds`
   (기본 0.35), `receive_periodic_damage()` 는 무적을 무시한다.
-- `CombatComponent` — 쿨다운, **스태미나**, 무기별 전략 dispatch.
+- `CombatComponent` — 공격 실행, 쿨다운, 스태미나 **소비/재생 로직**, 무기별 전략 dispatch.
+  스태미나 값 자체는 소유하지 않고 `combat_runtime`(`CombatRuntimeState`) 참조를 통해 읽고
+  쓴다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.
 - `HitboxComponent`(Area2D) / `HurtboxComponent`(Area2D) — 팩션·target_factions 검사 후
   `hit_effects` 적용.
 - `EffectController` — `PlayerState.effects` 모델의 어댑터. 시간은 모델이 소유.
@@ -162,7 +197,8 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 
 - `tests/test_runner.tscn` → `test_runner.gd` 가 자체 테스트 + `tests/unit/*`,
   `tests/integration/*` 를 `preload().new().run(self)` 로 순차 dispatch. 성공 시
-  `TEST PASS: <n> assertions` 출력. 현재 기준선 **785 assertions**.
+  `TEST PASS: <n> assertions` 출력. assertion 총계는 테스트가 늘 때마다 바뀌므로 문서에
+  고정 숫자를 적지 않는다. 판단 기준은 전체 suite 와 멀티플레이 E2E 의 통과 여부다.
 - `tools/check_project.py` — 엔진 버전 핀 확인 → editor import → 콘텐츠 검증 →
   테스트 러너 → restart-write/read → 60프레임 부팅. 각 단계 120초 제한, 경고도 실패.
 - `tools/test_multiplayer_*.py` — 실제 ENet + 분리된 OS 프로세스. restart(재접속/세이브),
@@ -175,7 +211,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 |---|---|
 | 아트 | 배경 텍스처만 존재. 캐릭터·적·시설·아이템 전부 Polygon2D 플레이스홀더. 애니메이션 0 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
-| 전투 | 회피/구르기·스태미나 UI·콤보·경직·넉백 적용·방향 공격·보스 없음 (자세히는 `combat_rework_prep.md`) |
+| 전투 | 스태미나(소유·복제·HUD)는 완료. Combat Action State Machine, 공격 타임라인, 넉백 적용, 피격 경직, 회피, 콤보, 보스가 없다 (단계별 계획은 `combat_rework_prep.md`) |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
 | 성장 | 레벨/경험치/스킬 트리 없음. 성장은 장비·시설 해금뿐 |

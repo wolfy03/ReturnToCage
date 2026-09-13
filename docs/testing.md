@@ -92,7 +92,7 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 
 ## 안정화 경계 테스트
 
-기존 runner는 다음 다섯 파일을 dispatch한다. 외부 프레임워크를 추가하지 않는다.
+기존 runner가 dispatch하는 파일 중 안정화·전투 관련 항목은 다음과 같다. 외부 프레임워크를 추가하지 않는다.
 
 - unit/test_inventory_stability.gd: 인스턴스 수량·중복, 내구도, signal 횟수, 정확한 instance 입력과 거래 rollback.
 - unit/test_player_state_restore.gd: reset/restore 3회, 보관한 이전 객체의 콜백 차단, 체력·생존·좌표 보정, getter 및 시작 콘텐츠 검증.
@@ -100,6 +100,11 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
 - unit/test_combat_runtime_state.gd: `CombatRuntimeState` reset/spend/regenerate/max 클램프, 실제 Settlement actor의 `CombatComponent`가 `PlayerRuntimeState.combat`을 참조하는지, 공격 성공 시 stamina_cost 차감·부족 시 거절과 값 유지·cooldown 미시작, `_process` 재생과 survival multiplier, stat modifier에 따른 max 변화, unbound component의 null 안전성, 월드 전환 시 유지와 respawn 시 max로 refill.
+- unit/test_combat_runtime_replication.gd: `CombatRuntimeState.apply_values` 검증,
+  `PlayerRuntimeSnapshot`/`PlayerCombatRuntimeSnapshot`의 payload 왕복과 누락·타입·음수·
+  초과·NaN/INF 거절, sequence 최신/중복/역행 처리, 값이 변하지 않을 때의 패킷 억제,
+  스냅샷 적용 후 `CombatRuntimeState` 객체 identity 유지, 플레이어 간 격리(B 갱신이 C를
+  건드리지 않음), HUD가 scene component가 아니라 runtime mirror를 읽는지.
 - unit/test_environment_presentation.gd: EnvironmentDefinition/BackgroundLayerDefinition 저장·필터, presenter의 cover fit·parallax·autoscroll·repeat·z 클램프, 4:3·16:10·21:9 viewport coverage, 빈/누락/잘못된 타입 경로의 안전한 fallback, 로딩 중 즉시 fallback 색, 비동기 Preset 로드와 scene 제거 후 non-blocking token 회수, Settlement/Adventure visible presentation에는 EnvironmentPresenter가 생성되고 `server_runtime_mode` 및 ServerWorldRuntime scene에는 생성되지 않는 경계.
 
 Resource.duplicate(true) 이후에도 외부 Resource는 공유될 수 있다. 테스트가 변경할

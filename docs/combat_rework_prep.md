@@ -1,7 +1,22 @@
-# 전투 개편 사전 분석 (데드셀 방향)
+# 전투 개편 계획과 현황 (데드셀 방향)
 
-다음 작업 대상은 "데드셀식 전투 개편"이고, 멀티플레이는 계속 유지·확장한다는 전제다.
-이 문서는 **구현 계획이 아니라 착수 전 실측 자료**다. 수치·파일·함수는 현재 코드에서 확인한 값이다.
+## 상태
+
+이 문서는 전투 개편 **착수 전 사전 분석**으로 시작했으나, 이후 기반 작업이 진행되어
+현재는 완료 사항까지 함께 기록한다.
+
+```
+완료  1차  CombatRuntimeState 로 stamina ownership 이전
+완료  2차  authoritative stamina replication (Protocol v13) + runtime-mirror HUD
+예정  3차  Combat Action State Machine (IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY)
+```
+
+> **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
+> **코드와 `CLAUDE.md` 의 현재 아키텍처 규칙이 우선**한다. 이 문서를 그대로 구현
+> 지시로 받아들이지 않는다. 아래 4절의 단계표가 현재 유효한 실행 계획이다.
+
+멀티플레이는 계속 유지·확장한다는 전제이며, 새 전투 시스템은 처음부터 서버 권위 경계를
+지켜서 설계한다. 1절의 수치·파일·함수는 현재 코드에서 확인한 값이다.
 
 ## 1. 지금 전투가 실제로 도는 경로
 
@@ -59,7 +74,7 @@
 | 요소 | 현재 | 비고 |
 |---|---|---|
 | 회피/구르기 | 없음 | 입력 액션도 없음. 무적 프레임 개념 없음 |
-| 스태미나 소비처 | 공격만 | 회피·대시·차징에 쓰려면 소유 위치부터 옮겨야 함(3절) |
+| 스태미나 소비처 | 공격만 | 소유·복제 구조는 완료(3-1). 회피·대시가 쓸 소비처만 남음 |
 | 콤보 | 없음 | 공격은 단발. `sequence` 는 네트워크용 일련번호일 뿐 콤보 인덱스가 아님 |
 | 공격 모션/선후딜 | 없음 | 히트박스가 즉시 켜짐. windup/active/recovery 구분 없음 |
 | 넉백 적용 | 벡터만 존재 | `DamageContext.knockback` 이 velocity 에 반영되지 않음 |
@@ -77,33 +92,71 @@
 - `PlayerActor.attack_presented(sequence, facing)` — 클라이언트 표현 훅(이미 복제됨).
 - `EffectRuntimeModel` / `EffectDefinition` — 상태이상·버프를 데이터로 넣을 수 있음.
 - `EnemyState` 상태 노드 — 적 패턴 추가는 노드 추가 + `change_state` 만으로 가능.
-- `MovementComponent.Mode` — 회피 상태를 여기에 추가하는 게 자연스러움.
+- `PlayerRuntimeState.combat`(`CombatRuntimeState`) — 전투 런타임 값을 추가로 얹을 자리.
+  스태미나가 이미 여기에 있고 복제 경로도 갖춰져 있다.
 
 ## 3. 먼저 결정해야 하는 구조 문제
 
-### 3-1. 스태미나의 소유자를 옮겨야 한다 (선행 작업)
+### 3-1. 스태미나 소유와 복제 — 완료됨 (1차·2차)
 
-현재 스태미나는 `CombatComponent.stamina`(Scene Node)가 소유한다. 이건 `CLAUDE.md` 의
-"Scene Node 가 지속 상태를 소유하지 않는다" 규칙과 어긋나고, 실제로 깨져 있다:
+과거 구조에서는 `CombatComponent`(Scene Node)가 스태미나를 소유했고, 그래서 저장되지도
+복제되지도 않았다(클라이언트 HUD 가 항상 최대치를 표시하는 문제가 있었다). 현재는 해소됐다.
 
-- **저장되지 않는다.** 씬을 이동하면 100으로 리셋된다.
-- **복제되지 않는다.** 클라이언트는 권위 액터가 아니라 `CombatComponent._process` 가
-  꺼져 있어, HUD 가 읽는 `bound_player.combat.stamina`(`ui/game_hud.gd:143`)는 항상 100이다.
-  즉 클라이언트 화면의 스태미나 표시는 지금도 거짓이다.
-- 회피·대시가 스태미나를 쓰게 되는 순간 이 불일치가 곧바로 조작감 문제가 된다.
+```
+PlayerRuntimeState
+ └─ CombatRuntimeState        ← 스태미나의 유일한 canonical owner
+      ├─ stamina
+      └─ max_stamina
 
-→ `PlayerState`(또는 `SurvivalState` 옆의 전용 런타임 모델)로 옮기고,
-`PlayerRuntimeSnapshot` 에 실어 복제하는 것이 선행 작업이다. `player_runtime_snapshot.gd`
-의 `to_payload`/`from_payload` 는 필드 검증이 엄격하므로 양쪽을 같이 고쳐야 한다.
+CombatComponent
+ └─ combat_runtime 참조만 보유 (소비·재생 로직은 계속 컴포넌트에 있음)
+```
 
-### 3-2. 회피를 어디에 둘 것인가
+- `CombatRuntimeState` 는 transient 이며 Save v4 에 포함되지 않는다. 네트워크를 전혀 모르는
+  순수 런타임 모델이고, 외부 권위 값을 받을 때는 `apply_values(stamina, max_stamina)` 를 쓴다.
+- 복제는 두 경로다. 이벤트 기반 reliable `PlayerRuntimeSnapshot`(stamina/max_stamina 포함)과,
+  지속 변화를 담당하는 throttled `PlayerCombatRuntimeSnapshot`(`unreliable_ordered` 채널 3,
+  `COMBAT_STATE_INTERVAL = 0.1`, 값이 변했을 때만 전송, sequence 로 stale 패킷 무시).
+- 클라이언트는 스태미나를 스스로 재생하지 않는다(`combat.set_process(false)` 유지, 예측 없음).
+  `GameSession.apply_player_combat_runtime_snapshot()` 이 기존 `CombatRuntimeState` **객체를
+  교체하지 않고 값만** 갱신한다. 교체하면 각 `CombatComponent` 의 참조가 끊어지기 때문이다.
+- HUD 는 `GameSession.get_player_stamina()` / `get_player_max_stamina()` 로 runtime mirror 를
+  읽고 `player_combat_runtime_changed` 로 갱신된다.
 
-- 상태는 `MovementComponent.Mode` 에 `DODGE` 추가가 가장 자연스럽다(중력·입력 처리를
-  이미 소유하고 있고, `mode` 는 이미 스냅샷으로 복제된다 — `NetworkProtocol.valid_snapshot()`
-  의 상한이 `Mode.CLIMB` 이라 **enum 확장 시 이 검증도 같이 고쳐야 한다**).
-- 무적 프레임은 `HealthComponent.invulnerable_remaining` 을 재사용할 수 있으나, 현재
-  이건 "피격 후 무적"이라 의미가 다르다. `receive_periodic_damage()` 가 무적을 무시하도록
-  이미 분리돼 있듯이, 회피 무적도 별도 플래그로 두는 편이 안전하다.
+자세한 복제 계약은 `docs/multiplayer.md` 의 "Authoritative stamina replication (Protocol v13)".
+
+### 3-2. 회피를 어디에 둘 것인가 — 결정됨
+
+**`MovementComponent.Mode` 에 `DODGE` 를 추가하지 않는다.** (과거 분석에서는 그 방향을
+제안했으나 폐기했다.) locomotion 과 combat action 을 하나의 enum 으로 합치면
+
+```
+AIR + ATTACK
+GROUND + ATTACK
+AIR + HURT
+CLIMB + HURT
+GROUND + DODGE
+```
+
+같은 조합이 곧바로 상태 폭발로 이어진다. 따라서 두 축을 독립적으로 관리한다.
+
+```
+Movement / Locomotion State        Combat Action State
+  GROUND                             IDLE
+  AIR                                ATTACK_STARTUP
+  CLIMB                              ATTACK_ACTIVE
+                                     ATTACK_RECOVERY
+                                     DODGE
+                                     HURT
+                                     DEAD
+```
+
+`MovementComponent.Mode` 는 현재의 `GROUND / AIR / CLIMB` 를 유지한다. `ATTACK`, `DODGE`,
+`HURT`, `DEAD` 는 3차에서 도입할 별도의 Combat Action State 가 담당한다.
+
+무적 프레임은 `HealthComponent.invulnerable_remaining` 을 그대로 재사용하지 않는 편이 안전하다.
+현재 이 값은 "피격 후 무적"이라 의미가 다르다. `receive_periodic_damage()` 가 접촉 무적을
+무시하도록 이미 분리돼 있듯이, 회피 무적도 별도 플래그로 둔다.
 
 ### 3-3. 네트워크 모델: 지금은 예측이 없다
 
@@ -128,54 +181,71 @@ hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하�
 새 Resource 는 `data/definitions/` 에 `ContentDefinition` 으로 넣고
 `validate_definition()` 을 반드시 구현한다(`CLAUDE.md` 4절).
 
-## 4. 단계별 착수안
+## 4. 단계 계획 (현재 유효한 실행 순서)
 
-각 단계는 **그 단계만으로 `check_project.py` 가 통과하는 상태**로 끝나야 한다.
+각 단계는 **그 단계만으로 `check_project.py` 와 멀티플레이 E2E 가 통과하는 상태**로 끝나야
+한다. 한 단계에서 한 종류의 구조적 문제만 해결한다.
 
-**0단계 — 기준선 고정 (선행)**
-현재 상태는 green 이다: `ALL PROJECT CHECKS PASS`, 테스트 785 assertions,
-2인 world-runtime E2E 통과. 개편 전에 이 숫자를 기록해 두고, 매 단계 비교한다.
+| 단계 | 내용 | 상태 |
+|---|---|---|
+| 1차 | Combat Runtime State — `CombatRuntimeState` 로 stamina ownership 이전 | 완료 |
+| 2차 | Stamina authoritative replication (Protocol v13) + runtime-mirror HUD | 완료 |
+| 3차 | **Combat Action State Machine** — `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 만 | 예정 |
+| 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 예정 |
+| 5차 | Hitbox 데이터화 + Knockback 실제 적용 | 예정 |
+| 6차 | HURT (플레이어 피격 경직) | 예정 |
+| 7차 이후 | Dodge/i-frame, Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 
-**1단계 — 스태미나 상태 이전**
-`CombatComponent.stamina` → 세션 상태로. 스냅샷 복제 + HUD 수정 + 저장 필드 추가.
-touch: `core/models/session/player_state.gd`, `core/models/network/player_runtime_snapshot.gd`,
-`gameplay/components/combat_component.gd`, `gameplay/actors/player/player.gd`,
-`ui/game_hud.gd`, `core/serialization/session_snapshot.gd`, `docs/save_format.md`.
-test: `tests/unit/` 에 스태미나 소비·회복·복원·스냅샷 왕복 테스트 추가.
+### 완료된 1차·2차 요약
 
-**2단계 — 공격 페이즈화**
-`AttackPhaseDefinition` 도입, `CombatComponent.attack()` 을 즉발에서 windup/active/recovery
-타임라인으로 교체. 히트박스 지속·크기·오프셋을 데이터에서 읽는다. 넉백을 실제 velocity 에
-적용하고 플레이어 피격 경직을 추가한다.
-touch: `data/definitions/weapon_definition.gd`(+새 정의), `gameplay/components/combat_component.gd`,
-`hitbox_component.gd`, `health_component.gd`, `movement_component.gd`, 기존 무기 `.tres` 2종.
+`CombatComponent` 가 소유하던 스태미나를 `PlayerRuntimeState.combat` 으로 옮기고(1차),
+이벤트 기반 reliable 스냅샷과 throttled unreliable combat 스냅샷으로 복제한 뒤 HUD 가
+runtime mirror 를 읽게 했다(2차). 상세는 3-1 과 `docs/multiplayer.md` 를 본다.
 
-**3단계 — 회피/구르기**
-`project.godot` 에 `dodge` 입력 액션 추가, `MovementComponent.Mode.DODGE`,
-`NetworkProtocol.valid_snapshot()` 상한 갱신, 회피 전용 무적, 스태미나 소비,
-클라이언트는 3-3 의 A 방식으로 표현 선행.
-touch: `project.godot`, `movement_component.gd`, `player_input_component.gd`,
-`network_combat_component.gd`(또는 새 intent RPC), `core/network/network_protocol.gd`,
-`docs/controls.md`, `docs/multiplayer.md`.
+### 3차 — Combat Action State Machine
 
-**4단계 — 콤보**
-콤보 인덱스와 캔슬 윈도우. 호스트가 콤보 상태를 소유하고, 클라이언트에는
-`attack_presented` 에 콤보 단계를 실어 보낸다(payload 확장 → 프로토콜 버전 상향).
+이 단계에서는 **상태 머신 골격만** 만든다. `IDLE`, `ATTACK_STARTUP`, `ATTACK_ACTIVE`,
+`ATTACK_RECOVERY` 네 상태와 그 사이의 전이·타이밍 소유권만 다루고, `DODGE`/`HURT`/`DEAD`,
+`AttackDefinition`, 넉백, 콤보, 입력 버퍼는 넣지 않는다.
 
-**5단계 — 적 패턴**
-`EnemyState` 에 텔레그래프/돌진/원거리 상태 추가, `EnemyDefinition` 에 패턴 데이터.
-적 공격을 `perform_attack()` 직접 호출에서 히트박스 기반으로 전환(플레이어와 같은 파이프라인).
+지켜야 할 경계:
+- locomotion(`MovementComponent.Mode = GROUND/AIR/CLIMB`)과 독립이다. Movement Mode 에
+  전투 상태를 추가하지 않는다(3-2).
+- 상태는 호스트가 소유한다. 클라이언트는 표현만 한다.
+- 상태 값을 네트워크 payload 에 싣게 되는 시점에 payload shape 가 바뀌는지 확인하고,
+  바뀐다면 `NetworkProtocol.VERSION` 을 함께 올린다(5절).
+- 상태 지속시간을 Scene Node 가 소유할지, `CombatRuntimeState` 로 올릴지는 착수 시 정한다.
+  씬 이동을 넘어 유지돼야 하는 값이면 runtime state 로 올린다.
 
-**6단계 — 표현**
-히트스톱, 카메라 흔들림, 피격 플래시. 아트가 없으므로 여기서 스프라이트/애니메이션
-파이프라인 작업과 만난다(별도 작업으로 분리 권장).
+### 4차 이후 메모
+
+무기마다 선딜/후딜/히트박스 모양/콤보 단계가 달라지므로, 지금처럼 `WeaponDefinition` 에
+스칼라만 두는 구조로는 부족하다. `AttackDefinition`(windup / active / recovery /
+hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하위 Resource 배열이 필요하다.
+새 Resource 는 `data/definitions/` 에 `ContentDefinition` 으로 넣고
+`validate_definition()` 을 반드시 구현한다(`CLAUDE.md` 4절).
+
+적 공격은 아직 `EnemyAgent.perform_attack()` 이 대상 `HealthComponent.receive_damage()` 를
+직접 호출한다. 히트박스 파이프라인으로 옮기는 것은 적 패턴 개편 단계의 일이다.
 
 ## 5. 개편 중 깨지기 쉬운 것
 
-- `NetworkProtocol.valid_snapshot()` 의 `movement_mode` 상한 — Mode enum 을 늘리면 여기도.
-- `NetworkProtocol.VERSION` — 페이로드 모양이 바뀌면 반드시 올린다. 핸드셰이크에서 거절된다.
-- `PlayerRuntimeSnapshot.from_payload()` — 필드 누락·범위 검증이 엄격하다. 필드 추가 시
-  구버전 payload 를 받는 테스트가 있는지 확인.
+- `NetworkProtocol.VERSION`(현재 13) — 페이로드 모양이 바뀌면 반드시 올린다. 핸드셰이크에서
+  거절되며 `tests/unit/test_network_input_validation.gd` 가 정확한 숫자를 검증한다.
+  Combat Action state 가 네트워크 payload 에 추가되는 시점에는 payload shape 변경 여부에
+  따라 protocol version 을 검토한다.
+- `NetworkProtocol.valid_snapshot()` 의 `movement_mode` 상한 — `MovementComponent.Mode` 는
+  `GROUND/AIR/CLIMB` 를 유지할 예정이라 당장 손댈 일은 없다. 다만 언젠가 locomotion 이
+  실제로 늘어난다면 이 상한도 같이 올려야 스냅샷이 조용히 버려지지 않는다.
+  (전투 상태는 Movement Mode 에 넣지 않으므로 여기에 해당하지 않는다 — 3-2 참고.)
+- `PlayerRuntimeSnapshot.from_payload()` / `PlayerCombatRuntimeSnapshot.from_payload()` —
+  필드 누락·타입·범위 검증이 엄격하다. 필드를 추가하면 두 validator 와
+  `tests/unit/test_combat_runtime_replication.gd`, `tests/unit/test_multiplayer_lifecycle.gd` 의
+  인라인 payload 를 함께 고친다.
+- 클라이언트 runtime mirror 는 `CombatRuntimeState` **객체를 교체하지 않는다.** 교체하면
+  `CombatComponent.combat_runtime` 참조가 조용히 끊어진다.
+- `tests/integration/multiplayer_world_runtime_probe.gd` 에서 `@rpc` 어노테이션과 그 대상
+  함수 사이에 다른 함수를 끼워 넣지 않는다. RPC 설정이 끊겨 타임아웃으로만 드러난다.
 - `tests/unit/test_multiplayer_combat_foundation.gd`, `tests/integration/test_multiplayer_combat_loot.gd`
   — 전투 경로를 직접 검증한다. 개편하면 여기부터 깨진다.
 - 전역 시그널 연결 해제 누락 → `check_project.py` 가 orphan/leak 경고로 실패.

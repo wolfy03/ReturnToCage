@@ -35,9 +35,14 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 - **Resource 는 정적 콘텐츠, RefCounted 모델은 런타임 상태.** 현재 수량·내구도·효과
   잔여시간·회수 여부·위치를 Resource 에 쓰지 않는다. 테스트에서 Resource 를 바꿔야 하면
   `duplicate()` 하거나 임시 등록 후 정리한다.
-- **Scene Node 가 지속시간·쿨다운의 소유자가 되지 않는다.** 효과 시간은
+- **Scene Node 가 지속 상태의 소유자가 되지 않는다.** 효과 시간은
   `PlayerState.effects`(`EffectRuntimeModel`)가 소유하고 `GameSession` 이 tick 한다.
-  씬을 이동해도 유지돼야 하는 값은 전부 State 에 둔다.
+  스태미나는 `PlayerRuntimeState.combat`(`CombatRuntimeState`)이 소유하고
+  `CombatComponent` 는 **참조만** 한다. 씬을 이동해도 유지돼야 하는 값은 전부 모델에 둔다.
+- **`MovementComponent.Mode` 는 locomotion 전용이다.** `GROUND`, `AIR`, `CLIMB` 뿐이며
+  `ATTACK`, `DODGE`, `HURT`, `DEAD` 를 여기에 추가하지 않는다. 이런 상태는 별도의
+  **Combat Action State** 가 관리한다(3차 작업 대상). 두 축을 한 enum 으로 합치면
+  `AIR + ATTACK`, `CLIMB + HURT`, `GROUND + DODGE` 같은 조합이 상태 폭발로 이어진다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.
@@ -78,6 +83,19 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `server_runtime_mode = true` 가 되며, **배경/표현 노드를 만들면 안 된다.**
 - `peer_id` 는 런타임 값이고 저장하지 않는다. 영속 신원은 `player_id`(StringName)다.
   저장·복원·소유 판정은 전부 `player_id` 기준.
+- **지속적으로 변하는 값을 reliable RPC 로 매 tick 보내지 않는다.** 이벤트 기반 교정은
+  reliable 로, 계속 변하는 값은 throttle + "변했을 때만" + `unreliable_ordered` + sequence 로
+  보낸다. 현재 모범 사례는 스태미나 복제다: 이벤트용 reliable `PlayerRuntimeSnapshot` 과,
+  10 Hz 상한에 값이 변했을 때만 나가는 `PlayerCombatRuntimeSnapshot`(채널 3)로 분리돼 있다.
+  클라이언트는 받은 값을 mirror 만 하고 스스로 굴리지 않는다(예측 없음).
+- 클라이언트 runtime mirror 를 적용할 때 **모델 객체를 교체하지 말고 값만 갱신한다.**
+  Scene 컴포넌트가 그 객체를 참조하고 있어서 교체하면 조용히 끊어진다.
+
+### payload 를 바꿀 때 함께 볼 것
+
+`NetworkProtocol.VERSION`(현재 **13**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
+validator → 관련 unit test(인라인 payload 를 쓰는 테스트 포함) → handshake mismatch 테스트.
+같은 버전 안에서 구/신 payload 를 섞어 허용하지 않는다.
 
 ## 3. 코드 컨벤션
 

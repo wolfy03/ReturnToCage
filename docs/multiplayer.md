@@ -140,7 +140,7 @@ Host Saved Game is distinct from offline Load followed by Host. `SaveManager.pre
 
 The 4-D process-restart lifecycle is covered by independent 2-player and 3-player OS-process probes. They verify profile primary/backup reuse, production Host Saved Game staging, detached canonical restoration, same-object reattachment, owner-private and revisioned item/quest synchronization, returning/fallback actor placement before readiness, B/C privacy isolation, symmetric runtime mappings, duplicate-active-identity rejection, repeated reconnect, and host-loss cache cleanup. Save v4 and Profile v1 remain unchanged. Deferred work is product infrastructure such as authenticated account identity, cloud saves, NAT traversal, dedicated servers, host migration, and active-Adventure persistence.
 
-## Independent world participation and runtime (Protocol v12)
+## Independent world participation and runtime (introduced in Protocol v12)
 
 `GameSession.phase` remains an offline and compatibility facade, but multiplayer location authority is `player_id -> PlayerWorldState`. A stable state identifies `settlement` or `adventure:<region_id>` and carries an incrementing revision. `peer_id` is used only to attach the active transport peer to that canonical state. Fresh joins and reconnects begin in Settlement; disconnecting from Adventure forfeits unsecured loot and resets the detached world state to Settlement without deleting the canonical `PlayerState`.
 
@@ -165,7 +165,7 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 2
 python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 ```
 
-## Authoritative stamina replication (Protocol v13)
+## Authoritative stamina replication (introduced in Protocol v13, current)
 
 `CombatRuntimeState`(`PlayerRuntimeState.combat`)가 스태미나의 유일한 권위 소유자다. 이
 모델은 네트워크를 전혀 모르며, 복제는 두 경로로 나뉜다.
