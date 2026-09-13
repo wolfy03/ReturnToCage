@@ -51,6 +51,7 @@ func run_all() -> void:
 	preload("res://tests/unit/test_multiplayer_combat_foundation.gd").new().run(self)
 	await preload("res://tests/unit/test_combat_runtime_replication.gd").new().run(self)
 	await preload("res://tests/unit/test_combat_action_controller.gd").new().run(self)
+	await preload("res://tests/unit/test_attack_timeline.gd").new().run(self)
 	await preload("res://tests/unit/test_combat_runtime_state.gd").new().run(self)
 	preload("res://tests/unit/test_multiplayer_quest_scope.gd").new().run(self)
 	preload("res://tests/unit/test_multiplayer_settlement.gd").new().run(self)

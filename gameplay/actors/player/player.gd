@@ -198,9 +198,10 @@ func _on_died(_context: DamageContext) -> void:
 	if _death_handled or not is_simulation_authority() or not GameSession.is_current_life(peer_id, _life_id):
 		return
 	_death_handled = true
-	# A dead actor must not linger in an attack recovery; the action axis is
-	# scene-local, so this is the only cleanup point it needs.
-	combat_action.reset()
+	# A dead actor must not linger mid-attack; this also drops the pending weapon
+	# and damage context. The action axis is scene-local, so this is the only
+	# cleanup point it needs.
+	combat.abort_attack()
 	movement.exit_climb()
 	movement.enabled = false
 	survival.drain_paused = true

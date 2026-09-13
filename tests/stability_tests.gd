@@ -295,6 +295,7 @@ func test_domain_rules_and_validation() -> void:
 	var weapon := WeaponDefinition.new()
 	weapon.id = &"test_invalid_projectile"
 	weapon.display_name = "Invalid projectile"
+	weapon.attack_definition = AttackDefinition.new()
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
 	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "projectile without attack scene rejected")
 
@@ -390,6 +391,10 @@ func test_world_and_climbing() -> void:
 	t.assert_equal(actor.movement.speed, 190.0, "effect expiry updates live actor movement")
 	# Range and faction filtering use the actual combat adapter and hurtbox.
 	t.assert_true(actor.combat.attack(1.0), "melee attack executes")
+	# The attack commits on entering ATTACK_ACTIVE, so advance past the wind-up
+	# before inspecting the hitbox it arms.
+	var weapon_timing := (ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition).attack_definition
+	actor.combat._process(weapon_timing.startup_seconds)
 	var shape := actor.combat.hitbox.get_node("CollisionShape2D").shape as RectangleShape2D
 	t.assert_equal(shape.size.x, 52.0, "weapon attack_range controls actual hitbox")
 	var hit := DamageContext.new(2.0, &"test", actor, &"player")
@@ -564,6 +569,7 @@ func test_projectile(actor: PlayerActor, enemy: EnemyAgent) -> void:
 	var weapon := WeaponDefinition.new()
 	weapon.id = &"test_projectile"
 	weapon.display_name = "Test projectile"
+	weapon.attack_definition = AttackDefinition.new()
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
 	weapon.attack_range = 180.0
 	weapon.attack_scene = load("res://tests/fixtures/projectile_attack.tscn") as PackedScene

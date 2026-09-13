@@ -30,6 +30,11 @@ func run(t: Node) -> void:
 	player.facing = 1.0
 	var enemy_health_before := enemy.health.current_health
 	var attack := player.network_combat._server_execute_attack(player.peer_id, 0)
+	# The intent starts a wind-up; damage lands when the timeline reaches ACTIVE.
+	var attack_timing := (ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition).attack_definition
+	t.assert_true(player.combat_action.current_state() == CombatActionController.State.ATTACK_STARTUP, "a server attack intent starts the wind-up")
+	t.assert_equal(enemy.health.current_health, enemy_health_before, "no damage lands during the wind-up")
+	player.combat._process(attack_timing.startup_seconds)
 	await t.get_tree().physics_frame
 	await t.get_tree().physics_frame
 	t.assert_true(attack.success and enemy.health.current_health < enemy_health_before, "player intent executes existing server hitbox combat against an in-range enemy")

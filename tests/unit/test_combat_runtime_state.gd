@@ -52,22 +52,23 @@ func _test_actor_binding_attack_and_regen(t: Node) -> void:
 	t.assert_equal(actor.combat.current_stamina(), runtime.combat.stamina, "component getter reads the runtime state")
 
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
+	actor.combat.stamina_regen_multiplier = 0.0
 	var before := runtime.combat.stamina
 	t.assert_true(actor.combat.attack(1.0), "attack succeeds with enough stamina")
-	t.assert_equal(runtime.combat.stamina, before - weapon.stamina_cost, "attack spends stamina_cost from the runtime state")
-	t.assert_equal(actor.combat.cooldown_remaining, weapon.attack_cooldown, "cooldown stays on the component")
+	actor.combat._process(weapon.attack_definition.startup_seconds)
+	actor.combat.stamina_regen_multiplier = 1.0
+	t.assert_equal(runtime.combat.stamina, before - weapon.stamina_cost, "committing the attack spends stamina_cost from the runtime state")
 
-	# Clear both gates so this case actually exercises the stamina rejection and
-	# not the combat action state left in recovery by the attack above.
-	actor.combat.cooldown_remaining = 0.0
-	actor.combat_action.reset()
+	# Clear the in-flight attack so this case actually exercises the stamina
+	# rejection rather than the action axis still being busy.
+	actor.combat.abort_attack()
 	runtime.combat.stamina = weapon.stamina_cost - 0.5
 	var low := runtime.combat.stamina
 	t.assert_true(not actor.combat.attack(1.0), "attack is rejected without enough stamina")
 	t.assert_equal(runtime.combat.stamina, low, "rejected attack leaves stamina unchanged")
-	t.assert_equal(actor.combat.cooldown_remaining, 0.0, "rejected attack starts no cooldown")
+	t.assert_equal(actor.combat.phase_remaining(), 0.0, "rejected attack starts no attack timeline")
 
-	actor.combat_action.reset()
+	actor.combat.abort_attack()
 	runtime.combat.stamina = 50.0
 	actor.combat.stamina_regen_multiplier = 1.0
 	actor.combat._process(1.0)

@@ -156,8 +156,22 @@ PlayerActor
 ├─ MovementComponent      locomotion : GROUND / AIR / CLIMB
 ├─ CombatActionController combat action : IDLE / ATTACK_STARTUP /
 │                                         ATTACK_ACTIVE / ATTACK_RECOVERY
-└─ CombatComponent        공격 실행 · 쿨다운 · 스태미나 로직
+└─ CombatComponent        pending attack · phase timer · 전략 실행 · 스태미나 commit
      └─ CombatRuntimeState 참조 (stamina / max_stamina)
+
+WeaponDefinition
+└─ AttackDefinition (embedded sub-resource, ContentDefinition 아님)
+     ├─ startup_seconds
+     ├─ active_seconds     ← 멜리 히트박스가 열려 있는 시간
+     └─ recovery_seconds
+```
+
+공격 한 번의 흐름:
+
+```
+attack(facing)  →  검증 + context/weapon 스냅샷  →  ATTACK_STARTUP (startup_seconds)
+  →  ATTACK_ACTIVE 진입 = commit (전략 실행 · 히트박스 arm · 스태미나 차감 · attacked)
+  →  active_seconds  →  ATTACK_RECOVERY (recovery_seconds)  →  IDLE
 ```
 
 권위가 아닌(= 원격 표현용) 액터는 `_ready()` 에서 Health/Survival/Combat/Effects 의
@@ -181,7 +195,8 @@ PlayerActor
   ATTACK_RECOVERY`). 상태 저장·전이 검증·시그널만 담당하며 데미지·스태미나·무기·히트박스·
   네트워크를 모른다. scene-local 이라 월드 전환 시 새 액터는 `IDLE` 로 시작한다.
   locomotion(`MovementComponent.Mode`)과 **독립된 축**이다.
-- `CombatComponent` — 공격 실행, 쿨다운, 스태미나 **소비/재생 로직**, 무기별 전략 dispatch.
+- `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending attack + phase timer),
+  `ATTACK_ACTIVE` 진입 시 전략 실행과 스태미나 commit, 스태미나 재생 로직.
   스태미나 값 자체는 소유하지 않고 `combat_runtime`(`CombatRuntimeState`) 참조를 통해 읽고
   쓴다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.
 - `HitboxComponent`(Area2D) / `HurtboxComponent`(Area2D) — 팩션·target_factions 검사 후
@@ -228,7 +243,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 |---|---|
 | 아트 | 배경 텍스처만 존재. 캐릭터·적·시설·아이템 전부 Polygon2D 플레이스홀더. 애니메이션 0 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
-| 전투 | 스태미나(소유·복제·HUD)는 완료. Combat Action State Machine, 공격 타임라인, 넉백 적용, 피격 경직, 회피, 콤보, 보스가 없다 (단계별 계획은 `combat_rework_prep.md`) |
+| 전투 | 스태미나(소유·복제·HUD), Combat Action State, 공격 타임라인까지 완료. 히트박스 모양·오프셋 데이터화, 넉백 적용, 피격 경직, 회피, 콤보, 보스가 없다 (단계별 계획은 `combat_rework_prep.md`) |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
 | 성장 | 레벨/경험치/스킬 트리 없음. 성장은 장비·시설 해금뿐 |

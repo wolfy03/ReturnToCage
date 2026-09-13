@@ -34,8 +34,12 @@ func current_state() -> State:
 func is_idle() -> bool:
 	return _state == State.IDLE
 
+## Explicit membership rather than "not IDLE", so adding DODGE/HURT/DEAD later
+## cannot silently change what this means.
 func is_attacking() -> bool:
-	return _state != State.IDLE
+	return _state == State.ATTACK_STARTUP \
+		or _state == State.ATTACK_ACTIVE \
+		or _state == State.ATTACK_RECOVERY
 
 ## The gameplay transition graph. Skipping a phase is rejected, so a caller
 ## cannot jump straight from IDLE into an active hitbox phase.
@@ -87,24 +91,6 @@ func cancel_attack() -> bool:
 	if _state != State.ATTACK_STARTUP and _state != State.ATTACK_ACTIVE:
 		return false
 	return transition_to(State.IDLE)
-
-## TEMPORARY BRIDGE — remove when AttackDefinition drives the real timeline.
-##
-## Today an attack resolves instantly: the hitbox is armed inside
-## `CombatComponent.attack()` and there is no authoritative source for startup or
-## active durations. Walking IDLE -> STARTUP -> ACTIVE -> RECOVERY in one call
-## would emit three state changes that describe nothing, so a successful legacy
-## attack takes this single labelled edge into recovery instead, where the
-## existing weapon cooldown already acts as the recovery window.
-##
-## This edge is deliberately NOT part of [method is_allowed_transition]:
-## `transition_to(ATTACK_RECOVERY)` from IDLE still fails. Only this explicitly
-## named call may use it, so the phase-skip cannot leak into gameplay code.
-func enter_recovery_from_immediate_attack() -> bool:
-	if _state != State.IDLE:
-		return false
-	_set_state(State.ATTACK_RECOVERY)
-	return true
 
 ## Returns to IDLE from any state. Used when an actor is (re)initialised or torn
 ## down; emits only when the state actually changed.

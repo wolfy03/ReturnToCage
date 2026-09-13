@@ -1,7 +1,7 @@
 extends RefCounted
-## Combat action axis: a state machine independent from locomotion. This stage
-## adds the states and transitions only — the legacy attack still resolves
-## instantly, so gameplay timing must be unchanged and no new timer may exist.
+## Combat action axis: a state machine independent from locomotion. Phase
+## durations and the attack commit itself are covered by test_attack_timeline.gd;
+## this file covers the machine and how the actor is wired to it.
 
 func run(t: Node) -> void:
 	_test_initial_state(t)
@@ -9,7 +9,7 @@ func run(t: Node) -> void:
 	_test_illegal_transitions(t)
 	_test_signal_policy(t)
 	_test_reset(t)
-	_test_immediate_attack_bridge(t)
+	_test_is_attacking_membership(t)
 	await _test_actor_integration(t)
 	await _test_world_transition_and_respawn(t)
 
@@ -99,15 +99,20 @@ func _test_reset(t: Node) -> void:
 	action.state_changed.disconnect(callback)
 	action.free()
 
-func _test_immediate_attack_bridge(t: Node) -> void:
+func _test_is_attacking_membership(t: Node) -> void:
+	# Explicit membership, not "anything but IDLE": DODGE/HURT/DEAD join this enum
+	# later and must not be reported as attacking.
 	var action := _controller()
-	t.assert_true(action.enter_recovery_from_immediate_attack(), "the legacy immediate attack reaches recovery")
-	t.assert_equal(action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the bridge lands in recovery")
-	t.assert_true(not action.enter_recovery_from_immediate_attack(), "the bridge only applies from idle")
-	t.assert_true(action.finish_attack(), "the bridge still leaves recovery through the normal edge")
+	t.assert_true(not action.is_attacking(), "IDLE is not attacking")
 	action.begin_attack()
-	t.assert_true(not action.enter_recovery_from_immediate_attack(), "the bridge cannot skip an attack already in progress")
-	t.assert_equal(action.current_state(), CombatActionController.State.ATTACK_STARTUP, "a rejected bridge leaves the state untouched")
+	t.assert_true(action.is_attacking(), "ATTACK_STARTUP counts as attacking")
+	action.enter_attack_active()
+	t.assert_true(action.is_attacking(), "ATTACK_ACTIVE counts as attacking")
+	action.enter_attack_recovery()
+	t.assert_true(action.is_attacking(), "ATTACK_RECOVERY counts as attacking")
+	action.finish_attack()
+	t.assert_true(not action.is_attacking() and action.is_idle(), "the cycle ends not attacking")
+	t.assert_true(not action.has_method("enter_recovery_from_immediate_attack"), "the stage-3 immediate-attack bridge is gone")
 	action.free()
 
 func _spawn_settlement_player(t: Node, layer: Node) -> PlayerActor:
@@ -131,51 +136,53 @@ func _test_actor_integration(t: Node) -> void:
 		and MovementComponent.Mode.keys().has("GROUND") and MovementComponent.Mode.keys().has("AIR") \
 		and MovementComponent.Mode.keys().has("CLIMB"), "MovementComponent.Mode stays locomotion-only")
 
-	# A successful legacy attack commits the action state; startup and active are
-	# not faked because the attack still resolves instantly.
+	# Starting an attack begins the wind-up only: nothing has committed yet.
 	var events: Array[Array] = []
 	var callback := func(previous: int, current: int) -> void: events.append([previous, current])
 	actor.combat_action.state_changed.connect(callback)
+	var attack_definition := weapon.attack_definition
+	actor.combat.stamina_regen_multiplier = 0.0
 	var stamina_before := runtime.combat.stamina
-	t.assert_true(actor.combat.attack(1.0), "a legacy attack still succeeds")
-	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "a successful attack enters recovery")
-	t.assert_equal(events.size(), 1, "the legacy attack emits a single action change, not a faked phase walk")
-	t.assert_equal(actor.combat.cooldown_remaining, weapon.attack_cooldown, "the weapon cooldown is unchanged by the action axis")
-	t.assert_equal(runtime.combat.stamina, stamina_before - weapon.stamina_cost, "stamina ownership is unchanged")
+	t.assert_true(actor.combat.attack(1.0), "an attack request starts the wind-up")
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "a successful request enters startup")
+	t.assert_equal(runtime.combat.stamina, stamina_before, "the wind-up spends no stamina")
+	t.assert_equal(actor.combat.hitbox.remaining, 0.0, "the hitbox stays inactive during the wind-up")
 
-	# Re-attacking during recovery is rejected without touching anything.
-	var stamina_in_recovery := runtime.combat.stamina
-	var cooldown_in_recovery := actor.combat.cooldown_remaining
-	var armed_before := actor.combat.hitbox.remaining
-	t.assert_true(not actor.combat.attack(1.0), "a second attack during recovery is rejected")
-	t.assert_equal(runtime.combat.stamina, stamina_in_recovery, "a rejected re-attack spends no stamina")
-	t.assert_equal(actor.combat.cooldown_remaining, cooldown_in_recovery, "a rejected re-attack does not extend the cooldown")
-	t.assert_equal(actor.combat.hitbox.remaining, armed_before, "a rejected re-attack arms no hitbox")
+	# Re-attacking mid-attack is rejected without touching anything.
+	t.assert_true(not actor.combat.attack(1.0), "a second attack during the wind-up is rejected")
+	t.assert_equal(runtime.combat.stamina, stamina_before, "a rejected re-attack spends no stamina")
 	t.assert_equal(events.size(), 1, "a rejected re-attack emits no action change")
 
-	# The existing cooldown is the recovery window; no second timer was added.
-	actor.combat._process(weapon.attack_cooldown + 0.01)
-	t.assert_equal(actor.combat.cooldown_remaining, 0.0, "the cooldown elapses as before")
-	t.assert_true(actor.combat_action.is_idle(), "the action returns to idle when the cooldown ends")
-	t.assert_equal(events.size(), 2, "returning to idle emits exactly one more change")
+	actor.combat._process(attack_definition.startup_seconds)
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "the wind-up ends in the active phase")
+	t.assert_equal(runtime.combat.stamina, stamina_before - weapon.stamina_cost, "stamina is spent once, on commit")
+	t.assert_true(not actor.combat.attack(1.0), "a second attack during the active phase is rejected")
+
+	actor.combat._process(attack_definition.active_seconds)
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the active phase ends in recovery")
+	t.assert_true(not actor.combat.attack(1.0), "a second attack during recovery is rejected")
+
+	actor.combat._process(attack_definition.recovery_seconds)
+	t.assert_true(actor.combat_action.is_idle(), "recovery ends at idle")
+	t.assert_equal(events.size(), 4, "one attack emits exactly four action changes")
+	t.assert_equal(events[0], [CombatActionController.State.IDLE, CombatActionController.State.ATTACK_STARTUP], "the cycle starts with the wind-up")
+	t.assert_equal(events[3], [CombatActionController.State.ATTACK_RECOVERY, CombatActionController.State.IDLE], "the cycle ends back at idle")
 	actor.combat._process(1.0)
-	t.assert_equal(events.size(), 2, "an already-idle controller is not re-notified every frame")
+	t.assert_equal(events.size(), 4, "an idle controller is not re-notified every frame")
 	actor.combat_action.state_changed.disconnect(callback)
 
-	# Every rejection path must leave the action axis at IDLE.
+	# Every rejection path must leave the action axis at IDLE and untouched.
 	t.assert_true(actor.combat_action.is_idle(), "the action axis is idle before the rejection cases")
 	runtime.combat.stamina = weapon.stamina_cost - 0.5
 	t.assert_true(not actor.combat.attack(1.0) and actor.combat_action.is_idle(), "an attack rejected for stamina leaves the action idle")
 	runtime.combat.stamina = runtime.combat.max_stamina
-	actor.combat.cooldown_remaining = 1.0
-	t.assert_true(not actor.combat.attack(1.0) and actor.combat_action.is_idle(), "an attack rejected by cooldown leaves the action idle")
-	actor.combat.cooldown_remaining = 0.0
 	actor.return_channel = 0.5
 	t.assert_true(not actor.combat.attack(1.0) and actor.combat_action.is_idle(), "an attack rejected during return channelling leaves the action idle")
 	actor.return_channel = 0.0
 	var equipped := GameSession.player.equipment.unequip(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 	t.assert_true(not actor.combat.attack(1.0) and actor.combat_action.is_idle(), "an attack without a weapon leaves the action idle")
 	GameSession.player.equipment.equip(equipped)
+	t.assert_equal(actor.combat.phase_remaining(), 0.0, "no phase timer is left running after the rejections")
 
 	layer.queue_free()
 	await t.get_tree().process_frame
@@ -188,8 +195,8 @@ func _test_world_transition_and_respawn(t: Node) -> void:
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var peer_id := GameSession.get_local_peer_id()
 	var runtime := GameSession.get_player_runtime(peer_id)
-	t.assert_true(actor.combat.attack(1.0), "the fixture lands one attack before transitioning")
-	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the actor is mid-recovery before the transition")
+	t.assert_true(actor.combat.attack(1.0), "the fixture starts one attack before transitioning")
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "the actor is mid-attack before the transition")
 	var previous_action := actor.combat_action
 	var stamina_before := runtime.combat.stamina
 
@@ -204,12 +211,13 @@ func _test_world_transition_and_respawn(t: Node) -> void:
 	t.assert_true(adventure_actor.combat.combat_runtime == runtime.combat, "the new actor keeps the same runtime stamina state")
 
 	t.assert_true(adventure_actor.combat.attack(1.0), "the new actor can attack")
-	t.assert_equal(adventure_actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the new actor enters recovery")
+	t.assert_true(adventure_actor.combat_action.is_attacking(), "the new actor's attack is running")
 	# Drive the real actor death path so the actor-level cleanup is exercised.
 	var life := GameSession.get_player_life_id(peer_id)
 	adventure_actor._on_died(DamageContext.new(999.0, &"test", adventure_actor, &"environment"))
 	t.assert_true(GameSession.get_player_death_result(peer_id) != null, "death resolves for the respawn fixture")
-	t.assert_true(adventure_actor.combat_action.is_idle(), "death clears a pending attack recovery")
+	t.assert_true(adventure_actor.combat_action.is_idle(), "death clears the in-flight attack")
+	t.assert_equal(adventure_actor.combat.phase_remaining(), 0.0, "death clears the pending phase timer")
 	t.assert_true(GameSession.get_player_life_id(peer_id) == life, "death does not arm a new life by itself")
 	t.assert_true(SceneRouter.go_to_settlement(), "respawn returns to the settlement")
 	await t.get_tree().process_frame

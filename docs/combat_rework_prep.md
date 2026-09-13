@@ -9,7 +9,8 @@
 완료  1차  CombatRuntimeState 로 stamina ownership 이전
 완료  2차  authoritative stamina replication (Protocol v13) + runtime-mirror HUD
 완료  3차  Combat Action State Machine (IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY)
-예정  4차  AttackDefinition + 실제 attack timeline
+완료  4차  AttackDefinition + 실제 attack timeline
+예정  5차  Hitbox 데이터화 + Knockback 실제 적용
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -23,61 +24,44 @@
 
 ```
 [로컬] Input.primary_attack(J)
-  → PlayerInputComponent.attack_requested                       (player_input_component.gd:43)
-  → NetworkCombatComponent._on_attack_requested()               (network_combat_component.gd:26)
+  → PlayerInputComponent.attack_requested
+  → NetworkCombatComponent._on_attack_requested()
      ├ 싱글: 바로 _server_execute_attack()
      └ 멀티 클라이언트: NetworkManager.submit_player_attack(peer_id, seq)
   → [호스트] _request_player_attack (RPC, any_peer/reliable)
-  → NetworkManager → player_attack_command_received
   → NetworkCombatComponent._server_execute_attack()
-     1. PlayerAttackCommand.is_valid_after(_last_server_sequence)  중복/역행 거절
-     2. sequence 를 먼저 소비 (스팸 재생 방지)
-     3. life_phase == ALIVE, phase ∈ {SETTLEMENT, ADVENTURE} 확인
-     4. ServerCombatService.try_player_attack(actor)
-        → CombatComponent.attack(facing)                        (combat_component.gd:27)
-           - cooldown_remaining > 0 이면 거절
-           - CLIMB 중이거나 귀환 채널링 중이면 거절
-           - MAIN_HAND 장비 → WeaponDefinition, durability == 0 이면 거절
-           - stamina < weapon.stamina_cost 이면 거절
-           - damage = weapon.base_damage + stats.attack_power
-           - DamageContext(knockback = (120*facing, -40)) 생성
-           - strategies[attack_mode].execute(...)
-             · MELEE: hitbox.configure_range(range, facing) + hitbox.arm(context, 0.12초)
-             · PROJECTILE: attack_scene 인스턴스 생성 후 launch()
-           - stamina -= cost, cooldown_remaining = weapon.attack_cooldown
-     5. actor.cancel_return_channel_for_combat()
-     6. NetworkManager.broadcast_player_attack(peer_id, seq, facing)  → 클라이언트는 표현만
-  → HitboxComponent 가 0.12초 동안 겹친 Hurtbox 에 receive_hit()
-  → HurtboxComponent: source_faction ≠ faction, target_factions 검사
-  → HealthComponent.receive_damage(): max(1, amount - defense), 접촉 무적 0.35초
-  → damaged/died 시그널 → EnemyAgent 는 hurt/dead 상태로 전이
+     sequence 중복/역행 거절 → life/phase 확인 → ServerCombatService.try_player_attack()
+  → CombatComponent.attack(facing)              ← 여기서는 "요청 수락 + 선딜 시작"만
+     action.is_idle() / CLIMB / 귀환 채널링 / 무기 / durability /
+     attack_definition 유효성 / 스태미나 / 전략 존재 확인
+     → damage·context·weapon 스냅샷 저장
+     → action.begin_attack()  =  ATTACK_STARTUP, phase = startup_seconds
+  → NetworkManager.broadcast_player_attack(...)  ← 클라이언트는 공격 "시작" 표현만
+
+[호스트 tick] CombatComponent._process(delta) → _advance_attack()
+  ATTACK_STARTUP 종료
+     → 스태미나 재확인 → action.enter_attack_active()
+     → strategy.execute()   ← 히트박스 arm(active_seconds) 또는 투사체 생성
+     → spend_stamina() → attacked            **공격은 여기서만 commit 된다**
+  ATTACK_ACTIVE 종료  → action.enter_attack_recovery()
+  ATTACK_RECOVERY 종료 → action.finish_attack() → IDLE, pending clear
 ```
 
-적 공격은 `EnemyAgent.perform_attack()` 이 대상의 `HealthComponent.receive_damage()` 를
-**직접** 호출한다(히트박스를 쓰지 않는다). 선딜은 `attack_state.gd` 의 `0.7 → 0.5` 하드코딩.
+phase 길이는 전부 `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다.
+코드에 하드코딩된 타이밍 상수는 없고, 별도의 무기 쿨다운도 없다. 한 프레임 delta 가
+phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지지 않게 한다.
 
-### 현재 고정 수치 (전부 하드코딩 또는 기본값)
-
-| 값 | 위치 | 값 |
-|---|---|---|
-| 히트박스 지속 | `combat_component.gd` 호출 인자 | 0.12초 |
-| 히트박스 높이 | `hitbox_component.configure_range()` | 30px 고정 |
-| 접촉 무적 | `health_component.gd` | 0.35초 |
-| 넉백 벡터 | `combat_component.gd` | `(120*facing, -40)` — **속도에 적용되지 않음** |
-| 적 경직 | `hurt_state.gd` | 0.25초 + `-last_hit_direction * 90` |
-| 적 공격 사이클 | `attack_state.gd` | 0.7초, 0.2초 뒤 판정 |
-| 중력/점프/가속 | `movement_component.gd` | 1100 / -390 / 1300 / 1700 |
-| 기본 스탯 | `stat_block.gd` | hp100, speed190, atk5, def0, stamina100, regen18 |
-| 스냅샷 | `network_player_component.gd` | 20Hz, 보간 14.0, 텔레포트 500px |
+적 공격은 아직 `EnemyAgent.perform_attack()` 이 대상 `HealthComponent.receive_damage()` 를
+직접 호출한다(플레이어 timeline 과 통합되지 않음).
 
 ## 2. 데드셀식으로 가려면 없는 것
 
 | 요소 | 현재 | 비고 |
 |---|---|---|
 | 회피/구르기 | 없음 | 입력 액션도 없음. 무적 프레임 개념 없음 |
-| 스태미나 소비처 | 공격만 | 소유·복제 구조는 완료(3-1). 회피·대시가 쓸 소비처만 남음 |
+| 스태미나 소비처 | 공격만 | 소유·복제·commit 시점 확정. 회피·대시가 쓸 소비처만 남음 |
 | 콤보 | 없음 | 공격은 단발. `sequence` 는 네트워크용 일련번호일 뿐 콤보 인덱스가 아님 |
-| 공격 모션/선후딜 | 없음 | 히트박스가 즉시 켜짐. windup/active/recovery 구분 없음 |
+| 공격 모션/선후딜 | **완료(4차)** | `AttackDefinition` 의 startup/active/recovery. 판정은 ACTIVE 진입 시 |
 | 넉백 적용 | 벡터만 존재 | `DamageContext.knockback` 이 velocity 에 반영되지 않음 |
 | 피격 경직(플레이어) | 없음 | 적만 hurt 상태가 있음 |
 | 방향 공격(위/아래) | 없음 | 히트박스가 항상 수평 |
@@ -194,8 +178,8 @@ hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하�
 | 1차 | Combat Runtime State — `CombatRuntimeState` 로 stamina ownership 이전 | 완료 |
 | 2차 | Stamina authoritative replication (Protocol v13) + runtime-mirror HUD | 완료 |
 | 3차 | **Combat Action State Machine** — `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 만 | 완료 |
-| 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 다음 |
-| 5차 | Hitbox 데이터화 + Knockback 실제 적용 | 예정 |
+| 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 완료 |
+| 5차 | Hitbox 데이터화(모양·오프셋·range) + Knockback 실제 적용 | 다음 |
 | 6차 | HURT (플레이어 피격 경직) | 예정 |
 | 7차 이후 | Dodge/i-frame, Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 
@@ -223,34 +207,51 @@ ATTACK_RECOVERY → IDLE
   시작한다. 씬을 넘어 유지돼야 하는 값(스태미나)은 계속 `CombatRuntimeState` 에 있다.
 - 권위 변경은 서버 시뮬레이션에서만 일어난다. 비권위 액터는 `combat.set_process(false)` 라
   action 이 스스로 진행하지 않는다. **네트워크로 복제하지 않으며 프로토콜은 v13 그대로다.**
-- **타이밍 상수를 새로 만들지 않았다.** 아직 startup/active 길이의 authoritative source 가
-  없기 때문이다. 현재 공격은 여전히 즉발이고 데미지 타이밍은 3차 이전과 동일하다.
-  성공한 공격은 `enter_recovery_from_immediate_attack()` 이라는 명시적 임시 edge 로
-  `ATTACK_RECOVERY` 에 들어가고, 기존 `WeaponDefinition.attack_cooldown` 이 그대로 recovery
-  창 역할을 한다. 쿨다운이 끝나는 프레임에 `finish_attack()` 으로 `IDLE` 에 복귀한다.
-  이 edge 는 일반 전이표에 없다 — `transition_to(ATTACK_RECOVERY)` 는 `IDLE` 에서 계속 실패하며,
-  4차에서 실제 타임라인이 생기면 삭제한다.
-- 공격 시작 조건에 `action.is_idle()` 이 추가됐다. 쿨다운과 역할이 일부 겹치지만 둘 다
-  유지한다. 쿨다운은 무기 공격 속도 규칙이고, action state 는 앞으로 타임라인과 캔슬 규칙을
-  담당할 축이다. 4차 이후 역할을 점진적으로 정리한다.
-- 실패한 공격(쿨다운·스태미나 부족·무기 없음·내구도 0·등반 중·귀환 채널링·strategy 실패)은
+- 3차 당시에는 타이밍의 authoritative source 가 없어 공격이 여전히 즉발이었고, 성공한 공격이
+  임시 edge 로 곧장 `ATTACK_RECOVERY` 에 들어가 기존 무기 쿨다운을 recovery 창으로 썼다.
+  **4차에서 그 임시 edge 와 쿨다운은 모두 제거됐다**(아래 4차 절 참고). 과거 구조이며 현재
+  코드에는 남아 있지 않다.
+- 공격 시작 조건에 `action.is_idle()` 이 추가됐고, 4차 이후로는 이것이 재공격 가능 여부의
+  **유일한** 기준이다.
+- 실패한 공격(스태미나 부족·무기 없음·내구도 0·등반 중·귀환 채널링·strategy 실패)은
   action state 를 **전혀 바꾸지 않는다**.
 
-### 4차 이후 메모
+### 4차 — AttackDefinition + attack timeline (완료)
 
-무기마다 선딜/후딜/히트박스 모양/콤보 단계가 달라지므로, 지금처럼 `WeaponDefinition` 에
-스칼라만 두는 구조로는 부족하다. `AttackDefinition`(windup / active / recovery /
-hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하위 Resource 배열이 필요하다.
+`data/definitions/attack_definition.gd` 의 `AttackDefinition` 은 **평범한 `Resource`** 이며
+`ContentDefinition` 이 아니다. 독립 id 로 ContentRegistry 에 등록되는 콘텐츠가 아니라
+`WeaponDefinition.attack_definition` 에 박히는 sub-resource 다.
 
-`AttackDefinition` 이 `WeaponDefinition` 안에 들어가는 sub-resource 라면 먼저 평범한
-`extends Resource` 를 검토한다. 반드시 `ContentDefinition` 일 필요는 없다 —
-`ContentDefinition` 은 ContentRegistry 에 독립적으로 등록되는 ID 기반 콘텐츠용이다.
-실제 데이터 ownership 은 4차에서 재검토한다.
+- 필드는 `startup_seconds` / `active_seconds` / `recovery_seconds` 세 개뿐이다. 전부 유한
+  양수여야 하며 `validation_errors(owner_id)` 가 검사하고 `WeaponDefinition.validate_definition()`
+  이 그 결과를 합쳐 콘텐츠 검증에서 실패시킨다. `attack_definition` 이 null 인 무기도 실패한다.
+- `twig_sword` 는 `0.10 / 0.12 / 0.33` 으로 이관했다. 합 0.55초로 **기존 공격 cadence 를
+  유지**하되 판정은 입력 직후가 아니라 0.10초 뒤에 발생한다. `active_seconds = 0.12` 는
+  기존 히트박스 arm 시간을 그대로 옮긴 값이며, 이제 이 값이 유일한 source 다
+  (`HitboxComponent.arm()` 의 기본값 인자도 제거했다).
+- `CombatComponent` 가 pending attack(weapon/context/facing)과 phase timer 를 소유한다.
+  scene-local 이고 Save 대상이 아니므로 `CombatRuntimeState` 로 올리지 않는다. 공격 도중
+  장비나 스탯이 바뀌어도 이미 시작된 공격의 의미는 스냅샷으로 고정된다.
+- 스태미나는 선딜에서 **검증만** 하고 ACTIVE commit 때 한 번 차감한다. commit 직전에 다시
+  확인하며, 부족하거나 전략 실행이 실패하면 데미지·차감 없이 `IDLE` 로 되돌린다.
+- 3차의 임시 edge `enter_recovery_from_immediate_attack()` 과 `WeaponDefinition.attack_cooldown`,
+  `CombatComponent.cooldown_remaining` 은 모두 제거했다. 재공격 가능 여부의 유일한 기준은
+  action state 가 `IDLE` 인지다.
+- 네트워크는 그대로다. action state 를 복제하지 않으며 `NetworkProtocol.VERSION` 은 **13**
+  이다. `attack_presented` 는 이제 "공격 시작" 표현 이벤트로 읽으면 된다.
+- 이번 단계에서 건드리지 않은 것: 히트박스 모양·오프셋·range 데이터화, 넉백 적용, 피격 경직,
+  공격 중 이동 제한, 적 공격 파이프라인.
 
-4차의 연결 지점은 이미 준비돼 있다. `begin_attack()` → startup 타이머 →
-`enter_attack_active()` → 히트박스 arm → active 타이머 → `enter_attack_recovery()` →
-recovery 타이머 → `finish_attack()` 으로 자연스럽게 이어지며, 그 시점에 위의 임시 edge 를
-삭제한다.
+### 5차 이후 메모
+
+`AttackDefinition` 은 지금 timing 세 값만 갖는다. 무기마다 히트박스 모양과 콤보 단계가
+달라지면 그때 이 Resource 를 확장하거나 배열로 바꾼다. `ContentDefinition` 으로 올릴 이유는
+아직 없다 — 독립 id 로 레지스트리에 등록될 콘텐츠가 아니기 때문이다.
+
+5차에서는 히트박스의 크기·오프셋·range 를 `AttackDefinition` 쪽으로 마저 옮기고,
+`DamageContext.knockback` 을 실제 velocity 에 적용한다. 현재 `attack_range` 와 히트박스
+높이 30px, 오프셋 계산은 아직 `WeaponDefinition` 과 `HitboxComponent.configure_range()` 에
+남아 있다.
 
 적 공격은 아직 `EnemyAgent.perform_attack()` 이 대상 `HealthComponent.receive_damage()` 를
 직접 호출한다. 히트박스 파이프라인으로 옮기는 것은 적 패턴 개편 단계의 일이다.
@@ -273,8 +274,13 @@ recovery 타이머 → `finish_attack()` 으로 자연스럽게 이어지며, �
   `CombatComponent.combat_runtime` 참조가 조용히 끊어진다.
 - `tests/integration/multiplayer_world_runtime_probe.gd` 에서 `@rpc` 어노테이션과 그 대상
   함수 사이에 다른 함수를 끼워 넣지 않는다. RPC 설정이 끊겨 타임아웃으로만 드러난다.
-- `tests/unit/test_multiplayer_combat_foundation.gd`, `tests/integration/test_multiplayer_combat_loot.gd`
-  — 전투 경로를 직접 검증한다. 개편하면 여기부터 깨진다.
+- `tests/unit/test_multiplayer_combat_foundation.gd`, `tests/integration/test_multiplayer_combat_loot.gd`,
+  `tests/stability_tests.gd` — 전투 경로를 직접 검증한다. 개편하면 여기부터 깨진다. 특히
+  "공격 요청 직후 히트박스/데미지" 를 가정한 픽스처는 이제 선딜을 지나야 한다.
+- `CombatComponent._process` 는 timeline 진행과 스태미나 재생을 같은 호출에서 한다.
+  테스트에서 차감량을 정확히 비교하려면 `stamina_regen_multiplier = 0.0` 으로 얼린다.
+- phase 경계의 부동소수점 잔차는 `PHASE_EPSILON` 이 흡수한다. 이 값을 없애면 phase 를
+  프레임으로 쪼갤 때 timeline 이 멈출 수 있다.
 - 전역 시그널 연결 해제 누락 → `check_project.py` 가 orphan/leak 경고로 실패.
 - `ServerWorldRuntime` 경로(`server_runtime_mode`)에서 표현 노드(애니메이션·파티클·카메라)를
   만들면 headless 서버가 텍스처를 로드하게 된다. 새 전투 표현은 전부 권위 경로 바깥에 둔다.

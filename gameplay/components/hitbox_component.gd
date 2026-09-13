@@ -17,7 +17,9 @@ func configure_range(distance: float, facing: float) -> void:
 		collision.shape = shape
 	position.x = distance * 0.5 * signf(facing)
 
-func arm(p_context: DamageContext, seconds: float = 0.12) -> void:
+## [param seconds] is always supplied by the caller: melee uses the weapon's
+## ACTIVE phase, a projectile uses its own flight time.
+func arm(p_context: DamageContext, seconds: float) -> void:
 	context = p_context
 	active = true
 	remaining = seconds
@@ -27,8 +29,11 @@ func arm(p_context: DamageContext, seconds: float = 0.12) -> void:
 func _process(delta: float) -> void:
 	if not active:
 		return
-	for area in get_overlapping_areas():
-		_on_area_entered(area)
+	# arm() enables monitoring deferred, so the first frame after arming may run
+	# before it applies. area_entered still catches everything that overlaps later.
+	if monitoring:
+		for area in get_overlapping_areas():
+			_on_area_entered(area)
 	remaining -= delta
 	if remaining <= 0.0:
 		active = false

@@ -45,9 +45,12 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   한 enum 으로 합치면 `AIR + ATTACK`, `CLIMB + HURT`, `GROUND + DODGE` 같은 조합이
   상태 폭발로 이어진다. 현재 구현된 action state 는 `IDLE / ATTACK_STARTUP /
   ATTACK_ACTIVE / ATTACK_RECOVERY` 이며 `DODGE`/`HURT`/`DEAD` 는 후속 단계다.
-- **임의의 타이밍 상수를 만들지 않는다.** 공격 선딜·유효·후딜 길이의 authoritative source
-  는 아직 없다(`AttackDefinition` 은 4차). 그때까지 기존 `WeaponDefinition.attack_cooldown`
-  을 재사용하고 새 타이머를 추가하지 않는다.
+- **공격 타이밍 상수를 코드에 두지 않는다.** 선딜·유효·후딜은 전부
+  `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다. 멜리 히트박스가
+  열려 있는 시간도 `active_seconds` 하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 —
+  재공격 가능 여부의 유일한 기준은 action state 가 `IDLE` 인지다.
+- **공격은 `ATTACK_ACTIVE` 진입 순간에만 commit 된다.** 히트박스 arm·투사체 생성·스태미나
+  차감이 전부 거기서 한 번 일어난다. 요청 프레임에는 아무것도 발생하지 않는다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.

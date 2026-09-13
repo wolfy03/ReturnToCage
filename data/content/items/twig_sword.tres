@@ -1,5 +1,13 @@
-[gd_resource type="Resource" script_class="WeaponDefinition" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="WeaponDefinition" load_steps=4 format=3]
 [ext_resource path="res://data/definitions/weapon_definition.gd" type="Script" id="1"]
+[ext_resource path="res://data/definitions/attack_definition.gd" type="Script" id="2"]
+
+[sub_resource type="Resource" id="TwigSwordAttack"]
+script = ExtResource("2")
+startup_seconds = 0.1
+active_seconds = 0.12
+recovery_seconds = 0.33
+
 [resource]
 script = ExtResource("1")
 id = &"twig_sword"
@@ -13,7 +21,7 @@ equipment_slot = 0
 max_durability = 60
 attack_mode = 0
 base_damage = 8.0
-attack_cooldown = 0.55
+attack_definition = SubResource("TwigSwordAttack")
 attack_range = 52.0
 stamina_cost = 8.0
 target_factions = Array[StringName]([&"hostile"])

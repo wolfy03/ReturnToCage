@@ -100,6 +100,12 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
 - unit/test_combat_runtime_state.gd: `CombatRuntimeState` reset/spend/regenerate/max 클램프, 실제 Settlement actor의 `CombatComponent`가 `PlayerRuntimeState.combat`을 참조하는지, 공격 성공 시 stamina_cost 차감·부족 시 거절과 값 유지·cooldown 미시작, `_process` 재생과 survival multiplier, stat modifier에 따른 max 변화, unbound component의 null 안전성, 월드 전환 시 유지와 respawn 시 max로 refill.
+- unit/test_attack_timeline.gd: `AttackDefinition` 검증(NaN/INF/0/음수 거절, owner id 접두사,
+  ContentDefinition 아님), `WeaponDefinition`의 null·중첩 타이밍 검증과 shipped `twig_sword`의
+  0.55초 cadence, STARTUP 동안 히트박스 비활성·commit 없음, ACTIVE 진입 시 1회 commit과
+  `active_seconds` 만큼의 히트박스 window·스태미나 1회 차감, RECOVERY 중 재공격 거절,
+  전체 사이클 후 IDLE과 재공격 허용, 전체 timeline보다 큰 delta에서도 4회 전이·1회 commit,
+  phase 경계를 걸친 delta의 잉여 이월, projectile이 commit 시 정확히 1회 spawn.
 - unit/test_combat_action_controller.gd: combat action 상태 머신의 초기 IDLE, 정상 전이
   (`IDLE → STARTUP → ACTIVE → RECOVERY → IDLE`)와 취소, 불법 전이 거절 및 거절 후 상태 유지,
   실제 변경 시에만 발생하는 signal, reset 정책, legacy 즉발 공격 bridge. 실제 PlayerActor
