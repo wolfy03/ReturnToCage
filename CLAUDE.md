@@ -119,6 +119,10 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   클라이언트는 받은 값을 mirror 만 하고 스스로 굴리지 않는다(예측 없음).
 - 클라이언트 runtime mirror 를 적용할 때 **모델 객체를 교체하지 말고 값만 갱신한다.**
   Scene 컴포넌트가 그 객체를 참조하고 있어서 교체하면 조용히 끊어진다.
+- **`InteractionTarget.activated` 는 권위 경계가 아니다.** remote presentation actor는 HURT를
+  복제받지 않으므로 local interaction 차단은 UX 보조일 뿐이다. world transition, attack,
+  quick item, loot, gather처럼 gameplay를 변경하는 명령은 최종 서버 경계에서 해당 peer/world의
+  authoritative `PlayerActor`와 life/death/HURT 상태를 다시 검증한다.
 
 ### payload 를 바꿀 때 함께 볼 것
 

@@ -54,7 +54,9 @@ Sewer에 들어가도 Settlement client가 유지되는 경우까지 검사한�
 20 Hz snapshot, enemy AI/health/combat, 실제 enemy attack knockback의 서버 위치 변화와 원격
 presentation 방향 동기화, loot claim/despawn, shared gather consumption, world clock,
 same-world roster를 검증한다. Sewer player의 Settlement command와 Host의 cross-world
-attack/pickup은 실패해야 하며 B의 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
+attack/pickup은 실패해야 한다. remote presentation actor가 HURT를 모르는 상태에서도 escape
+요청은 서버 authoritative HURT로 거절되고, HURT 종료 후 같은 return은 성공해야 한다. B의
+개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
 러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리로 같은 project check, 2-player valid/invalid 및 3-player valid process-restart E2E, 2/3-player individual-world E2E, 2/3-player world-runtime E2E를 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
@@ -100,6 +102,9 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 - unit/test_settlement_state_restore.gd: unknown pending, storage overflow 합병, 세션 전체 중복, 보상·pending 재진입/원자성.
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
+- unit/test_world_runtime.gd: world runtime lifecycle/물리 격리와 함께 authoritative HURT 중
+  enter-region/return-to-Settlement가 world/revision, Adventure participation, pending transition,
+  spawn assignment를 보존하며 거절되고 HURT 종료 직후 정상 성공하는지 검증한다.
 - unit/test_combat_runtime_state.gd: `CombatRuntimeState` reset/spend/regenerate/max 클램프, 실제 Settlement actor의 `CombatComponent`가 `PlayerRuntimeState.combat`을 참조하는지, 공격 성공 시 stamina_cost 차감·부족 시 거절과 값 유지·cooldown 미시작, `_process` 재생과 survival multiplier, stat modifier에 따른 max 변화, unbound component의 null 안전성, 월드 전환 시 유지와 respawn 시 max로 refill.
 - unit/test_attack_timeline.gd: `AttackDefinition` timing/spatial 검증(양수 finite range/size,
   finite offset/knockback, zero·음수 knockback 허용, owner id 접두사, ContentDefinition 아님),
@@ -132,7 +137,9 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   입력·jump·climb·interaction·quick item 거절, gravity/knockback displacement 유지, zero-knockback
   HURT와 non-reaction impulse의 독립성, periodic/starvation no-HURT, lethal/death/respawn reset,
   IDLE lethal hit의 transient HURT 부재, HURT 종료 후 interaction/item 재허용, world transition의
-  scene-local reset과 locomotion enum 비오염을 검증한다.
+  scene-local reset과 locomotion enum 비오염, 실제 server item command의 HURT 거절을 검증한다.
+- integration/test_multiplayer_combat_loot.gd: 기존 전투/사망/loot claim 외에 권위 HURT actor의
+  gather와 loot pickup이 mutation 없이 거절되는지 검증한다.
 - unit/test_combat_runtime_replication.gd: `CombatRuntimeState.apply_values` 검증,
   `PlayerRuntimeSnapshot`/`PlayerCombatRuntimeSnapshot`의 payload 왕복과 누락·타입·음수·
   초과·NaN/INF 거절, sequence 최신/중복/역행 처리, 값이 변하지 않을 때의 패킷 억제,

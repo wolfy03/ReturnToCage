@@ -13,6 +13,7 @@
 완료  4차 안정화  ACTIVE window 단일 소유 + immediate sweep
 완료  5차  AttackDefinition geometry/range + Knockback 실제 적용
 완료  6차  Player HURT / Hit-Stun
+완료  6차 보강  Server-authoritative interaction guard
 다음  7차  Dodge + i-frame
 ```
 
@@ -184,6 +185,7 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 4차 안정화 | ACTIVE window 단일 소유 + immediate sweep | 완료 |
 | 5차 | AttackDefinition rectangle geometry/range + Knockback 실제 적용 | 완료 |
 | 6차 | HURT (플레이어 피격 경직·공격 interruption·control lock) | 완료 |
+| 6차 보강 | Server-authoritative HURT interaction/world-transition guard | 완료 |
 | 7차 | Dodge + i-frame | **다음** |
 | 이후 | Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 
@@ -327,6 +329,16 @@ PlayerActor
 - HURT는 무적이 아니다. 기존 contact invulnerability를 변경하지 않았고 Dodge i-frame도 아직
   없다. scene-local timer/state/controls/velocity는 Save v4에 저장하거나 network payload로
   복제하지 않는다. Protocol v13과 기존 transform/runtime replication을 유지한다.
+
+#### 6차 보강 — authoritative interaction guard (완료)
+
+remote presentation actor는 HURT를 복제받지 않으므로 `InteractionTarget.activated`와 로컬
+`PlayerActor` guard는 최종 authority가 아니다. `NetworkManager`의 enter-region/return-to-
+Settlement mutation boundary가 공통 helper로 peer/player/runtime/world-ready, ALIVE, 현재 world의
+authoritative actor, death, HURT를 다시 검증한다. 거절은 world/revision, Adventure participation,
+pending transition, spawn assignment를 변경하지 않으며 HURT 종료 직후 같은 명령이 허용된다.
+기존 attack, quick-item, loot, gather의 서버 HURT guard도 유지한다. 새 RPC/payload/replication은
+없고 Protocol v13과 Save v4가 그대로다.
 
 ### 7차 NEXT
 

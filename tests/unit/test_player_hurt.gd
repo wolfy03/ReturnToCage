@@ -188,6 +188,17 @@ func _test_interaction_and_item_lock(t: Node, actor: PlayerActor) -> void:
 	var activations: Array[int] = []
 	target.activated.connect(func(_who: Node) -> void: activations.append(1))
 	var berries_before := actor.player_state().inventory.count(&"berry")
+	var item_service := actor.get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+	var owns_item_service := item_service == null
+	if owns_item_service:
+		item_service = PlayerItemReplicationService.new()
+		actor.get_parent().add_child(item_service)
+	var item_results: Array[bool] = []
+	item_service.use_item_result.connect(func(success: bool, _message: String) -> void: item_results.append(success), CONNECT_ONE_SHOT)
+	item_service.request_use_item(&"berry")
+	t.assert_equal(item_results.size(), 1, "authoritative item command returns one HURT result")
+	if not item_results.is_empty():
+		t.assert_true(not item_results[0], "authoritative item command rejects HURT")
 	actor._on_interact()
 	actor._on_quick_item()
 	t.assert_true(not actor.consume_item(&"berry"), "authoritative direct item use is rejected during HURT")
@@ -205,6 +216,8 @@ func _test_interaction_and_item_lock(t: Node, actor: PlayerActor) -> void:
 	t.assert_equal(actor.player_state().inventory.count(&"berry"), berries_before - 1, "post-HURT quick item consumes exactly one item")
 	actor.interaction._targets.erase(target)
 	target.queue_free()
+	if owns_item_service:
+		item_service.queue_free()
 
 func _test_projectile_interruption(t: Node, actor: PlayerActor) -> void:
 	var source := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition

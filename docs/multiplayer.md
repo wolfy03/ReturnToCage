@@ -74,7 +74,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Validated health/life runtime presentation snapshots (separate from save data)
 - Intent-only player attack requests with sequence replay protection
 - Server-only enemy AI, hit resolution, additive `DamageContext.knockback`, health, and death resolution; movement snapshots carry the resulting transform/velocity with no knockback RPC
-- Server-only Player HURT/hit-stun and attack interruption. HURT is not replicated; authoritative movement snapshots expose only its resulting motion, and server command endpoints reject attacks, quick-item use, loot pickup, and gather while HURT
+- Server-only Player HURT/hit-stun and attack interruption. HURT is not replicated; authoritative movement snapshots expose only its resulting motion, and server command endpoints reject attacks, quick-item use, loot pickup, gather, region entry, and Settlement return/escape while HURT
 - Definition-driven enemy actors (`enemy_id -> EnemyDefinition.actor_scene -> EnemyAgent`) on server and clients
 - Stable world-local network entity IDs for enemies and loot
 - Enemy spawn/despawn plus 20 Hz interpolated transform snapshots and reliable health/state events
@@ -217,6 +217,15 @@ velocity snapshot만 받아 서버 knockback 이동을 보간한다. world-runti
 HURT action에서 거절하고 sequence는 기존 정책대로 소비한다. 같은 우회를 막기 위해 consumable
 use, loot pickup, gather의 서버 명령 종착점도 송신자가 아닌 권위 PlayerActor의 HURT를 검사한다.
 HURT animation/event, client prediction, CombatAction replication은 후속 범위다.
+
+`InteractionTarget.activated`는 client presentation에서 실행될 수 있으므로 authority boundary가
+아니다. enter-region과 return/escape는 최종 `NetworkManager` mutation 함수에서 공통
+`_validate_authoritative_world_interaction()`을 호출한다. 이 helper는 peer/player/runtime/world-ready,
+ALIVE 상태와 현재 world의 authoritative PlayerActor identity, death, HURT를 검사한다. 따라서
+remote client가 HURT를 전혀 몰라도 서버가 transition 전에 요청을 거절하고 world/revision,
+Adventure participation, pending transition, spawn assignment를 바꾸지 않는다. HURT 종료 뒤에는
+같은 요청이 정상 처리된다. quest dialog/crafting/facility 제한은 필요할 때 명령별 정책으로
+추가하며 이번 보강은 interaction system 전체를 재설계하지 않는다.
 
 ## Not synchronized yet
 

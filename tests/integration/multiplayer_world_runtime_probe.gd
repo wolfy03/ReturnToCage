@@ -273,6 +273,34 @@ func _run_host_scenario() -> void:
 			_fail("consumed gather remained visible to a same-world peer")
 			return
 
+	# The remote presentation actor intentionally does not know HURT. Its escape
+	# request must still be rejected at the authoritative world-mutation boundary.
+	var hurt_world_before := GameSession.get_peer_world(b_peer)
+	var hurt_spawn_before := NetworkManager.spawn_assignment_for_peer(b_peer)
+	var hurt_participation := session.get_player_adventure(b_peer) if session != null else null
+	b_actor.hurt.duration_seconds = 2.0
+	if not b_actor.hurt.begin_hurt():
+		_fail("could not start authoritative HURT for remote escape rejection")
+		return
+	_command.rpc_id(b_peer, "RETURN_DURING_SERVER_HURT", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("RETURN_DURING_SERVER_HURT", b_peer)):
+		_fail("remote HURT escape rejection did not complete")
+		return
+	var hurt_world_after := GameSession.get_peer_world(b_peer)
+	var hurt_report := _confirmation("RETURN_DURING_SERVER_HURT", b_peer)
+	if not b_actor.hurt.is_active() or hurt_world_after.world_id != hurt_world_before.world_id \
+			or hurt_world_after.revision != hurt_world_before.revision \
+			or NetworkManager._pending_world_transitions.has(b_peer) \
+			or NetworkManager.spawn_assignment_for_peer(b_peer) != hurt_spawn_before \
+			or session == null or session.get_player_adventure(b_peer) != hurt_participation \
+			or session.result != AdventureSession.Result.ACTIVE \
+			or bool(hurt_report.get("presentation_hurt", true)) \
+			or StringName(hurt_report.get("world_id", &"")) != SEWER:
+		_fail("remote client bypassed authoritative HURT world-transition guard")
+		return
+	b_actor.hurt.physics_tick(b_actor.hurt.remaining + 0.01)
+	b_actor.hurt.duration_seconds = 0.25
+
 	_command.rpc_id(b_peer, "RETURN", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN", b_peer)):
 		_fail("B did not return independently")
@@ -353,6 +381,25 @@ func _command(command: String, value: int) -> void:
 				_fail(result.message)
 				return
 			await _confirm_when_world_ready(command, SETTLEMENT)
+		"RETURN_DURING_SERVER_HURT":
+			var actor := _local_actor()
+			if actor == null or actor.hurt.is_active():
+				_fail("remote presentation unexpectedly knows authoritative HURT")
+				return
+			var result := NetworkManager.request_return_to_settlement()
+			if not result.success:
+				_fail("client could not submit the escape intent")
+				return
+			await get_tree().create_timer(0.35).timeout
+			if SceneRouter.current_world_id() != SEWER \
+					or GameSession.get_peer_world_id(NetworkManager.local_peer_id()) != SEWER \
+					or not NetworkManager.is_local_world_ready():
+				_fail("client left Sewer while its authoritative actor was HURT")
+				return
+			_confirm.rpc_id(1, command, {
+				"presentation_hurt": actor.hurt.is_active(),
+				"world_id": SceneRouter.current_world_id(),
+			})
 		"REPORT_SETTLEMENT":
 			if SceneRouter.current_world_id() != SETTLEMENT \
 					or GameSession.get_peer_world_id(NetworkManager.local_peer_id()) != SETTLEMENT \

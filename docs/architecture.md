@@ -36,6 +36,8 @@ CombatComponent는 근접/투사체 전략을 선택한다. `AttackDefinition`�
 
 Player HURT는 locomotion이 아니라 scene-local Combat Action이다. `PlayerHurtComponent`가 0.25초 timer, 공격 interruption, 독립 control lock을 소유한다. `DamageContext.causes_hurt`가 직접 hit reaction 여부를 정하며 knockback과는 독립이다. periodic/starvation은 HURT를 만들지 않고 lethal damage는 기존 death lifecycle로 바로 간다. HURT는 저장·복제하거나 별도 RPC로 보내지 않으며, client는 권위 movement 결과만 기존 snapshot으로 관찰한다.
 
+따라서 remote presentation actor는 서버 HURT를 모를 수 있고 `InteractionTarget.activated`도 권위 검증이 아니다. 실제 multiplayer mutation은 서버 command boundary가 현재 peer/world의 authoritative PlayerActor를 다시 찾아 검증한다. HURT 동안 attack, quick item, loot, gather, region entry, Settlement return/escape를 거절하며, dialog/crafting/facility의 향후 제한은 각 명령 정책으로 별도 확장한다.
+
 ## 이동과 등반
 
 PlayerInputComponent는 Input Map에서 수평·수직 축을 제공한다. MovementComponent는 GROUND/AIR/CLIMB을 구분한다. ClimbableArea2D와 겹치고 중심선 허용 거리 안에서 W/S를 눌러야 진입한다. CLIMB은 중력을 끄고 Resource 속도·정렬·이탈 정책을 사용한다. 공격과 귀환 채널링은 등반과 함께 실행할 수 없다. 피격은 drop_on_damage, non-zero 넉백·사망은 강제 이탈이며 넉백은 locomotion mode가 아닌 additive external impulse다. 영역 이탈·상하단·점프·장면 변경도 일반 이동으로 복구한다.

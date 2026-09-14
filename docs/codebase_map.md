@@ -107,6 +107,12 @@ v13 의 내용은 `PlayerRuntimeSnapshot` 에 `stamina`/`max_stamina` 포함, �
 
 RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 받는다. 이 구조를 깨지 말 것.
 
+`InteractionTarget.activated`는 로컬 presentation 흐름이며 authority boundary가 아니다. 특히
+remote actor에는 HURT가 복제되지 않는다. `_begin_player_world_transition()`과
+`_return_player_to_settlement()`은 공통 `_validate_authoritative_world_interaction()`으로
+현재 peer/world의 authoritative actor, ALIVE/death/HURT 상태를 spawn/world mutation 전에
+재검증한다. attack/item/loot/gather도 각각의 기존 서버 경계에서 HURT를 거절한다.
+
 - 클라이언트 → 호스트 (`any_peer`): `_request_player_move_input`(unreliable_ordered ch0),
   `_request_player_attack`, `_request_world_loot_pickup`, `_request_world_gather`,
   `_request_enter_region`, `_request_return_to_settlement`, `_request_world_roster`,

@@ -25,6 +25,14 @@ func run(t: Node) -> void:
 	if player == null or enemy == null:
 		world.queue_free()
 		return
+	var gather_target: InteractionTarget = world._gather_targets.get(&"scrap_cache_a")
+	t.assert_true(gather_target != null, "authoritative gather HURT fixture exists")
+	if gather_target != null:
+		player.global_position = gather_target.global_position
+		player.hurt.begin_hurt()
+		t.assert_true(not world._try_gather(player.peer_id, &"scrap_cache_a"), "authoritative gather rejects a HURT player")
+		t.assert_true(not world._consumed_gather.has(&"scrap_cache_a"), "rejected HURT gather preserves the target")
+		player.hurt.physics_tick(player.hurt.duration_seconds + 0.01)
 
 	enemy.global_position = player.global_position + Vector2(38, 0)
 	player.facing = 1.0

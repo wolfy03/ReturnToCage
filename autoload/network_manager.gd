@@ -759,8 +759,9 @@ func _begin_player_world_transition(
 	exit_id: StringName,
 	region_id: StringName
 ) -> CommandResult:
-	if not is_authoritative_simulation() or not players.has(peer_id) or not is_peer_world_ready(peer_id):
-		return CommandResult.make(false, "Player world is not ready for transition")
+	var interaction_check := _validate_authoritative_world_interaction(peer_id)
+	if not interaction_check.success:
+		return interaction_check
 	if _pending_world_transitions.has(peer_id):
 		return CommandResult.make(false, "A world transition is already pending")
 	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
@@ -787,8 +788,9 @@ func _begin_player_world_transition(
 	return _dispatch_world_assignment(peer_id, old_world)
 
 func _return_player_to_settlement(peer_id: int, result: AdventureSession.Result) -> CommandResult:
-	if not is_authoritative_simulation() or not players.has(peer_id) or not is_peer_world_ready(peer_id):
-		return CommandResult.make(false, "Player world is not ready for transition")
+	var interaction_check := _validate_authoritative_world_interaction(peer_id)
+	if not interaction_check.success:
+		return interaction_check
 	if _pending_world_transitions.has(peer_id):
 		return CommandResult.make(false, "A world transition is already pending")
 	var player_state := GameSession.get_player(peer_id)
@@ -813,6 +815,29 @@ func _return_player_to_settlement(peer_id: int, result: AdventureSession.Result)
 		return finished
 	_place_player_in_loaded_host_world(peer_id, spawn)
 	return _dispatch_world_assignment(peer_id, old_world)
+
+## Final server-authoritative guard for gameplay-mutating world interactions.
+## A remote presentation actor does not replicate HURT and is never consulted;
+## the actor must belong to this peer's current authoritative world simulation.
+func _validate_authoritative_world_interaction(peer_id: int) -> CommandResult:
+	if not is_authoritative_simulation() or not players.has(peer_id) \
+			or not GameSession.has_player(peer_id) or not is_peer_world_ready(peer_id):
+		return CommandResult.make(false, "Player world is not ready for transition")
+	var runtime := GameSession.get_player_runtime(peer_id)
+	if runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
+		return CommandResult.make(false, "Only a living player can change worlds")
+	var world_id := GameSession.get_peer_world_id(peer_id)
+	var actor: PlayerActor
+	for candidate in get_tree().get_nodes_in_group(&"authoritative_player"):
+		if candidate is PlayerActor and candidate.peer_id == peer_id \
+				and candidate.world_id == world_id and candidate.is_simulation_authority():
+			actor = candidate
+			break
+	if actor == null or actor.is_death_handled():
+		return CommandResult.make(false, "Authoritative player actor is unavailable")
+	if actor.hurt.is_active():
+		return CommandResult.make(false, "Cannot change worlds while hurt")
+	return CommandResult.make(true, "Player may change worlds")
 
 func _restore_spawn_assignment(peer_id: int, previous: PlayerSpawnAssignment) -> void:
 	if previous == null:
