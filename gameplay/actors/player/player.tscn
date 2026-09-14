@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource path="res://gameplay/actors/player/player.gd" type="Script" id="1"]
 [ext_resource path="res://gameplay/components/player_input_component.gd" type="Script" id="2"]
@@ -14,6 +14,9 @@
 [ext_resource path="res://gameplay/components/network_combat_component.gd" type="Script" id="12"]
 [ext_resource path="res://gameplay/components/combat_action_controller.gd" type="Script" id="13"]
 [ext_resource path="res://gameplay/components/player_hurt_component.gd" type="Script" id="14"]
+[ext_resource path="res://gameplay/components/player_dodge_component.gd" type="Script" id="15"]
+[ext_resource path="res://gameplay/components/network_dodge_component.gd" type="Script" id="16"]
+[ext_resource path="res://data/combat/player_dodge.tres" type="Resource" id="17"]
 
 [sub_resource type="CapsuleShape2D" id="Capsule"]
 radius = 14.0
@@ -58,6 +61,10 @@ script = ExtResource("11")
 unique_name_in_owner = true
 script = ExtResource("12")
 
+[node name="NetworkDodge" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("16")
+
 [node name="Health" type="Node" parent="."]
 unique_name_in_owner = true
 script = ExtResource("4")
@@ -77,6 +84,11 @@ script = ExtResource("13")
 [node name="Hurt" type="Node" parent="."]
 unique_name_in_owner = true
 script = ExtResource("14")
+
+[node name="Dodge" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("15")
+definition = ExtResource("17")
 
 [node name="Combat" type="Node" parent="."]
 unique_name_in_owner = true

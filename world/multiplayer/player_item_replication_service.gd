@@ -103,6 +103,8 @@ func _server_execute(
 		result = CommandResult.make(false, "Only a living player can use item commands")
 	elif command_type == CommandType.USE_ITEM and actor.hurt.is_active():
 		result = CommandResult.make(false, "Quick items are unavailable while hurt")
+	elif command_type == CommandType.USE_ITEM and actor.dodge.is_active():
+		result = CommandResult.make(false, "Quick items are unavailable while dodging")
 	elif command_type == CommandType.TRANSFER and not GameSession.is_peer_in_settlement(peer_id):
 		result = CommandResult.make(false, "Storage transfer requires settlement state")
 	elif GameSession.phase not in [GameSession.Phase.SETTLEMENT, GameSession.Phase.ADVENTURE]:

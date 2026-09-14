@@ -14,7 +14,8 @@
 완료  5차  AttackDefinition geometry/range + Knockback 실제 적용
 완료  6차  Player HURT / Hit-Stun
 완료  6차 보강  Server-authoritative interaction guard
-다음  7차  Dodge + i-frame
+완료  7차  Dodge + i-frame (Protocol v14)
+다음  8차  Combo · 입력 버퍼 · 캔슬 윈도우
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -68,6 +69,7 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 공격 모션/선후딜 | **완료(4차)** | `AttackDefinition` 의 startup/active/recovery. 판정은 ACTIVE 진입 시 |
 | 넉백 적용 | **완료(5차)** | 권위 Player/Enemy가 `DamageContext.knockback`을 velocity에 additive 적용 |
 | 피격 경직(플레이어) | **완료(6차)** | scene-local HURT action + 0.25초 input lock |
+| 회피/i-frame | **완료(7차)** | scene-local DODGE action + `DodgeDefinition` half-open i-frame 창 + 서버 권위 intent |
 | 방향 공격(위/아래) | 없음 | 히트박스가 항상 수평 |
 | 무기별 패턴 | 2종(근접/투사체) | `AttackStrategy` 확장점은 이미 있음 |
 | 방패/패링 | 없음 | |
@@ -142,7 +144,8 @@ Movement / Locomotion State        Combat Action State
 
 `MovementComponent.Mode` 는 현재의 `GROUND / AIR / CLIMB` 를 유지한다. `ATTACK`, `DODGE`,
 `HURT`, `DEAD` 는 모두 Combat Action State 축에 속한다. 현재
-`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY / HURT`를 구현했다.
+`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY / HURT / DODGE`를 구현했다.
+`DODGE` 는 `IDLE` 에서만 진입하고 `IDLE`/`HURT` 로만 나간다.
 `DODGE`와 `DEAD` action은 후속 단계다.
 
 무적 프레임은 `HealthComponent.invulnerable_remaining` 을 그대로 재사용하지 않는 편이 안전하다.
@@ -186,8 +189,9 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 5차 | AttackDefinition rectangle geometry/range + Knockback 실제 적용 | 완료 |
 | 6차 | HURT (플레이어 피격 경직·공격 interruption·control lock) | 완료 |
 | 6차 보강 | Server-authoritative HURT interaction/world-transition guard | 완료 |
-| 7차 | Dodge + i-frame | **다음** |
-| 이후 | Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
+| 7차 | Dodge + i-frame (`DodgeDefinition`·서버 권위 intent·evasion gate, Protocol v14) | 완료 |
+| 8차 | Combo·입력 버퍼·캔슬 윈도우 | 다음 |
+| 이후 | 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 
 ### 완료된 1차·2차 요약
 

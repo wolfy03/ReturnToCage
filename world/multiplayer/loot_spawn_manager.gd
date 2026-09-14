@@ -96,6 +96,8 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 		return CommandResult.make(false, "Player cannot pick up loot")
 	if player.hurt.is_active():
 		return CommandResult.make(false, "Player cannot pick up loot while hurt")
+	if player.dodge.is_active():
+		return CommandResult.make(false, "Player cannot pick up loot while dodging")
 	if player.global_position.distance_to(loot.global_position) > PICKUP_RANGE:
 		return CommandResult.make(false, "Loot is out of range")
 	var adventure_session := GameSession.adventure_session_for_world(effective_world)

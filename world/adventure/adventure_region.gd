@@ -183,7 +183,7 @@ func _try_gather(peer_id: int, interaction_id: StringName) -> bool:
 	var runtime := GameSession.get_player_runtime(peer_id)
 	if target == null or actor == null or runtime == null \
 			or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE \
-			or actor.hurt.is_active() \
+			or actor.hurt.is_active() or actor.dodge.is_active() \
 			or actor.global_position.distance_to(target.global_position) > 90.0:
 		return false
 	var result := GameSession.collect_adventure_loot_for_peer(

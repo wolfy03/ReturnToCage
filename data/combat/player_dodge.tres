@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="DodgeDefinition" load_steps=2 format=3]
+
+[ext_resource path="res://data/definitions/dodge_definition.gd" type="Script" id="1"]
+
+[resource]
+script = ExtResource("1")
+duration_seconds = 0.3
+iframe_start_seconds = 0.0
+iframe_end_seconds = 0.18
+speed = 420.0
+stamina_cost = 20.0

@@ -7,7 +7,11 @@ extends RefCounted
 # max_stamina, and a throttled unreliable combat runtime channel mirrors
 # regeneration. Old and new payload shapes are never mixed within one version;
 # the handshake rejects mismatched peers.
-const VERSION := 13
+# v14 adds the dodge intent channel: a reliable PlayerDodgeCommand (sequence +
+# strict facing) and the authoritative dodge presentation broadcast that mirrors
+# it. i-frames, stamina and position stay host-side and are never sent as a
+# client decision.
+const VERSION := 14
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

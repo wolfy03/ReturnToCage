@@ -59,6 +59,12 @@ arm할 때(`arm_player_life`, 완료된 death result가 있을 때)만 다시 �
 읽는다. 복제 경로는 [멀티플레이](multiplayer.md)의 "Authoritative stamina replication
 (Protocol v13)"을 따른다.
 
+전투 action 상태는 어느 쪽에도 들어가지 않는다. `CombatActionController` 의 상태(HURT, DODGE
+포함), `PlayerHurtComponent` 의 hit-stun timer, `PlayerDodgeComponent` 의 dodge timeline 과
+i-frame 창은 전부 **scene-local** 이라 월드를 전환하거나 부활하면 새 액터가 `IDLE` 로 시작한다.
+따라서 Save v4 에도, 복제 payload 에도 들어가지 않는다. 반대로 dodge 가 소비한 스태미나는
+위의 `CombatRuntimeState` 가 소유하므로 월드 전환 뒤에도 그대로 남는다.
+
 save format은 **4**이다. `peer_id`와 network/runtime revision은 저장하지 않으며, Host의
 attached/detached canonical PlayerState와 personal progression은 persistent `player_id`로
 저장한다. v1 → v2 → v3 → v4 migration을 거치며 진행 중 원정은 재개하지 않는다.

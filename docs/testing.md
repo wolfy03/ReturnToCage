@@ -131,6 +131,19 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   `IDLE → STARTUP → ACTIVE → RECOVERY → IDLE` 전체 phase 진행, 각 공격 phase에서 재공격 거절,
   별도 cooldown 없이 IDLE에서만 재공격 허용, 모든 실패 경로에서 IDLE 유지,
   월드 전환·사망·부활 후 IDLE을 검증한다.
+- unit/test_player_dodge.gd: `DodgeDefinition` 검증(양수 유한 duration/speed/cost, half-open
+  i-frame 창의 시작<끝과 duration 내부 포함, 비-ContentDefinition, 배포 리소스 유효성),
+  `DODGE` 전이표(IDLE→DODGE만 허용, attack/HURT에서 DODGE 진입 거절, DODGE→IDLE/HURT),
+  소유자별 control lock(누적·소유자별 해제·빈 source 거절), `PlayerDodgeCommand`의
+  sequence/±1 direction 분리 검증과 `dodge` 입력 액션 존재, dodge 타임라인(시작 시 스태미나
+  1회 commit·환불 없음·중간 입력으로 방향 변경 불가·oversized delta·스태미나 부족 거절),
+  i-frame(창 안 evadable 피해 무효화·periodic/starvation/`can_be_evaded=false`는 관통·창 종료
+  후 정상 피격·god mode 미사용), HURT interrupt(직접 DODGE→HURT·넉백 velocity 보존·환불 없음·
+  dodge lock만 해제·dodge로 hit-stun 탈출 불가·dodge로 attack 캔슬 불가), locomotion 경계
+  (지상 시작 전용·위치 직접 조작 없음·낭떠러지 AIR 낙하 유지·벽 통과 불가·입력/점프 잠금),
+  권위 guard(interaction/quick item/consumable/world transition 거절과 종료 후 재허용),
+  network intent(sequence 소비 순서·중복/역행 거절·malformed direction 거절·presentation 경로가
+  시뮬레이션하지 않음), death/world transition 정리를 검증한다.
 - unit/test_player_hurt.gd: 0.25초 HURT lifecycle/control lock과 re-hit timer refresh(signal 없음),
   STARTUP/ACTIVE/RECOVERY 직접 interruption, phase별 stamina 소비·비환불, melee hitbox cleanup,
   projectile commit 전 spawn 차단과 commit 후 projectile 생존, HURT 중 attack/network command·수평
@@ -138,6 +151,11 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   HURT와 non-reaction impulse의 독립성, periodic/starvation no-HURT, lethal/death/respawn reset,
   IDLE lethal hit의 transient HURT 부재, HURT 종료 후 interaction/item 재허용, world transition의
   scene-local reset과 locomotion enum 비오염, 실제 server item command의 HURT 거절을 검증한다.
+- world-runtime process E2E(`tools/test_multiplayer_world_runtime.py`)는 remote client의 dodge
+  intent가 호스트에서만 실행되는지도 확인한다: 클라이언트 intent → 권위 dodge 시작과 i-frame/
+  스태미나/control lock, 창 안 evadable 피해 무효화, presentation actor가 DODGE도 i-frame도
+  갖지 않음, dodge 중 return/escape 거절(world/revision·spawn assignment·adventure 참여 보존),
+  dodge 종료 후 lock/i-frame 해제, ±1이 아닌 direction의 거절을 검증한다.
 - integration/test_multiplayer_combat_loot.gd: 기존 전투/사망/loot claim 외에 권위 HURT actor의
   gather와 loot pickup이 mutation 없이 거절되는지 검증한다.
 - unit/test_combat_runtime_replication.gd: `CombatRuntimeState.apply_values` 검증,

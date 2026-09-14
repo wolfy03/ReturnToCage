@@ -5,6 +5,11 @@ signal mode_changed
 signal climb_hint_changed
 
 enum Mode { GROUND, AIR, CLIMB }
+
+## Named owners of an input gate. Locks are additive and each source only ever
+## clears its own: a dodge that ends inside hit-stun must not hand control back.
+const CONTROL_LOCK_HURT: StringName = &"hurt"
+const CONTROL_LOCK_DODGE: StringName = &"dodge"
 @export var acceleration: float = 1300.0
 @export var deceleration: float = 1700.0
 @export var jump_velocity: float = -390.0
@@ -14,8 +19,13 @@ var input: PlayerInputComponent
 var stats: StatBlock
 var speed: float = 190.0
 var enabled: bool = true
-## HURT-owned input gate. Independent from the lifecycle/channel `enabled` flag.
-var controls_locked: bool = false
+var _control_locks: Dictionary[StringName, bool] = {}
+## True while any combat action holds an input gate. Independent from the
+## lifecycle/channel `enabled` flag, and read-only: callers use
+## [method set_control_lock] so every lock keeps an owner.
+var controls_locked: bool:
+	get:
+		return not _control_locks.is_empty()
 var mode: Mode = Mode.AIR
 var climb_area: ClimbableArea2D
 var climb_areas: Array[ClimbableArea2D] = []
@@ -115,8 +125,24 @@ func on_damage(forced_knockback: bool = false) -> void:
 	if mode == Mode.CLIMB and (forced_knockback or climb_area.definition.drop_on_damage):
 		exit_climb()
 
-func set_controls_locked(value: bool) -> void:
-	controls_locked = value
+## Adds or removes one named input gate. An unnamed source is rejected so a lock
+## can never be left behind without an owner able to release it.
+func set_control_lock(source: StringName, locked: bool) -> bool:
+	if source.is_empty():
+		return false
+	if locked:
+		_control_locks[source] = true
+	else:
+		_control_locks.erase(source)
+	return true
+
+func has_control_lock(source: StringName) -> bool:
+	return _control_locks.has(source)
+
+## Number of gates currently held. Exists so tests can prove that releasing one
+## source does not silently drop another.
+func control_lock_count() -> int:
+	return _control_locks.size()
 
 ## Applies an authoritative, additive physics impulse without introducing a
 ## locomotion mode or timer. Invalid vectors never reach CharacterBody2D.
@@ -142,4 +168,4 @@ func _exit_tree() -> void:
 	climb_area = null
 	climb_areas.clear()
 	mode = Mode.AIR
-	controls_locked = false
+	_control_locks.clear()

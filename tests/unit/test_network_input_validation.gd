@@ -5,7 +5,7 @@ const PLAYER_TWO := "player_22222222222222222222222222222222"
 const PLAYER_TEST: StringName = &"player_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func run(t: Node) -> void:
-	t.assert_equal(NetworkProtocol.VERSION, 13, "authoritative stamina replication uses protocol v13")
+	t.assert_equal(NetworkProtocol.VERSION, 14, "the authoritative dodge intent channel uses protocol v14")
 	var valid := PlayerMoveCommand.new(1, 1.0, -1.0, true)
 	t.assert_true(valid.is_valid_after(0), "bounded movement command is accepted")
 	t.assert_true(not valid.is_valid_after(1), "duplicate movement sequence is rejected")
@@ -58,5 +58,7 @@ func run(t: Node) -> void:
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "a previous-version session snapshot is rejected")
 	payload["protocol_version"] = 11
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "v11 session snapshot is rejected")
+	payload["protocol_version"] = 13
+	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "a pre-dodge v13 session snapshot is rejected")
 	payload["protocol_version"] = NetworkProtocol.VERSION + 1
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "protocol mismatch is rejected explicitly")

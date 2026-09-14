@@ -4,6 +4,7 @@ extends CharacterBody2D
 signal interaction_prompt_changed(text: String)
 signal return_channel_changed(active: bool, progress: float)
 signal attack_presented(sequence: int, facing: float)
+signal dodge_presented(sequence: int, direction: float)
 
 @onready var input: PlayerInputComponent = %Input
 @onready var movement: MovementComponent = %Movement
@@ -12,10 +13,12 @@ signal attack_presented(sequence: int, facing: float)
 @onready var combat_action: CombatActionController = %CombatAction
 @onready var combat: CombatComponent = %Combat
 @onready var hurt: PlayerHurtComponent = %Hurt
+@onready var dodge: PlayerDodgeComponent = %Dodge
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
 @onready var network: NetworkPlayerComponent = %Network
 @onready var network_combat: NetworkCombatComponent = %NetworkCombat
+@onready var network_dodge: NetworkDodgeComponent = %NetworkDodge
 @export var peer_id: int = GameSession.LOCAL_SINGLEPLAYER_PEER_ID
 var simulation_enabled: bool = true
 var presentation_enabled: bool = true
@@ -62,11 +65,14 @@ func _ready() -> void:
 	movement.configure(self, input, _bound_state.stats)
 	var runtime := GameSession.get_player_runtime(peer_id)
 	combat.configure(self, _bound_state.stats, runtime.combat if runtime != null else null, combat_action)
-	hurt.configure(self, combat_action, combat, movement)
+	dodge.configure(self, combat_action, combat, movement, health)
+	hurt.configure(self, combat_action, combat, movement, dodge)
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
 	network_combat.configure(self, input)
 	network_combat.attack_presented.connect(func(_peer_id: int, sequence: int, replicated_facing: float) -> void: attack_presented.emit(sequence, replicated_facing))
+	network_dodge.configure(self, input)
+	network_dodge.dodge_presented.connect(func(_peer_id: int, sequence: int, replicated_direction: float) -> void: dodge_presented.emit(sequence, replicated_direction))
 	input.interact_requested.connect(_on_interact)
 	input.quick_item_requested.connect(_on_quick_item)
 	interaction.target_changed.connect(_on_target_changed)
@@ -111,6 +117,9 @@ func _physics_process(delta: float) -> void:
 		network.presentation_tick(delta)
 		return
 	hurt.physics_tick(delta)
+	# Before locomotion, so the dodge's roll velocity is what the body moves with
+	# this frame rather than something applied a frame late.
+	dodge.physics_tick(delta)
 	if not movement.controls_locked and absf(input.move_axis) > 0.01:
 		facing = signf(input.move_axis)
 	movement.physics_tick(delta)
@@ -126,7 +135,7 @@ func _physics_process(delta: float) -> void:
 				_complete_return_channel()
 
 func _on_interact() -> void:
-	if _death_handled or hurt.is_active():
+	if _death_handled or hurt.is_active() or dodge.is_active():
 		return
 	if not is_simulation_authority():
 		var loot := interaction.current_target as LootActor
@@ -144,7 +153,7 @@ func _on_target_changed(target: InteractionTarget) -> void:
 	_refresh_interaction_prompt()
 
 func _on_quick_item() -> void:
-	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled or hurt.is_active():
+	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled or hurt.is_active() or dodge.is_active():
 		return
 	if not GameSession.is_peer_in_adventure(peer_id):
 		var item_service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
@@ -186,7 +195,7 @@ func is_death_handled() -> bool:
 	return _death_handled
 
 func consume_item(item_id: StringName) -> bool:
-	if _death_handled or hurt.is_active() or not is_simulation_authority():
+	if _death_handled or hurt.is_active() or dodge.is_active() or not is_simulation_authority():
 		return false
 	return ItemUseService.use_item(_bound_state.inventory, survival, effects, item_id, Callable(ContentRegistry, "get_item"))
 
@@ -197,6 +206,7 @@ func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirs
 	if (hunger_stage == 3 or thirst_stage == 3) and health.current_health > 0.0:
 		var context := DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment")
 		context.causes_hurt = false
+		context.can_be_evaded = false
 		health.receive_damage(context)
 
 func _on_died(_context: DamageContext) -> void:
@@ -204,6 +214,9 @@ func _on_died(_context: DamageContext) -> void:
 		return
 	_death_handled = true
 	hurt.reset()
+	# Clears the i-frame gate and the dodge control lock; a dead actor must not
+	# keep either.
+	dodge.reset()
 	# A dead actor must not linger mid-attack; this also drops the pending weapon
 	# and damage context. The action axis is scene-local, so this is the only
 	# cleanup point it needs.

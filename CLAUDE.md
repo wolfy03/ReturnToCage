@@ -44,7 +44,8 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   **Combat Action State**(`CombatActionController`, `%CombatAction`)가 관리한다. 두 축을
   한 enum 으로 합치면 `AIR + ATTACK`, `CLIMB + HURT`, `GROUND + DODGE` 같은 조합이
   상태 폭발로 이어진다. 현재 구현된 action state 는 `IDLE / ATTACK_STARTUP /
-  ATTACK_ACTIVE / ATTACK_RECOVERY / HURT` 이며 `DODGE`/`DEAD` 는 후속 단계다.
+  ATTACK_ACTIVE / ATTACK_RECOVERY / HURT / DODGE` 이며 `DEAD` 는 후속 단계다.
+  `DODGE` 는 `IDLE` 에서만 진입하고 `IDLE`/`HURT` 로만 나간다.
 - **공격 타이밍 상수를 코드에 두지 않는다.** 선딜·유효·후딜은 전부
   `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다. 멜리 히트박스가
   열려 있는 시간도 `active_seconds` 하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 —
@@ -68,10 +69,27 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   Enemy는 같은 finite 검증의 actor helper를 쓴다. 별도 RPC/저장 필드/locomotion mode를 만들지
   않는다. 넉백 자체는 HURT 여부를 결정하지 않는다.
 - **Player HURT 는 scene-local Combat Action 이다.** `PlayerHurtComponent` 하나가 0.25초
-  hit-stun timer와 독립적인 `MovementComponent.controls_locked`를 소유한다. 직접 피해의
-  `DamageContext.causes_hurt`가 true면 공격을 IDLE 중간 전이 없이 HURT로 interrupt한다.
+  hit-stun timer와 `MovementComponent` 의 `CONTROL_LOCK_HURT` lock 을 소유한다. 직접 피해의
+  `DamageContext.causes_hurt`가 true면 공격이나 dodge를 IDLE 중간 전이 없이 HURT로 interrupt한다.
   knockback은 별도로 먼저 적용되며 zero knockback도 HURT를 만들 수 있다. periodic/starvation은
   `causes_hurt = false`다. HURT는 기존 contact invulnerability도, 저장/복제 상태도 아니다.
+- **Player DODGE 는 scene-local Combat Action 이고 i-frame 은 데이터가 소유한다.**
+  `PlayerDodgeComponent` 하나가 dodge timeline 과 `CONTROL_LOCK_DODGE` lock 을 소유하고,
+  duration·무적 구간·속도·비용은 전부 `DodgeDefinition`(`res://data/combat/player_dodge.tres`)
+  에서 읽는다. 무적은 `HealthComponent.evasion_invulnerable`(타이머 없는 gate)로만 구현하며
+  기존 post-hit `invulnerability_seconds` 나 `god_mode` 를 재사용하지 않는다. 이 gate 는
+  `DamageContext.can_be_evaded` 가 true 인 피해만 막는다(periodic/starvation 은 false).
+  스태미나는 시작 시 1회 지불되고 **절대 환불하지 않는다.** dodge 는 지상에서만 시작하고,
+  진행 중 위치를 직접 쓰지 않으므로 벽은 `move_and_slide` 가 막고 낭떠러지는 평범한 `AIR`
+  낙하가 된다. dodge 를 위해 locomotion mode 를 추가하지 않는다.
+- **`MovementComponent` 의 input gate 는 소유자별이다.** `set_control_lock(source, locked)` 와
+  `CONTROL_LOCK_HURT` / `CONTROL_LOCK_DODGE` 를 쓰고, `controls_locked` 는 읽기 전용 계산
+  속성이다. 각 소유자는 자기 lock 만 해제한다 — HURT 로 끊긴 dodge 가 hit-stun 도중에
+  조작을 돌려주면 안 된다.
+- **Dodge 입력은 edge-trigger intent 다.** 매 tick 나가는 unreliable movement packet 에 태우지
+  않고 별도 reliable `PlayerDodgeCommand` 로 보낸다. 호스트는 sequence 를 게임플레이 검증보다
+  먼저 소비하고, `direction` 은 정확히 `±1` 만 허용하며 그 외 값은 정규화하지 않고 거절한다.
+  remote client 는 HP 무적·스태미나 소비·DODGE state·위치를 스스로 결정하지 않는다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.
@@ -100,8 +118,8 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `simulation_enabled` 를 함께 본다(`PlayerActor.is_simulation_authority()`).
   싱글플레이도 "호스트"로 취급되므로 같은 코드 경로를 탄다.
 - 전송자 위조 방지는 `NetworkProtocol.valid_command_sender(sender_id, actor_peer_id, known_peer)`.
-- 명령은 **sequence 로 중복·역행을 막는다**(`PlayerMoveCommand`, `PlayerAttackCommand`
-  의 `is_valid_after()`). 새 명령을 만들면 같은 패턴을 따른다. 유효한 sequence 는
+- 명령은 **sequence 로 중복·역행을 막는다**(`PlayerMoveCommand`, `PlayerAttackCommand`,
+  `PlayerDodgeCommand` 의 `is_valid_after()`). 새 명령을 만들면 같은 패턴을 따른다. 유효한 sequence 는
   게임플레이 검증보다 **먼저** 소비해서, 거절된 스팸이 쿨다운 후 재생되지 않게 한다.
 - 모든 월드 페이로드는 `(world_id, revision)` 과 묶인다. 전환 직전에 날아온 패킷은
   revision 불일치로 버린다. 복제 대상은 `ready_remote_peer_ids(world_id)` /
@@ -122,11 +140,11 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 - **`InteractionTarget.activated` 는 권위 경계가 아니다.** remote presentation actor는 HURT를
   복제받지 않으므로 local interaction 차단은 UX 보조일 뿐이다. world transition, attack,
   quick item, loot, gather처럼 gameplay를 변경하는 명령은 최종 서버 경계에서 해당 peer/world의
-  authoritative `PlayerActor`와 life/death/HURT 상태를 다시 검증한다.
+  authoritative `PlayerActor`와 life/death/HURT/DODGE 상태를 다시 검증한다.
 
 ### payload 를 바꿀 때 함께 볼 것
 
-`NetworkProtocol.VERSION`(현재 **13**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
+`NetworkProtocol.VERSION`(현재 **14**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
 validator → 관련 unit test(인라인 payload 를 쓰는 테스트 포함) → handshake mismatch 테스트.
 같은 버전 안에서 구/신 payload 를 섞어 허용하지 않는다.
 

@@ -108,10 +108,10 @@ v13 의 내용은 `PlayerRuntimeSnapshot` 에 `stamina`/`max_stamina` 포함, �
 RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 받는다. 이 구조를 깨지 말 것.
 
 `InteractionTarget.activated`는 로컬 presentation 흐름이며 authority boundary가 아니다. 특히
-remote actor에는 HURT가 복제되지 않는다. `_begin_player_world_transition()`과
+remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirror + 표현만 받는다). `_begin_player_world_transition()`과
 `_return_player_to_settlement()`은 공통 `_validate_authoritative_world_interaction()`으로
-현재 peer/world의 authoritative actor, ALIVE/death/HURT 상태를 spawn/world mutation 전에
-재검증한다. attack/item/loot/gather도 각각의 기존 서버 경계에서 HURT를 거절한다.
+현재 peer/world의 authoritative actor, ALIVE/death/HURT/DODGE 상태를 spawn/world mutation
+전에 재검증한다. attack/item/loot/gather도 각각의 기존 서버 경계에서 HURT와 DODGE를 거절한다.
 
 - 클라이언트 → 호스트 (`any_peer`): `_request_player_move_input`(unreliable_ordered ch0),
   `_request_player_attack`, `_request_world_loot_pickup`, `_request_world_gather`,
@@ -152,8 +152,9 @@ remote actor에는 HURT가 복제되지 않는다. `_begin_player_world_transiti
 ## 5. 액터와 컴포넌트
 
 `PlayerActor`(CharacterBody2D) 자식:
-`%Input` `%Movement` `%Network` `%NetworkCombat` `%Health` `%Survival` `%Effects`
-`%CombatAction` `%Combat` `%Hurt` `Hitbox` `Hurtbox` `%Interaction` `Camera2D`.
+`%Input` `%Movement` `%Network` `%NetworkCombat` `%NetworkDodge` `%Health` `%Survival`
+`%Effects` `%CombatAction` `%Hurt` `%Dodge` `%Combat` `Hitbox` `Hurtbox` `%Interaction`
+`Camera2D`.
 
 두 상태 축은 분리돼 있다.
 
@@ -161,10 +162,17 @@ remote actor에는 HURT가 복제되지 않는다. `_begin_player_world_transiti
 PlayerActor
 ├─ MovementComponent      locomotion : GROUND / AIR / CLIMB
 ├─ CombatActionController combat action : IDLE / ATTACK_STARTUP /
-│                                         ATTACK_ACTIVE / ATTACK_RECOVERY / HURT
+│                                         ATTACK_ACTIVE / ATTACK_RECOVERY /
+│                                         HURT / DODGE
 ├─ CombatComponent        pending attack · phase timer · 전략 실행 · 스태미나 commit
 │    └─ CombatRuntimeState 참조 (stamina / max_stamina)
-└─ PlayerHurtComponent    HURT timer · 공격 interruption · control lock
+├─ PlayerHurtComponent    HURT timer · 공격/dodge interruption · control lock(hurt)
+└─ PlayerDodgeComponent   DODGE timer · i-frame gate · control lock(dodge)
+     └─ DodgeDefinition (res://data/combat/player_dodge.tres, ContentDefinition 아님)
+          ├─ duration_seconds
+          ├─ iframe_start_seconds / iframe_end_seconds  ← half-open 무적 구간
+          ├─ speed                                      ← 롤 수평 속도
+          └─ stamina_cost                               ← 시작 시 1회 commit, 환불 없음
 
 WeaponDefinition
 └─ AttackDefinition (embedded sub-resource, ContentDefinition 아님)
@@ -194,6 +202,7 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
 | ATTACK_ACTIVE | **active** |
 | ATTACK_RECOVERY | inactive |
 | HURT | inactive |
+| DODGE | inactive |
 | `abort_attack()` / 사망 | inactive (즉시) |
 
 권위가 아닌(= 원격 표현용) 액터는 `_ready()` 에서 Health/Survival/Combat/Effects 의
@@ -210,11 +219,17 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
   `local_input_enabled`(로컬 플레이어만), `gameplay_actions_enabled`(권위일 때만 직접 실행),
   `network_intents_enabled`(클라이언트가 의도만 보낼 때).
 - `MovementComponent` — `GROUND/AIR/CLIMB`. 중력·가감속·점프·등반 정렬을 전부 소유.
-  `speed` 는 `move_speed` 스탯을 따라간다.
+  `speed` 는 `move_speed` 스탯을 따라간다. input gate 는 **소유자별**이다:
+  `set_control_lock(source, locked)` 와 `CONTROL_LOCK_HURT` / `CONTROL_LOCK_DODGE` 를 쓰고
+  `controls_locked` 는 "lock 이 하나라도 있는가" 를 읽는 계산 속성이다. 각 소유자는 자기
+  lock 만 해제한다.
 - `HealthComponent` — `receive_damage(DamageContext)`, 접촉 무적 `invulnerability_seconds`
-  (기본 0.35), `receive_periodic_damage()` 는 무적을 무시한다.
+  (기본 0.35), `receive_periodic_damage()` 는 무적을 무시한다. 여기에 더해 타이머 없는
+  `evasion_invulnerable` gate 가 있고 `PlayerDodgeComponent` 만 열고 닫는다. 이 gate 는
+  `DamageContext.can_be_evaded` 가 true 인 피해만 막으며 접촉 무적/god mode 와 별개다.
 - `CombatActionController` — combat action 축(`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE /
-  ATTACK_RECOVERY / HURT`). 상태 저장·전이 검증·시그널만 담당하며 timing·데미지·스태미나·무기·히트박스·
+  ATTACK_RECOVERY / HURT / DODGE`). `DODGE` 는 `IDLE` 에서만 들어가고 `IDLE`/`HURT` 로만
+  나간다(공격을 롤로 캔슬하거나 hit-stun 을 롤로 탈출할 수 없다). 상태 저장·전이 검증·시그널만 담당하며 timing·데미지·스태미나·무기·히트박스·
   네트워크를 모른다. scene-local 이라 월드 전환 시 새 액터는 `IDLE` 로 시작한다.
   locomotion(`MovementComponent.Mode`)과 **독립된 축**이다.
 - `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending attack + phase timer),
@@ -230,8 +245,16 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
   방어적 기술 한계일 뿐 gameplay target 수가 아니다. 중복 타격은 `_hit_targets`가 막는다.
 - `PlayerHurtComponent` — scene-local HURT timing owner. 유효한 직접 피해가 들어오면 공격의
   pending data/hitbox를 정리한 뒤 현재 attack phase에서 HURT로 직접 전환한다. 0.25초 동안
-  별도 `controls_locked`를 유지하고 재피격은 signal 없이 timer만 refresh한다. 종료는 반드시
-  `HURT → IDLE`이며 death/reset과 새 world actor에는 상태가 남지 않는다.
+  `CONTROL_LOCK_HURT` lock을 유지하고 재피격은 signal 없이 timer만 refresh한다. 종료는 반드시
+  `HURT → IDLE`이며 death/reset과 새 world actor에는 상태가 남지 않는다. 진행 중인 dodge가
+  있으면 `DODGE → HURT` 전이 직전에 `interrupt_for_hurt()`로 i-frame과 dodge lock만 내리고
+  velocity는 건드리지 않는다(넉백 impulse는 이미 적용돼 있다).
+- `PlayerDodgeComponent` — scene-local DODGE timing owner. `DodgeDefinition` 없이는 모든
+  dodge를 거절한다. 지상에서 `IDLE`일 때만 시작하고, 시작 시 스태미나를 **정확히 한 번**
+  지불한 뒤 절대 환불하지 않는다. 매 tick 수평 velocity만 쓰고 위치는 쓰지 않으므로 벽은
+  `move_and_slide`가 막고 낭떠러지는 평범한 `AIR` 낙하가 된다(새 locomotion mode 없음).
+  i-frame 구간은 definition의 half-open 창이 유일한 소유자이며 `HealthComponent`의
+  `evasion_invulnerable`을 열고 닫는다.
 - 피해 성공 후 `HealthComponent.damaged(context)`를 받은 권위 Player/Enemy가
   `context.knockback`을 기존 velocity에 더한다. Player는 non-zero impulse일 때 CLIMB을 먼저
   이탈한다. 이 물리 impulse와 `DamageContext.causes_hurt`의 hit reaction은 독립이다. HURT 중
@@ -279,7 +302,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 |---|---|
 | 아트 | 배경 텍스처만 존재. 캐릭터·적·시설·아이템 전부 Polygon2D 플레이스홀더. 애니메이션 0 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
-| 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption까지 완료. 회피/i-frame, 콤보, 보스는 없다 (단계별 계획은 `combat_rework_prep.md`) |
+| 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption, 서버 권위 Dodge + i-frame 까지 완료. 콤보·입력 버퍼·보스는 없다 (단계별 계획은 `combat_rework_prep.md`) |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
 | 성장 | 레벨/경험치/스킬 트리 없음. 성장은 장비·시설 해금뿐 |

@@ -10,8 +10,9 @@ extends Node
 ## This controller only stores the current state, validates transitions and
 ## reports changes. It calculates no damage or stamina, looks up no weapon,
 ## drives no hitbox or animation, and knows nothing about the network. It does
-## not own timing either: [CombatComponent] drives attack phase durations and
-## [PlayerHurtComponent] drives hit-stun duration.
+## not own timing either: [CombatComponent] drives attack phase durations,
+## [PlayerHurtComponent] drives hit-stun duration and [PlayerDodgeComponent]
+## drives dodge duration and its i-frame window.
 ##
 ## Scene-local by design: an attack has no reason to survive a world transition,
 ## so a new actor simply starts at IDLE. Values that must outlive the scene
@@ -25,6 +26,7 @@ enum State {
 	ATTACK_ACTIVE,
 	ATTACK_RECOVERY,
 	HURT,
+	DODGE,
 }
 
 var _state: State = State.IDLE
@@ -45,20 +47,27 @@ func is_attacking() -> bool:
 func is_hurt() -> bool:
 	return _state == State.HURT
 
+func is_dodging() -> bool:
+	return _state == State.DODGE
+
 ## The gameplay transition graph. Skipping a phase is rejected, so a caller
 ## cannot jump straight from IDLE into an active hitbox phase.
 ##
+## A dodge is deliberately not a universal cancel: it may only start from IDLE,
+## so an attack cannot be rolled out of, and HURT cannot be escaped early.
+##
 ## [codeblock]
-## IDLE            -> ATTACK_STARTUP | HURT
+## IDLE            -> ATTACK_STARTUP | HURT | DODGE
 ## ATTACK_STARTUP  -> ATTACK_ACTIVE | IDLE | HURT
 ## ATTACK_ACTIVE   -> ATTACK_RECOVERY | IDLE | HURT
 ## ATTACK_RECOVERY -> IDLE | HURT
 ## HURT            -> IDLE
+## DODGE           -> IDLE | HURT
 ## [/codeblock]
 static func is_allowed_transition(from: State, to: State) -> bool:
 	match from:
 		State.IDLE:
-			return to == State.ATTACK_STARTUP or to == State.HURT
+			return to == State.ATTACK_STARTUP or to == State.HURT or to == State.DODGE
 		State.ATTACK_STARTUP:
 			return to == State.ATTACK_ACTIVE or to == State.IDLE or to == State.HURT
 		State.ATTACK_ACTIVE:
@@ -67,6 +76,8 @@ static func is_allowed_transition(from: State, to: State) -> bool:
 			return to == State.IDLE or to == State.HURT
 		State.HURT:
 			return to == State.IDLE
+		State.DODGE:
+			return to == State.IDLE or to == State.HURT
 	return false
 
 func can_transition_to(next_state: State) -> bool:
@@ -97,6 +108,14 @@ func enter_hurt() -> bool:
 	return transition_to(State.HURT)
 
 func finish_hurt() -> bool:
+	return transition_to(State.IDLE)
+
+func enter_dodge() -> bool:
+	return transition_to(State.DODGE)
+
+func finish_dodge() -> bool:
+	if _state != State.DODGE:
+		return false
 	return transition_to(State.IDLE)
 
 ## Aborts an attack that has not reached recovery yet.

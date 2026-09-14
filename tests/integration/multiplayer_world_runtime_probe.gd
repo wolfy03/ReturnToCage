@@ -273,6 +273,88 @@ func _run_host_scenario() -> void:
 			_fail("consumed gather remained visible to a same-world peer")
 			return
 
+	# Dodge is an edge-triggered client intent on its own reliable channel. The
+	# host runs the whole move: the remote client never enters DODGE, never opens
+	# i-frames, never spends stamina and never moves itself.
+	if not await _wait_until(func() -> bool: return b_actor.movement.mode == MovementComponent.Mode.GROUND, 5.0):
+		_fail("dodge fixture actor never reached the ground")
+		return
+	var shipped_dodge := b_actor.dodge.definition
+	# Authored content is never mutated in place; the probe needs a longer window
+	# than the shipped 0.3s to fit a client round trip inside one dodge.
+	var probe_dodge := shipped_dodge.duplicate() as DodgeDefinition
+	probe_dodge.duration_seconds = 3.0
+	probe_dodge.iframe_end_seconds = 2.0
+	b_actor.dodge.definition = probe_dodge
+	var dodge_world_before := GameSession.get_peer_world(b_peer)
+	var dodge_spawn_before := NetworkManager.spawn_assignment_for_peer(b_peer)
+	var dodge_participation := session.get_player_adventure(b_peer) if session != null else null
+	# The actor has been teleported around by the earlier loot/gather steps, so it
+	# may still be settling. A dodge only starts from a grounded IDLE actor;
+	# retrying a fresh sequence keeps the probe deterministic without weakening
+	# what it asserts.
+	var dodge_stamina_before := b_combat.stamina
+	var dodge_started := false
+	for attempt in 8:
+		if not await _wait_until(func() -> bool:
+			return b_actor.movement.mode == MovementComponent.Mode.GROUND and b_actor.combat_action.is_idle()
+		, 4.0):
+			continue
+		dodge_stamina_before = b_combat.stamina
+		_command.rpc_id(b_peer, "DODGE", 700 + attempt)
+		if await _wait_until(func() -> bool: return b_actor.dodge.is_active(), 1.5):
+			dodge_started = true
+			break
+	if not dodge_started:
+		_fail("client dodge intent did not start the authoritative dodge (mode=%d action=%d stamina=%.2f)" \
+			% [b_actor.movement.mode, b_actor.combat_action.current_state(), b_combat.stamina])
+		return
+	if not b_actor.health.evasion_invulnerable or b_combat.stamina >= dodge_stamina_before \
+			or not b_actor.movement.has_control_lock(MovementComponent.CONTROL_LOCK_DODGE):
+		_fail("authoritative dodge did not open i-frames, commit stamina and lock controls")
+		return
+	var dodge_health_before := b_actor.health.current_health
+	b_actor.health.invulnerable_remaining = 0.0
+	var evaded := b_actor.health.receive_damage(DamageContext.new(5.0, &"probe", b_actor, &"hostile"))
+	if evaded or b_actor.health.current_health != dodge_health_before:
+		_fail("an evadable hit landed during authoritative i-frames")
+		return
+	_command.rpc_id(b_peer, "RETURN_DURING_SERVER_DODGE", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("RETURN_DURING_SERVER_DODGE", b_peer)):
+		_fail("remote dodge escape rejection did not complete")
+		return
+	var dodge_world_after := GameSession.get_peer_world(b_peer)
+	var dodge_report := _confirmation("RETURN_DURING_SERVER_DODGE", b_peer)
+	if not b_actor.dodge.is_active() \
+			or dodge_world_after.world_id != dodge_world_before.world_id \
+			or dodge_world_after.revision != dodge_world_before.revision \
+			or NetworkManager._pending_world_transitions.has(b_peer) \
+			or NetworkManager.spawn_assignment_for_peer(b_peer) != dodge_spawn_before \
+			or session == null or session.get_player_adventure(b_peer) != dodge_participation \
+			or session.result != AdventureSession.Result.ACTIVE \
+			or bool(dodge_report.get("presentation_dodging", true)) \
+			or bool(dodge_report.get("presentation_evasion", true)) \
+			or StringName(dodge_report.get("world_id", &"")) != SEWER:
+		_fail("remote client bypassed the authoritative DODGE world-transition guard")
+		return
+	if not await _wait_until(func() -> bool: return not b_actor.dodge.is_active(), 6.0):
+		_fail("authoritative dodge never finished")
+		return
+	if b_actor.movement.has_control_lock(MovementComponent.CONTROL_LOCK_DODGE) or b_actor.health.evasion_invulnerable:
+		_fail("a finished dodge left its control lock or i-frames behind")
+		return
+	# A direction that is not exactly one of the two facings is refused outright
+	# rather than normalised into a usable roll.
+	_command.rpc_id(b_peer, "DODGE_MALFORMED", 800)
+	if not await _wait_until(func() -> bool: return _confirmed("DODGE_MALFORMED", b_peer)):
+		_fail("malformed dodge command was not delivered")
+		return
+	await get_tree().create_timer(0.4).timeout
+	if b_actor.dodge.is_active() or b_actor.health.evasion_invulnerable:
+		_fail("a malformed dodge direction started an authoritative dodge")
+		return
+	b_actor.dodge.definition = shipped_dodge
+
 	# The remote presentation actor intentionally does not know HURT. Its escape
 	# request must still be rejected at the authoritative world-mutation boundary.
 	var hurt_world_before := GameSession.get_peer_world(b_peer)
@@ -381,6 +463,32 @@ func _command(command: String, value: int) -> void:
 				_fail(result.message)
 				return
 			await _confirm_when_world_ready(command, SETTLEMENT)
+		"DODGE":
+			NetworkManager.submit_player_dodge(NetworkManager.local_peer_id(), value, 1.0)
+			_confirm.rpc_id(1, command, {"sequence": value})
+		"DODGE_MALFORMED":
+			NetworkManager.submit_player_dodge(NetworkManager.local_peer_id(), value, 0.5)
+			_confirm.rpc_id(1, command, {"sequence": value})
+		"RETURN_DURING_SERVER_DODGE":
+			var dodge_actor := _local_actor()
+			if dodge_actor == null or dodge_actor.dodge.is_active() or dodge_actor.health.evasion_invulnerable:
+				_fail("remote presentation unexpectedly runs the authoritative dodge")
+				return
+			var dodge_result := NetworkManager.request_return_to_settlement()
+			if not dodge_result.success:
+				_fail("client could not submit the escape intent during a server dodge")
+				return
+			await get_tree().create_timer(0.35).timeout
+			if SceneRouter.current_world_id() != SEWER \
+					or GameSession.get_peer_world_id(NetworkManager.local_peer_id()) != SEWER \
+					or not NetworkManager.is_local_world_ready():
+				_fail("client left Sewer while its authoritative actor was dodging")
+				return
+			_confirm.rpc_id(1, command, {
+				"presentation_dodging": dodge_actor.dodge.is_active(),
+				"presentation_evasion": dodge_actor.health.evasion_invulnerable,
+				"world_id": SceneRouter.current_world_id(),
+			})
 		"RETURN_DURING_SERVER_HURT":
 			var actor := _local_actor()
 			if actor == null or actor.hurt.is_active():

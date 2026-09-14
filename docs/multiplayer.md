@@ -29,7 +29,7 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `13`, verifies that its roster entry matches its local persistent profile, receives session metadata plus its owner-private state, then enters the settlement.
+3. Select **Join**. The client validates protocol version `14`, verifies that its roster entry matches its local persistent profile, receives session metadata plus its owner-private state, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
@@ -99,7 +99,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
 - Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
 - Host Saved Game orchestration with pre-transport Save staging and a restoring-state handshake gate
-- Protocol v13 synchronization: v12 world/revision-bound gameplay replication plus authoritative stamina
+- Protocol v14 synchronization: v13 world/revision-bound gameplay replication plus authoritative stamina, and the dodge intent channel
 
 `inventory_changed` remains a local-player UI compatibility signal. `quest_changed` is a compatibility notification; `quest_state_changed` carries scope and logical owner for replication. Peer-specific health/life presentation remains separate.
 
@@ -166,7 +166,7 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 2
 python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 ```
 
-## Authoritative stamina replication (introduced in Protocol v13, current)
+## Authoritative stamina replication (introduced in Protocol v13)
 
 `CombatRuntimeState`(`PlayerRuntimeState.combat`)가 스태미나의 유일한 권위 소유자다. 이
 모델은 네트워크를 전혀 모르며, 복제는 두 경로로 나뉜다.
@@ -199,7 +199,7 @@ combat 스냅샷을 자기 자신에게 emit 하지 않는다. 클라이언트�
 `player_combat_runtime_changed` 시그널로 갱신된다. 스태미나는 여전히 transient 이며
 Save v4 에 포함되지 않는다.
 
-## Authoritative Player HURT (Stage 6, Protocol remains v13)
+## Authoritative Player HURT (Stage 6, Protocol remained v13)
 
 Player HURT는 권위 `PlayerActor` 안의 scene-local combat action이다. 서버의 accepted damage가
 `DamageContext.causes_hurt=true`이고 non-lethal일 때만 `PlayerHurtComponent`가 attack pending
@@ -226,6 +226,49 @@ remote client가 HURT를 전혀 몰라도 서버가 transition 전에 요청을 
 Adventure participation, pending transition, spawn assignment를 바꾸지 않는다. HURT 종료 뒤에는
 같은 요청이 정상 처리된다. quest dialog/crafting/facility 제한은 필요할 때 명령별 정책으로
 추가하며 이번 보강은 interaction system 전체를 재설계하지 않는다.
+
+## Authoritative Dodge + i-frame (Stage 7, introduced in Protocol v14, current)
+
+Dodge는 HURT와 같은 scene-local combat action이지만, HURT와 달리 **클라이언트가 시작을
+요청한다.** 따라서 이번 단계에서 처음으로 dodge 전용 intent 채널이 생겼고
+`NetworkProtocol.VERSION` 이 **14** 로 올라갔다. v13 peer 는 handshake 에서 거절된다.
+
+- **Intent (client → host, reliable).** `dodge` 는 edge-trigger action 이므로 매 tick 나가는
+  unreliable movement packet 에 태우지 않는다. 드롭된 한 프레임이 입력을 조용히 삼키기
+  때문이다. `NetworkManager.submit_player_dodge(peer_id, sequence, direction)` →
+  `_request_player_dodge`(`any_peer`, `reliable`) 경로로 `PlayerDodgeCommand`(`sequence`,
+  `direction`)만 전달한다.
+- **검증 순서.** `NetworkDodgeComponent._server_execute_dodge()` 는 `is_valid_after()` 로
+  sequence 를 확인하고 **게임플레이 검증보다 먼저 소비한다.** 그 다음에야 direction,
+  life/phase, `PlayerDodgeComponent.try_begin()` 을 본다. 거절된 스팸이 dodge 가능해진 뒤
+  같은 번호로 재생되지 않는다. `direction` 은 정확히 `+1` 또는 `-1` 만 허용하며 그 외 값은
+  정규화하지 않고 거절한다 — 그렇지 않으면 direction 필드가 속도 배율이 된다.
+- **Presentation (host → same-world ready peers, reliable).**
+  `broadcast_player_dodge()` / `_receive_player_dodge` 가 `(world_id, revision)` 에 묶여
+  나간다. 클라이언트는 받은 facing 을 mirror 하고 롤을 재생할 뿐, DODGE state 에 들어가지도,
+  i-frame 을 열지도, 스태미나를 쓰지도, 스스로 이동하지도 않는다.
+
+권위 측 규칙:
+
+- i-frame 은 `DodgeDefinition.iframe_start_seconds` / `iframe_end_seconds` (half-open) 만이
+  소유한다. `HealthComponent.evasion_invulnerable` 은 **타이머가 없는 gate** 이고
+  `PlayerDodgeComponent` 가 열고 닫는다. 기존 post-hit `invulnerability_seconds` 나
+  `god_mode` 를 재사용하지 않는다.
+- `DamageContext.can_be_evaded` 가 true 인 피해만 흘려보낸다. periodic/starvation 은
+  `can_be_evaded = false` 라서 dodge 로 생존 압박을 앉아서 넘길 수 없다.
+- 스태미나는 시작 시점에 정확히 한 번 지불되고 **절대 환불되지 않는다** — 벽에 막혀도,
+  낭떠러지로 떨어져도, HURT 로 끊겨도 마찬가지다.
+- DODGE 는 `IDLE` 에서만 시작하고 `IDLE` 또는 `HURT` 로만 나간다. 공격을 롤로 캔슬할 수
+  없고 hit-stun 을 롤로 탈출할 수도 없다. 지상에서만 시작하며, 진행 중 낭떠러지를 벗어나면
+  그대로 평범한 `AIR` 낙하가 된다(새 locomotion mode 를 만들지 않는다).
+- `MovementComponent` 의 input gate 는 이제 **소유자별**이다
+  (`set_control_lock(source, locked)`, `CONTROL_LOCK_HURT` / `CONTROL_LOCK_DODGE`). 각 소유자는
+  자기 lock 만 해제하므로, HURT 로 끊긴 dodge 가 hit-stun 도중에 조작을 돌려주지 못한다.
+
+`_validate_authoritative_world_interaction()` 은 HURT 와 함께 DODGE 도 검사하고, loot pickup /
+gather / consumable use 의 서버 종착점도 동일하게 확장했다. dodge state·i-frame·남은 시간은
+복제하지 않으며 Save v4 에도 들어가지 않는다(transient). dodge animation/event 와
+CombatAction replication 은 후속 범위다.
 
 ## Not synchronized yet
 

@@ -20,6 +20,8 @@ signal player_runtime_snapshot_received(payload: Dictionary)
 signal player_combat_runtime_snapshot_received(payload: Dictionary)
 signal player_attack_command_received(peer_id: int, sequence: int)
 signal player_attack_presented_received(peer_id: int, sequence: int, facing: float)
+signal player_dodge_command_received(peer_id: int, sequence: int, direction: float)
+signal player_dodge_presented_received(peer_id: int, sequence: int, direction: float)
 signal player_respawn_received(world_id: StringName, peer_id: int, position: Vector2)
 signal enemy_spawn_received(world_id: StringName, payload: Dictionary)
 signal enemy_despawn_received(world_id: StringName, entity_id: int)
@@ -517,6 +519,41 @@ func _request_player_attack(sequence: int) -> void:
 	if sender > 1 and has_peer(sender) and GameSession.has_player(sender) and is_peer_world_ready(sender):
 		player_attack_command_received.emit(sender, sequence)
 
+## Dodge is an edge-triggered intent, so it travels as its own reliable command
+## instead of riding the unreliable movement packet where a dropped frame would
+## silently eat the input.
+func submit_player_dodge(peer_id: int, sequence: int, direction: float) -> void:
+	if is_server():
+		if peer_id == local_peer_id() and is_peer_world_ready(peer_id):
+			player_dodge_command_received.emit(peer_id, sequence, direction)
+	elif is_session_connected() and peer_id == local_peer_id() and is_local_world_ready():
+		_request_player_dodge.rpc_id(1, sequence, direction)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_player_dodge(sequence: int, direction: float) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender > 1 and has_peer(sender) and GameSession.has_player(sender) and is_peer_world_ready(sender):
+		player_dodge_command_received.emit(sender, sequence, direction)
+
+func broadcast_player_dodge(source_peer_id: int, sequence: int, direction: float) -> void:
+	if not is_host_session_ready():
+		return
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_dodge.rpc_id(peer_id, world_id, ready.revision, source_peer_id, sequence, direction)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		player_dodge_presented_received.emit(source_peer_id, sequence, direction)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_player_dodge(
+	world_id: StringName, world_revision: int, peer_id: int, sequence: int, direction: float
+) -> void:
+	if _accept_current_world_packet(world_id, world_revision):
+		player_dodge_presented_received.emit(peer_id, sequence, direction)
+
 func broadcast_player_attack(source_peer_id: int, sequence: int, facing: float) -> void:
 	if not is_host_session_ready():
 		return
@@ -817,8 +854,9 @@ func _return_player_to_settlement(peer_id: int, result: AdventureSession.Result)
 	return _dispatch_world_assignment(peer_id, old_world)
 
 ## Final server-authoritative guard for gameplay-mutating world interactions.
-## A remote presentation actor does not replicate HURT and is never consulted;
-## the actor must belong to this peer's current authoritative world simulation.
+## A remote presentation actor does not replicate HURT or DODGE and is never
+## consulted; the actor must belong to this peer's current authoritative world
+## simulation.
 func _validate_authoritative_world_interaction(peer_id: int) -> CommandResult:
 	if not is_authoritative_simulation() or not players.has(peer_id) \
 			or not GameSession.has_player(peer_id) or not is_peer_world_ready(peer_id):
@@ -837,6 +875,8 @@ func _validate_authoritative_world_interaction(peer_id: int) -> CommandResult:
 		return CommandResult.make(false, "Authoritative player actor is unavailable")
 	if actor.hurt.is_active():
 		return CommandResult.make(false, "Cannot change worlds while hurt")
+	if actor.dodge.is_active():
+		return CommandResult.make(false, "Cannot change worlds while dodging")
 	return CommandResult.make(true, "Player may change worlds")
 
 func _restore_spawn_assignment(peer_id: int, previous: PlayerSpawnAssignment) -> void:

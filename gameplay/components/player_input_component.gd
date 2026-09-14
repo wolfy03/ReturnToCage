@@ -3,6 +3,9 @@ extends Node
 
 signal jump_requested
 signal attack_requested
+## Edge-triggered, like attack: a dodge is a discrete intent and never rides the
+## continuous movement axes.
+signal dodge_requested
 signal interact_requested
 signal quick_item_requested
 signal inventory_requested
@@ -43,6 +46,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed(&"primary_attack"):
 		if gameplay_actions_enabled or network_intents_enabled:
 			attack_requested.emit()
+	elif event.is_action_pressed(&"dodge"):
+		if gameplay_actions_enabled or network_intents_enabled:
+			dodge_requested.emit()
 	elif event.is_action_pressed(&"interact"):
 		if gameplay_actions_enabled or network_intents_enabled:
 			interact_requested.emit()
