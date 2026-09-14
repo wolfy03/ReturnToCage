@@ -32,11 +32,11 @@ PlayerActor가 실제 위치와 함께 `handle_player_death()`를 한 번 호출
 
 STAT_MODIFIER, PERIODIC_HEAL, PERIODIC_DAMAGE를 실행한다. tick_interval_seconds마다 magnitude × stacks를 적용한다. 음식 슬롯 교체와 REPLACE/REFRESH/STACK을 지원한다. 장비 source는 `equipment:<slot>`, 효과 source는 `effect:<source>/<effect_id>` 형식이다. 장비 효과는 장착 중 지속하며 저장 시 제외하고 장비로 재구성한다. 내구도 0인 장비는 능력치·효과·공격을 제공하지 않는다.
 
-CombatComponent는 근접/투사체 전략을 선택한다. 근접 범위는 Resource의 attack_range로 Hitbox를 구성한다. 투사체는 ProjectileAttack 씬을 생성해 범위만큼 이동한다. Hurtbox는 target_factions를 검사하고 성공한 피격에 hit_effects를 적용한다.
+CombatComponent는 근접/투사체 전략을 선택한다. `AttackDefinition`은 timing과 논리적 range, rectangle `hitbox_size`/`hitbox_offset`, 공격자 기준 knockback을 소유한다. 근접 전략은 이 geometry로 Hitbox를 구성하고 투사체는 같은 정의의 range만큼 이동한다. 공격 시작 시 facing으로 x만 반전한 knockback을 `DamageContext`에 snapshot한다. Hurtbox는 target_factions를 검사하고 성공한 피격에 hit_effects를 적용하며, 권위 Player/Enemy는 context impulse를 기존 `CharacterBody2D.velocity`에 더한다. 별도 knockback RPC나 HURT action state는 없다.
 
 ## 이동과 등반
 
-PlayerInputComponent는 Input Map에서 수평·수직 축을 제공한다. MovementComponent는 GROUND/AIR/CLIMB을 구분한다. ClimbableArea2D와 겹치고 중심선 허용 거리 안에서 W/S를 눌러야 진입한다. CLIMB은 중력을 끄고 Resource 속도·정렬·이탈 정책을 사용한다. 공격과 귀환 채널링은 등반과 함께 실행할 수 없다. 피격은 drop_on_damage, 강제 넉백·사망은 강제 이탈이다. 영역 이탈·상하단·점프·장면 변경도 일반 이동으로 복구한다.
+PlayerInputComponent는 Input Map에서 수평·수직 축을 제공한다. MovementComponent는 GROUND/AIR/CLIMB을 구분한다. ClimbableArea2D와 겹치고 중심선 허용 거리 안에서 W/S를 눌러야 진입한다. CLIMB은 중력을 끄고 Resource 속도·정렬·이탈 정책을 사용한다. 공격과 귀환 채널링은 등반과 함께 실행할 수 없다. 피격은 drop_on_damage, non-zero 넉백·사망은 강제 이탈이며 넉백은 locomotion mode가 아닌 additive external impulse다. 영역 이탈·상하단·점프·장면 변경도 일반 이동으로 복구한다.
 
 ## 저장 경계와 시그널
 

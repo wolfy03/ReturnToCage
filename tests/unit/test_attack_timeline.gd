@@ -24,7 +24,7 @@ func _valid_definition() -> AttackDefinition:
 
 func _test_definition_validation(t: Node) -> void:
 	var definition := _valid_definition()
-	t.assert_true(definition.validation_errors().is_empty(), "a positive finite definition validates")
+	t.assert_true(definition.validation_errors().is_empty(), "a positive finite timing and spatial definition validates")
 	t.assert_true(is_equal_approx(definition.total_seconds(), 0.55), "total_seconds sums the three phases")
 	# A plain Resource, not registry content: it has no content id of its own.
 	t.assert_true(not "id" in definition, "AttackDefinition is a plain Resource, not a ContentDefinition")
@@ -37,21 +37,67 @@ func _test_definition_validation(t: Node) -> void:
 			t.assert_true(not errors.is_empty(), "%s = %s is rejected" % [field, invalid])
 			t.assert_true(String(errors[0]).begins_with("test_weapon: "), "validation errors carry the owner id")
 
+	for invalid in [NAN, INF, -INF, 0.0, -1.0]:
+		var broken := _valid_definition()
+		broken.range = invalid
+		t.assert_true(not broken.validation_errors().is_empty(), "range = %s is rejected" % invalid)
+
+	for invalid_size in [
+		Vector2.ZERO,
+		Vector2(-1.0, 20.0),
+		Vector2(20.0, -1.0),
+		Vector2(NAN, 20.0),
+		Vector2(20.0, NAN),
+		Vector2(INF, 20.0),
+		Vector2(20.0, -INF),
+	]:
+		var broken := _valid_definition()
+		broken.hitbox_size = invalid_size
+		t.assert_true(not broken.validation_errors().is_empty(), "hitbox_size %s is rejected" % invalid_size)
+
+	for invalid_offset in [Vector2(NAN, 0.0), Vector2(0.0, INF), Vector2(-INF, 0.0)]:
+		var broken := _valid_definition()
+		broken.hitbox_offset = invalid_offset
+		t.assert_true(not broken.validation_errors().is_empty(), "hitbox_offset %s is rejected" % invalid_offset)
+
+	for invalid_knockback in [Vector2(NAN, 0.0), Vector2(0.0, INF), Vector2(-INF, 0.0)]:
+		var broken := _valid_definition()
+		broken.knockback = invalid_knockback
+		t.assert_true(not broken.validation_errors().is_empty(), "knockback %s is rejected" % invalid_knockback)
+
+	for valid_knockback in [Vector2.ZERO, Vector2(-120.0, -40.0), Vector2(120.0, 40.0)]:
+		var valid := _valid_definition()
+		valid.knockback = valid_knockback
+		t.assert_true(valid.validation_errors().is_empty(), "finite knockback %s is valid" % valid_knockback)
+	var independent_geometry := _valid_definition()
+	independent_geometry.range = 60.0
+	independent_geometry.hitbox_size = Vector2(48.0, 20.0)
+	t.assert_true(independent_geometry.validation_errors().is_empty(), "logical range and rectangle width may differ")
+
 func _test_weapon_validation(t: Node) -> void:
 	var weapon := WeaponDefinition.new()
 	weapon.id = &"test_timing_weapon"
 	weapon.display_name = "Timing test"
 	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "a weapon without an attack definition is invalid")
 	weapon.attack_definition = _valid_definition()
-	t.assert_true(weapon.validate_definition(ContentRegistry).is_empty(), "a weapon with valid timing passes")
+	t.assert_true(weapon.validate_definition(ContentRegistry).is_empty(), "a weapon with a valid attack definition passes")
+	t.assert_true(not "attack_range" in weapon, "WeaponDefinition no longer owns attack_range")
 	weapon.attack_definition.active_seconds = 0.0
 	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "invalid nested timing fails the weapon")
+	weapon.attack_definition = _valid_definition()
+	weapon.attack_definition.hitbox_offset.x = NAN
+	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "invalid nested spatial data fails the weapon")
 
 	var shipped := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
 	t.assert_true(shipped != null and shipped.attack_definition != null, "the shipped weapon carries an attack definition")
 	t.assert_true(shipped.attack_definition.validation_errors(shipped.id).is_empty(), "the shipped weapon timing is valid")
 	t.assert_true(is_equal_approx(shipped.attack_definition.total_seconds(), 0.55), "twig_sword keeps its 0.55s attack cadence")
+	t.assert_equal(shipped.attack_definition.range, 52.0, "twig_sword range migrated unchanged")
+	t.assert_equal(shipped.attack_definition.hitbox_size, Vector2(52.0, 30.0), "twig_sword hitbox size migrated unchanged")
+	t.assert_equal(shipped.attack_definition.hitbox_offset, Vector2(26.0, 0.0), "twig_sword hitbox offset migrated unchanged")
+	t.assert_equal(shipped.attack_definition.knockback, Vector2(120.0, -40.0), "twig_sword knockback migrated unchanged")
 	t.assert_true(not "attack_cooldown" in shipped, "the legacy weapon cooldown field is gone")
+	t.assert_true(not "attack_range" in shipped, "the legacy weapon range field is gone")
 
 func _spawn_settlement_player(t: Node, layer: Node) -> PlayerActor:
 	SceneRouter.register_world_layer(layer)
@@ -168,6 +214,9 @@ func _test_projectile_commits_once(t: Node) -> void:
 	actor.combat._process(timing.startup_seconds * 0.5)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "the projectile attack reaches the active phase")
 	t.assert_equal(_projectile_count(parent), before + 1, "entering the active phase spawns exactly one projectile")
+	var projectile := _first_projectile(parent)
+	t.assert_true(projectile != null and is_equal_approx(projectile.distance_remaining, timing.range), "projectile travel distance comes from AttackDefinition.range")
+	t.assert_equal(projectile.context.knockback, timing.knockback, "projectile reuses the attack-start DamageContext knockback snapshot")
 
 	actor.combat._process(timing.active_seconds * 0.5)
 	t.assert_equal(_projectile_count(parent), before + 1, "no extra projectile spawns during the active phase")
@@ -198,7 +247,7 @@ func _register_projectile_weapon(timing: AttackDefinition) -> WeaponDefinition:
 	weapon.max_durability = 10
 	weapon.equipment_slot = EquipmentDefinition.EquipmentSlot.MAIN_HAND
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
-	weapon.attack_range = 180.0
+	timing.range = 180.0
 	weapon.stamina_cost = 1.0
 	weapon.attack_definition = timing
 	weapon.attack_scene = load("res://tests/fixtures/projectile_attack.tscn") as PackedScene
@@ -369,3 +418,9 @@ func _projectile_count(parent: Node) -> int:
 		if child is ProjectileAttack:
 			count += 1
 	return count
+
+func _first_projectile(parent: Node) -> ProjectileAttack:
+	for child in parent.get_children():
+		if child is ProjectileAttack:
+			return child
+	return null

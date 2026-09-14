@@ -6,6 +6,12 @@ func execute(weapon: WeaponDefinition, context: DamageContext, _actor: Character
 		return false
 	# Shape and facing only. How long the hitbox stays live is the ACTIVE phase,
 	# which CombatComponent owns — this strategy never reads attack timing.
-	hitbox.configure_range(weapon.attack_range, facing)
+	var attack_definition := weapon.attack_definition
+	if attack_definition == null or not hitbox.configure_geometry(
+		attack_definition.hitbox_size,
+		attack_definition.hitbox_offset,
+		facing
+	):
+		return false
 	hitbox.activate(context)
 	return true

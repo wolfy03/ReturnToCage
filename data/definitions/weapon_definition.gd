@@ -8,7 +8,6 @@ enum AttackMode { MELEE, PROJECTILE }
 ## Phase timing for this weapon. The attack timeline (startup/active/recovery)
 ## is the only lock-out; there is no separate attack cooldown any more.
 @export var attack_definition: AttackDefinition
-@export_range(1.0, 1000.0, 1.0) var attack_range: float = 54.0
 @export_range(0.0, 100.0, 0.1) var stamina_cost: float = 8.0
 @export var attack_scene: PackedScene
 @export var hit_effects: Array[EffectDefinition] = []
@@ -16,8 +15,8 @@ enum AttackMode { MELEE, PROJECTILE }
 
 func validate_definition(registry: Node) -> PackedStringArray:
 	var errors: PackedStringArray = super.validate_definition(registry)
-	if not is_finite(attack_range) or attack_range <= 0.0 or target_factions.is_empty():
-		errors.append("%s: invalid weapon range or target factions" % id)
+	if target_factions.is_empty():
+		errors.append("%s: weapon target factions cannot be empty" % id)
 	if attack_definition == null:
 		errors.append("%s: missing attack_definition" % id)
 	else:

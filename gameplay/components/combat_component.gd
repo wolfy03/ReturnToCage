@@ -98,7 +98,10 @@ func attack(facing: float) -> bool:
 	# Snapshot everything the commit will need, so the attack keeps the meaning it
 	# had when the player pressed the button.
 	var damage := weapon.base_damage + stats.value(&"attack_power")
-	var context := DamageContext.new(damage, &"physical", owner_actor, &"player", Vector2(120.0 * signf(facing), -40.0))
+	var direction := -1.0 if facing < 0.0 else 1.0
+	var authored_knockback := attack_definition.knockback
+	var resolved_knockback := Vector2(authored_knockback.x * direction, authored_knockback.y)
+	var context := DamageContext.new(damage, &"physical", owner_actor, &"player", resolved_knockback)
 	context.target_factions = weapon.target_factions.duplicate()
 	context.hit_effects = weapon.hit_effects.duplicate()
 	_pending_weapon = weapon

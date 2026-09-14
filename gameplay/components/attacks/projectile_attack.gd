@@ -8,8 +8,8 @@ var distance_remaining: float = 0.0
 ## A projectile is live for its whole flight and frees itself when the travel
 ## distance runs out, so it needs no window from the attack timeline.
 func launch(weapon: WeaponDefinition, damage: DamageContext, facing: float) -> void:
-	direction = signf(facing)
-	distance_remaining = weapon.attack_range
+	direction = -1.0 if facing < 0.0 else 1.0
+	distance_remaining = weapon.attack_definition.range
 	activate(damage)
 
 func _physics_process(delta: float) -> void:

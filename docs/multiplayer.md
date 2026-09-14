@@ -73,7 +73,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Individual same-world respawn without ending the party adventure
 - Validated health/life runtime presentation snapshots (separate from save data)
 - Intent-only player attack requests with sequence replay protection
-- Server-only enemy AI, combat, knockback, health, and death resolution
+- Server-only enemy AI, hit resolution, additive `DamageContext.knockback`, health, and death resolution; movement snapshots carry the resulting transform/velocity with no knockback RPC
 - Definition-driven enemy actors (`enemy_id -> EnemyDefinition.actor_scene -> EnemyAgent`) on server and clients
 - Stable world-local network entity IDs for enemies and loot
 - Enemy spawn/despawn plus 20 Hz interpolated transform snapshots and reliable health/state events

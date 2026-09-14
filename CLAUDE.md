@@ -49,6 +49,10 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다. 멜리 히트박스가
   열려 있는 시간도 `active_seconds` 하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 —
   재공격 가능 여부의 유일한 기준은 action state 가 `IDLE` 인지다.
+- **공격 공간 정보와 플레이어 공격 넉백도 `AttackDefinition` 이 소유한다.** 논리적 reach는
+  `range`, 현재 rectangle 판정은 `hitbox_size`/`hitbox_offset`, 공격자 기준 impulse는
+  `knockback` 에 둔다. `WeaponDefinition.attack_range` 나 Hitbox/Combat 코드 기본값을 다시
+  만들지 않는다. facing 은 x와 offset x만 반전하고 y는 그대로 둔다.
 - **공격은 `ATTACK_ACTIVE` 진입 순간에만 commit 된다.** 히트박스 활성화·투사체 생성·스태미나
   차감이 전부 거기서 한 번 일어난다. 요청 프레임에는 아무것도 발생하지 않는다.
 - **phase 시간의 소유자는 `CombatComponent` 하나다.** `HitboxComponent` 는 자체 duration
@@ -59,6 +63,10 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   판정 기회가 0 이 되지 않도록, 히트박스는 활성화되는 순간 direct space query 로 즉시
   한 번 훑는다(`monitoring` 은 다음 physics step 에야 켜지기 때문). 중복 타격은
   공격 단위 `_hit_targets` 가 막는다.
+- **`DamageContext.knockback` 은 권위 물리 impulse 다.** 호스트의 damaged 경로에서 기존
+  `CharacterBody2D.velocity` 에 더한다. Player는 `MovementComponent.apply_external_impulse()`,
+  Enemy는 같은 finite 검증의 actor helper를 쓴다. 별도 RPC/저장 필드/locomotion mode를 만들지
+  않으며, 넉백만으로 combat action timeline을 취소하지 않는다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.

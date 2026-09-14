@@ -241,7 +241,9 @@ func _on_damaged(context: DamageContext) -> void:
 	if not is_simulation_authority():
 		return
 	_cancel_return_channel()
-	movement.on_damage(context.knockback.length() > 0.0)
+	var valid_knockback := is_finite(context.knockback.x) and is_finite(context.knockback.y)
+	movement.on_damage(valid_knockback and context.knockback != Vector2.ZERO)
+	movement.apply_external_impulse(context.knockback)
 
 func _refresh_interaction_prompt() -> void:
 	var target: InteractionTarget = interaction.current_target

@@ -7,6 +7,10 @@ script = ExtResource("2")
 startup_seconds = 0.1
 active_seconds = 0.12
 recovery_seconds = 0.33
+range = 52.0
+hitbox_size = Vector2(52, 30)
+hitbox_offset = Vector2(26, 0)
+knockback = Vector2(120, -40)
 
 [resource]
 script = ExtResource("1")
@@ -22,6 +26,5 @@ max_durability = 60
 attack_mode = 0
 base_damage = 8.0
 attack_definition = SubResource("TwigSwordAttack")
-attack_range = 52.0
 stamina_cost = 8.0
 target_factions = Array[StringName]([&"hostile"])

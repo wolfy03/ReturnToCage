@@ -100,9 +100,10 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
 - unit/test_save_migration.gd: 실제 v1/v2/v3 파일 로드, 잘못된 버전과 필드, 사용자 경고, fatal rollback.
 - integration/test_session_stability.gd: null 사망 설정, 전이 거부, duplicate death, 늦은 Actor 시그널, 씬 실패 후 respawn 재시도.
 - unit/test_combat_runtime_state.gd: `CombatRuntimeState` reset/spend/regenerate/max 클램프, 실제 Settlement actor의 `CombatComponent`가 `PlayerRuntimeState.combat`을 참조하는지, 공격 성공 시 stamina_cost 차감·부족 시 거절과 값 유지·cooldown 미시작, `_process` 재생과 survival multiplier, stat modifier에 따른 max 변화, unbound component의 null 안전성, 월드 전환 시 유지와 respawn 시 max로 refill.
-- unit/test_attack_timeline.gd: `AttackDefinition` 검증(NaN/INF/0/음수 거절, owner id 접두사,
-  ContentDefinition 아님), `WeaponDefinition`의 null·중첩 타이밍 검증과 shipped `twig_sword`의
-  0.55초 cadence, STARTUP 동안 히트박스 비활성·commit 없음, ACTIVE 진입 시 1회 commit과
+- unit/test_attack_timeline.gd: `AttackDefinition` timing/spatial 검증(양수 finite range/size,
+  finite offset/knockback, zero·음수 knockback 허용, owner id 접두사, ContentDefinition 아님),
+  `WeaponDefinition`의 null·중첩 검증, `attack_range` 제거와 shipped `twig_sword`의 0.55초 cadence,
+  STARTUP 동안 히트박스 비활성·commit 없음, ACTIVE 진입 시 1회 commit과
   `active_seconds` 만큼의 히트박스 window·스태미나 1회 차감, RECOVERY 중 재공격 거절,
   전체 사이클 후 IDLE과 재공격 허용, 전체 timeline보다 큰 delta에서도 4회 전이·1회 commit,
   phase 경계를 걸친 delta의 잉여 이월. 히트박스 lifecycle(IDLE/STARTUP/RECOVERY에서 비활성,
@@ -110,13 +111,19 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   정리(ACTIVE 이후 abort는 스태미나를 환불하지 않음, 반복 호출 안전). 실제 적을 사거리에 두고
   전체 timeline을 삼키는 큰 delta에서도 melee 판정이 정확히 1회 발생하는지, ACTIVE 도중 사망 시
   즉시 히트박스가 꺼지고 추가 피해가 없는지. projectile은 strategy 직접 호출이 아니라 실제
-  `CombatComponent` timeline을 통해 ACTIVE 진입에서 정확히 1개만 spawn되는지 검증한다.
+  `CombatComponent` timeline을 통해 ACTIVE 진입에서 정확히 1개만 spawn되고
+  `AttackDefinition.range` 및 동일한 context knockback snapshot을 쓰는지 검증한다.
+- unit/test_combat_hit_geometry.gd: twig/custom rectangle size와 right/left offset x mirror(y 유지),
+  runtime non-finite geometry 거절, Player/Enemy additive impulse와 zero/non-finite 안전성. 실제
+  right/left melee가 Enemy HURT를 유지하면서 authored velocity와 위치 이동을 만드는지,
+  Player damage가 velocity/위치에 반영되는지, zero knockback no-op, CLIMB 이탈 후 impulse,
+  공격 중 피격에도 STARTUP→ACTIVE→RECOVERY→IDLE timeline 유지, presentation actor no-op.
 - unit/test_combat_action_controller.gd: combat action 상태 머신의 초기 IDLE, 정상 전이
   (`IDLE → STARTUP → ACTIVE → RECOVERY → IDLE`)와 취소, 불법 전이 거절 및 거절 후 상태 유지,
-  실제 변경 시에만 발생하는 signal, reset 정책, legacy 즉발 공격 bridge. 실제 PlayerActor
-  통합으로 wiring, 성공 공격 후 RECOVERY(가짜 phase 진행 없이 1회 signal), recovery 중
-  재공격 거절(스태미나·쿨다운·히트박스 불변), 기존 쿨다운 종료 시 IDLE 복귀(별도 타이머 없음),
-  모든 실패 경로에서 IDLE 유지, 월드 전환·사망·부활 후 IDLE.
+  실제 변경 시에만 발생하는 signal과 reset 정책. 실제 PlayerActor 통합으로 wiring,
+  `IDLE → STARTUP → ACTIVE → RECOVERY → IDLE` 전체 phase 진행, 각 공격 phase에서 재공격 거절,
+  별도 cooldown 없이 IDLE에서만 재공격 허용, 모든 실패 경로에서 IDLE 유지,
+  월드 전환·사망·부활 후 IDLE을 검증한다.
 - unit/test_combat_runtime_replication.gd: `CombatRuntimeState.apply_values` 검증,
   `PlayerRuntimeSnapshot`/`PlayerCombatRuntimeSnapshot`의 payload 왕복과 누락·타입·음수·
   초과·NaN/INF 거절, sequence 최신/중복/역행 처리, 값이 변하지 않을 때의 패킷 억제,

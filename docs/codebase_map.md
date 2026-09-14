@@ -163,7 +163,11 @@ WeaponDefinition
 └─ AttackDefinition (embedded sub-resource, ContentDefinition 아님)
      ├─ startup_seconds
      ├─ active_seconds     ← 멜리 히트박스가 열려 있는 시간
-     └─ recovery_seconds
+     ├─ recovery_seconds
+     ├─ range              ← 논리적 reach / projectile 이동 거리
+     ├─ hitbox_size        ← 현재 rectangle 크기
+     ├─ hitbox_offset      ← 공격자 local offset
+     └─ knockback          ← 공격자 forward-local impulse
 ```
 
 공격 한 번의 흐름:
@@ -208,11 +212,17 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
 - `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending attack + phase timer),
   `ATTACK_ACTIVE` 진입 시 전략 실행과 스태미나 commit, 스태미나 재생 로직.
   스태미나 값 자체는 소유하지 않고 `combat_runtime`(`CombatRuntimeState`) 참조를 통해 읽고
-  쓴다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.
+  쓴다. 공격 시작 시 `AttackDefinition.knockback`의 x만 facing으로 해석해 `DamageContext`에
+  snapshot한다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.
 - `HitboxComponent`(Area2D) / `HurtboxComponent`(Area2D) — 팩션·target_factions 검사 후
   `hit_effects` 적용. Hitbox 는 **duration 을 모른다**: `activate()`/`deactivate()` 로만
-  켜지고 꺼지며, 활성화 순간 direct space query 로 이미 겹친 대상을 즉시 한 번 훑는다.
-  중복 타격은 공격 단위 `_hit_targets` 가 막는다.
+  켜지고 꺼지고 공격 geometry 기본값도 갖지 않는다. Melee strategy가 ACTIVE commit 전에
+  `AttackDefinition.hitbox_size/hitbox_offset`으로 rectangle을 구성한다. 활성화 순간 실제
+  CollisionShape2D와 같은 shape/transform으로 direct space query를 실행하며, 256 결과 상한은
+  방어적 기술 한계일 뿐 gameplay target 수가 아니다. 중복 타격은 `_hit_targets`가 막는다.
+- 피해 성공 후 `HealthComponent.damaged(context)`를 받은 권위 Player/Enemy가
+  `context.knockback`을 기존 velocity에 더한다. Player는 non-zero impulse일 때 CLIMB을 먼저
+  이탈하지만 HURT action state나 공격 취소는 아직 없다.
 - `EffectController` — `PlayerState.effects` 모델의 어댑터. 시간은 모델이 소유.
 - `SurvivalComponent` — 허기/갈증. `GameSession.player.survival` 과 같은 객체를 공유.
 
@@ -255,7 +265,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 |---|---|
 | 아트 | 배경 텍스처만 존재. 캐릭터·적·시설·아이템 전부 Polygon2D 플레이스홀더. 애니메이션 0 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
-| 전투 | 스태미나(소유·복제·HUD), Combat Action State, 공격 타임라인까지 완료. 히트박스 모양·오프셋 데이터화, 넉백 적용, 피격 경직, 회피, 콤보, 보스가 없다 (단계별 계획은 `combat_rework_prep.md`) |
+| 전투 | 스태미나(소유·복제·HUD), Combat Action State, 공격 타임라인, AttackDefinition rectangle geometry/range, 권위 넉백 impulse까지 완료. 플레이어 피격 경직, 회피, 콤보, 보스는 없다 (단계별 계획은 `combat_rework_prep.md`) |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
 | 성장 | 레벨/경험치/스킬 트리 없음. 성장은 장비·시설 해금뿐 |

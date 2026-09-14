@@ -396,7 +396,7 @@ func test_world_and_climbing() -> void:
 	var weapon_timing := (ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition).attack_definition
 	actor.combat._process(weapon_timing.startup_seconds)
 	var shape := actor.combat.hitbox.get_node("CollisionShape2D").shape as RectangleShape2D
-	t.assert_equal(shape.size.x, 52.0, "weapon attack_range controls actual hitbox")
+	t.assert_equal(shape.size.x, 52.0, "AttackDefinition hitbox_size controls actual hitbox")
 	var hit := DamageContext.new(2.0, &"test", actor, &"player")
 	hit.target_factions = [&"neutral"]
 	t.assert_true(not enemy.hurtbox.receive_hit(hit), "target faction filter denies wrong faction")
@@ -570,8 +570,8 @@ func test_projectile(actor: PlayerActor, enemy: EnemyAgent) -> void:
 	weapon.id = &"test_projectile"
 	weapon.display_name = "Test projectile"
 	weapon.attack_definition = AttackDefinition.new()
+	weapon.attack_definition.range = 180.0
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
-	weapon.attack_range = 180.0
 	weapon.attack_scene = load("res://tests/fixtures/projectile_attack.tscn") as PackedScene
 	t.assert_true(weapon.validate_definition(ContentRegistry).is_empty(), "valid projectile scene accepted")
 	var strategy := ProjectileAttackStrategy.new()
@@ -582,6 +582,12 @@ func test_projectile(actor: PlayerActor, enemy: EnemyAgent) -> void:
 	var context := DamageContext.new(3.0, &"projectile", actor, &"player")
 	context.target_factions = [&"hostile"]
 	t.assert_true(strategy.execute(weapon, context, actor, actor.combat.hitbox, 1.0), "projectile strategy spawns scene")
+	var spawned_projectile: ProjectileAttack
+	for child in actor.get_parent().get_children():
+		if child is ProjectileAttack:
+			spawned_projectile = child
+			break
+	t.assert_true(spawned_projectile != null and is_equal_approx(spawned_projectile.distance_remaining, weapon.attack_definition.range), "projectile range comes from AttackDefinition")
 	await frames(20)
 	t.assert_true(enemy.health.current_health < before, "projectile moves and hits actual hostile hurtbox")
 	await frames(18)

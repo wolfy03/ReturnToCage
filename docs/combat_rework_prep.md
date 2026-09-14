@@ -10,7 +10,9 @@
 완료  2차  authoritative stamina replication (Protocol v13) + runtime-mirror HUD
 완료  3차  Combat Action State Machine (IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY)
 완료  4차  AttackDefinition + 실제 attack timeline
-예정  5차  Hitbox 데이터화 + Knockback 실제 적용
+완료  4차 안정화  ACTIVE window 단일 소유 + immediate sweep
+완료  5차  AttackDefinition geometry/range + Knockback 실제 적용
+다음  6차  Player HURT
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -41,7 +43,7 @@
 [호스트 tick] CombatComponent._process(delta) → _advance_attack()
   ATTACK_STARTUP 종료
      → 스태미나 재확인 → action.enter_attack_active()
-     → strategy.execute()   ← 히트박스 arm(active_seconds) 또는 투사체 생성
+     → strategy.execute()   ← geometry 구성 후 히트박스 activate 또는 투사체 생성
      → spend_stamina() → attacked            **공격은 여기서만 commit 된다**
   ATTACK_ACTIVE 종료  → action.enter_attack_recovery()
   ATTACK_RECOVERY 종료 → action.finish_attack() → IDLE, pending clear
@@ -62,7 +64,7 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 스태미나 소비처 | 공격만 | 소유·복제·commit 시점 확정. 회피·대시가 쓸 소비처만 남음 |
 | 콤보 | 없음 | 공격은 단발. `sequence` 는 네트워크용 일련번호일 뿐 콤보 인덱스가 아님 |
 | 공격 모션/선후딜 | **완료(4차)** | `AttackDefinition` 의 startup/active/recovery. 판정은 ACTIVE 진입 시 |
-| 넉백 적용 | 벡터만 존재 | `DamageContext.knockback` 이 velocity 에 반영되지 않음 |
+| 넉백 적용 | **완료(5차)** | 권위 Player/Enemy가 `DamageContext.knockback`을 velocity에 additive 적용 |
 | 피격 경직(플레이어) | 없음 | 적만 hurt 상태가 있음 |
 | 방향 공격(위/아래) | 없음 | 히트박스가 항상 수평 |
 | 무기별 패턴 | 2종(근접/투사체) | `AttackStrategy` 확장점은 이미 있음 |
@@ -162,11 +164,10 @@ Movement / Locomotion State        Combat Action State
 
 ### 3-4. 데이터로 뺄 것과 코드에 남길 것
 
-무기마다 선딜/후딜/히트박스 모양/콤보 단계가 달라지므로, 지금처럼 `WeaponDefinition` 에
-스칼라만 두는 구조로는 부족하다. `AttackPhaseDefinition`(windup / active / recovery /
-hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하위 Resource 배열이 필요하다.
-새 Resource 는 `data/definitions/` 에 `ContentDefinition` 으로 넣고
-`validate_definition()` 을 반드시 구현한다(`CLAUDE.md` 4절).
+현재 단발 공격의 timing/range/rectangle geometry/knockback은 embedded plain Resource인
+`AttackDefinition`에 모였다. 향후 실제 무기가 multiple hitbox, shape type, 콤보 단계나 cancel
+window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그때도 독립 콘텐츠 id가 필요하지
+않다면 `ContentDefinition`으로 올리지 않고 weapon sub-resource 경계를 유지한다.
 
 ## 4. 단계 계획 (현재 유효한 실행 순서)
 
@@ -179,8 +180,9 @@ hitbox 오프셋·크기 / 캔슬 가능 구간 / 다음 콤보 id) 같은 하�
 | 2차 | Stamina authoritative replication (Protocol v13) + runtime-mirror HUD | 완료 |
 | 3차 | **Combat Action State Machine** — `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 만 | 완료 |
 | 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 완료 |
-| 5차 | Hitbox 데이터화(모양·오프셋·range) + Knockback 실제 적용 | 다음 |
-| 6차 | HURT (플레이어 피격 경직) | 예정 |
+| 4차 안정화 | ACTIVE window 단일 소유 + immediate sweep | 완료 |
+| 5차 | AttackDefinition rectangle geometry/range + Knockback 실제 적용 | 완료 |
+| 6차 | HURT (플레이어 피격 경직) | **다음** |
 | 7차 이후 | Dodge/i-frame, Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 
 ### 완료된 1차·2차 요약
@@ -222,9 +224,11 @@ ATTACK_RECOVERY → IDLE
 `ContentDefinition` 이 아니다. 독립 id 로 ContentRegistry 에 등록되는 콘텐츠가 아니라
 `WeaponDefinition.attack_definition` 에 박히는 sub-resource 다.
 
-- 필드는 `startup_seconds` / `active_seconds` / `recovery_seconds` 세 개뿐이다. 전부 유한
-  양수여야 하며 `validation_errors(owner_id)` 가 검사하고 `WeaponDefinition.validate_definition()`
-  이 그 결과를 합쳐 콘텐츠 검증에서 실패시킨다. `attack_definition` 이 null 인 무기도 실패한다.
+- timing은 `startup_seconds` / `active_seconds` / `recovery_seconds`이며 전부 유한 양수다.
+  5차부터 `range`(양수 finite), `hitbox_size`(각 성분 양수 finite), `hitbox_offset`(각 성분
+  finite), `knockback`(각 성분 finite)도 같은 Resource가 소유한다. knockback은 zero와 음수
+  x/y를 허용한다. `validation_errors(owner_id)` 결과는 `WeaponDefinition.validate_definition()`에
+  합쳐지며 `attack_definition`이 null인 무기도 실패한다.
 - `twig_sword` 는 `0.10 / 0.12 / 0.33` 으로 이관했다. 합 0.55초로 **기존 공격 cadence 를
   유지**하되 판정은 입력 직후가 아니라 0.10초 뒤에 발생한다. `active_seconds = 0.12` 는
   기존 히트박스 활성 시간을 그대로 옮긴 값이며, 이제 이 값이 유일한 source 다
@@ -246,22 +250,51 @@ ATTACK_RECOVERY → IDLE
   action state 가 `IDLE` 인지다.
 - 네트워크는 그대로다. action state 를 복제하지 않으며 `NetworkProtocol.VERSION` 은 **13**
   이다. `attack_presented` 는 이제 "공격 시작" 표현 이벤트로 읽으면 된다.
-- 이번 단계에서 건드리지 않은 것: 히트박스 모양·오프셋·range 데이터화, 넉백 적용, 피격 경직,
-  공격 중 이동 제한, 적 공격 파이프라인.
+- 4차에서 건드리지 않았던 히트박스 geometry/range와 넉백 적용은 5차에 완료했다. 피격 경직,
+  공격 중 이동 제한, 적 공격 파이프라인은 여전히 후속 범위다.
 
-### 5차 이후 메모
+### 5차 — Hitbox data + Knockback (완료)
 
-`AttackDefinition` 은 지금 timing 세 값만 갖는다. 무기마다 히트박스 모양과 콤보 단계가
-달라지면 그때 이 Resource 를 확장하거나 배열로 바꾼다. `ContentDefinition` 으로 올릴 이유는
-아직 없다 — 독립 id 로 레지스트리에 등록될 콘텐츠가 아니기 때문이다.
+`AttackDefinition`은 다음 정적 공격 데이터를 함께 소유한다.
 
-5차에서는 히트박스의 크기·오프셋·range 를 `AttackDefinition` 쪽으로 마저 옮기고,
-`DamageContext.knockback` 을 실제 velocity 에 적용한다. 현재 `attack_range` 와 히트박스
-높이 30px, 오프셋 계산은 아직 `WeaponDefinition` 과 `HitboxComponent.configure_range()` 에
-남아 있다.
+```
+AttackDefinition
+├─ timing: startup_seconds / active_seconds / recovery_seconds
+├─ range: 논리적 reach, projectile 이동 거리
+├─ rectangle geometry: hitbox_size / hitbox_offset
+└─ knockback: 공격자 forward-local impulse
+```
+
+- `WeaponDefinition.attack_range`는 제거됐고 공격별 range의 source는
+  `weapon.attack_definition.range` 하나다. melee collision 크기와 offset은 range와 독립이다.
+- `MeleeAttackStrategy`가 ACTIVE commit 시 `configure_geometry(size, offset, facing)` 후
+  `activate(context)`를 호출한다. RectangleShape2D 크기는 항상 양수이고 offset x만 facing으로
+  mirror하며 y는 유지한다. HitboxComponent에는 공격 geometry 기본값, 30px 높이, `range * 0.5`
+  계산이 없다. immediate sweep은 방금 CollisionShape2D에 넣은 동일 shape/global transform을
+  사용한다. query의 256 결과 상한은 defensive technical limit이지 gameplay max_targets가 아니다.
+- `twig_sword`는 `range=52`, `hitbox_size=(52,30)`, `hitbox_offset=(26,0)`,
+  `knockback=(120,-40)`으로 기존 체감을 그대로 이관했다.
+- `CombatComponent.attack()`이 STARTUP 시작 시 authored knockback의 x만 facing으로 반전해
+  `DamageContext`에 snapshot한다. melee와 projectile은 이 context를 그대로 공유한다.
+- 성공한 damage는 기존 `HealthComponent.damaged(context)` 신호를 거쳐 권위 Player/Enemy의
+  `CharacterBody2D.velocity += context.knockback`으로 이어진다. finite가 아닌 impulse는 runtime
+  boundary에서도 거절한다. zero는 유효한 no-op이다.
+- Player는 non-zero impulse를 받을 때 기존 climb damage 정책에 관계없이 CLIMB을 먼저 이탈한
+  뒤 impulse를 받는다. Enemy `HurtState`는 0.25초 duration만 소유하고 고정 90px 넉백은 없다.
+- Player HURT, hit stun, input lock, attack cancel은 추가하지 않았다. 공격 도중 넉백을 받아도
+  combat action timeline은 독립적으로 끝까지 진행한다. Movement Mode도 GROUND/AIR/CLIMB뿐이다.
+- 모든 계산/적용은 권위 시뮬레이션에만 있고 RPC/payload/save 변경은 없다. Protocol v13과
+  Save v4를 유지하며 기존 transform/runtime replication이 결과 위치와 velocity를 전달한다.
 
 적 공격은 아직 `EnemyAgent.perform_attack()` 이 대상 `HealthComponent.receive_damage()` 를
-직접 호출한다. 히트박스 파이프라인으로 옮기는 것은 적 패턴 개편 단계의 일이다.
+직접 호출하고 `(100,-30)`을 작성한다. Player가 이를 실제 impulse로 받지만, 적 공격을
+Hitbox/정적 데이터 파이프라인으로 옮기는 일은 후속 enemy pattern 단계다.
+
+### 6차 NEXT
+
+다음 단계는 Player HURT다. 피격 경직, hit stun, damage cancel 정책을 설계하되 Dodge/i-frame,
+Combo/input buffer와 적 공격 pipeline 개편은 각각 후속 범위로 유지한다. 5차 완료 시점에는
+Player HURT action state, hurt duration, input lock, invulnerability 추가가 없다.
 
 ## 5. 개편 중 깨지기 쉬운 것
 

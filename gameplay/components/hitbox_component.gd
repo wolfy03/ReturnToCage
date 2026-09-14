@@ -7,6 +7,10 @@ extends Area2D
 ## timing and switches this on when the attack enters ATTACK_ACTIVE and off when
 ## it leaves — nothing here reads `active_seconds` or counts down.
 
+## Defensive technical ceiling for one immediate physics query. This is not a
+## gameplay maximum-target rule; `_hit_targets` still defines per-window hits.
+const IMMEDIATE_SWEEP_MAX_RESULTS := 256
+
 var context: DamageContext
 var active: bool = false
 var _hit_targets: Array[int] = []
@@ -14,13 +18,18 @@ var _hit_targets: Array[int] = []
 func _ready() -> void:
 	area_entered.connect(_on_area_entered)
 
-func configure_range(distance: float, facing: float) -> void:
+func configure_geometry(size: Vector2, offset: Vector2, facing: float) -> bool:
 	var collision := get_node_or_null("CollisionShape2D") as CollisionShape2D
-	if collision != null:
-		var shape := RectangleShape2D.new()
-		shape.size = Vector2(distance, 30.0)
-		collision.shape = shape
-	position.x = distance * 0.5 * signf(facing)
+	if collision == null or not is_finite(size.x) or not is_finite(size.y) \
+			or size.x <= 0.0 or size.y <= 0.0 \
+			or not is_finite(offset.x) or not is_finite(offset.y):
+		return false
+	var shape := RectangleShape2D.new()
+	shape.size = size
+	collision.shape = shape
+	var direction := -1.0 if facing < 0.0 else 1.0
+	position = Vector2(offset.x * direction, offset.y)
+	return true
 
 ## Makes the hitbox live for whatever targets it overlaps, until [method
 ## deactivate]. Enabling `monitoring` only takes effect on the next physics step,
@@ -57,7 +66,7 @@ func _sweep_overlaps_now() -> void:
 	query.collision_mask = collision_mask
 	query.collide_with_areas = true
 	query.collide_with_bodies = false
-	for hit in space.intersect_shape(query, 32):
+	for hit in space.intersect_shape(query, IMMEDIATE_SWEEP_MAX_RESULTS):
 		_on_area_entered(hit.get("collider") as Area2D)
 
 func _on_area_entered(area: Area2D) -> void:

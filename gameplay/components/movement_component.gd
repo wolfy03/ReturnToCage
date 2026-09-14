@@ -111,6 +111,14 @@ func on_damage(forced_knockback: bool = false) -> void:
 	if mode == Mode.CLIMB and (forced_knockback or climb_area.definition.drop_on_damage):
 		exit_climb()
 
+## Applies an authoritative, additive physics impulse without introducing a
+## locomotion mode or timer. Invalid vectors never reach CharacterBody2D.
+func apply_external_impulse(impulse: Vector2) -> bool:
+	if body == null or not is_finite(impulse.x) or not is_finite(impulse.y):
+		return false
+	body.velocity += impulse
+	return true
+
 func request_jump() -> void:
 	if not enabled or body == null:
 		return
