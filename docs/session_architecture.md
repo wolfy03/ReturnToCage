@@ -61,7 +61,9 @@ arm할 때(`arm_player_life`, 완료된 death result가 있을 때)만 다시 �
 
 전투 action 상태는 어느 쪽에도 들어가지 않는다. `CombatActionController` 의 상태(HURT, DODGE
 포함), `PlayerHurtComponent` 의 hit-stun timer, `PlayerDodgeComponent` 의 dodge timeline 과
-i-frame 창은 전부 **scene-local** 이라 월드를 전환하거나 부활하면 새 액터가 `IDLE` 로 시작한다.
+i-frame 창, `CombatComponent` 의 combo index 와 step elapsed, `CombatInputBufferComponent` 의
+pending intent 와 만료 시간은 전부 **scene-local** 이라 월드를 전환하거나 부활하면 새 액터가
+`IDLE` 에 빈 buffer 로 시작한다.
 따라서 Save v4 에도, 복제 payload 에도 들어가지 않는다. 반대로 dodge 가 소비한 스태미나는
 위의 `CombatRuntimeState` 가 소유하므로 월드 전환 뒤에도 그대로 남는다.
 

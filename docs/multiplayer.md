@@ -227,7 +227,7 @@ Adventure participation, pending transition, spawn assignment를 바꾸지 않�
 같은 요청이 정상 처리된다. quest dialog/crafting/facility 제한은 필요할 때 명령별 정책으로
 추가하며 이번 보강은 interaction system 전체를 재설계하지 않는다.
 
-## Authoritative Dodge + i-frame (Stage 7, introduced in Protocol v14, current)
+## Authoritative Dodge + i-frame (Stage 7, introduced in Protocol v14)
 
 Dodge는 HURT와 같은 scene-local combat action이지만, HURT와 달리 **클라이언트가 시작을
 요청한다.** 따라서 이번 단계에서 처음으로 dodge 전용 intent 채널이 생겼고
@@ -287,6 +287,55 @@ Dodge는 HURT와 같은 scene-local combat action이지만, HURT와 달리 **클
 gather / consumable use 의 서버 종착점도 동일하게 확장했다. dodge state·i-frame·남은 시간은
 복제하지 않으며 Save v4 에도 들어가지 않는다(transient). dodge animation/event 와
 CombatAction replication 은 후속 범위다.
+
+## Combo, authoritative input buffer and cancel windows (Stage 8, Protocol remains v14)
+
+이번 단계는 **wire 를 전혀 바꾸지 않는다.** 새 RPC 도, 새 payload 도 없고 기존
+`PlayerAttackCommand` / `PlayerDodgeCommand` 를 그대로 쓴다. 따라서
+`NetworkProtocol.VERSION = 14` 와 Save v4 를 유지한다.
+
+바뀐 것은 **호스트 안에서 intent 가 언제 실행되는가** 다.
+
+```
+client intent
+  → reliable Attack/Dodge command
+  → NetworkComponent: authority · sequence 소비 · life/session 검증
+  → CombatInputBufferComponent (권위 scheduler)
+       ├─ 지금 가능       → 즉시 실행
+       ├─ transient lock  → buffer (0.15s)
+       └─ IDLE 인데 거절  → reject
+  → CombatComponent / PlayerDodgeComponent
+  → 실제 시작 순간에만 presentation broadcast
+```
+
+- **Input Buffer 는 client prediction 이 아니다.** 클라이언트는 여전히 자기 presentation
+  actor 를 근거로 "지금 공격/캔슬/콤보 가능" 을 판단하지 않는다. buffer 는 이미 인증·검증된
+  intent 가 *언제* 실행될지만 정하는 서버 측 스케줄러이며, `NetworkManager` 도 RPC 도 peer 도
+  모른다. 실행 결과는 `attack_executed` / `dodge_executed` 시그널로만 알린다.
+- **sequence 는 수신 시점에 소비된다.** buffer 에 들어갔다고 소비를 미루지 않으므로,
+  buffer 된 sequence 를 다시 보내도 duplicate 로 거절된다. 교체되어 버려진 intent 의 번호도
+  이미 소비된 상태다.
+- **presentation timing 이 이번 단계의 핵심 계약이다.** 수신 시점에는 아무 event 도 나가지
+  않는다. `attack_presented` / `dodge_presented` 는 실제로 `ATTACK_STARTUP` / `DODGE` 가
+  시작되는 순간에 **정확히 한 번** 나가며, 즉시 실행과 buffer 실행이 같은 경로를 쓴다.
+  교체되어 실행되지 않은 intent 는 영영 presentation 을 만들지 않는다.
+- **combo 와 cancel 은 authored window 가 결정한다.** `AttackDefinition` 마다
+  `chain_window` / `dodge_cancel_window`(half-open `[start, end)`)가 있고, 8차의 모든 window 는
+  recovery 안에만 존재한다. `CombatActionController` 에 `ATTACK_RECOVERY → ATTACK_STARTUP`
+  과 `ATTACK_RECOVERY → DODGE` 가 추가됐지만, graph 상 허용은 필요조건일 뿐 실제 허가는
+  window 가 낸다. 두 전이 모두 IDLE 을 거치지 않으므로 관찰자가 콤보 도중 IDLE 을 보지 않는다.
+- **combo index·step elapsed·pending intent·buffer 잔여시간은 복제하지 않는다.** 전부
+  scene-local 이며 Save v4 에도 들어가지 않는다. remote presentation actor 는 기존
+  transform/stamina 스냅샷만 받고, combo 나 buffer 상태를 스스로 판단하지 않는다.
+- **권위 interaction guard 는 그대로다.** HURT/DODGE 중 item·loot·gather·world transition
+  거절 정책은 유지되며, intent 가 buffer 에 들어 있다는 사실만으로 우회되지 않는다. 마찬가지로
+  Dodge intent 가 buffer 에만 들어간 상태는 return channel 을 취소하지 않는다 — 취소는 7차
+  정책 그대로 실제 dodge commit 시점에만 일어난다.
+
+world-runtime process E2E 는 이 경계를 한 시나리오로 확인한다: 호스트가 remote B 를
+hit-stun 으로 묶은 뒤 B 의 attack intent 를 받아 **buffer** 하고, 그 동안 클라이언트에는
+presentation 이 가지 않으며, hit-stun 을 풀면 intent 가 실행되고 그때 **한 번** presentation 이
+도착하는지 검증한다. 정확한 chain 타이밍은 왕복 지연에 민감하므로 unit/integration 이 맡는다.
 
 ## Not synchronized yet
 

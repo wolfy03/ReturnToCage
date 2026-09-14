@@ -153,8 +153,8 @@ remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirro
 
 `PlayerActor`(CharacterBody2D) 자식:
 `%Input` `%Movement` `%Network` `%NetworkCombat` `%NetworkDodge` `%Health` `%Survival`
-`%Effects` `%CombatAction` `%Hurt` `%Dodge` `%Combat` `Hitbox` `Hurtbox` `%Interaction`
-`Camera2D`.
+`%Effects` `%CombatAction` `%Hurt` `%Dodge` `%CombatInputBuffer` `%Combat` `Hitbox`
+`Hurtbox` `%Interaction` `Camera2D`.
 
 두 상태 축은 분리돼 있다.
 
@@ -164,9 +164,13 @@ PlayerActor
 ├─ CombatActionController combat action : IDLE / ATTACK_STARTUP /
 │                                         ATTACK_ACTIVE / ATTACK_RECOVERY /
 │                                         HURT / DODGE
-├─ CombatComponent        pending attack · phase timer · 전략 실행 · 스태미나 commit
+├─ CombatComponent        pending step · phase timer · 전략 실행 · 스태미나 commit
+│                         · combo index · step elapsed · cancel window 질의
 │    └─ CombatRuntimeState 참조 (stamina / max_stamina)
-├─ PlayerHurtComponent    HURT timer · 공격/dodge interruption · control lock(hurt)
+├─ CombatInputBufferComponent  pending intent 1개 · expiry · latest input wins
+│    └─ CombatInputBufferDefinition (res://data/combat/player_input_buffer.tres)
+├─ PlayerHurtComponent    HURT timer · 공격/dodge interruption · buffer clear
+│                         · control lock(hurt)
 └─ PlayerDodgeComponent   DODGE timer · i-frame gate · control lock(dodge)
      └─ DodgeDefinition (res://data/combat/player_dodge.tres, ContentDefinition 아님)
           ├─ duration_seconds
@@ -175,14 +179,37 @@ PlayerActor
           └─ stamina_cost                               ← 시작 시 1회 commit, 환불 없음
 
 WeaponDefinition
-└─ AttackDefinition (embedded sub-resource, ContentDefinition 아님)
-     ├─ startup_seconds
-     ├─ active_seconds     ← 멜리 히트박스가 열려 있는 시간
-     ├─ recovery_seconds
-     ├─ range              ← 논리적 reach / projectile 이동 거리
-     ├─ hitbox_size        ← 현재 rectangle 크기
-     ├─ hitbox_offset      ← 공격자 local offset
-     └─ knockback          ← 공격자 forward-local impulse
+└─ AttackComboDefinition (embedded sub-resource, ContentDefinition 아님)
+     └─ steps: Array[AttackDefinition]   ← 1타, 2타, 3타 …
+          ├─ startup_seconds
+          ├─ active_seconds     ← 멜리 히트박스가 열려 있는 시간
+          ├─ recovery_seconds
+          ├─ range              ← 논리적 reach / projectile 이동 거리
+          ├─ hitbox_size        ← 현재 rectangle 크기
+          ├─ hitbox_offset      ← 공격자 local offset
+          ├─ knockback          ← 공격자 forward-local impulse
+          ├─ chain_window       ← 다음 step 으로 이어갈 수 있는 구간
+          └─ dodge_cancel_window ← recovery 를 dodge 로 끊을 수 있는 구간
+               (둘 다 CombatActionWindowDefinition, half-open [start, end),
+                recovery 안에만 존재)
+```
+
+combo 한 벌의 흐름:
+
+```
+attack(facing)      →  step 0 STARTUP  →  ACTIVE(commit)  →  RECOVERY
+  chain_window 안에서 chain_attack()  →  step 1 STARTUP … (IDLE 경유 없음)
+  dodge_cancel_window 안에서 dodge    →  DODGE (IDLE 경유 없음, combo 종료)
+  window 밖 / 마지막 step            →  IDLE, combo index 0
+```
+
+입력이 조금 이른 경우:
+
+```
+intent → (network 검증·sequence 소비) → CombatInputBufferComponent
+   ├─ 지금 실행 가능(IDLE 또는 window open)  → 즉시 실행
+   ├─ transient action 때문에 불가          → buffer (0.15s)
+   └─ IDLE 인데 게임플레이가 거절           → reject (buffer 하지 않음)
 ```
 
 공격 한 번의 흐름:
@@ -228,12 +255,22 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
   `evasion_invulnerable` gate 가 있고 `PlayerDodgeComponent` 만 열고 닫는다. 이 gate 는
   `DamageContext.can_be_evaded` 가 true 인 피해만 막으며 접촉 무적/god mode 와 별개다.
 - `CombatActionController` — combat action 축(`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE /
-  ATTACK_RECOVERY / HURT / DODGE`). `DODGE` 는 `IDLE` 에서만 들어가고 `IDLE`/`HURT` 로만
-  나간다(공격을 롤로 캔슬하거나 hit-stun 을 롤로 탈출할 수 없다). 상태 저장·전이 검증·시그널만 담당하며 timing·데미지·스태미나·무기·히트박스·
+  ATTACK_RECOVERY / HURT / DODGE`). `ATTACK_RECOVERY` 만 취소 가능하며 다음 step 이나
+  `DODGE` 로 직접 전이한다. `STARTUP`/`ACTIVE` 는 commitment 이고 hit-stun 도 롤로 탈출할 수
+  없다. 이 컨트롤러는 시간을 모르므로 graph 상 허용은 필요조건일 뿐, 실제 허가는 authored
+  window 가 낸다. 상태 저장·전이 검증·시그널만 담당하며 timing·데미지·스태미나·무기·히트박스·
   네트워크를 모른다. scene-local 이라 월드 전환 시 새 액터는 `IDLE` 로 시작한다.
   locomotion(`MovementComponent.Mode`)과 **독립된 축**이다.
-- `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending attack + phase timer),
-  `ATTACK_ACTIVE` 진입 시 전략 실행과 스태미나 commit, 스태미나 재생 로직.
+- `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending step + phase timer),
+  `ATTACK_ACTIVE` 진입 시 전략 실행과 스태미나 commit, 스태미나 재생 로직. combo index 와
+  step elapsed 도 여기가 소유하며, `can_chain_attack_now()` / `can_dodge_cancel_now()` 로
+  authored window 질의에 답한다. `chain_attack()` 은 `ATTACK_RECOVERY` 에서 다음 step 의
+  `ATTACK_STARTUP` 으로 직접 전이한다.
+- `CombatInputBufferComponent` — 권위 scheduler. 검증이 끝난 intent 하나를 들고 있다가
+  실행 가능한 순간에 정확히 한 번 실행한다. slot 은 하나이고 최신 입력이 이전 것을 대체한다.
+  `IDLE` 에서 거절된 요청은 buffer 하지 않고, 만료된 intent 는 실행하지 않으며, 실행 가능해진
+  시점에 실패하면 재시도 없이 버린다. 네트워크를 전혀 모르고 `attack_executed` /
+  `dodge_executed` 로만 결과를 알린다.
   스태미나 값 자체는 소유하지 않고 `combat_runtime`(`CombatRuntimeState`) 참조를 통해 읽고
   쓴다. 공격 시작 시 `AttackDefinition.knockback`의 x만 facing으로 해석해 `DamageContext`에
   snapshot한다. 비권위 액터에서는 `_process` 가 꺼져 있어 재생을 돌리지 않는다.

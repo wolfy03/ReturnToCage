@@ -20,6 +20,9 @@ var _sewer_loot_events := 0
 var _min_mirrored_stamina := INF
 var _mirrored_max_stamina := 0.0
 var _knockback_watch_origin_x := 0.0
+## Attack presentation sequences this client has been told about. A buffered
+## intent must produce none until the host actually starts the swing.
+var _presented_attack_sequences: Array[int] = []
 
 func _ready() -> void:
 	_parse_arguments()
@@ -273,6 +276,65 @@ func _run_host_scenario() -> void:
 			_fail("consumed gather remained visible to a same-world peer")
 			return
 
+	# A remote attack intent that cannot run yet is scheduled by the host, not
+	# dropped and not executed early. Hit-stun is used as the lock because the
+	# host can end it on demand, which keeps the check deterministic instead of
+	# racing a round trip against an authored chain window.
+	_command.rpc_id(b_peer, "WATCH_ATTACK_PRESENTED", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("WATCH_ATTACK_PRESENTED", b_peer)):
+		_fail("client did not prepare the attack presentation watch")
+		return
+	b_actor.input_buffer.clear()
+	b_combat.stamina = b_combat.max_stamina
+	# Authored content is never mutated in place. The shipped 0.15s buffer is
+	# tuned for a player's fingers, not for a probe that has to round-trip a
+	# question to the client while the intent waits, so this run gets its own.
+	var shipped_buffer := b_actor.input_buffer.definition
+	var probe_buffer := shipped_buffer.duplicate() as CombatInputBufferDefinition
+	probe_buffer.buffer_seconds = 1.0
+	b_actor.input_buffer.definition = probe_buffer
+	var buffer_hurt_duration := b_actor.hurt.duration_seconds
+	b_actor.hurt.duration_seconds = 5.0
+	if not b_actor.hurt.begin_hurt():
+		_fail("could not lock the authoritative actor for the input buffer check")
+		return
+	var buffered_sequence := 700
+	_command.rpc_id(b_peer, "ATTACK", buffered_sequence)
+	if not await _wait_until(func() -> bool: return b_actor.input_buffer.has_pending(), 4.0):
+		_fail("remote attack intent was not buffered by the host")
+		return
+	if b_actor.input_buffer.pending_sequence() != buffered_sequence \
+			or not b_actor.combat_action.is_hurt() or b_actor.combat.combo_index() != 0:
+		_fail("buffered remote intent started an attack instead of waiting")
+		return
+	_command.rpc_id(b_peer, "REPORT_NO_ATTACK_PRESENTED", buffered_sequence)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_NO_ATTACK_PRESENTED", b_peer)):
+		_fail("client presentation check for the buffered intent did not complete")
+		return
+	if not b_actor.input_buffer.has_pending():
+		_fail("the scheduled intent expired before the probe could release the lock")
+		return
+	# Release the lock; the scheduled intent must now run and be announced once.
+	b_actor.hurt.physics_tick(b_actor.hurt.remaining + 0.01)
+	if not await _wait_until(func() -> bool: return b_actor.combat_action.is_attacking(), 3.0):
+		_fail("the buffered remote intent never executed once the actor was free")
+		return
+	if b_actor.input_buffer.has_pending():
+		_fail("an executed intent stayed in the buffer")
+		return
+	_command.rpc_id(b_peer, "REPORT_ATTACK_PRESENTED", buffered_sequence)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_ATTACK_PRESENTED", b_peer), 4.0):
+		_fail("buffered attack presentation never reached the client")
+		return
+	var presentation_report := _confirmation("REPORT_ATTACK_PRESENTED", b_peer)
+	if int(presentation_report.get("count", 0)) != 1:
+		_fail("buffered attack was presented %s times instead of once" % presentation_report.get("count", 0))
+		return
+	b_actor.combat.abort_attack()
+	b_actor.hurt.duration_seconds = buffer_hurt_duration
+	b_actor.input_buffer.definition = shipped_buffer
+	b_actor.input_buffer.clear()
+
 	# Dodge is an edge-triggered client intent on its own reliable channel. The
 	# host runs the whole move: the remote client never enters DODGE, never opens
 	# i-frames, never spends stamina and never moves itself.
@@ -464,6 +526,31 @@ func _command(command: String, value: int) -> void:
 				_fail(result.message)
 				return
 			await _confirm_when_world_ready(command, SETTLEMENT)
+		"WATCH_ATTACK_PRESENTED":
+			var watch_actor := _local_actor()
+			if watch_actor == null:
+				_fail("local attack presentation actor is unavailable")
+				return
+			_presented_attack_sequences.clear()
+			watch_actor.attack_presented.connect(func(sequence: int, _facing: float) -> void:
+				_presented_attack_sequences.append(sequence)
+			)
+			_confirm.rpc_id(1, command, {})
+		"REPORT_NO_ATTACK_PRESENTED":
+			# A buffered intent has not happened yet, so nothing may arrive for it.
+			await get_tree().create_timer(0.15).timeout
+			if _presented_attack_sequences.has(value):
+				_fail("client was told about an attack that was only buffered")
+				return
+			_confirm.rpc_id(1, command, {"count": _presented_attack_sequences.count(value)})
+		"REPORT_ATTACK_PRESENTED":
+			if not await _wait_until(func() -> bool:
+				return _presented_attack_sequences.has(value)
+			, 3.0):
+				_fail("client never received the buffered attack presentation")
+				return
+			await get_tree().create_timer(0.2).timeout
+			_confirm.rpc_id(1, command, {"count": _presented_attack_sequences.count(value)})
 		"DODGE":
 			NetworkManager.submit_player_dodge(NetworkManager.local_peer_id(), value, 1.0)
 			_confirm.rpc_id(1, command, {"sequence": value})

@@ -78,24 +78,26 @@ func _test_weapon_validation(t: Node) -> void:
 	var weapon := WeaponDefinition.new()
 	weapon.id = &"test_timing_weapon"
 	weapon.display_name = "Timing test"
-	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "a weapon without an attack definition is invalid")
-	weapon.attack_definition = _valid_definition()
-	t.assert_true(weapon.validate_definition(ContentRegistry).is_empty(), "a weapon with a valid attack definition passes")
+	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "a weapon without an attack combo is invalid")
+	weapon.attack_combo = CombatTestFixtures.single_step_combo(_valid_definition())
+	t.assert_true(weapon.validate_definition(ContentRegistry).is_empty(), "a weapon with a valid one-step combo passes")
 	t.assert_true(not "attack_range" in weapon, "WeaponDefinition no longer owns attack_range")
-	weapon.attack_definition.active_seconds = 0.0
+	t.assert_true(not "attack_definition" in weapon, "WeaponDefinition no longer owns a single attack_definition")
+	weapon.attack_combo.steps[0].active_seconds = 0.0
 	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "invalid nested timing fails the weapon")
-	weapon.attack_definition = _valid_definition()
-	weapon.attack_definition.hitbox_offset.x = NAN
+	weapon.attack_combo = CombatTestFixtures.single_step_combo(_valid_definition())
+	weapon.attack_combo.steps[0].hitbox_offset.x = NAN
 	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "invalid nested spatial data fails the weapon")
 
 	var shipped := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	t.assert_true(shipped != null and shipped.attack_definition != null, "the shipped weapon carries an attack definition")
-	t.assert_true(shipped.attack_definition.validation_errors(shipped.id).is_empty(), "the shipped weapon timing is valid")
-	t.assert_true(is_equal_approx(shipped.attack_definition.total_seconds(), 0.55), "twig_sword keeps its 0.55s attack cadence")
-	t.assert_equal(shipped.attack_definition.range, 52.0, "twig_sword range migrated unchanged")
-	t.assert_equal(shipped.attack_definition.hitbox_size, Vector2(52.0, 30.0), "twig_sword hitbox size migrated unchanged")
-	t.assert_equal(shipped.attack_definition.hitbox_offset, Vector2(26.0, 0.0), "twig_sword hitbox offset migrated unchanged")
-	t.assert_equal(shipped.attack_definition.knockback, Vector2(120.0, -40.0), "twig_sword knockback migrated unchanged")
+	var first_step := CombatTestFixtures.first_step(shipped)
+	t.assert_true(shipped != null and first_step != null, "the shipped weapon carries an attack combo")
+	t.assert_true(first_step.validation_errors(shipped.id).is_empty(), "the shipped weapon timing is valid")
+	t.assert_true(is_equal_approx(first_step.total_seconds(), 0.55), "twig_sword keeps its 0.55s opening cadence")
+	t.assert_equal(first_step.range, 52.0, "twig_sword range migrated unchanged")
+	t.assert_equal(first_step.hitbox_size, Vector2(52.0, 30.0), "twig_sword hitbox size migrated unchanged")
+	t.assert_equal(first_step.hitbox_offset, Vector2(26.0, 0.0), "twig_sword hitbox offset migrated unchanged")
+	t.assert_equal(first_step.knockback, Vector2(120.0, -40.0), "twig_sword knockback migrated unchanged")
 	t.assert_true(not "attack_cooldown" in shipped, "the legacy weapon cooldown field is gone")
 	t.assert_true(not "attack_range" in shipped, "the legacy weapon range field is gone")
 
@@ -112,7 +114,7 @@ func _test_phase_durations_and_commit(t: Node) -> void:
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var runtime := GameSession.get_player_runtime(GameSession.get_local_peer_id())
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var timing := weapon.attack_definition
+	var timing := CombatTestFixtures.first_step(weapon)
 	var commits: Array[int] = []
 	actor.combat.attacked.connect(func() -> void: commits.append(1))
 	# Regeneration runs in the same _process; freeze it so the spend is exact.
@@ -165,7 +167,7 @@ func _test_large_delta(t: Node) -> void:
 	t.add_child(layer)
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var timing := weapon.attack_definition
+	var timing := CombatTestFixtures.first_step(weapon)
 	var commits: Array[int] = []
 	var events: Array[Array] = []
 	actor.combat.attacked.connect(func() -> void: commits.append(1))
@@ -249,7 +251,7 @@ func _register_projectile_weapon(timing: AttackDefinition) -> WeaponDefinition:
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
 	timing.range = 180.0
 	weapon.stamina_cost = 1.0
-	weapon.attack_definition = timing
+	weapon.attack_combo = CombatTestFixtures.single_step_combo(timing)
 	weapon.attack_scene = load("res://tests/fixtures/projectile_attack.tscn") as PackedScene
 	ContentRegistry._definitions[weapon.id] = weapon
 	return weapon
@@ -292,7 +294,7 @@ func _test_hitbox_lifecycle_and_abort(t: Node) -> void:
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var runtime := GameSession.get_player_runtime(GameSession.get_local_peer_id())
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var timing := weapon.attack_definition
+	var timing := CombatTestFixtures.first_step(weapon)
 	actor.combat.stamina_regen_multiplier = 0.0
 
 	t.assert_true(not actor.combat.hitbox.active, "the hitbox is inactive while idle")
@@ -341,7 +343,7 @@ func _test_large_delta_still_hits(t: Node) -> void:
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var runtime := GameSession.get_player_runtime(GameSession.get_local_peer_id())
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var timing := weapon.attack_definition
+	var timing := CombatTestFixtures.first_step(weapon)
 	var enemy: EnemyAgent = await _spawn_enemy_in_range(t, actor)
 	actor.facing = 1.0
 	# Survival updates can reset this during the awaited frames above, so freeze
@@ -384,7 +386,7 @@ func _test_death_during_active(t: Node) -> void:
 	t.add_child(layer)
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var timing := weapon.attack_definition
+	var timing := CombatTestFixtures.first_step(weapon)
 	var enemy: EnemyAgent = await _spawn_enemy_in_range(t, actor)
 	actor.facing = 1.0
 	actor.combat.stamina_regen_multiplier = 0.0

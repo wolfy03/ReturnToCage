@@ -55,6 +55,7 @@ func run_all() -> void:
 	await preload("res://tests/unit/test_combat_hit_geometry.gd").new().run(self)
 	await preload("res://tests/unit/test_player_hurt.gd").new().run(self)
 	await preload("res://tests/unit/test_player_dodge.gd").new().run(self)
+	await preload("res://tests/unit/test_attack_combo.gd").new().run(self)
 	await preload("res://tests/unit/test_combat_runtime_state.gd").new().run(self)
 	preload("res://tests/unit/test_multiplayer_quest_scope.gd").new().run(self)
 	preload("res://tests/unit/test_multiplayer_settlement.gd").new().run(self)

@@ -68,6 +68,28 @@ func remaining() -> float:
 ## An in-progress return-item channel does not block a dodge; a committed dodge
 ## cancels it. A rejected dodge changes nothing at all.
 func try_begin(requested_direction: float) -> bool:
+	# A neutral dodge is only reachable from IDLE, so an attack cannot be rolled
+	# out of by accident; cancelling recovery has its own entry point below.
+	if action == null or not action.is_idle():
+		return false
+	return _begin(requested_direction, false)
+
+## Cuts an attack's recovery short. The authored dodge-cancel window is what
+## permits this, and [CombatComponent] owns that window, so this may only be
+## called once it has said yes — it re-checks anyway rather than trusting the
+## caller.
+##
+## Everything else is identical to a neutral dodge: same grounding rule, same
+## direction contract, same stamina cost. The interrupted attack keeps the
+## stamina it already spent; a cancel is a second decision, not a refund.
+func try_begin_from_attack_cancel(requested_direction: float) -> bool:
+	if action == null or combat == null \
+			or action.current_state() != CombatActionController.State.ATTACK_RECOVERY \
+			or not combat.can_dodge_cancel_now():
+		return false
+	return _begin(requested_direction, true)
+
+func _begin(requested_direction: float, from_attack_cancel: bool) -> bool:
 	if definition == null or action == null or combat == null or movement == null \
 			or not definition.validation_errors().is_empty():
 		return false
@@ -75,9 +97,7 @@ func try_begin(requested_direction: float) -> bool:
 		return false
 	if health != null and health.current_health <= 0.0:
 		return false
-	# DODGE is only reachable from IDLE, so an attack cannot be rolled out of and
-	# hit-stun cannot be escaped early. The action axis is the single lock-out.
-	if not action.is_idle() or not action.can_transition_to(CombatActionController.State.DODGE):
+	if not action.can_transition_to(CombatActionController.State.DODGE):
 		return false
 	# Grounded means actually standing on something, not merely a locomotion mode
 	# that says so. `mode` is written once per physics tick and can be one frame
@@ -89,7 +109,12 @@ func try_begin(requested_direction: float) -> bool:
 	var committed := _resolve_direction(requested_direction)
 	if committed == 0.0:
 		return false
-	if not action.enter_dodge():
+	# Clear the attack before the transition so the interrupted step can never
+	# leave a pending weapon or a live hitbox behind it.
+	if from_attack_cancel:
+		combat.interrupt_attack_for_dodge()
+	var entered := action.cancel_recovery_into_dodge() if from_attack_cancel else action.enter_dodge()
+	if not entered:
 		return false
 	if not combat.spend_stamina(definition.stamina_cost):
 		# Stamina is the last thing committed; if it cannot be paid the dodge

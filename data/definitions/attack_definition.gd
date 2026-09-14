@@ -1,7 +1,11 @@
 class_name AttackDefinition
 extends Resource
-## Timing and spatial properties of one attack, embedded in the
-## [WeaponDefinition] that owns it.
+## Timing and spatial properties of one attack step, embedded in the
+## [AttackComboDefinition] that orders it.
+##
+## One of these is a single swing, not a whole attack: a weapon's combo is a list
+## of them, and each step authors its own timing, geometry, knockback and
+## follow-up windows independently.
 ##
 ## Deliberately a plain [Resource] and not a [ContentDefinition]: this is not
 ## standalone content with its own id registered in ContentRegistry, it only
@@ -31,9 +35,28 @@ extends Resource
 ## Attacker-local impulse. Positive x means forward; y uses Godot world axes.
 @export var knockback: Vector2 = Vector2(120.0, -40.0)
 
+## When the next combo step may begin, measured from the start of this step.
+## Disabled or absent means this step ends the combo.
+@export var chain_window: CombatActionWindowDefinition
+## When a dodge may cut this step short. Disabled or absent means the step must
+## be seen through to the end.
+@export var dodge_cancel_window: CombatActionWindowDefinition
+
 ## Full cycle from the input that starts the attack to being able to attack again.
 func total_seconds() -> float:
 	return startup_seconds + active_seconds + recovery_seconds
+
+## When recovery begins. Every authored follow-up window must sit at or after
+## this point: startup and active are commitment, and staying committed to a
+## swing that is already live is what makes an attack a decision.
+func recovery_start_seconds() -> float:
+	return startup_seconds + active_seconds
+
+func can_chain_at(elapsed: float) -> bool:
+	return chain_window != null and chain_window.contains(elapsed)
+
+func can_dodge_cancel_at(elapsed: float) -> bool:
+	return dodge_cancel_window != null and dodge_cancel_window.contains(elapsed)
 
 ## Every phase must be a positive, finite duration: a zero-length phase would
 ## have no observable state and only complicate the timeline loop.
@@ -58,4 +81,20 @@ func validation_errors(owner_id: StringName = &"") -> PackedStringArray:
 		errors.append("%sattack hitbox_offset components must be finite" % prefix)
 	if not is_finite(knockback.x) or not is_finite(knockback.y):
 		errors.append("%sattack knockback components must be finite" % prefix)
+	# Follow-up windows live inside recovery only. A window that opened during
+	# startup or the live hitbox would turn every attack into a feint.
+	var recovery_start := recovery_start_seconds()
+	var total := total_seconds()
+	if chain_window != null:
+		errors.append_array(chain_window.validation_errors(
+			StringName("%schain" % prefix) if not prefix.is_empty() else &"chain",
+			recovery_start,
+			total
+		))
+	if dodge_cancel_window != null:
+		errors.append_array(dodge_cancel_window.validation_errors(
+			StringName("%sdodge cancel" % prefix) if not prefix.is_empty() else &"dodge cancel",
+			recovery_start,
+			total
+		))
 	return errors

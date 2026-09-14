@@ -52,7 +52,7 @@ func _test_attack_interruptions_and_controls(t: Node) -> void:
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var attack := weapon.attack_definition
+	var attack := CombatTestFixtures.first_step(weapon)
 	actor.combat.stamina_regen_multiplier = 0.0
 
 	# STARTUP: no commit, no stamina spend, and one direct ATTACK_STARTUP -> HURT.
@@ -70,10 +70,18 @@ func _test_attack_interruptions_and_controls(t: Node) -> void:
 	var rejected_stamina := runtime.combat.stamina
 	t.assert_true(not actor.combat.attack(1.0), "HURT rejects direct combat attacks")
 	t.assert_equal(runtime.combat.stamina, rejected_stamina, "a HURT-rejected attack changes no stamina")
-	var network_rejection := actor.network_combat._server_execute_attack(actor.peer_id, 600)
-	t.assert_true(not network_rejection.success, "the authoritative network attack path rejects HURT")
+	# Since stage 8 an attack pressed during hit-stun is scheduled rather than
+	# thrown away: the authoritative buffer holds it until the actor is free. The
+	# sequence is consumed on receipt either way, so it can never be replayed.
+	var network_buffered := actor.network_combat._server_execute_attack(actor.peer_id, 600)
+	t.assert_true(network_buffered.success, "an attack command during HURT is accepted by the authoritative path")
+	t.assert_true(actor.input_buffer.has_pending(), "the HURT attack command is buffered rather than executed")
+	t.assert_equal(actor.input_buffer.pending_sequence(), 600, "the buffered intent keeps its own command sequence")
+	t.assert_true(actor.combat_action.is_hurt(), "buffering starts no attack while hit-stun is running")
+	t.assert_equal(runtime.combat.stamina, rejected_stamina, "a buffered attack spends no stamina")
+	t.assert_true(not actor.network_combat._server_execute_attack(actor.peer_id, 600).success, "a sequence consumed during HURT cannot be replayed")
+	actor.input_buffer.clear()
 	_finish_hurt(actor)
-	t.assert_true(not actor.network_combat._server_execute_attack(actor.peer_id, 600).success, "a sequence rejected during HURT is still consumed")
 
 	# ACTIVE: commit remains spent and the live melee hitbox drops immediately.
 	runtime.combat.stamina = runtime.combat.max_stamina
@@ -225,8 +233,7 @@ func _test_projectile_interruption(t: Node, actor: PlayerActor) -> void:
 	weapon.id = &"test_hurt_projectile"
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
 	weapon.attack_scene = load("res://tests/fixtures/projectile_attack.tscn") as PackedScene
-	weapon.attack_definition = source.attack_definition.duplicate() as AttackDefinition
-	weapon.attack_definition.range = 180.0
+	CombatTestFixtures.first_step(weapon).range = 180.0
 	ContentRegistry._definitions[weapon.id] = weapon
 	var stack := ItemStack.new(weapon.id, 1)
 	stack.durability = weapon.max_durability
@@ -242,7 +249,7 @@ func _test_projectile_interruption(t: Node, actor: PlayerActor) -> void:
 
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "projectile active interruption begins")
-	actor.combat._process(weapon.attack_definition.startup_seconds)
+	actor.combat._process(CombatTestFixtures.first_step(weapon).startup_seconds)
 	var projectile := _first_projectile(actor.get_parent())
 	t.assert_true(projectile != null, "projectile exists after ACTIVE commit")
 	var projectile_origin := projectile.global_position

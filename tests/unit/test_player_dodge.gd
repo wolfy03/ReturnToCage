@@ -78,16 +78,19 @@ func _test_action_transitions(t: Node) -> void:
 	t.assert_true(CombatActionController.is_allowed_transition(CombatActionController.State.IDLE, CombatActionController.State.DODGE), "IDLE may enter DODGE")
 	t.assert_true(CombatActionController.is_allowed_transition(CombatActionController.State.DODGE, CombatActionController.State.IDLE), "DODGE may return to IDLE")
 	t.assert_true(CombatActionController.is_allowed_transition(CombatActionController.State.DODGE, CombatActionController.State.HURT), "DODGE may be interrupted by HURT")
+	# Recovery gained a dodge cancel in stage 8; startup, the live phase and
+	# hit-stun are still commitment.
+	t.assert_true(CombatActionController.is_allowed_transition(CombatActionController.State.ATTACK_RECOVERY, CombatActionController.State.DODGE), "recovery may be cancelled into DODGE")
 	for forbidden in [
 		CombatActionController.State.ATTACK_STARTUP,
 		CombatActionController.State.ATTACK_ACTIVE,
-		CombatActionController.State.ATTACK_RECOVERY,
 		CombatActionController.State.HURT,
 	]:
 		t.assert_true(not CombatActionController.is_allowed_transition(forbidden, CombatActionController.State.DODGE), "state %d cannot be cancelled into DODGE" % forbidden)
 	t.assert_true(not CombatActionController.is_allowed_transition(CombatActionController.State.DODGE, CombatActionController.State.ATTACK_STARTUP), "a dodge cannot be cancelled straight into an attack")
 
 	t.assert_true(action.enter_dodge() and action.is_dodging(), "enter_dodge applies the transition")
+	t.assert_true(not action.enter_dodge(), "enter_dodge only ever starts a neutral dodge from IDLE")
 	t.assert_true(not action.is_attacking() and not action.is_hurt(), "DODGE counts as neither attacking nor hurt")
 	t.assert_true(not action.begin_attack(), "an attack is refused while dodging")
 	t.assert_true(action.finish_dodge() and action.is_idle(), "finish_dodge returns to IDLE")
@@ -262,6 +265,27 @@ func _test_direction_priority(t: Node) -> void:
 		t.assert_equal(actor.facing, intent, "a committed dodge turns the actor to match")
 		t.assert_equal(submitted, [intent] as Array[float], "only a canonical direction crosses the wire")
 		actor.dodge.reset()
+
+	# A malformed local signal is refused at the network boundary too: it never
+	# turns into a command, and it never quietly becomes the actor's facing.
+	for malformed in [0.5, -0.5, 0.999999, 2.0, NAN, INF]:
+		await _settle(t, actor)
+		runtime.combat.stamina = runtime.combat.max_stamina
+		actor.facing = 1.0
+		submitted.clear()
+		actor.network_dodge._on_dodge_requested(malformed)
+		t.assert_true(not actor.dodge.is_active(), "a malformed local dodge signal %s submits nothing" % malformed)
+		t.assert_true(submitted.is_empty(), "a malformed local dodge signal %s produces no presentation" % malformed)
+		t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "a malformed local dodge signal spends no stamina")
+
+	# A facing that is itself unusable is not replaced with an invented one.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	actor.facing = NAN
+	submitted.clear()
+	actor.network_dodge._on_dodge_requested(0.0)
+	t.assert_true(not actor.dodge.is_active() and submitted.is_empty(), "an unusable facing produces no fallback dodge")
+	actor.facing = 1.0
 
 	# A raw axis value never becomes a roll: the component rejects it outright
 	# rather than rounding it into a usable direction.

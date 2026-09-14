@@ -16,7 +16,8 @@
 완료  6차 보강  Server-authoritative interaction guard
 완료  7차  Dodge + i-frame (Protocol v14)
 완료  7차 안정화  종료 velocity · 방향 정책 · 실제 접지 · Return Channel A · strict direction
-다음  8차  Combo · 입력 버퍼 · 캔슬 윈도우
+완료  8차  Combo + Authoritative Input Buffer + Authored Cancel Window
+다음  9차  Combat Presentation / Animation Integration
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -71,6 +72,9 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 넉백 적용 | **완료(5차)** | 권위 Player/Enemy가 `DamageContext.knockback`을 velocity에 additive 적용 |
 | 피격 경직(플레이어) | **완료(6차)** | scene-local HURT action + 0.25초 input lock |
 | 회피/i-frame | **완료(7차)** | scene-local DODGE action + `DodgeDefinition` half-open i-frame 창 + 서버 권위 intent |
+| 콤보 | **완료(8차)** | `AttackComboDefinition` 3-hit + `ATTACK_RECOVERY → ATTACK_STARTUP` 직접 전이 |
+| 입력 버퍼 | **완료(8차)** | 권위 `CombatInputBufferComponent`, single slot, latest input wins, 0.15s |
+| 캔슬 윈도우 | **완료(8차)** | step 별 `chain_window` / `dodge_cancel_window`, recovery 한정 |
 | 방향 공격(위/아래) | 없음 | 히트박스가 항상 수평 |
 | 무기별 패턴 | 2종(근접/투사체) | `AttackStrategy` 확장점은 이미 있음 |
 | 방패/패링 | 없음 | |
@@ -192,8 +196,9 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 6차 보강 | Server-authoritative HURT interaction/world-transition guard | 완료 |
 | 7차 | Dodge + i-frame (`DodgeDefinition`·서버 권위 intent·evasion gate, Protocol v14) | 완료 |
 | 7차 안정화 | 종료 velocity 정리·입력 우선 방향·실제 접지 검증·Return Channel 정책 A·exact ±1 | 완료 |
-| 8차 | Combo·입력 버퍼·캔슬 윈도우 | 다음 |
-| 이후 | 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
+| 8차 | Combo(`AttackComboDefinition`)·권위 Input Buffer·authored cancel window | 완료 |
+| 9차 | Combat Presentation / Animation Integration | 다음 |
+| 이후 | 적 패턴 개편, 히트스톱·카메라 표현, client prediction | 예정 |
 
 ### 완료된 1차·2차 요약
 

@@ -24,15 +24,21 @@ var strategies: Dictionary[int, AttackStrategy] = {WeaponDefinition.AttackMode.M
 var stats: StatBlock
 var stamina_regen_multiplier: float = 1.0
 
-# One in-flight attack. WeaponDefinition and AttackDefinition are immutable
+# One in-flight attack step. WeaponDefinition and AttackDefinition are immutable
 # authored Resources held by reference. Runtime values whose meaning must not
-# change mid-attack (damage, resolved knockback, factions and effects) are
-# snapshotted in DamageContext when the wind-up starts.
+# change mid-step (damage, resolved knockback, factions and effects) are
+# snapshotted in DamageContext when that step's wind-up starts, per step.
 var _pending_weapon: WeaponDefinition
 var _pending_attack: AttackDefinition
 var _pending_context: DamageContext
 var _pending_facing: float = 1.0
 var _phase_remaining: float = 0.0
+## Which step of the current combo is running. Reset to zero whenever the combo
+## ends for any reason, so an independent attack always starts from the first.
+var _combo_index: int = 0
+## Time spent inside the current step, used only to answer whether an authored
+## follow-up window is open. Reset to zero on every new step, including a chain.
+var _attack_elapsed: float = 0.0
 
 func configure(
 	actor: CharacterBody2D,
@@ -78,27 +84,86 @@ func phase_remaining() -> float:
 ## ATTACK_STARTUP began — the hitbox is NOT armed and no stamina is spent yet.
 ## Both happen when the timeline reaches ATTACK_ACTIVE.
 func attack(facing: float) -> bool:
-	# A new attack may only start from an idle combat action. The action state is
-	# the single lock-out; there is no separate weapon cooldown any more.
+	# A new combo may only start from an idle combat action. The action state is
+	# the single lock-out; there is no separate weapon cooldown any more, and
+	# continuing an existing combo goes through chain_attack() instead.
 	if action == null or not action.is_idle():
 		return false
 	if hitbox == null or (owner_actor is PlayerActor and (owner_actor.movement.mode == MovementComponent.Mode.CLIMB or owner_actor.return_channel > 0.0)):
 		return false
+	var weapon := equipped_weapon()
+	if weapon == null:
+		return false
+	return _begin_step(weapon, 0, facing, false)
+
+## Continues the combo into its next step, directly from ATTACK_RECOVERY. The
+## authored chain window is the only thing that permits this, so a caller must
+## have asked [method can_chain_attack_now] first — this re-checks it anyway.
+func chain_attack(facing: float) -> bool:
+	if not can_chain_attack_now():
+		return false
+	# Re-resolve rather than trusting the snapshot: a weapon swapped or broken
+	# mid-combo ends the combo instead of continuing someone else's swing.
+	var weapon := equipped_weapon()
+	if weapon == null or weapon != _pending_weapon:
+		return false
+	return _begin_step(weapon, _combo_index + 1, facing, true)
+
+## The weapon currently in the main hand, or null when there is nothing usable
+## there. Broken equipment (zero durability) counts as nothing.
+func equipped_weapon() -> WeaponDefinition:
 	var actor_state: PlayerState = owner_actor.player_state() if owner_actor is PlayerActor else GameSession.player
 	var equipped_stack := actor_state.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND) if actor_state != null else null
-	var weapon := ContentRegistry.get_definition(equipped_stack.item_id) as WeaponDefinition if equipped_stack != null else null
-	if weapon == null or equipped_stack.durability == 0:
+	if equipped_stack == null or equipped_stack.durability == 0:
+		return null
+	return ContentRegistry.get_definition(equipped_stack.item_id) as WeaponDefinition
+
+## Index of the step currently running, or the one that just ran. Zero while idle.
+func combo_index() -> int:
+	return _combo_index
+
+## Time spent inside the current step. Zero while idle.
+func attack_elapsed() -> float:
+	return _attack_elapsed
+
+## True only while the current step's authored chain window is open and there is
+## another step to chain into.
+func can_chain_attack_now() -> bool:
+	if action == null or action.current_state() != CombatActionController.State.ATTACK_RECOVERY:
 		return false
-	var attack_definition := weapon.attack_definition
-	if attack_definition == null or not attack_definition.validation_errors().is_empty():
+	if _pending_weapon == null or _pending_attack == null or _pending_weapon.attack_combo == null:
+		return false
+	if not _pending_weapon.attack_combo.has_step(_combo_index + 1):
+		return false
+	return _pending_attack.can_chain_at(_attack_elapsed)
+
+## True only while the current step's authored dodge-cancel window is open.
+func can_dodge_cancel_now() -> bool:
+	if action == null or action.current_state() != CombatActionController.State.ATTACK_RECOVERY:
+		return false
+	if _pending_attack == null:
+		return false
+	return _pending_attack.can_dodge_cancel_at(_attack_elapsed)
+
+## Starts one combo step. [param chained] selects the direct
+## ATTACK_RECOVERY -> ATTACK_STARTUP transition, which never passes through IDLE
+## so no observer can see a combo momentarily end.
+func _begin_step(weapon: WeaponDefinition, index: int, facing: float, chained: bool) -> bool:
+	var combo := weapon.attack_combo
+	if combo == null or not combo.validation_errors().is_empty():
+		return false
+	var attack_definition := combo.step(index)
+	if attack_definition == null:
 		return false
 	if not can_spend_stamina(weapon.stamina_cost):
 		return false
 	var strategy: AttackStrategy = strategies.get(weapon.attack_mode)
 	if strategy == null:
 		return false
-	# Snapshot everything the commit will need, so the attack keeps the meaning it
-	# had when the player pressed the button.
+	# Snapshot everything the commit will need, so the step keeps the meaning it
+	# had when the player pressed the button. Every step builds its own context:
+	# knockback, effects and facing all belong to the swing that is starting, not
+	# to the one before it.
 	var damage := weapon.base_damage + stats.value(&"attack_power")
 	var direction := -1.0 if facing < 0.0 else 1.0
 	var authored_knockback := attack_definition.knockback
@@ -106,13 +171,19 @@ func attack(facing: float) -> bool:
 	var context := DamageContext.new(damage, &"physical", owner_actor, &"player", resolved_knockback)
 	context.target_factions = weapon.target_factions.duplicate()
 	context.hit_effects = weapon.hit_effects.duplicate()
+	var entered := action.chain_attack() if chained else action.begin_attack()
+	if not entered:
+		return false
+	# The previous step is over the moment the next one is entered; its hitbox is
+	# already down, but dropping it again keeps that true without depending on it.
+	if chained and hitbox != null:
+		hitbox.deactivate()
 	_pending_weapon = weapon
 	_pending_attack = attack_definition
 	_pending_context = context
 	_pending_facing = facing
-	if not action.begin_attack():
-		_clear_pending()
-		return false
+	_combo_index = index
+	_attack_elapsed = 0.0
 	_phase_remaining = attack_definition.startup_seconds
 	return true
 
@@ -134,12 +205,25 @@ func interrupt_attack_for_hurt() -> void:
 		hitbox.deactivate()
 	_clear_pending()
 
+## Clears an in-flight attack before a direct ATTACK_RECOVERY -> DODGE cancel.
+## Like the hurt interrupt it leaves the action state alone, so observers see one
+## clean transition into DODGE rather than a detour through IDLE. The dodge's own
+## component owns the transition and the stamina it costs.
+func interrupt_attack_for_dodge() -> void:
+	if hitbox != null:
+		hitbox.deactivate()
+	_clear_pending()
+
+## Ends the combo as well as the step. Called wherever an attack stops for good,
+## so the next independent attack starts from the first step again.
 func _clear_pending() -> void:
 	_pending_weapon = null
 	_pending_attack = null
 	_pending_context = null
 	_pending_facing = 1.0
 	_phase_remaining = 0.0
+	_combo_index = 0
+	_attack_elapsed = 0.0
 
 ## Runs the attack timeline. Only the authoritative simulation reaches this: a
 ## presentation actor has this component's processing disabled.
@@ -151,10 +235,14 @@ func _advance_attack(delta: float) -> void:
 	while not action.is_idle():
 		if _phase_remaining - remaining_delta > PHASE_EPSILON:
 			_phase_remaining -= remaining_delta
+			_attack_elapsed += remaining_delta
 			return
 		# The phase ended inside this tick; carry the surplus into the next one so
-		# a long frame cannot stretch the attack.
+		# a long frame cannot stretch the attack. Elapsed tracks the delta actually
+		# consumed, so a long frame reports the same position in the step that a
+		# run of short frames would.
 		remaining_delta -= _phase_remaining
+		_attack_elapsed += _phase_remaining
 		_phase_remaining = 0.0
 		steps += 1
 		if steps > MAX_PHASE_STEPS_PER_TICK:
@@ -206,7 +294,7 @@ func _commit_attack() -> bool:
 	if not action.enter_attack_active():
 		abort_attack()
 		return false
-	if not strategy.execute(weapon, _pending_context, owner_actor, hitbox, _pending_facing):
+	if not strategy.execute(weapon, attack_definition, _pending_context, owner_actor, hitbox, _pending_facing):
 		push_error("Attack strategy failed to execute for weapon %s" % weapon.id)
 		abort_attack()
 		return false

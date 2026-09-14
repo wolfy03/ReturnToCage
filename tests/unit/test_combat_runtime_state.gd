@@ -55,7 +55,7 @@ func _test_actor_binding_attack_and_regen(t: Node) -> void:
 	actor.combat.stamina_regen_multiplier = 0.0
 	var before := runtime.combat.stamina
 	t.assert_true(actor.combat.attack(1.0), "attack succeeds with enough stamina")
-	actor.combat._process(weapon.attack_definition.startup_seconds)
+	actor.combat._process(CombatTestFixtures.first_step(weapon).startup_seconds)
 	actor.combat.stamina_regen_multiplier = 1.0
 	t.assert_equal(runtime.combat.stamina, before - weapon.stamina_cost, "committing the attack spends stamina_cost from the runtime state")
 

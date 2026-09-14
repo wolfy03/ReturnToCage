@@ -1,5 +1,12 @@
 class_name NetworkCombatComponent
 extends Node
+## Network boundary for player attacks.
+##
+## It authenticates, sequences and life-checks a command, then hands the intent
+## to the authoritative [CombatInputBufferComponent] and stops. It does not
+## decide when the attack runs, and it deliberately announces nothing at that
+## point: an intent that is merely waiting has not happened, so the presentation
+## broadcast is driven by the buffer's execution signal instead.
 
 signal attack_presented(peer_id: int, sequence: int, facing: float)
 
@@ -13,6 +20,8 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent) -> void:
 	input = p_input
 	input.network_intents_enabled = actor.is_local_player() and NetworkManager.is_multiplayer_active()
 	input.attack_requested.connect(_on_attack_requested)
+	if actor.input_buffer != null:
+		actor.input_buffer.attack_executed.connect(_on_attack_started)
 	NetworkManager.player_attack_presented_received.connect(_on_attack_presented_received)
 	if actor.is_simulation_authority() and NetworkManager.is_server():
 		NetworkManager.player_attack_command_received.connect(_on_attack_command_received)
@@ -50,16 +59,27 @@ func _server_execute_attack(peer_id: int, sequence: int) -> CombatResult:
 		or actor.is_death_handled() or GameSession.phase not in [GameSession.Phase.SETTLEMENT, GameSession.Phase.ADVENTURE]:
 		print("[NET-COMBAT] Attack rejected peer %d: invalid life or session state" % peer_id)
 		return CombatResult.make(false, peer_id, "Player cannot attack in the current state")
-	var result := ServerCombatService.try_player_attack(actor)
-	if not result.success:
-		print("[NET-COMBAT] Attack rejected peer %d: %s" % [peer_id, result.message])
-		return result
-	print("[NET-COMBAT] Attack accepted peer %d sequence %d" % [peer_id, sequence])
+	var result := ServerCombatService.submit_player_attack(actor, sequence)
+	match result:
+		CombatInputBufferComponent.SubmitResult.EXECUTED:
+			print("[NET-COMBAT] Attack executed peer %d sequence %d" % [peer_id, sequence])
+			return CombatResult.make(true, peer_id)
+		CombatInputBufferComponent.SubmitResult.BUFFERED:
+			print("[NET-COMBAT] Attack buffered peer %d sequence %d" % [peer_id, sequence])
+			return CombatResult.make(true, peer_id, "Attack buffered")
+	print("[NET-COMBAT] Attack rejected peer %d sequence %d" % [peer_id, sequence])
+	return CombatResult.make(false, peer_id, "Attack rejected by combat rules")
+
+## The attack actually started — immediately or out of the buffer. This is the
+## only place presentation is announced, so remote peers see a swing exactly when
+## one exists.
+func _on_attack_started(sequence: int, facing: float) -> void:
+	if actor == null or not actor.is_simulation_authority():
+		return
 	actor.cancel_return_channel_for_combat()
-	attack_presented.emit(peer_id, sequence, actor.facing)
+	attack_presented.emit(actor.peer_id, sequence, facing)
 	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
-		NetworkManager.broadcast_player_attack(peer_id, sequence, actor.facing)
-	return result
+		NetworkManager.broadcast_player_attack(actor.peer_id, sequence, facing)
 
 func _on_attack_presented_received(peer_id: int, sequence: int, replicated_facing: float) -> void:
 	if actor == null or actor.is_simulation_authority() or peer_id != actor.peer_id \

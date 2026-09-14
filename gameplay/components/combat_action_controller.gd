@@ -53,14 +53,20 @@ func is_dodging() -> bool:
 ## The gameplay transition graph. Skipping a phase is rejected, so a caller
 ## cannot jump straight from IDLE into an active hitbox phase.
 ##
-## A dodge is deliberately not a universal cancel: it may only start from IDLE,
-## so an attack cannot be rolled out of, and HURT cannot be escaped early.
+## Recovery is the only cancellable phase: startup and the live hitbox are
+## commitment. From recovery an attack may chain into the next combo step or be
+## rolled out of, and both go there directly — never via IDLE, so no observer
+## sees a combo momentarily end.
+##
+## Being in the graph is necessary, not sufficient. This controller knows no
+## timing, so whether a chain or a dodge cancel may happen *now* is decided by
+## the authored [CombatActionWindowDefinition] that [CombatComponent] checks.
 ##
 ## [codeblock]
 ## IDLE            -> ATTACK_STARTUP | HURT | DODGE
 ## ATTACK_STARTUP  -> ATTACK_ACTIVE | IDLE | HURT
 ## ATTACK_ACTIVE   -> ATTACK_RECOVERY | IDLE | HURT
-## ATTACK_RECOVERY -> IDLE | HURT
+## ATTACK_RECOVERY -> IDLE | HURT | ATTACK_STARTUP | DODGE
 ## HURT            -> IDLE
 ## DODGE           -> IDLE | HURT
 ## [/codeblock]
@@ -73,7 +79,8 @@ static func is_allowed_transition(from: State, to: State) -> bool:
 		State.ATTACK_ACTIVE:
 			return to == State.ATTACK_RECOVERY or to == State.IDLE or to == State.HURT
 		State.ATTACK_RECOVERY:
-			return to == State.IDLE or to == State.HURT
+			return to == State.IDLE or to == State.HURT \
+				or to == State.ATTACK_STARTUP or to == State.DODGE
 		State.HURT:
 			return to == State.IDLE
 		State.DODGE:
@@ -92,7 +99,17 @@ func transition_to(next_state: State) -> bool:
 	_set_state(next_state)
 	return true
 
+## Starts a fresh combo. Deliberately IDLE-only: continuing an existing combo is
+## [method chain_attack], and neither startup nor the live phase may restart.
 func begin_attack() -> bool:
+	if _state != State.IDLE:
+		return false
+	return transition_to(State.ATTACK_STARTUP)
+
+## Continues a combo straight from recovery into the next step's wind-up.
+func chain_attack() -> bool:
+	if _state != State.ATTACK_RECOVERY:
+		return false
 	return transition_to(State.ATTACK_STARTUP)
 
 func enter_attack_active() -> bool:
@@ -110,7 +127,17 @@ func enter_hurt() -> bool:
 func finish_hurt() -> bool:
 	return transition_to(State.IDLE)
 
+## Starts a dodge from a neutral actor.
 func enter_dodge() -> bool:
+	if _state != State.IDLE:
+		return false
+	return transition_to(State.DODGE)
+
+## Cuts an attack's recovery short with a dodge, directly and without a visit to
+## IDLE. Only recovery may be cancelled this way.
+func cancel_recovery_into_dodge() -> bool:
+	if _state != State.ATTACK_RECOVERY:
+		return false
 	return transition_to(State.DODGE)
 
 func finish_dodge() -> bool:

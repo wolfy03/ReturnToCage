@@ -1,8 +1,22 @@
-[gd_resource type="Resource" script_class="WeaponDefinition" load_steps=4 format=3]
+[gd_resource type="Resource" script_class="WeaponDefinition" load_steps=12 format=3]
 [ext_resource path="res://data/definitions/weapon_definition.gd" type="Script" id="1"]
 [ext_resource path="res://data/definitions/attack_definition.gd" type="Script" id="2"]
+[ext_resource path="res://data/definitions/combat_action_window_definition.gd" type="Script" id="3"]
+[ext_resource path="res://data/definitions/attack_combo_definition.gd" type="Script" id="4"]
 
-[sub_resource type="Resource" id="TwigSwordAttack"]
+[sub_resource type="Resource" id="Step1Chain"]
+script = ExtResource("3")
+enabled = true
+start_seconds = 0.3
+end_seconds = 0.5
+
+[sub_resource type="Resource" id="Step1Dodge"]
+script = ExtResource("3")
+enabled = true
+start_seconds = 0.22
+end_seconds = 0.55
+
+[sub_resource type="Resource" id="Step1"]
 script = ExtResource("2")
 startup_seconds = 0.1
 active_seconds = 0.12
@@ -11,6 +25,53 @@ range = 52.0
 hitbox_size = Vector2(52, 30)
 hitbox_offset = Vector2(26, 0)
 knockback = Vector2(120, -40)
+chain_window = SubResource("Step1Chain")
+dodge_cancel_window = SubResource("Step1Dodge")
+
+[sub_resource type="Resource" id="Step2Chain"]
+script = ExtResource("3")
+enabled = true
+start_seconds = 0.28
+end_seconds = 0.46
+
+[sub_resource type="Resource" id="Step2Dodge"]
+script = ExtResource("3")
+enabled = true
+start_seconds = 0.21
+end_seconds = 0.51
+
+[sub_resource type="Resource" id="Step2"]
+script = ExtResource("2")
+startup_seconds = 0.09
+active_seconds = 0.12
+recovery_seconds = 0.3
+range = 56.0
+hitbox_size = Vector2(56, 30)
+hitbox_offset = Vector2(28, 0)
+knockback = Vector2(130, -40)
+chain_window = SubResource("Step2Chain")
+dodge_cancel_window = SubResource("Step2Dodge")
+
+[sub_resource type="Resource" id="Step3Dodge"]
+script = ExtResource("3")
+enabled = true
+start_seconds = 0.27
+end_seconds = 0.65
+
+[sub_resource type="Resource" id="Step3"]
+script = ExtResource("2")
+startup_seconds = 0.13
+active_seconds = 0.14
+recovery_seconds = 0.38
+range = 60.0
+hitbox_size = Vector2(60, 32)
+hitbox_offset = Vector2(30, 0)
+knockback = Vector2(165, -55)
+dodge_cancel_window = SubResource("Step3Dodge")
+
+[sub_resource type="Resource" id="TwigSwordCombo"]
+script = ExtResource("4")
+steps = Array[AttackDefinition]([SubResource("Step1"), SubResource("Step2"), SubResource("Step3")])
 
 [resource]
 script = ExtResource("1")
@@ -25,6 +86,6 @@ equipment_slot = 0
 max_durability = 60
 attack_mode = 0
 base_damage = 8.0
-attack_definition = SubResource("TwigSwordAttack")
+attack_combo = SubResource("TwigSwordCombo")
 stamina_cost = 8.0
 target_factions = Array[StringName]([&"hostile"])

@@ -45,13 +45,41 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   한 enum 으로 합치면 `AIR + ATTACK`, `CLIMB + HURT`, `GROUND + DODGE` 같은 조합이
   상태 폭발로 이어진다. 현재 구현된 action state 는 `IDLE / ATTACK_STARTUP /
   ATTACK_ACTIVE / ATTACK_RECOVERY / HURT / DODGE` 이며 `DEAD` 는 후속 단계다.
-  `DODGE` 는 `IDLE` 에서만 진입하고 `IDLE`/`HURT` 로만 나간다.
+  `ATTACK_RECOVERY` 만 취소 가능하다: 다음 combo step(`ATTACK_STARTUP`)이나 `DODGE` 로
+  **직접** 전이한다(IDLE 경유 금지). `STARTUP`/`ACTIVE` 는 계속 commitment 구간이다.
 - **공격 타이밍 상수를 코드에 두지 않는다.** 선딜·유효·후딜은 전부
-  `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다. 멜리 히트박스가
-  열려 있는 시간도 `active_seconds` 하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 —
-  재공격 가능 여부의 유일한 기준은 action state 가 `IDLE` 인지다.
-- **공격 공간 정보와 플레이어 공격 넉백도 `AttackDefinition` 이 소유한다.** 논리적 reach는
-  `range`, 현재 rectangle 판정은 `hitbox_size`/`hitbox_offset`, 공격자 기준 impulse는
+  `WeaponDefinition.attack_combo`(`AttackComboDefinition`)의 각 step
+  (`AttackDefinition`)에서 읽는다. 멜리 히트박스가 열려 있는 시간도 `active_seconds`
+  하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 — 새 combo 를 시작할 수 있는 유일한
+  기준은 action state 가 `IDLE` 인지다.
+- **무기는 combo 하나만 소유한다.** `AttackDefinition` 은 **한 타격 step** 이고,
+  `WeaponDefinition.attack_combo` 가 그 순서를 소유한다. 한 번만 휘두르는 무기도
+  1-step combo 로 authoring 한다 — `attack_definition` 같은 단일 필드를 되살려 source of
+  truth 를 둘로 만들지 않는다. `AttackStrategy` 는 실행 중인 step 을 **인자로 받는다**
+  (무기에서 다시 조회하지 않는다).
+- **chain / dodge cancel 은 authored window 가 결정한다.** 각 step 의 `chain_window` /
+  `dodge_cancel_window`(`CombatActionWindowDefinition`, half-open `[start, end)`)만이
+  "지금 가능한가" 를 답한다. `CombatActionController` 는 시간을 모르므로 graph 상 허용은
+  필요조건일 뿐이다. 8차의 모든 window 는 **recovery 안에만** 존재한다
+  (`start >= startup + active`, `end <= total`) — validation 이 이를 강제한다.
+- **combo step 마다 새 `DamageContext` 를 만든다.** knockback·hit effect·facing 이 step 별로
+  다를 수 있으므로 1타 context 를 2·3타에 재사용하지 않는다. 스태미나도 step 마다
+  `ATTACK_ACTIVE` 진입 시 1회씩 차감한다(combo 전체를 미리 예약하지 않는다).
+- **combo index 는 다음에서 0 으로 초기화된다.** 정상 종료, HURT, dodge cancel, death,
+  reset, world transition, commit/strategy 실패.
+- **Input Buffer 는 client prediction 이 아니라 authoritative scheduler 다.**
+  `CombatInputBufferComponent` 는 **검증이 끝난** intent 가 *언제* 실행될지만 정한다.
+  slot 은 **하나**이고 **latest input wins**(queue 로 확장하지 않는다). transient combat
+  action(`non-IDLE`) 때문에 못 하는 경우에만 buffer 하고, `IDLE` 에서 게임플레이 사유로
+  거절된 요청은 buffer 하지 않는다 — buffer 는 무효한 행동을 나중에 유효하게 만들지 않는다.
+  만료된 intent 는 window 가 열려도 실행되지 않으며, 실행 가능해진 시점에 실패하면 **한 번만**
+  시도하고 버린다. 이 컴포넌트는 `NetworkManager`·RPC·peer 를 전혀 모른다.
+- **buffer 된 intent 는 presentation event 를 만들지 않는다.** 수신 시점이 아니라 실제
+  action 이 시작되는 순간에만 `attack_presented` / `dodge_presented` 가 나간다(정확히 1회).
+  즉시 실행과 buffer 실행이 같은 signal 경로(`attack_executed`/`dodge_executed`)를 쓴다.
+  교체되어 버려진 intent 는 영영 presentation 을 만들지 않는다(sequence 는 이미 소비됨).
+- **공격 공간 정보와 플레이어 공격 넉백도 `AttackDefinition` step 이 소유한다.** 논리적
+  reach는 `range`, 현재 rectangle 판정은 `hitbox_size`/`hitbox_offset`, 공격자 기준 impulse는
   `knockback` 에 둔다. `WeaponDefinition.attack_range` 나 Hitbox/Combat 코드 기본값을 다시
   만들지 않는다. facing 은 x와 offset x만 반전하고 y는 그대로 둔다.
 - **공격은 `ATTACK_ACTIVE` 진입 순간에만 commit 된다.** 히트박스 활성화·투사체 생성·스태미나
@@ -106,9 +134,12 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   않고 별도 reliable `PlayerDodgeCommand` 로 보낸다. 호스트는 sequence 를 게임플레이 검증보다
   먼저 소비하고, `direction` 은 정확히 `±1` 만 허용하며 그 외 값은 정규화하지 않고 거절한다.
   이 검사는 `is_equal_approx` 가 아니라 **exact 비교**다 — 호스트가 이 값에 dodge 속도를
-  곱하므로 `0.999999` 같은 근사값을 받아주면 계약이 무너진다. malformed direction 도
-  sequence 는 소비하므로 같은 번호로 정상 값을 다시 보낼 수 없다. remote client 는
-  HP 무적·스태미나 소비·DODGE state·위치를 스스로 결정하지 않는다.
+  곱하므로 `0.999999` 같은 근사값을 받아주면 계약이 무너진다. local signal 층도 같은 계약을
+  쓴다: `±1` 은 그대로, `0` 만 facing fallback, 그 외 finite 값은 **거절**한다(반올림하지
+  않는다). facing 자체가 `0`/`NaN`/`INF` 면 `+1` 을 지어내지 않고 아무것도 보내지 않는다.
+  malformed direction 도 sequence 는 소비하므로 같은 번호로 정상 값을 다시 보낼 수 없다.
+  remote client 는 HP 무적·스태미나 소비·DODGE state·combo index·input buffer·위치를 스스로
+  결정하지 않는다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.

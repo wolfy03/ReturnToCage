@@ -5,6 +5,10 @@ extends Node
 ## A remote client sends an intent and nothing else. It never decides its own
 ## i-frames, never spends its own stamina, never enters DODGE by itself and
 ## never moves itself: the host runs the dodge and replicates the result.
+##
+## Like the attack boundary it hands validated intents to the authoritative
+## [CombatInputBufferComponent] and announces nothing until that buffer reports
+## the dodge actually started.
 
 signal dodge_presented(peer_id: int, sequence: int, direction: float)
 
@@ -17,6 +21,8 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent) -> void:
 	actor = p_actor
 	input = p_input
 	input.dodge_requested.connect(_on_dodge_requested)
+	if actor.input_buffer != null:
+		actor.input_buffer.dodge_executed.connect(_on_dodge_started)
 	NetworkManager.player_dodge_presented_received.connect(_on_dodge_presented_received)
 	if actor.is_simulation_authority() and NetworkManager.is_server():
 		NetworkManager.player_dodge_command_received.connect(_on_dodge_command_received)
@@ -37,16 +43,30 @@ func _exit_tree() -> void:
 func _on_dodge_requested(horizontal_direction: float) -> void:
 	if actor == null or not actor.is_local_player():
 		return
-	var requested := horizontal_direction if is_finite(horizontal_direction) else 0.0
-	if requested != 1.0 and requested != -1.0:
-		requested = signf(actor.facing) if is_finite(actor.facing) else 0.0
+	var requested := _resolve_requested_direction(horizontal_direction)
 	if requested == 0.0:
-		requested = 1.0
+		# Nothing usable to ask for. No command goes out and no local sequence is
+		# spent, so a later well-formed request is not treated as a replay.
+		return
 	_local_sequence += 1
 	if actor.is_simulation_authority() and not NetworkManager.is_multiplayer_active():
 		_server_execute_dodge(actor.peer_id, _local_sequence, requested)
 	elif NetworkManager.is_session_connected() and NetworkManager.is_local_world_ready():
 		NetworkManager.submit_player_dodge(actor.peer_id, _local_sequence, requested)
+
+## Applies the same strict contract the wire does, one layer earlier. A value
+## that is not exactly a facing is a broken request, not an approximate one, so
+## it is refused rather than silently rounded to the way the actor happens to be
+## looking. Only a genuine "no direction held" falls back to facing — and if the
+## facing itself is unusable, nothing is invented in its place.
+func _resolve_requested_direction(horizontal_direction: float) -> float:
+	if horizontal_direction == 1.0 or horizontal_direction == -1.0:
+		return horizontal_direction
+	if horizontal_direction != 0.0:
+		return 0.0
+	if actor == null or not is_finite(actor.facing):
+		return 0.0
+	return signf(actor.facing)
 
 func _on_dodge_command_received(peer_id: int, sequence: int, direction: float) -> void:
 	if actor != null and actor.is_simulation_authority() and actor.peer_id == peer_id:
@@ -69,16 +89,26 @@ func _server_execute_dodge(peer_id: int, sequence: int, direction: float) -> Com
 		or actor.is_death_handled() or GameSession.phase not in [GameSession.Phase.SETTLEMENT, GameSession.Phase.ADVENTURE]:
 		print("[NET-DODGE] Dodge rejected peer %d: invalid life or session state" % peer_id)
 		return CombatResult.make(false, peer_id, "Player cannot dodge in the current state")
-	if actor.dodge == null or not actor.dodge.try_begin(command.direction):
-		print("[NET-DODGE] Dodge rejected peer %d: rejected by dodge rules" % peer_id)
-		return CombatResult.make(false, peer_id, "Dodge rejected by combat rules")
-	# The return channel is cancelled by the dodge itself, on commit, so every
-	# caller of try_begin() gets the same semantics without a second owner here.
-	print("[NET-DODGE] Dodge accepted peer %d sequence %d" % [peer_id, sequence])
-	dodge_presented.emit(peer_id, sequence, actor.dodge.direction)
+	var result := ServerCombatService.submit_player_dodge(actor, sequence, command.direction)
+	match result:
+		CombatInputBufferComponent.SubmitResult.EXECUTED:
+			print("[NET-DODGE] Dodge executed peer %d sequence %d" % [peer_id, sequence])
+			return CombatResult.make(true, peer_id)
+		CombatInputBufferComponent.SubmitResult.BUFFERED:
+			print("[NET-DODGE] Dodge buffered peer %d sequence %d" % [peer_id, sequence])
+			return CombatResult.make(true, peer_id, "Dodge buffered")
+	print("[NET-DODGE] Dodge rejected peer %d sequence %d" % [peer_id, sequence])
+	return CombatResult.make(false, peer_id, "Dodge rejected by combat rules")
+
+## The dodge actually started — immediately or out of the buffer. The return
+## channel is cancelled by the dodge itself, on commit, so there is no second
+## owner of that here.
+func _on_dodge_started(sequence: int, direction: float) -> void:
+	if actor == null or not actor.is_simulation_authority():
+		return
+	dodge_presented.emit(actor.peer_id, sequence, direction)
 	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
-		NetworkManager.broadcast_player_dodge(peer_id, sequence, actor.dodge.direction)
-	return CombatResult.make(true, peer_id)
+		NetworkManager.broadcast_player_dodge(actor.peer_id, sequence, direction)
 
 ## Presentation only: the client mirrors the facing the host committed and plays
 ## the roll. It starts no timeline, opens no i-frames and touches no stamina.

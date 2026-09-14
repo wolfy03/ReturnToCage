@@ -14,6 +14,7 @@ signal dodge_presented(sequence: int, direction: float)
 @onready var combat: CombatComponent = %Combat
 @onready var hurt: PlayerHurtComponent = %Hurt
 @onready var dodge: PlayerDodgeComponent = %Dodge
+@onready var input_buffer: CombatInputBufferComponent = %CombatInputBuffer
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
 @onready var network: NetworkPlayerComponent = %Network
@@ -66,7 +67,8 @@ func _ready() -> void:
 	var runtime := GameSession.get_player_runtime(peer_id)
 	combat.configure(self, _bound_state.stats, runtime.combat if runtime != null else null, combat_action)
 	dodge.configure(self, combat_action, combat, movement, health)
-	hurt.configure(self, combat_action, combat, movement, dodge)
+	input_buffer.configure(self, combat_action, combat, dodge)
+	hurt.configure(self, combat_action, combat, movement, dodge, input_buffer)
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
 	network_combat.configure(self, input)
@@ -120,6 +122,9 @@ func _physics_process(delta: float) -> void:
 	# Before locomotion, so the dodge's roll velocity is what the body moves with
 	# this frame rather than something applied a frame late.
 	dodge.physics_tick(delta)
+	# After both, so a buffered intent sees the action state those ticks just
+	# produced and can start on the very frame a window opens.
+	input_buffer.physics_tick(delta)
 	if not movement.controls_locked and absf(input.move_axis) > 0.01:
 		facing = signf(input.move_axis)
 	movement.physics_tick(delta)
@@ -217,6 +222,8 @@ func _on_died(_context: DamageContext) -> void:
 	# Clears the i-frame gate and the dodge control lock; a dead actor must not
 	# keep either.
 	dodge.reset()
+	# A pending intent must not survive into the next life and fire on respawn.
+	input_buffer.clear()
 	# A dead actor must not linger mid-attack; this also drops the pending weapon
 	# and damage context. The action axis is scene-local, so this is the only
 	# cleanup point it needs.

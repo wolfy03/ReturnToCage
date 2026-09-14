@@ -131,6 +131,23 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   `IDLE → STARTUP → ACTIVE → RECOVERY → IDLE` 전체 phase 진행, 각 공격 phase에서 재공격 거절,
   별도 cooldown 없이 IDLE에서만 재공격 허용, 모든 실패 경로에서 IDLE 유지,
   월드 전환·사망·부활 후 IDLE을 검증한다.
+- unit/test_attack_combo.gd: `CombatActionWindowDefinition`(half-open `[start, end)`,
+  disabled 기본값, 비유한/역전/길이 0 거절, startup·active 안의 window 거절, action 길이를
+  넘는 window 거절), `AttackComboDefinition`(빈 combo·null step 거절, step 오류 전파와 step
+  번호가 붙은 메시지, 1-step/3-step), `WeaponDefinition` 마이그레이션(`attack_definition`
+  부재, `attack_combo` 가 단일 source), 배포된 twig_sword 3-step 의 타이밍·geometry·knockback·
+  window 값 고정, `CombatInputBufferDefinition` 검증과 배포 리소스, combo 진행(1→2→3 직접
+  전이·transient IDLE 부재·step 별 elapsed·step 별 `DamageContext`·step 당 1회 stamina commit·
+  마지막 step 은 chain 불가·종료 시 index 0), buffer 타이밍(startup/active/창 이전에는 대기,
+  창이 열리는 순간 실행, 만료된 intent 는 실행하지 않음, 창이 닫힌 뒤의 입력은 이전 combo 를
+  잇지 않고 새 combo 를 염, 마지막 step 뒤에도 새 combo, 입력 시점 facing snapshot),
+  dodge cancel(startup/active 직접 취소 불가, recovery 창에서 `ATTACK_RECOVERY → DODGE` 직접
+  전이, pending/phase/hitbox/combo 정리, attack stamina 환불 없음, 창 밖 거절), buffer 수명
+  (latest input wins 양방향, IDLE 거절은 buffer 하지 않음, HURT 진입이 기존 intent 제거,
+  HURT 중 새 입력은 살아남아 종료 후 실행, DODGE 는 direct cancel 없이 종료 후 실행,
+  실행 가능 시점의 실패는 1회 시도 후 폐기, death 가 buffer 를 비움), presentation timing
+  (수신 시 0회, 실행 시 정확히 1회, 교체된 intent 는 영영 0회, buffer 된 sequence 재전송 거절),
+  그리고 실제 적을 상대로 한 3타 전부 명중·step 당 1회 타격을 검증한다.
 - unit/test_player_dodge.gd: `DodgeDefinition` 검증(양수 유한 duration/speed/cost, half-open
   i-frame 창의 시작<끝과 duration 내부 포함, 비-ContentDefinition, 배포 리소스 유효성),
   `DODGE` 전이표(IDLE→DODGE만 허용, attack/HURT에서 DODGE 진입 거절, DODGE→IDLE/HURT),
@@ -161,6 +178,11 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   HURT와 non-reaction impulse의 독립성, periodic/starvation no-HURT, lethal/death/respawn reset,
   IDLE lethal hit의 transient HURT 부재, HURT 종료 후 interaction/item 재허용, world transition의
   scene-local reset과 locomotion enum 비오염, 실제 server item command의 HURT 거절을 검증한다.
+- world-runtime process E2E 는 8차 경계도 확인한다: 호스트가 remote B 를 hit-stun 으로 묶은
+  상태에서 B 의 attack intent 를 받아 buffer 하고(실행되지 않고 sequence 는 유지), 그 동안
+  클라이언트에 presentation 이 가지 않으며, hit-stun 해제 후 intent 가 실행되고 그때 정확히
+  한 번 presentation 이 도착하는지 본다. 정확한 chain/cancel 타이밍은 왕복 지연에 민감하므로
+  unit/integration 이 맡고 E2E 에 넣지 않는다.
 - world-runtime process E2E(`tools/test_multiplayer_world_runtime.py`)는 remote client의 dodge
   intent가 호스트에서만 실행되는지도 확인한다: 클라이언트 intent → 권위 dodge 시작과 i-frame/
   스태미나/control lock, 창 안 evadable 피해 무효화, presentation actor가 DODGE도 i-frame도

@@ -69,7 +69,7 @@ func _test_authoritative_actor_knockback(t: Node) -> void:
 	await t.get_tree().process_frame
 	var actor := t.get_tree().get_first_node_in_group(&"player") as PlayerActor
 	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
-	var attack := weapon.attack_definition
+	var attack := CombatTestFixtures.first_step(weapon)
 	actor.combat.stamina_regen_multiplier = 0.0
 	_test_attack_start_snapshot(t, actor, weapon)
 
@@ -164,7 +164,6 @@ func _test_authoritative_actor_knockback(t: Node) -> void:
 func _test_attack_start_snapshot(t: Node, actor: PlayerActor, source_weapon: WeaponDefinition) -> void:
 	var weapon := source_weapon.duplicate(true) as WeaponDefinition
 	weapon.id = &"test_knockback_snapshot"
-	weapon.attack_definition = source_weapon.attack_definition.duplicate() as AttackDefinition
 	ContentRegistry._definitions[weapon.id] = weapon
 	var stack := ItemStack.new(weapon.id, 1)
 	stack.durability = weapon.max_durability
@@ -172,7 +171,7 @@ func _test_attack_start_snapshot(t: Node, actor: PlayerActor, source_weapon: Wea
 
 	t.assert_true(actor.combat.attack(1.0), "snapshot fixture starts an attack")
 	var expected := actor.combat._pending_context.knockback
-	weapon.attack_definition.knockback = Vector2.ZERO
+	CombatTestFixtures.first_step(weapon).knockback = Vector2.ZERO
 	t.assert_equal(actor.combat._pending_context.knockback, expected, "an in-flight attack keeps its start-time knockback snapshot")
 	actor.combat.abort_attack()
 	actor.player_state().equipment.unequip(EquipmentDefinition.EquipmentSlot.MAIN_HAND)

@@ -9,7 +9,8 @@ extends Node
 ##
 ## HURT is the single interrupt point: it is the only place that ends an attack
 ## or a dodge because the actor was hit, and it holds its own named control lock
-## so an interrupted dodge cannot hand control back mid hit-stun.
+## so an interrupted dodge cannot hand control back mid hit-stun. It also drops
+## whatever combat intent was buffered for the exchange the hit just ended.
 
 @export_range(0.01, 5.0, 0.01) var duration_seconds: float = 0.25
 
@@ -19,19 +20,22 @@ var action: CombatActionController
 var combat: CombatComponent
 var movement: MovementComponent
 var dodge: PlayerDodgeComponent
+var input_buffer: CombatInputBufferComponent
 
 func configure(
 	p_actor: PlayerActor,
 	p_action: CombatActionController,
 	p_combat: CombatComponent,
 	p_movement: MovementComponent,
-	p_dodge: PlayerDodgeComponent = null
+	p_dodge: PlayerDodgeComponent = null,
+	p_input_buffer: CombatInputBufferComponent = null
 ) -> void:
 	actor = p_actor
 	action = p_action
 	combat = p_combat
 	movement = p_movement
 	dodge = p_dodge
+	input_buffer = p_input_buffer
 
 func is_active() -> bool:
 	return action != null and action.is_hurt()
@@ -56,6 +60,11 @@ func begin_hurt() -> bool:
 		dodge.interrupt_for_hurt()
 	if not action.enter_hurt():
 		return false
+	# Being hit ends the exchange the player was in the middle of. An intent they
+	# queued before the hit belonged to that exchange, so it dies with it; an
+	# intent pressed *during* hit-stun is a new decision and buffers normally.
+	if input_buffer != null:
+		input_buffer.clear()
 	remaining = duration_seconds
 	movement.set_control_lock(MovementComponent.CONTROL_LOCK_HURT, true)
 	return true

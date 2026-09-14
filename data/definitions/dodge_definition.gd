@@ -7,11 +7,12 @@ extends Resource
 ## standalone content with an id registered in ContentRegistry, it is authored
 ## once and referenced by the actor that owns the move.
 ##
-## Unlike [AttackDefinition], which is purely timing, this also owns the roll
-## speed and the stamina cost — every number a dodge needs lives here so no
-## component invents its own. The i-frame window is expressed as a half-open
-## interval inside the dodge, so the definition alone says when the actor is
-## untouchable.
+## Like [AttackDefinition], this owns the authored gameplay parameters of one
+## combat action while staying a plain [Resource] rather than standalone registry
+## content. Every number a dodge needs — duration, i-frames, speed, cost — lives
+## here so no component invents its own. The i-frame window is expressed as a
+## half-open interval inside the dodge, so the definition alone says when the
+## actor is untouchable.
 ## Nothing here knows about the network; the values are read, never written, at
 ## runtime.
 

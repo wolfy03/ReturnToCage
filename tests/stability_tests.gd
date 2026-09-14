@@ -295,7 +295,7 @@ func test_domain_rules_and_validation() -> void:
 	var weapon := WeaponDefinition.new()
 	weapon.id = &"test_invalid_projectile"
 	weapon.display_name = "Invalid projectile"
-	weapon.attack_definition = AttackDefinition.new()
+	weapon.attack_combo = CombatTestFixtures.single_step_combo(AttackDefinition.new())
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
 	t.assert_true(not weapon.validate_definition(ContentRegistry).is_empty(), "projectile without attack scene rejected")
 
@@ -393,7 +393,7 @@ func test_world_and_climbing() -> void:
 	t.assert_true(actor.combat.attack(1.0), "melee attack executes")
 	# The attack commits on entering ATTACK_ACTIVE, so advance past the wind-up
 	# before inspecting the hitbox it arms.
-	var weapon_timing := (ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition).attack_definition
+	var weapon_timing := CombatTestFixtures.first_step(ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition)
 	actor.combat._process(weapon_timing.startup_seconds)
 	var shape := actor.combat.hitbox.get_node("CollisionShape2D").shape as RectangleShape2D
 	t.assert_equal(shape.size.x, 52.0, "AttackDefinition hitbox_size controls actual hitbox")
@@ -569,8 +569,9 @@ func test_projectile(actor: PlayerActor, enemy: EnemyAgent) -> void:
 	var weapon := WeaponDefinition.new()
 	weapon.id = &"test_projectile"
 	weapon.display_name = "Test projectile"
-	weapon.attack_definition = AttackDefinition.new()
-	weapon.attack_definition.range = 180.0
+	var projectile_step := AttackDefinition.new()
+	projectile_step.range = 180.0
+	weapon.attack_combo = CombatTestFixtures.single_step_combo(projectile_step)
 	weapon.attack_mode = WeaponDefinition.AttackMode.PROJECTILE
 	weapon.attack_scene = load("res://tests/fixtures/projectile_attack.tscn") as PackedScene
 	t.assert_true(weapon.validate_definition(ContentRegistry).is_empty(), "valid projectile scene accepted")
@@ -581,13 +582,13 @@ func test_projectile(actor: PlayerActor, enemy: EnemyAgent) -> void:
 	var before: float = enemy.health.current_health
 	var context := DamageContext.new(3.0, &"projectile", actor, &"player")
 	context.target_factions = [&"hostile"]
-	t.assert_true(strategy.execute(weapon, context, actor, actor.combat.hitbox, 1.0), "projectile strategy spawns scene")
+	t.assert_true(strategy.execute(weapon, projectile_step, context, actor, actor.combat.hitbox, 1.0), "projectile strategy spawns scene")
 	var spawned_projectile: ProjectileAttack
 	for child in actor.get_parent().get_children():
 		if child is ProjectileAttack:
 			spawned_projectile = child
 			break
-	t.assert_true(spawned_projectile != null and is_equal_approx(spawned_projectile.distance_remaining, weapon.attack_definition.range), "projectile range comes from AttackDefinition")
+	t.assert_true(spawned_projectile != null and is_equal_approx(spawned_projectile.distance_remaining, projectile_step.range), "projectile range comes from AttackDefinition")
 	await frames(20)
 	t.assert_true(enemy.health.current_health < before, "projectile moves and hits actual hostile hurtbox")
 	await frames(18)

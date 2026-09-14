@@ -57,8 +57,23 @@ func _test_illegal_transitions(t: Node) -> void:
 	t.assert_equal(action.current_state(), s.ATTACK_ACTIVE, "a rejected backwards transition leaves the state untouched")
 	action.enter_attack_recovery()
 	t.assert_true(not action.transition_to(s.ATTACK_ACTIVE), "recovery cannot re-enter the active phase")
-	t.assert_true(not action.transition_to(s.ATTACK_STARTUP), "recovery cannot restart an attack directly")
 	t.assert_equal(action.current_state(), s.ATTACK_RECOVERY, "recovery survives rejected transitions")
+	# Recovery is the one cancellable phase: it may chain into the next combo
+	# step or be rolled out of, and both go there without passing through IDLE.
+	t.assert_true(not action.begin_attack(), "begin_attack only ever starts a fresh combo from IDLE")
+	t.assert_true(action.chain_attack(), "recovery chains directly into the next step's wind-up")
+	t.assert_equal(action.current_state(), s.ATTACK_STARTUP, "a chain lands in startup, never in IDLE")
+	t.assert_true(not action.chain_attack(), "only recovery may chain")
+	action.enter_attack_active()
+	action.enter_attack_recovery()
+	t.assert_true(action.cancel_recovery_into_dodge(), "recovery may be cancelled into a dodge")
+	t.assert_equal(action.current_state(), s.DODGE, "the dodge cancel lands in DODGE directly")
+	action.reset()
+	action.begin_attack()
+	t.assert_true(not action.cancel_recovery_into_dodge(), "startup may not be cancelled into a dodge")
+	action.enter_attack_active()
+	t.assert_true(not action.cancel_recovery_into_dodge(), "the live phase may not be cancelled into a dodge")
+	action.enter_attack_recovery()
 
 	t.assert_true(not CombatActionController.is_allowed_transition(s.IDLE, s.ATTACK_ACTIVE), "the transition table forbids IDLE -> ACTIVE")
 	t.assert_true(not CombatActionController.is_allowed_transition(s.IDLE, s.ATTACK_RECOVERY), "the transition table forbids IDLE -> RECOVERY")
@@ -183,7 +198,7 @@ func _test_actor_integration(t: Node) -> void:
 	var events: Array[Array] = []
 	var callback := func(previous: int, current: int) -> void: events.append([previous, current])
 	actor.combat_action.state_changed.connect(callback)
-	var attack_definition := weapon.attack_definition
+	var attack_definition := CombatTestFixtures.first_step(weapon)
 	actor.combat.stamina_regen_multiplier = 0.0
 	var stamina_before := runtime.combat.stamina
 	t.assert_true(actor.combat.attack(1.0), "an attack request starts the wind-up")
