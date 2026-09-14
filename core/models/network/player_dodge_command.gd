@@ -21,5 +21,9 @@ func is_valid_after(previous_sequence: int) -> bool:
 ## Strictly one of the two facings. Anything else — zero, a fraction, a huge
 ## value, NAN or INF — is rejected rather than normalised, so a remote peer can
 ## never smuggle a speed multiplier through the direction field.
+##
+## The comparison is exact on purpose. An approximate match would quietly accept
+## values like 0.999999, and the host multiplies this number by the authored
+## dodge speed, so "close to a facing" is not the same contract as "a facing".
 func has_valid_direction() -> bool:
-	return is_finite(direction) and (is_equal_approx(direction, 1.0) or is_equal_approx(direction, -1.0))
+	return is_finite(direction) and (direction == 1.0 or direction == -1.0)

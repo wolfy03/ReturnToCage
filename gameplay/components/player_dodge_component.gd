@@ -64,11 +64,14 @@ func remaining() -> float:
 ## Grounded start only: an air dodge would need its own locomotion rules, and
 ## this stage adds no locomotion mode. Rolling off a ledge mid-dodge is allowed
 ## and simply becomes a normal AIR fall under gravity.
+##
+## An in-progress return-item channel does not block a dodge; a committed dodge
+## cancels it. A rejected dodge changes nothing at all.
 func try_begin(requested_direction: float) -> bool:
 	if definition == null or action == null or combat == null or movement == null \
 			or not definition.validation_errors().is_empty():
 		return false
-	if actor != null and (actor.is_death_handled() or actor.return_channel > 0.0):
+	if actor == null or actor.is_death_handled():
 		return false
 	if health != null and health.current_health <= 0.0:
 		return false
@@ -76,7 +79,10 @@ func try_begin(requested_direction: float) -> bool:
 	# hit-stun cannot be escaped early. The action axis is the single lock-out.
 	if not action.is_idle() or not action.can_transition_to(CombatActionController.State.DODGE):
 		return false
-	if movement.mode != MovementComponent.Mode.GROUND:
+	# Grounded means actually standing on something, not merely a locomotion mode
+	# that says so. `mode` is written once per physics tick and can be one frame
+	# stale, which would otherwise let an airborne actor start a ground dodge.
+	if movement.mode != MovementComponent.Mode.GROUND or not actor.is_on_floor():
 		return false
 	if not combat.can_spend_stamina(definition.stamina_cost):
 		return false
@@ -90,11 +96,14 @@ func try_begin(requested_direction: float) -> bool:
 		# never happened and the action axis goes straight back to IDLE.
 		action.finish_dodge()
 		return false
+	# From here the dodge is committed, so it may now interrupt a return channel.
+	# Doing this only after every check means a rejected dodge leaves an
+	# in-progress channel — and `movement.enabled` — exactly as it found them.
+	actor.cancel_return_channel_for_combat()
 	direction = committed
 	elapsed = 0.0
 	movement.set_control_lock(MovementComponent.CONTROL_LOCK_DODGE, true)
-	if actor != null:
-		actor.facing = committed
+	actor.facing = committed
 	_apply_dodge_velocity()
 	_refresh_invulnerability()
 	return true
@@ -125,13 +134,23 @@ func reset() -> void:
 	_clear(true)
 
 ## The dodge ran its full authored duration.
+##
+## Only the horizontal roll velocity this component wrote is cleared. Without
+## that, the authored speed would survive the dodge and coast away under normal
+## deceleration. Vertical velocity is left alone so a dodge that rolled off a
+## ledge keeps falling at the speed gravity gave it.
 func _finish() -> void:
+	if actor != null:
+		actor.velocity.x = 0.0
 	_clear(false)
 	if action != null:
 		action.finish_dodge()
 
 ## Releases everything this component owns: the i-frame gate, the dodge control
-## lock and the timeline. Never touches the attack timeline or velocity.
+## lock and the timeline. Never touches the attack timeline or velocity — it is
+## shared by the normal finish, the hit-stun interrupt and lifecycle cleanup, and
+## clearing velocity here would swallow the knockback of the hit that interrupted
+## the dodge. Only [method _finish] clears the roll velocity.
 func _clear(reset_action: bool) -> void:
 	elapsed = 0.0
 	direction = 0.0
@@ -141,13 +160,22 @@ func _clear(reset_action: bool) -> void:
 	if reset_action and action != null and action.is_dodging():
 		action.reset()
 
-## A dodge always travels along a definite facing. An unusable request falls back
-## to the actor's current facing rather than producing a zero-length roll.
+## Resolves the committed facing of the roll.
+##
+## Callers hand over a canonical direction: exactly -1 or +1 when the player
+## expressed one, and 0 when they did not. Only 0 falls back to the actor's
+## current facing; any other non-canonical value is a broken request and is
+## rejected rather than rounded into a usable roll. Returning 0 means "no dodge".
 func _resolve_direction(requested_direction: float) -> float:
-	var resolved := signf(requested_direction) if is_finite(requested_direction) else 0.0
-	if resolved == 0.0 and actor != null and is_finite(actor.facing):
-		resolved = signf(actor.facing)
-	return resolved
+	if not is_finite(requested_direction):
+		return 0.0
+	if requested_direction == 1.0 or requested_direction == -1.0:
+		return requested_direction
+	if requested_direction != 0.0:
+		return 0.0
+	if actor != null and is_finite(actor.facing):
+		return signf(actor.facing)
+	return 0.0
 
 ## Constant horizontal speed for the whole dodge. Vertical velocity is left to
 ## gravity and the body's own collision response, so the roll falls off ledges

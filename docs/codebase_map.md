@@ -250,11 +250,15 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
   있으면 `DODGE → HURT` 전이 직전에 `interrupt_for_hurt()`로 i-frame과 dodge lock만 내리고
   velocity는 건드리지 않는다(넉백 impulse는 이미 적용돼 있다).
 - `PlayerDodgeComponent` — scene-local DODGE timing owner. `DodgeDefinition` 없이는 모든
-  dodge를 거절한다. 지상에서 `IDLE`일 때만 시작하고, 시작 시 스태미나를 **정확히 한 번**
-  지불한 뒤 절대 환불하지 않는다. 매 tick 수평 velocity만 쓰고 위치는 쓰지 않으므로 벽은
-  `move_and_slide`가 막고 낭떠러지는 평범한 `AIR` 낙하가 된다(새 locomotion mode 없음).
-  i-frame 구간은 definition의 half-open 창이 유일한 소유자이며 `HealthComponent`의
-  `evasion_invulnerable`을 열고 닫는다.
+  dodge를 거절한다. `IDLE`이면서 `movement.mode == GROUND` **그리고** `is_on_floor()`일 때만
+  시작하고(stale mode만으로는 부족하다), 시작 시 스태미나를 **정확히 한 번** 지불한 뒤 절대
+  환불하지 않는다. 매 tick 수평 velocity만 쓰고 위치는 쓰지 않으므로 벽은 `move_and_slide`가
+  막고 낭떠러지는 평범한 `AIR` 낙하가 된다(새 locomotion mode 없음). i-frame 구간은
+  definition의 half-open 창이 유일한 소유자이며 `HealthComponent`의 `evasion_invulnerable`을
+  열고 닫는다. 방향은 `dodge_requested(horizontal_direction)`가 실어 보낸 입력 시점 의도가
+  우선이고, 없을 때만 `facing`으로 fallback한다. 정상 종료(`_finish()`)만 자기가 쓴
+  `velocity.x`를 0으로 되돌리며, 공용 cleanup은 velocity를 건드리지 않는다. 진행 중인 return
+  channel은 dodge를 막지 않고, 커밋이 확정된 뒤 이 컴포넌트가 한 번만 취소한다.
 - 피해 성공 후 `HealthComponent.damaged(context)`를 받은 권위 Player/Enemy가
   `context.knockback`을 기존 velocity에 더한다. Player는 non-zero impulse일 때 CLIMB을 먼저
   이탈한다. 이 물리 impulse와 `DamageContext.causes_hurt`의 hit reaction은 독립이다. HURT 중

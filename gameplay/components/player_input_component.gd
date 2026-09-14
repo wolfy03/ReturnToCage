@@ -4,12 +4,20 @@ extends Node
 signal jump_requested
 signal attack_requested
 ## Edge-triggered, like attack: a dodge is a discrete intent and never rides the
-## continuous movement axes.
-signal dodge_requested
+## continuous movement axes. It carries the horizontal intent sampled at the
+## moment the button went down — -1, +1, or 0 when the player held no direction —
+## because the cached axis below is only refreshed in [method _process] and can
+## still describe the previous frame on the tick the player turns and dodges
+## together.
+signal dodge_requested(horizontal_direction: float)
 signal interact_requested
 signal quick_item_requested
 signal inventory_requested
 signal pause_requested
+
+## Below this the stick is treated as centred, so a resting analogue stick does
+## not decide a dodge direction the player did not ask for.
+const HORIZONTAL_INTENT_DEADZONE := 0.1
 
 var vertical_axis: float = 0.0
 var move_vector: Vector2:
@@ -48,7 +56,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			attack_requested.emit()
 	elif event.is_action_pressed(&"dodge"):
 		if gameplay_actions_enabled or network_intents_enabled:
-			dodge_requested.emit()
+			dodge_requested.emit(_current_horizontal_intent())
 	elif event.is_action_pressed(&"interact"):
 		if gameplay_actions_enabled or network_intents_enabled:
 			interact_requested.emit()
@@ -59,6 +67,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		inventory_requested.emit()
 	elif event.is_action_pressed(&"pause"):
 		pause_requested.emit()
+
+## Reads the movement actions directly rather than the cached axis, so a dodge
+## pressed on the same frame as a turn rolls the way the player is pressing.
+## Returns exactly -1, +1 or 0 — never a raw analogue value.
+func _current_horizontal_intent() -> float:
+	var axis := Input.get_axis(&"move_left", &"move_right")
+	return signf(axis) if absf(axis) >= HORIZONTAL_INTENT_DEADZONE else 0.0
 
 func take_jump_pressed() -> bool:
 	var pressed := _jump_pressed

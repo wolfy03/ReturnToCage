@@ -143,7 +143,17 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   (지상 시작 전용·위치 직접 조작 없음·낭떠러지 AIR 낙하 유지·벽 통과 불가·입력/점프 잠금),
   권위 guard(interaction/quick item/consumable/world transition 거절과 종료 후 재허용),
   network intent(sequence 소비 순서·중복/역행 거절·malformed direction 거절·presentation 경로가
-  시뮬레이션하지 않음), death/world transition 정리를 검증한다.
+  시뮬레이션하지 않음), death/world transition 정리를 검증한다. 7차 안정화로 다음이 추가됐다:
+  dodge 입력 edge 가 그 시점 `Input.get_axis` 를 스냅샷해 `dodge_requested(±1/0)` 를 emit하고
+  stale cached axis 를 무시하는지, 정상 종료가 `velocity.x` 만 0 으로 되돌리고 낭떠러지에서
+  끝난 dodge 의 수직 속도는 보존하는지, HURT interrupt 는 넉백 velocity 를 그대로 두는지,
+  현재 입력 방향이 facing 보다 우선하고 입력이 없을 때만 facing 으로 fallback 하는지, 비정규
+  direction(0.5 / 0.999999 / NaN / INF)을 반올림하지 않고 거절하는지, `mode == GROUND` 라도
+  실제 `is_on_floor()` 가 false 면 dodge 를 거절하고 스태미나·lock 을 건드리지 않는지, 그리고
+  Return Channel 정책 A(유효한 dodge 는 채널을 정확히 한 번 취소하고 `movement.enabled` 를
+  복구, 거절된 dodge 는 stamina/AIR/HURT/malformed 어느 경우에도 채널과 `movement.enabled` 를
+  그대로 둔다)를 검증한다. dodge fixture 는 `movement.mode` 를 강제로 쓰지 않고 실제 physics
+  frame 을 돌려 접지시킨다.
 - unit/test_player_hurt.gd: 0.25초 HURT lifecycle/control lock과 re-hit timer refresh(signal 없음),
   STARTUP/ACTIVE/RECOVERY 직접 interruption, phase별 stamina 소비·비환불, melee hitbox cleanup,
   projectile commit 전 spawn 차단과 commit 후 projectile 생존, HURT 중 attack/network command·수평

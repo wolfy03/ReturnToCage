@@ -82,6 +82,22 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   스태미나는 시작 시 1회 지불되고 **절대 환불하지 않는다.** dodge 는 지상에서만 시작하고,
   진행 중 위치를 직접 쓰지 않으므로 벽은 `move_and_slide` 가 막고 낭떠러지는 평범한 `AIR`
   낙하가 된다. dodge 를 위해 locomotion mode 를 추가하지 않는다.
+- **"지상" 은 enum 이 아니라 실제 접지다.** dodge 시작 조건은
+  `movement.mode == GROUND` **그리고** `CharacterBody2D.is_on_floor()` 둘 다다. `mode` 는
+  physics tick 당 한 번만 갱신돼 한 프레임 stale 할 수 있고, 그것만 믿으면 이미 공중인
+  액터가 지상 dodge 를 시작한다. 시작 후 낭떠러지를 벗어나는 것은 여전히 정상이다.
+- **정상 종료만 dodge 속도를 정리한다.** duration 을 다 채운 dodge 는 `_finish()` 에서
+  `actor.velocity.x = 0.0` 만 한다(`velocity = Vector2.ZERO` 금지 — 낭떠러지 낙하 속도를
+  지운다). 공용 cleanup(`interrupt_for_hurt` / `reset` / death)은 velocity 를 **절대**
+  건드리지 않는다. HURT 로 끊긴 dodge 가 자기를 끊은 넉백을 삼키면 안 된다.
+- **dodge 방향은 버튼을 누른 순간의 이동 의도가 먼저다.** `PlayerInputComponent` 가
+  `dodge_requested(horizontal_direction)` 로 그 시점의 `Input.get_axis` 를 함께 넘긴다
+  (cached `move_axis` 는 `_process` 에서만 갱신돼 같은 프레임 방향 전환을 놓친다). 입력이
+  없을 때만 `actor.facing` 으로 fallback 한다.
+- **Return Channel 은 dodge 거절 사유가 아니다.** 유효한 dodge 는 채널을 취소하고 시작한다.
+  취소는 **모든 검증 + action 전이 + 스태미나 지불이 끝난 뒤** `PlayerDodgeComponent` 가
+  한 번만 호출한다. 거절된 dodge 는 `return_channel` 도 `movement.enabled` 도 바꾸지 않는다.
+  cancel ownership 을 network 계층에 중복으로 두지 않는다.
 - **`MovementComponent` 의 input gate 는 소유자별이다.** `set_control_lock(source, locked)` 와
   `CONTROL_LOCK_HURT` / `CONTROL_LOCK_DODGE` 를 쓰고, `controls_locked` 는 읽기 전용 계산
   속성이다. 각 소유자는 자기 lock 만 해제한다 — HURT 로 끊긴 dodge 가 hit-stun 도중에
@@ -89,7 +105,10 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 - **Dodge 입력은 edge-trigger intent 다.** 매 tick 나가는 unreliable movement packet 에 태우지
   않고 별도 reliable `PlayerDodgeCommand` 로 보낸다. 호스트는 sequence 를 게임플레이 검증보다
   먼저 소비하고, `direction` 은 정확히 `±1` 만 허용하며 그 외 값은 정규화하지 않고 거절한다.
-  remote client 는 HP 무적·스태미나 소비·DODGE state·위치를 스스로 결정하지 않는다.
+  이 검사는 `is_equal_approx` 가 아니라 **exact 비교**다 — 호스트가 이 값에 dodge 속도를
+  곱하므로 `0.999999` 같은 근사값을 받아주면 계약이 무너진다. malformed direction 도
+  sequence 는 소비하므로 같은 번호로 정상 값을 다시 보낼 수 없다. remote client 는
+  HP 무적·스태미나 소비·DODGE state·위치를 스스로 결정하지 않는다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.

@@ -8,6 +8,11 @@ func run(t: Node) -> void:
 	_test_action_transitions(t)
 	_test_control_lock_ownership(t)
 	_test_command_validation(t)
+	_test_input_direction_snapshot(t)
+	await _test_dodge_finish_velocity(t)
+	await _test_direction_priority(t)
+	await _test_actual_ground_requirement(t)
+	await _test_return_channel_policy(t)
 	await _test_dodge_timeline_and_stamina(t)
 	await _test_iframes(t)
 	await _test_hurt_interrupt(t)
@@ -122,22 +127,302 @@ func _test_command_validation(t: Node) -> void:
 	t.assert_true(PlayerDodgeCommand.new(2, 7.5).is_valid_after(1), "a malformed direction still occupies its sequence")
 	for valid_direction in [1.0, -1.0]:
 		t.assert_true(PlayerDodgeCommand.new(1, valid_direction).has_valid_direction(), "direction %s is accepted" % valid_direction)
-	for invalid_direction in [0.0, 0.5, -0.5, 12.0, NAN, INF, -INF]:
+	for invalid_direction in [0.0, 0.5, -0.5, 2.0, -2.0, 12.0, NAN, INF, -INF]:
 		t.assert_true(not PlayerDodgeCommand.new(1, invalid_direction).has_valid_direction(), "direction %s is rejected rather than normalised" % invalid_direction)
+	# The host multiplies this number by the authored dodge speed, so "almost a
+	# facing" is not the contract. The comparison must be exact, not approximate.
+	for near_miss in [0.999999, -0.999999, 1.000001, -1.000001]:
+		t.assert_true(not PlayerDodgeCommand.new(1, near_miss).has_valid_direction(), "direction %s is rejected by exact validation" % near_miss)
 	t.assert_true(InputMap.has_action(&"dodge"), "the dodge input action is defined in project.godot")
+
+func _test_input_direction_snapshot(t: Node) -> void:
+	# The dodge edge carries the horizontal intent sampled at the button press.
+	# Reading the cached axis instead would describe the previous frame on exactly
+	# the tick a player turns and dodges together.
+	var input := PlayerInputComponent.new()
+	var captured: Array[float] = []
+	input.dodge_requested.connect(func(direction: float) -> void: captured.append(direction))
+	var event := InputEventAction.new()
+	event.action = &"dodge"
+	event.pressed = true
+
+	input._unhandled_input(event)
+	t.assert_equal(captured, [0.0] as Array[float], "no horizontal input reports no direction")
+
+	captured.clear()
+	Input.action_press(&"move_left")
+	input._unhandled_input(event)
+	Input.action_release(&"move_left")
+	t.assert_equal(captured, [-1.0] as Array[float], "a held left input reports -1 at the dodge edge")
+
+	captured.clear()
+	Input.action_press(&"move_right")
+	input._unhandled_input(event)
+	Input.action_release(&"move_right")
+	t.assert_equal(captured, [1.0] as Array[float], "a held right input reports +1 at the dodge edge")
+
+	# The cached axis is deliberately not consulted: it still says the old value.
+	captured.clear()
+	input.move_axis = 1.0
+	Input.action_press(&"move_left")
+	input._unhandled_input(event)
+	Input.action_release(&"move_left")
+	t.assert_equal(captured, [-1.0] as Array[float], "the dodge edge ignores the stale cached axis")
+
+	captured.clear()
+	input.local_input_enabled = false
+	input._unhandled_input(event)
+	t.assert_true(captured.is_empty(), "a disabled input component emits no dodge intent")
+	input.free()
+
+func _test_dodge_finish_velocity(t: Node) -> void:
+	GameSession.start_new_game()
+	var layer := Node.new()
+	t.add_child(layer)
+	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	var definition := actor.dodge.definition
+	runtime.combat.stamina = runtime.combat.max_stamina
+
+	# A finished dodge must not leave its authored speed behind to coast away
+	# under normal deceleration.
+	t.assert_true(actor.dodge.try_begin(1.0), "the finish-velocity fixture starts a dodge")
+	t.assert_true(is_equal_approx(actor.velocity.x, definition.speed), "the dodge drives the authored roll speed")
+	actor.dodge.physics_tick(definition.duration_seconds)
+	t.assert_true(not actor.dodge.is_active() and actor.combat_action.is_idle(), "the dodge finished at IDLE")
+	t.assert_equal(actor.velocity.x, 0.0, "a finished dodge clears its own horizontal velocity")
+	t.assert_true(not actor.movement.controls_locked and not actor.health.evasion_invulnerable, "a finished dodge releases its lock and i-frames")
+
+	# A dodge that rolled off a ledge keeps the fall it earned: only x is cleared.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.dodge.try_begin(1.0), "the ledge-finish fixture starts a dodge")
+	actor.global_position += Vector2(0.0, -140.0)
+	actor.velocity.y = 0.0
+	actor.movement.physics_tick(0.016)
+	actor.movement.physics_tick(0.016)
+	t.assert_equal(actor.movement.mode, MovementComponent.Mode.AIR, "the ledge fixture is airborne mid-dodge")
+	var falling := actor.velocity.y
+	t.assert_true(falling > 0.0, "gravity accumulated during the airborne dodge")
+	actor.dodge.physics_tick(definition.duration_seconds)
+	t.assert_true(not actor.dodge.is_active(), "the airborne dodge still finishes on time")
+	t.assert_equal(actor.velocity.x, 0.0, "an airborne finish clears horizontal velocity")
+	t.assert_equal(actor.velocity.y, falling, "an airborne finish leaves vertical velocity untouched")
+
+	# Hit-stun is a different ending: it must never swallow the knockback that
+	# caused it.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	actor.health.current_health = actor.health.max_health
+	t.assert_true(actor.dodge.try_begin(1.0), "the interrupt-velocity fixture starts a dodge")
+	actor.dodge.physics_tick(definition.iframe_end_seconds + 0.01)
+	actor.velocity = Vector2.ZERO
+	actor.health.invulnerable_remaining = 0.0
+	t.assert_true(actor.health.receive_damage(DamageContext.new(1.0, &"test", actor, &"hostile", Vector2(-150.0, -60.0))), "the vulnerable tail is hit")
+	t.assert_true(actor.hurt.is_active() and not actor.dodge.is_active(), "the hit interrupts the dodge into hit-stun")
+	t.assert_equal(actor.velocity, Vector2(-150.0, -60.0), "an interrupted dodge preserves the knockback impulse")
+	actor.hurt.physics_tick(actor.hurt.duration_seconds + 0.01)
+	actor.hurt.reset()
+
+	layer.queue_free()
+	await t.get_tree().process_frame
+	await t.get_tree().process_frame
+	GameSession.start_new_game()
+
+func _test_direction_priority(t: Node) -> void:
+	GameSession.start_new_game()
+	var layer := Node.new()
+	t.add_child(layer)
+	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	var submitted: Array[float] = []
+	actor.network_dodge.dodge_presented.connect(func(_peer_id: int, _sequence: int, direction: float) -> void: submitted.append(direction))
+
+	# No horizontal intent falls back to the actor's current facing.
+	for facing in [1.0, -1.0]:
+		await _settle(t, actor)
+		runtime.combat.stamina = runtime.combat.max_stamina
+		actor.facing = facing
+		submitted.clear()
+		actor.network_dodge._on_dodge_requested(0.0)
+		t.assert_true(actor.dodge.is_active(), "a facing-only dodge starts with facing %s" % facing)
+		t.assert_equal(actor.dodge.direction, facing, "no horizontal input falls back to facing %s" % facing)
+		t.assert_equal(submitted, [facing] as Array[float], "the submitted command carries the fallback facing %s" % facing)
+		actor.dodge.reset()
+
+	# Current horizontal intent beats a facing that is about to change.
+	for intent in [1.0, -1.0]:
+		await _settle(t, actor)
+		runtime.combat.stamina = runtime.combat.max_stamina
+		actor.facing = -intent
+		submitted.clear()
+		actor.network_dodge._on_dodge_requested(intent)
+		t.assert_true(actor.dodge.is_active(), "an input-directed dodge starts toward %s" % intent)
+		t.assert_equal(actor.dodge.direction, intent, "current horizontal input overrides the stale facing")
+		t.assert_equal(actor.facing, intent, "a committed dodge turns the actor to match")
+		t.assert_equal(submitted, [intent] as Array[float], "only a canonical direction crosses the wire")
+		actor.dodge.reset()
+
+	# A raw axis value never becomes a roll: the component rejects it outright
+	# rather than rounding it into a usable direction.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	var stamina_before := runtime.combat.stamina
+	for raw in [0.5, -0.5, 0.999999, -0.999999, 2.0]:
+		t.assert_true(not actor.dodge.try_begin(raw), "a non-canonical direction %s is rejected, not rounded" % raw)
+	t.assert_true(actor.combat_action.is_idle(), "rejected directions leave the action axis idle")
+	t.assert_equal(runtime.combat.stamina, stamina_before, "rejected directions spend no stamina")
+	t.assert_true(not actor.dodge.try_begin(NAN) and not actor.dodge.try_begin(INF), "non-finite directions are rejected")
+
+	layer.queue_free()
+	await t.get_tree().process_frame
+	await t.get_tree().process_frame
+	GameSession.start_new_game()
+
+func _test_actual_ground_requirement(t: Node) -> void:
+	GameSession.start_new_game()
+	var layer := Node.new()
+	t.add_child(layer)
+	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	runtime.combat.stamina = runtime.combat.max_stamina
+
+	t.assert_true(actor.is_on_floor() and actor.movement.mode == MovementComponent.Mode.GROUND, "the fixture actor really is standing on the world")
+	t.assert_true(actor.dodge.try_begin(1.0), "a genuinely grounded actor may dodge")
+	actor.dodge.reset()
+
+	# `movement.mode` is written once per physics tick, so it can still say GROUND
+	# for an actor that has already left the floor. The real floor contact decides.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	var stamina_before := runtime.combat.stamina
+	actor.global_position += Vector2(0.0, -220.0)
+	actor.velocity = Vector2.ZERO
+	actor.move_and_slide()
+	actor.movement.mode = MovementComponent.Mode.GROUND
+	t.assert_true(not actor.is_on_floor(), "the stale-mode fixture is actually airborne")
+	t.assert_true(not actor.dodge.try_begin(1.0), "a stale GROUND mode does not let an airborne actor dodge")
+	t.assert_true(actor.combat_action.is_idle(), "the rejected stale-mode dodge leaves the action axis idle")
+	t.assert_equal(runtime.combat.stamina, stamina_before, "the rejected stale-mode dodge spends no stamina")
+	t.assert_true(not actor.movement.controls_locked, "the rejected stale-mode dodge takes no control lock")
+
+	t.assert_true(await _settle(t, actor), "the actor lands again after the stale-mode check")
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.dodge.try_begin(1.0), "the re-landed actor may dodge again")
+	actor.dodge.reset()
+
+	layer.queue_free()
+	await t.get_tree().process_frame
+	await t.get_tree().process_frame
+	GameSession.start_new_game()
+
+func _test_return_channel_policy(t: Node) -> void:
+	GameSession.start_new_game()
+	var layer := Node.new()
+	t.add_child(layer)
+	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	var definition := actor.dodge.definition
+	var cancellations: Array[int] = []
+	actor.return_channel_changed.connect(func(active: bool, _progress: float) -> void:
+		if not active:
+			cancellations.append(1)
+	)
+
+	# A committed dodge interrupts an in-progress return channel.
+	runtime.combat.stamina = runtime.combat.max_stamina
+	_start_return_channel(actor)
+	t.assert_true(actor.return_channel > 0.0 and not actor.movement.enabled, "the channel fixture is running with movement disabled")
+	cancellations.clear()
+	t.assert_true(actor.dodge.try_begin(1.0), "a valid dodge is not blocked by an active return channel")
+	t.assert_equal(actor.return_channel, 0.0, "a committed dodge cancels the return channel")
+	t.assert_true(actor.movement.enabled, "cancelling the channel restores movement")
+	t.assert_equal(cancellations.size(), 1, "the channel is cancelled by exactly one owner")
+	t.assert_true(actor.dodge.is_active() and actor.movement.has_control_lock(MovementComponent.CONTROL_LOCK_DODGE), "the dodge runs normally after cancelling the channel")
+	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina - definition.stamina_cost, "the dodge still commits stamina exactly once")
+	actor.dodge.reset()
+
+	# Every rejection path must leave the channel — and movement — untouched.
+	await _settle(t, actor)
+	runtime.combat.stamina = definition.stamina_cost - 1.0
+	_start_return_channel(actor)
+	cancellations.clear()
+	t.assert_true(not actor.dodge.try_begin(1.0), "an unaffordable dodge is rejected")
+	t.assert_true(actor.return_channel > 0.0 and not actor.movement.enabled, "an unaffordable dodge preserves the return channel")
+	t.assert_true(cancellations.is_empty(), "a rejected dodge emits no channel cancellation")
+	_clear_return_channel(actor)
+
+	runtime.combat.stamina = runtime.combat.max_stamina
+	await _settle(t, actor)
+	actor.global_position += Vector2(0.0, -220.0)
+	actor.velocity = Vector2.ZERO
+	actor.move_and_slide()
+	_start_return_channel(actor)
+	cancellations.clear()
+	t.assert_true(not actor.dodge.try_begin(1.0), "an airborne dodge is rejected")
+	t.assert_true(actor.return_channel > 0.0 and not actor.movement.enabled, "an airborne dodge preserves the return channel")
+	_clear_return_channel(actor)
+
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	actor.health.invulnerable_remaining = 0.0
+	t.assert_true(actor.health.receive_damage(DamageContext.new(1.0, &"test", actor, &"hostile")), "the hit-stun channel fixture is damaged")
+	t.assert_true(actor.hurt.is_active(), "the fixture is in hit-stun")
+	_start_return_channel(actor)
+	cancellations.clear()
+	t.assert_true(not actor.dodge.try_begin(1.0), "a dodge during hit-stun is rejected")
+	t.assert_true(actor.return_channel > 0.0 and not actor.movement.enabled, "a hit-stun dodge rejection preserves the return channel")
+	t.assert_true(cancellations.is_empty(), "no channel cancellation is emitted during hit-stun")
+	_clear_return_channel(actor)
+	actor.hurt.physics_tick(actor.hurt.duration_seconds + 0.01)
+	actor.hurt.reset()
+
+	# A malformed direction is a rejection like any other.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	_start_return_channel(actor)
+	cancellations.clear()
+	t.assert_true(not actor.dodge.try_begin(0.5), "a malformed direction is rejected")
+	t.assert_true(actor.return_channel > 0.0 and not actor.movement.enabled, "a malformed direction preserves the return channel")
+	_clear_return_channel(actor)
+
+	layer.queue_free()
+	await t.get_tree().process_frame
+	await t.get_tree().process_frame
+	GameSession.start_new_game()
+
+## Reproduces the state PlayerActor enters when a return item starts channelling,
+## without depending on adventure phase or inventory contents.
+func _start_return_channel(actor: PlayerActor) -> void:
+	actor.return_channel = 0.001
+	actor.return_channel_origin = actor.global_position
+	actor.movement.enabled = false
+
+func _clear_return_channel(actor: PlayerActor) -> void:
+	actor.return_channel = 0.0
+	actor.movement.enabled = true
 
 func _spawn_settlement_player(t: Node, layer: Node) -> PlayerActor:
 	SceneRouter.register_world_layer(layer)
 	t.assert_true(SceneRouter.go_to_settlement(), "player dodge fixture loads the settlement")
 	await t.get_tree().process_frame
 	var actor := t.get_tree().get_first_node_in_group(&"player") as PlayerActor
-	# Regeneration runs in the same _process; freeze it so every spend is exact.
-	actor.combat.stamina_regen_multiplier = 0.0
-	actor.movement.mode = MovementComponent.Mode.GROUND
+	await _settle(t, actor)
 	return actor
 
-func _ground(actor: PlayerActor) -> void:
-	actor.movement.mode = MovementComponent.Mode.GROUND
+## Runs real physics until the actor is genuinely standing on the world, instead
+## of forcing `movement.mode`. A dodge now requires actual floor contact, so a
+## fixture that fakes the locomotion mode would no longer exercise the contract.
+## Also re-freezes stamina regeneration, which survival stage changes can undo.
+func _settle(t: Node, actor: PlayerActor, frames: int = 240) -> bool:
+	for frame in frames:
+		if actor.is_on_floor() and actor.movement.mode == MovementComponent.Mode.GROUND:
+			break
+		await t.get_tree().physics_frame
+	# Regeneration runs in the same _process; freeze it so every spend is exact.
+	actor.combat.stamina_regen_multiplier = 0.0
+	actor.health.invulnerable_remaining = 0.0
+	return actor.is_on_floor() and actor.movement.mode == MovementComponent.Mode.GROUND
 
 func _test_dodge_timeline_and_stamina(t: Node) -> void:
 	GameSession.start_new_game()
@@ -180,14 +465,14 @@ func _test_dodge_timeline_and_stamina(t: Node) -> void:
 
 	# An oversized frame must still resolve the dodge exactly once.
 	runtime.combat.stamina = runtime.combat.max_stamina
-	_ground(actor)
+	await _settle(t, actor)
 	t.assert_true(actor.dodge.try_begin(1.0), "the oversized-delta fixture starts a dodge")
 	actor.dodge.physics_tick(definition.duration_seconds + 5.0)
 	t.assert_true(not actor.dodge.is_active() and actor.combat_action.is_idle(), "an oversized delta still finishes the dodge")
 	t.assert_true(not actor.health.evasion_invulnerable, "an oversized delta closes the i-frame gate")
 
 	# Stamina is the gate: an exhausted player cannot dodge at all.
-	_ground(actor)
+	await _settle(t, actor)
 	runtime.combat.stamina = definition.stamina_cost - 1.0
 	t.assert_true(not actor.dodge.try_begin(1.0), "a dodge is refused without enough stamina")
 	t.assert_true(actor.combat_action.is_idle(), "a refused dodge leaves the action axis idle")
@@ -237,7 +522,7 @@ func _test_iframes(t: Node) -> void:
 	actor.dodge.reset()
 
 	# The vulnerable tail of the dodge takes hits normally.
-	_ground(actor)
+	await _settle(t, actor)
 	runtime.combat.stamina = runtime.combat.max_stamina
 	actor.health.current_health = actor.health.max_health
 	t.assert_true(actor.dodge.try_begin(1.0), "the i-frame tail fixture starts a dodge")
@@ -292,13 +577,13 @@ func _test_hurt_interrupt(t: Node) -> void:
 	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "a dodge refused during hit-stun spends nothing")
 	actor.hurt.physics_tick(actor.hurt.duration_seconds + 0.01)
 	t.assert_true(not actor.movement.controls_locked, "hit-stun releases the last lock when it ends")
-	_ground(actor)
+	await _settle(t, actor)
 	t.assert_true(actor.dodge.try_begin(1.0), "a dodge is available again once hit-stun ends")
 	actor.dodge.reset()
 
 	# An attack in flight is not a dodge cancel.
 	runtime.combat.stamina = runtime.combat.max_stamina
-	_ground(actor)
+	await _settle(t, actor)
 	t.assert_true(actor.combat.attack(1.0), "the attack-cancel fixture starts an attack")
 	var attack_stamina := runtime.combat.stamina
 	t.assert_true(not actor.dodge.try_begin(1.0), "a dodge cannot cancel an attack wind-up")
@@ -326,7 +611,7 @@ func _test_locomotion_boundaries(t: Node) -> void:
 	actor.movement.mode = MovementComponent.Mode.CLIMB
 	t.assert_true(not actor.dodge.try_begin(1.0), "a climbing dodge is refused")
 	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "refused starts spend nothing")
-	_ground(actor)
+	await _settle(t, actor)
 
 	# The component itself never moves the body: it writes velocity and lets
 	# move_and_slide resolve terrain, so a wall cannot be rolled through.
@@ -357,7 +642,7 @@ func _test_locomotion_boundaries(t: Node) -> void:
 	t.assert_true(not actor.movement.controls_locked, "reset releases the dodge control lock")
 
 	# A wall stops the roll rather than letting it pass through.
-	_ground(actor)
+	await _settle(t, actor)
 	actor.velocity = Vector2.ZERO
 	runtime.combat.stamina = runtime.combat.max_stamina
 	var wall := StaticBody2D.new()
@@ -371,7 +656,7 @@ func _test_locomotion_boundaries(t: Node) -> void:
 	await t.get_tree().physics_frame
 	await t.get_tree().physics_frame
 	var wall_limit := wall.global_position.x - 20.0
-	_ground(actor)
+	await _settle(t, actor)
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.dodge.try_begin(1.0), "the wall fixture starts a dodge toward the wall")
 	for step in 12:
@@ -477,7 +762,7 @@ func _test_network_intent(t: Node) -> void:
 
 	# A command rejected by gameplay still consumes its sequence, so it cannot be
 	# replayed once the actor is dodgeable again.
-	_ground(actor)
+	await _settle(t, actor)
 	runtime.combat.stamina = 0.0
 	t.assert_true(not actor.network_dodge._server_execute_dodge(actor.peer_id, 20, 1.0).success, "an unaffordable dodge command is rejected")
 	runtime.combat.stamina = runtime.combat.max_stamina
@@ -492,7 +777,7 @@ func _test_network_intent(t: Node) -> void:
 	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "a malformed command spends no stamina")
 
 	# The presentation path mirrors, it does not simulate.
-	_ground(actor)
+	await _settle(t, actor)
 	var presented_count := presented.size()
 	actor.network_dodge._on_dodge_presented_received(actor.peer_id, 99, -1.0)
 	t.assert_equal(presented.size(), presented_count, "an authoritative actor ignores presentation packets about itself")
@@ -527,7 +812,7 @@ func _test_death_and_world_transition(t: Node) -> void:
 	t.assert_true(runtime.combat.stamina >= stamina_before and runtime.combat.stamina < runtime.combat.max_stamina, "a scene-local dodge does not replace persistent stamina, and its spend survives the transition")
 
 	replacement.combat.stamina_regen_multiplier = 0.0
-	_ground(replacement)
+	await _settle(t, replacement)
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(replacement.dodge.try_begin(1.0), "the new actor can dodge")
 	t.assert_true(replacement.health.evasion_invulnerable, "the new actor's dodge opens its own evasion gate")

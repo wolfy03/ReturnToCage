@@ -297,7 +297,8 @@ func _run_host_scenario() -> void:
 	var dodge_started := false
 	for attempt in 8:
 		if not await _wait_until(func() -> bool:
-			return b_actor.movement.mode == MovementComponent.Mode.GROUND and b_actor.combat_action.is_idle()
+			return b_actor.movement.mode == MovementComponent.Mode.GROUND \
+				and b_actor.is_on_floor() and b_actor.combat_action.is_idle()
 		, 4.0):
 			continue
 		dodge_stamina_before = b_combat.stamina
@@ -306,8 +307,8 @@ func _run_host_scenario() -> void:
 			dodge_started = true
 			break
 	if not dodge_started:
-		_fail("client dodge intent did not start the authoritative dodge (mode=%d action=%d stamina=%.2f)" \
-			% [b_actor.movement.mode, b_actor.combat_action.current_state(), b_combat.stamina])
+		_fail("client dodge intent did not start the authoritative dodge (mode=%d floor=%s action=%d stamina=%.2f)" \
+			% [b_actor.movement.mode, b_actor.is_on_floor(), b_actor.combat_action.current_state(), b_combat.stamina])
 		return
 	if not b_actor.health.evasion_invulnerable or b_combat.stamina >= dodge_stamina_before \
 			or not b_actor.movement.has_control_lock(MovementComponent.CONTROL_LOCK_DODGE):

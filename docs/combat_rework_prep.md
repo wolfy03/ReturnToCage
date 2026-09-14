@@ -15,6 +15,7 @@
 완료  6차  Player HURT / Hit-Stun
 완료  6차 보강  Server-authoritative interaction guard
 완료  7차  Dodge + i-frame (Protocol v14)
+완료  7차 안정화  종료 velocity · 방향 정책 · 실제 접지 · Return Channel A · strict direction
 다음  8차  Combo · 입력 버퍼 · 캔슬 윈도우
 ```
 
@@ -190,6 +191,7 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 6차 | HURT (플레이어 피격 경직·공격 interruption·control lock) | 완료 |
 | 6차 보강 | Server-authoritative HURT interaction/world-transition guard | 완료 |
 | 7차 | Dodge + i-frame (`DodgeDefinition`·서버 권위 intent·evasion gate, Protocol v14) | 완료 |
+| 7차 안정화 | 종료 velocity 정리·입력 우선 방향·실제 접지 검증·Return Channel 정책 A·exact ±1 | 완료 |
 | 8차 | Combo·입력 버퍼·캔슬 윈도우 | 다음 |
 | 이후 | 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 

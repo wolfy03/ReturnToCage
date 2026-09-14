@@ -1,14 +1,17 @@
 class_name DodgeDefinition
 extends Resource
-## Timing and cost of one dodge roll.
+## The authored gameplay parameters of one dodge roll: its timing, its i-frame
+## window, its speed and its cost.
 ##
 ## Deliberately a plain [Resource] and not a [ContentDefinition]: a dodge is not
 ## standalone content with an id registered in ContentRegistry, it is authored
 ## once and referenced by the actor that owns the move.
 ##
-## Like [AttackDefinition] this is timing data only. The i-frame window is
-## expressed as a half-open interval inside the dodge, so the definition alone
-## says when the actor is untouchable — no component invents its own numbers.
+## Unlike [AttackDefinition], which is purely timing, this also owns the roll
+## speed and the stamina cost — every number a dodge needs lives here so no
+## component invents its own. The i-frame window is expressed as a half-open
+## interval inside the dodge, so the definition alone says when the actor is
+## untouchable.
 ## Nothing here knows about the network; the values are read, never written, at
 ## runtime.
 

@@ -238,11 +238,19 @@ Dodge는 HURT와 같은 scene-local combat action이지만, HURT와 달리 **클
   때문이다. `NetworkManager.submit_player_dodge(peer_id, sequence, direction)` →
   `_request_player_dodge`(`any_peer`, `reliable`) 경로로 `PlayerDodgeCommand`(`sequence`,
   `direction`)만 전달한다.
+- **Direction 결정 순서 (client 측).** `PlayerInputComponent` 가 dodge 버튼 edge 에서
+  `Input.get_axis(&"move_left", &"move_right")` 를 직접 읽어 `dodge_requested(±1 또는 0)` 로
+  넘긴다. cached `move_axis` 는 `_process` 에서만 갱신되므로, 방향 전환과 dodge 가 같은
+  프레임에 일어나면 이전 프레임 값을 보게 된다. `NetworkDodgeComponent` 는 그 의도를 우선
+  사용하고, 0 일 때만 `actor.facing` 으로 fallback 한다. **wire 에는 언제나 정규화된 `±1`
+  하나만 실린다** — raw axis 값은 나가지 않는다.
 - **검증 순서.** `NetworkDodgeComponent._server_execute_dodge()` 는 `is_valid_after()` 로
   sequence 를 확인하고 **게임플레이 검증보다 먼저 소비한다.** 그 다음에야 direction,
   life/phase, `PlayerDodgeComponent.try_begin()` 을 본다. 거절된 스팸이 dodge 가능해진 뒤
   같은 번호로 재생되지 않는다. `direction` 은 정확히 `+1` 또는 `-1` 만 허용하며 그 외 값은
-  정규화하지 않고 거절한다 — 그렇지 않으면 direction 필드가 속도 배율이 된다.
+  정규화하지 않고 거절한다 — 그렇지 않으면 direction 필드가 속도 배율이 된다. 비교는
+  `is_equal_approx` 가 아니라 **exact** 다: 호스트가 이 값에 authored dodge speed 를 곱하므로
+  `0.999999` 를 받아주는 것은 계약 위반이다.
 - **Presentation (host → same-world ready peers, reliable).**
   `broadcast_player_dodge()` / `_receive_player_dodge` 가 `(world_id, revision)` 에 묶여
   나간다. 클라이언트는 받은 facing 을 mirror 하고 롤을 재생할 뿐, DODGE state 에 들어가지도,
@@ -259,8 +267,18 @@ Dodge는 HURT와 같은 scene-local combat action이지만, HURT와 달리 **클
 - 스태미나는 시작 시점에 정확히 한 번 지불되고 **절대 환불되지 않는다** — 벽에 막혀도,
   낭떠러지로 떨어져도, HURT 로 끊겨도 마찬가지다.
 - DODGE 는 `IDLE` 에서만 시작하고 `IDLE` 또는 `HURT` 로만 나간다. 공격을 롤로 캔슬할 수
-  없고 hit-stun 을 롤로 탈출할 수도 없다. 지상에서만 시작하며, 진행 중 낭떠러지를 벗어나면
-  그대로 평범한 `AIR` 낙하가 된다(새 locomotion mode 를 만들지 않는다).
+  없고 hit-stun 을 롤로 탈출할 수도 없다. 시작 조건의 "지상" 은
+  `movement.mode == GROUND` **그리고** `CharacterBody2D.is_on_floor()` 둘 다다 — `mode` 는
+  physics tick 당 한 번만 갱신돼 stale 할 수 있다. 진행 중 낭떠러지를 벗어나면 그대로
+  평범한 `AIR` 낙하가 된다(새 locomotion mode 를 만들지 않는다).
+- 정상 종료(duration 완주)만 dodge 가 쓴 `velocity.x` 를 0 으로 되돌린다. 수직 속도는
+  건드리지 않으므로 낭떠러지에서 끝난 dodge 는 gravity 가 준 낙하를 유지한다. HURT
+  interrupt / reset / death 의 공용 cleanup 은 velocity 를 전혀 건드리지 않는다 — 건드리면
+  dodge 를 끊은 그 넉백을 삼키게 된다.
+- 진행 중인 return-item channel 은 dodge 를 막지 않는다. 모든 검증과 action 전이, 스태미나
+  지불이 끝나 dodge 가 확정된 뒤에 `PlayerDodgeComponent` 가 채널을 **한 번만** 취소한다.
+  거절된 dodge 는 `return_channel` 도 `movement.enabled` 도 바꾸지 않는다. gameplay 로 거절된
+  원격 명령이라도 sequence 는 이미 소비된 상태다.
 - `MovementComponent` 의 input gate 는 이제 **소유자별**이다
   (`set_control_lock(source, locked)`, `CONTROL_LOCK_HURT` / `CONTROL_LOCK_DODGE`). 각 소유자는
   자기 lock 만 해제하므로, HURT 로 끊긴 dodge 가 hit-stun 도중에 조작을 돌려주지 못한다.
