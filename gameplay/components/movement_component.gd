@@ -14,6 +14,8 @@ var input: PlayerInputComponent
 var stats: StatBlock
 var speed: float = 190.0
 var enabled: bool = true
+## HURT-owned input gate. Independent from the lifecycle/channel `enabled` flag.
+var controls_locked: bool = false
 var mode: Mode = Mode.AIR
 var climb_area: ClimbableArea2D
 var climb_areas: Array[ClimbableArea2D] = []
@@ -68,7 +70,7 @@ func physics_tick(delta: float) -> void:
 		else:
 			_climb_tick(delta)
 			return
-	if enabled and not _needs_release and absf(input.vertical_axis) >= 0.1:
+	if enabled and not controls_locked and not _needs_release and absf(input.vertical_axis) >= 0.1:
 		var candidate: ClimbableArea2D = climb_candidate()
 		if candidate != null and (not candidate.definition.requires_interaction or _interaction_granted):
 			climb_area = candidate
@@ -81,20 +83,22 @@ func physics_tick(delta: float) -> void:
 	mode = Mode.GROUND if body.is_on_floor() else Mode.AIR
 	if mode == Mode.AIR:
 		body.velocity.y += gravity * delta
-	var target: float = input.move_axis * speed if enabled else 0.0
-	body.velocity.x = move_toward(body.velocity.x, target, (acceleration if absf(target) > 0.01 else deceleration) * delta)
+	if not controls_locked:
+		var target: float = input.move_axis * speed if enabled else 0.0
+		body.velocity.x = move_toward(body.velocity.x, target, (acceleration if absf(target) > 0.01 else deceleration) * delta)
 	body.move_and_slide()
 
 func _climb_tick(delta: float) -> void:
 	var definition: ClimbableDefinition = climb_area.definition
+	var vertical_axis := 0.0 if controls_locked else input.vertical_axis
 	body.velocity.x = clampf((climb_area.global_position.x - body.global_position.x) / delta, -definition.alignment_speed, definition.alignment_speed)
-	body.velocity.y = input.vertical_axis * speed * definition.speed_multiplier
+	body.velocity.y = vertical_axis * speed * definition.speed_multiplier
 	var next_y: float = body.global_position.y + body.velocity.y * delta
 	var leave: bool = false
-	if next_y <= climb_area.top().y and input.vertical_axis < 0.0:
+	if next_y <= climb_area.top().y and vertical_axis < 0.0:
 		body.velocity.y = (climb_area.top().y - body.global_position.y) / delta
 		leave = definition.allow_top_exit
-	elif next_y >= climb_area.bottom().y and input.vertical_axis > 0.0:
+	elif next_y >= climb_area.bottom().y and vertical_axis > 0.0:
 		body.velocity.y = (climb_area.bottom().y - body.global_position.y) / delta
 		leave = definition.allow_bottom_exit
 	body.move_and_slide()
@@ -111,6 +115,9 @@ func on_damage(forced_knockback: bool = false) -> void:
 	if mode == Mode.CLIMB and (forced_knockback or climb_area.definition.drop_on_damage):
 		exit_climb()
 
+func set_controls_locked(value: bool) -> void:
+	controls_locked = value
+
 ## Applies an authoritative, additive physics impulse without introducing a
 ## locomotion mode or timer. Invalid vectors never reach CharacterBody2D.
 func apply_external_impulse(impulse: Vector2) -> bool:
@@ -120,7 +127,7 @@ func apply_external_impulse(impulse: Vector2) -> bool:
 	return true
 
 func request_jump() -> void:
-	if not enabled or body == null:
+	if not enabled or controls_locked or body == null:
 		return
 	if mode == Mode.CLIMB:
 		if climb_area.definition.allow_jump_exit:
@@ -135,3 +142,4 @@ func _exit_tree() -> void:
 	climb_area = null
 	climb_areas.clear()
 	mode = Mode.AIR
+	controls_locked = false

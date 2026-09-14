@@ -32,7 +32,9 @@ PlayerActor가 실제 위치와 함께 `handle_player_death()`를 한 번 호출
 
 STAT_MODIFIER, PERIODIC_HEAL, PERIODIC_DAMAGE를 실행한다. tick_interval_seconds마다 magnitude × stacks를 적용한다. 음식 슬롯 교체와 REPLACE/REFRESH/STACK을 지원한다. 장비 source는 `equipment:<slot>`, 효과 source는 `effect:<source>/<effect_id>` 형식이다. 장비 효과는 장착 중 지속하며 저장 시 제외하고 장비로 재구성한다. 내구도 0인 장비는 능력치·효과·공격을 제공하지 않는다.
 
-CombatComponent는 근접/투사체 전략을 선택한다. `AttackDefinition`은 timing과 논리적 range, rectangle `hitbox_size`/`hitbox_offset`, 공격자 기준 knockback을 소유한다. 근접 전략은 이 geometry로 Hitbox를 구성하고 투사체는 같은 정의의 range만큼 이동한다. 공격 시작 시 facing으로 x만 반전한 knockback을 `DamageContext`에 snapshot한다. Hurtbox는 target_factions를 검사하고 성공한 피격에 hit_effects를 적용하며, 권위 Player/Enemy는 context impulse를 기존 `CharacterBody2D.velocity`에 더한다. 별도 knockback RPC나 HURT action state는 없다.
+CombatComponent는 근접/투사체 전략을 선택한다. `AttackDefinition`은 timing과 논리적 range, rectangle `hitbox_size`/`hitbox_offset`, 공격자 기준 knockback을 소유한다. 근접 전략은 이 geometry로 Hitbox를 구성하고 투사체는 같은 정의의 range만큼 이동한다. 공격 시작 시 facing으로 x만 반전한 knockback을 `DamageContext`에 snapshot한다. Hurtbox는 target_factions를 검사하고 성공한 피격에 hit_effects를 적용하며, 권위 Player/Enemy는 context impulse를 기존 `CharacterBody2D.velocity`에 더한다.
+
+Player HURT는 locomotion이 아니라 scene-local Combat Action이다. `PlayerHurtComponent`가 0.25초 timer, 공격 interruption, 독립 control lock을 소유한다. `DamageContext.causes_hurt`가 직접 hit reaction 여부를 정하며 knockback과는 독립이다. periodic/starvation은 HURT를 만들지 않고 lethal damage는 기존 death lifecycle로 바로 간다. HURT는 저장·복제하거나 별도 RPC로 보내지 않으며, client는 권위 movement 결과만 기존 snapshot으로 관찰한다.
 
 ## 이동과 등반
 

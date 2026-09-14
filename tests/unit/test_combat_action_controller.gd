@@ -10,6 +10,7 @@ func run(t: Node) -> void:
 	_test_signal_policy(t)
 	_test_reset(t)
 	_test_is_attacking_membership(t)
+	_test_hurt_transitions(t)
 	await _test_actor_integration(t)
 	await _test_world_transition_and_respawn(t)
 
@@ -96,12 +97,15 @@ func _test_reset(t: Node) -> void:
 	action.reset()
 	t.assert_true(action.is_idle(), "reset returns to idle from any state")
 	t.assert_equal(events.size(), 3, "reset emits one change when it actually moved the state")
+	action.enter_hurt()
+	action.reset()
+	t.assert_true(action.is_idle(), "reset also clears HURT")
+	t.assert_equal(events.size(), 5, "entering and resetting HURT each emit one real change")
 	action.state_changed.disconnect(callback)
 	action.free()
 
 func _test_is_attacking_membership(t: Node) -> void:
-	# Explicit membership, not "anything but IDLE": DODGE/HURT/DEAD join this enum
-	# later and must not be reported as attacking.
+	# Explicit membership, not "anything but IDLE": HURT is not an attack.
 	var action := _controller()
 	t.assert_true(not action.is_attacking(), "IDLE is not attacking")
 	action.begin_attack()
@@ -112,8 +116,47 @@ func _test_is_attacking_membership(t: Node) -> void:
 	t.assert_true(action.is_attacking(), "ATTACK_RECOVERY counts as attacking")
 	action.finish_attack()
 	t.assert_true(not action.is_attacking() and action.is_idle(), "the cycle ends not attacking")
+	action.enter_hurt()
+	t.assert_true(action.is_hurt() and not action.is_attacking() and not action.is_idle(), "HURT is explicit and does not count as attacking")
+	action.finish_hurt()
 	t.assert_true(not action.has_method("enter_recovery_from_immediate_attack"), "the stage-3 immediate-attack bridge is gone")
 	action.free()
+
+func _test_hurt_transitions(t: Node) -> void:
+	for source: int in [
+		CombatActionController.State.IDLE,
+		CombatActionController.State.ATTACK_STARTUP,
+		CombatActionController.State.ATTACK_ACTIVE,
+		CombatActionController.State.ATTACK_RECOVERY,
+	]:
+		var action := _controller()
+		_advance_to(action, source as CombatActionController.State)
+		t.assert_true(action.enter_hurt(), "%s -> HURT is allowed" % CombatActionController.State.keys()[source])
+		t.assert_true(action.is_hurt() and not action.is_attacking(), "HURT helper and attack membership agree")
+		t.assert_true(action.finish_hurt(), "HURT -> IDLE is allowed")
+		t.assert_true(action.is_idle(), "finishing HURT returns to IDLE")
+		action.free()
+
+	var hurt := _controller()
+	var events: Array[Array] = []
+	hurt.state_changed.connect(func(previous: int, current: int) -> void: events.append([previous, current]))
+	t.assert_true(hurt.enter_hurt(), "the rejection fixture enters HURT")
+	t.assert_true(not hurt.begin_attack(), "HURT cannot transition directly to ATTACK_STARTUP")
+	t.assert_true(not hurt.enter_attack_active(), "HURT cannot transition to ATTACK_ACTIVE")
+	t.assert_true(not hurt.enter_attack_recovery(), "HURT cannot transition to ATTACK_RECOVERY")
+	t.assert_true(not hurt.enter_hurt(), "HURT -> HURT is not a transition")
+	t.assert_equal(events.size(), 1, "rejected HURT transitions emit no additional signal")
+	t.assert_true(hurt.finish_hurt(), "the fixture leaves HURT through IDLE")
+	t.assert_equal(events.size(), 2, "HURT completion emits exactly one additional signal")
+	hurt.free()
+
+func _advance_to(action: CombatActionController, state: CombatActionController.State) -> void:
+	if state >= CombatActionController.State.ATTACK_STARTUP:
+		action.begin_attack()
+	if state >= CombatActionController.State.ATTACK_ACTIVE:
+		action.enter_attack_active()
+	if state >= CombatActionController.State.ATTACK_RECOVERY:
+		action.enter_attack_recovery()
 
 func _spawn_settlement_player(t: Node, layer: Node) -> PlayerActor:
 	SceneRouter.register_world_layer(layer)

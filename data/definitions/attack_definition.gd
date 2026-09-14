@@ -7,8 +7,10 @@ extends Resource
 ## standalone content with its own id registered in ContentRegistry, it only
 ## exists as a sub-resource of a weapon.
 ##
-## Nothing here knows about the network. Values are authored as static content
-## and snapshotted by the authoritative combat path when an attack starts.
+## Nothing here knows about the network. AttackDefinition/WeaponDefinition are
+## immutable authored Resources held by reference during an attack; they are not
+## deep-copied per use. Runtime combat values such as damage, resolved knockback,
+## faction targets and effects are snapshotted when the attack starts.
 
 ## Wind-up before the attack commits. No hit can land during this phase.
 @export_range(0.01, 10.0, 0.01) var startup_seconds: float = 0.10

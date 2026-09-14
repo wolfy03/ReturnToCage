@@ -51,8 +51,9 @@ B/C가 함께 Sewer roster를 구성하는 경우를 모두 확인하며, 각 �
 `test_multiplayer_world_runtime.py`는 동일한 독립 process 경계에서 Host presentation이
 Settlement인 동안 별도 Sewer server runtime을 실행하고, 2-player에서는 반대로 Host만
 Sewer에 들어가도 Settlement client가 유지되는 경우까지 검사한다. 실제 movement command와
-20 Hz snapshot, enemy AI/health/combat, loot claim/despawn, shared gather consumption, world
-clock, same-world roster를 검증한다. Sewer player의 Settlement command와 Host의 cross-world
+20 Hz snapshot, enemy AI/health/combat, 실제 enemy attack knockback의 서버 위치 변화와 원격
+presentation 방향 동기화, loot claim/despawn, shared gather consumption, world clock,
+same-world roster를 검증한다. Sewer player의 Settlement command와 Host의 cross-world
 attack/pickup은 실패해야 하며 B의 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
@@ -117,13 +118,21 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   runtime non-finite geometry 거절, Player/Enemy additive impulse와 zero/non-finite 안전성. 실제
   right/left melee가 Enemy HURT를 유지하면서 authored velocity와 위치 이동을 만드는지,
   Player damage가 velocity/위치에 반영되는지, zero knockback no-op, CLIMB 이탈 후 impulse,
-  공격 중 피격에도 STARTUP→ACTIVE→RECOVERY→IDLE timeline 유지, presentation actor no-op.
+  `causes_hurt=false` impulse가 공격 timeline과 독립인지, presentation actor no-op.
 - unit/test_combat_action_controller.gd: combat action 상태 머신의 초기 IDLE, 정상 전이
   (`IDLE → STARTUP → ACTIVE → RECOVERY → IDLE`)와 취소, 불법 전이 거절 및 거절 후 상태 유지,
-  실제 변경 시에만 발생하는 signal과 reset 정책. 실제 PlayerActor 통합으로 wiring,
+  IDLE/각 attack phase→HURT와 HURT→IDLE, HURT에서 attack phase/HURT 직접 전이 거절,
+  `is_hurt=true`/`is_attacking=false`, 실제 변경 시에만 발생하는 signal과 reset 정책. 실제 PlayerActor 통합으로 wiring,
   `IDLE → STARTUP → ACTIVE → RECOVERY → IDLE` 전체 phase 진행, 각 공격 phase에서 재공격 거절,
   별도 cooldown 없이 IDLE에서만 재공격 허용, 모든 실패 경로에서 IDLE 유지,
   월드 전환·사망·부활 후 IDLE을 검증한다.
+- unit/test_player_hurt.gd: 0.25초 HURT lifecycle/control lock과 re-hit timer refresh(signal 없음),
+  STARTUP/ACTIVE/RECOVERY 직접 interruption, phase별 stamina 소비·비환불, melee hitbox cleanup,
+  projectile commit 전 spawn 차단과 commit 후 projectile 생존, HURT 중 attack/network command·수평
+  입력·jump·climb·interaction·quick item 거절, gravity/knockback displacement 유지, zero-knockback
+  HURT와 non-reaction impulse의 독립성, periodic/starvation no-HURT, lethal/death/respawn reset,
+  IDLE lethal hit의 transient HURT 부재, HURT 종료 후 interaction/item 재허용, world transition의
+  scene-local reset과 locomotion enum 비오염을 검증한다.
 - unit/test_combat_runtime_replication.gd: `CombatRuntimeState.apply_values` 검증,
   `PlayerRuntimeSnapshot`/`PlayerCombatRuntimeSnapshot`의 payload 왕복과 누락·타입·음수·
   초과·NaN/INF 거절, sequence 최신/중복/역행 처리, 값이 변하지 않을 때의 패킷 억제,

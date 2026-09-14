@@ -12,7 +12,8 @@
 완료  4차  AttackDefinition + 실제 attack timeline
 완료  4차 안정화  ACTIVE window 단일 소유 + immediate sweep
 완료  5차  AttackDefinition geometry/range + Knockback 실제 적용
-다음  6차  Player HURT
+완료  6차  Player HURT / Hit-Stun
+다음  7차  Dodge + i-frame
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -65,7 +66,7 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 콤보 | 없음 | 공격은 단발. `sequence` 는 네트워크용 일련번호일 뿐 콤보 인덱스가 아님 |
 | 공격 모션/선후딜 | **완료(4차)** | `AttackDefinition` 의 startup/active/recovery. 판정은 ACTIVE 진입 시 |
 | 넉백 적용 | **완료(5차)** | 권위 Player/Enemy가 `DamageContext.knockback`을 velocity에 additive 적용 |
-| 피격 경직(플레이어) | 없음 | 적만 hurt 상태가 있음 |
+| 피격 경직(플레이어) | **완료(6차)** | scene-local HURT action + 0.25초 input lock |
 | 방향 공격(위/아래) | 없음 | 히트박스가 항상 수평 |
 | 무기별 패턴 | 2종(근접/투사체) | `AttackStrategy` 확장점은 이미 있음 |
 | 방패/패링 | 없음 | |
@@ -139,9 +140,9 @@ Movement / Locomotion State        Combat Action State
 ```
 
 `MovementComponent.Mode` 는 현재의 `GROUND / AIR / CLIMB` 를 유지한다. `ATTACK`, `DODGE`,
-`HURT`, `DEAD` 는 모두 Combat Action State 축에 속한다. 3차에서 그 축(`CombatActionController`)을
-도입하면서 `IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY` 네 상태만 구현했고,
-`DODGE` / `HURT` / `DEAD` 는 후속 단계다.
+`HURT`, `DEAD` 는 모두 Combat Action State 축에 속한다. 현재
+`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE / ATTACK_RECOVERY / HURT`를 구현했다.
+`DODGE`와 `DEAD` action은 후속 단계다.
 
 무적 프레임은 `HealthComponent.invulnerable_remaining` 을 그대로 재사용하지 않는 편이 안전하다.
 현재 이 값은 "피격 후 무적"이라 의미가 다르다. `receive_periodic_damage()` 가 접촉 무적을
@@ -182,8 +183,9 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 4차 | `AttackDefinition` + 실제 attack timeline (데이터로 뺀 선딜/유효/후딜) | 완료 |
 | 4차 안정화 | ACTIVE window 단일 소유 + immediate sweep | 완료 |
 | 5차 | AttackDefinition rectangle geometry/range + Knockback 실제 적용 | 완료 |
-| 6차 | HURT (플레이어 피격 경직) | **다음** |
-| 7차 이후 | Dodge/i-frame, Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
+| 6차 | HURT (플레이어 피격 경직·공격 interruption·control lock) | 완료 |
+| 7차 | Dodge + i-frame | **다음** |
+| 이후 | Combo·입력 버퍼·캔슬 윈도우, 적 패턴 개편, 히트스톱·카메라 표현 | 예정 |
 
 ### 완료된 1차·2차 요약
 
@@ -198,9 +200,11 @@ runtime mirror 를 읽게 했다(2차). 상세는 3-1 과 `docs/multiplayer.md` 
 
 ```
 IDLE            → ATTACK_STARTUP
-ATTACK_STARTUP  → ATTACK_ACTIVE | IDLE      (취소)
-ATTACK_ACTIVE   → ATTACK_RECOVERY | IDLE    (취소)
-ATTACK_RECOVERY → IDLE
+IDLE            → HURT
+ATTACK_STARTUP  → ATTACK_ACTIVE | IDLE | HURT
+ATTACK_ACTIVE   → ATTACK_RECOVERY | IDLE | HURT
+ATTACK_RECOVERY → IDLE | HURT
+HURT            → IDLE
 ```
 
 - 상태 저장·전이 검증·`state_changed` 시그널만 담당한다. 데미지·스태미나·무기·히트박스·
@@ -250,8 +254,8 @@ ATTACK_RECOVERY → IDLE
   action state 가 `IDLE` 인지다.
 - 네트워크는 그대로다. action state 를 복제하지 않으며 `NetworkProtocol.VERSION` 은 **13**
   이다. `attack_presented` 는 이제 "공격 시작" 표현 이벤트로 읽으면 된다.
-- 4차에서 건드리지 않았던 히트박스 geometry/range와 넉백 적용은 5차에 완료했다. 피격 경직,
-  공격 중 이동 제한, 적 공격 파이프라인은 여전히 후속 범위다.
+- 4차에서 건드리지 않았던 히트박스 geometry/range와 넉백 적용은 5차에 완료했고 Player
+  피격 경직은 6차에 완료했다. 적 공격 파이프라인은 여전히 후속 범위다.
 
 ### 5차 — Hitbox data + Knockback (완료)
 
@@ -276,6 +280,9 @@ AttackDefinition
   `knockback=(120,-40)`으로 기존 체감을 그대로 이관했다.
 - `CombatComponent.attack()`이 STARTUP 시작 시 authored knockback의 x만 facing으로 반전해
   `DamageContext`에 snapshot한다. melee와 projectile은 이 context를 그대로 공유한다.
+- `WeaponDefinition`/`AttackDefinition` 자체는 매 공격 deep-copy하지 않는다. static authored
+  Resource를 immutable reference로 유지하며 damage, resolved knockback, target factions,
+  hit effects처럼 runtime에 필요한 mutable 의미만 시작 시 context/pending field에 고정한다.
 - 성공한 damage는 기존 `HealthComponent.damaged(context)` 신호를 거쳐 권위 Player/Enemy의
   `CharacterBody2D.velocity += context.knockback`으로 이어진다. finite가 아닌 impulse는 runtime
   boundary에서도 거절한다. zero는 유효한 no-op이다.
@@ -290,11 +297,42 @@ AttackDefinition
 직접 호출하고 `(100,-30)`을 작성한다. Player가 이를 실제 impulse로 받지만, 적 공격을
 Hitbox/정적 데이터 파이프라인으로 옮기는 일은 후속 enemy pattern 단계다.
 
-### 6차 NEXT
+### 6차 — Player HURT / Hit-Stun (완료)
 
-다음 단계는 Player HURT다. 피격 경직, hit stun, damage cancel 정책을 설계하되 Dodge/i-frame,
-Combo/input buffer와 적 공격 pipeline 개편은 각각 후속 범위로 유지한다. 5차 완료 시점에는
-Player HURT action state, hurt duration, input lock, invulnerability 추가가 없다.
+`CombatActionController`에 scene-local `HURT`를 추가했다. 모든 공격 phase와 IDLE에서 HURT로
+직접 진입할 수 있고 HURT는 IDLE로만 끝난다. HURT→ATTACK 직접 전이와 HURT→HURT transition은
+거절한다. 재피격은 state signal 없이 timer만 refresh한다.
+
+```
+PlayerActor
+├─ MovementComponent       GROUND / AIR / CLIMB + additive impulse
+├─ CombatActionController  state/transition only
+├─ CombatComponent         attack timeline owner
+└─ PlayerHurtComponent     0.25초 HURT timer + attack interruption + control lock
+```
+
+- 직접 damage가 accept되면 return channel을 취소하고 knockback을 먼저 적용한다. 살아 있고
+  `DamageContext.causes_hurt`가 true일 때만 HURT를 시작한다. zero knockback도 HURT를 만들며,
+  non-zero knockback + `causes_hurt=false`도 가능하다.
+- 공격 중 피격은 `interrupt_attack_for_hurt()`로 pending/context/phase/hitbox만 정리한 뒤
+  현재 attack phase→HURT로 한 번에 전환한다. STARTUP은 stamina를 쓰지 않았으므로 그대로이고,
+  ACTIVE/RECOVERY는 이미 쓴 stamina를 환불하지 않는다. 이미 spawn된 projectile은 유지된다.
+- HURT 동안 독립적인 `controls_locked`가 수평 가속, jump, climb 입력/새 진입을 차단한다.
+  gravity, collision, move_and_slide와 기존 knockback velocity는 계속 작동한다. interaction,
+  quick item, loot pickup, gather도 권위 actor의 HURT를 확인해 거절한다.
+- periodic effect와 starvation은 semantic `causes_hurt=false`를 명시해 HP는 감소하지만 HURT나
+  attack interruption을 만들지 않는다. damage type 문자열은 reaction 정책에 사용하지 않는다.
+- lethal damaged signal에서는 HURT를 시작하지 않는다. death는 hurt reset 후 attack/lifecycle을
+  정리하며 respawn/world transition으로 만들어진 새 actor는 IDLE/unlocked다.
+- HURT는 무적이 아니다. 기존 contact invulnerability를 변경하지 않았고 Dodge i-frame도 아직
+  없다. scene-local timer/state/controls/velocity는 Save v4에 저장하거나 network payload로
+  복제하지 않는다. Protocol v13과 기존 transform/runtime replication을 유지한다.
+
+### 7차 NEXT
+
+다음 단계는 Dodge + i-frame이다. 로컬 presentation latency 정책을 함께 검토하되 HURT와 기존
+contact invulnerability를 Dodge 무적과 합치지 않는다. Combo/input buffer/cancel window와 적
+pattern 재구성은 계속 후속 범위다.
 
 ## 5. 개편 중 깨지기 쉬운 것
 

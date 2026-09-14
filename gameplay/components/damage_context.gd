@@ -9,6 +9,9 @@ var damage_type: StringName
 var source: Node
 var source_faction: StringName
 var knockback: Vector2
+## Semantic hit-reaction policy, independent from physical knockback. Direct
+## attacks default to hit-stun; periodic/environment ticks opt out explicitly.
+var causes_hurt: bool = true
 
 func _init(p_amount: float = 0.0, p_type: StringName = &"physical", p_source: Node = null, p_faction: StringName = &"neutral", p_knockback: Vector2 = Vector2.ZERO) -> void:
 	amount = p_amount

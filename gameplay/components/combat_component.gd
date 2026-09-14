@@ -24,8 +24,10 @@ var strategies: Dictionary[int, AttackStrategy] = {WeaponDefinition.AttackMode.M
 var stats: StatBlock
 var stamina_regen_multiplier: float = 1.0
 
-# One in-flight attack. Captured when the wind-up starts so that equipment or
-# stat changes during startup cannot redefine an attack that is already running.
+# One in-flight attack. WeaponDefinition and AttackDefinition are immutable
+# authored Resources held by reference. Runtime values whose meaning must not
+# change mid-attack (damage, resolved knockback, factions and effects) are
+# snapshotted in DamageContext when the wind-up starts.
 var _pending_weapon: WeaponDefinition
 var _pending_attack: AttackDefinition
 var _pending_context: DamageContext
@@ -124,6 +126,14 @@ func abort_attack() -> void:
 		action.reset()
 	_clear_pending()
 
+## Clears an in-flight attack before a direct ATTACK_* -> HURT transition.
+## Unlike abort_attack(), this deliberately leaves the action state untouched so
+## observers never see a transient ATTACK_* -> IDLE -> HURT sequence.
+func interrupt_attack_for_hurt() -> void:
+	if hitbox != null:
+		hitbox.deactivate()
+	_clear_pending()
+
 func _clear_pending() -> void:
 	_pending_weapon = null
 	_pending_attack = null
@@ -134,7 +144,7 @@ func _clear_pending() -> void:
 ## Runs the attack timeline. Only the authoritative simulation reaches this: a
 ## presentation actor has this component's processing disabled.
 func _advance_attack(delta: float) -> void:
-	if action == null or action.is_idle() or delta <= 0.0:
+	if action == null or not action.is_attacking() or delta <= 0.0:
 		return
 	var remaining_delta := delta
 	var steps := 0

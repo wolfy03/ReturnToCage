@@ -61,6 +61,10 @@ func run(t: Node) -> void:
 	loot.global_position = player.global_position
 	var personal := GameSession.adventure.active_session.get_player_adventure(player.peer_id)
 	var before_count := personal.unsecured_loot.count(loot.stack.item_id)
+	player.hurt.begin_hurt()
+	var hurt_pickup := loot_manager.server_try_pickup(player.peer_id, loot_id)
+	t.assert_true(not hurt_pickup.success, "authoritative loot pickup rejects a HURT player")
+	player.hurt.physics_tick(player.hurt.duration_seconds + 0.01)
 	var picked := loot_manager.server_try_pickup(player.peer_id, loot_id)
 	var raced := loot_manager.server_try_pickup(player.peer_id, loot_id)
 	t.assert_true(picked.success and not raced.success, "loot claim transaction allows exactly one winner")

@@ -29,7 +29,7 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `10`, verifies that its roster entry matches its local persistent profile, receives session metadata plus its owner-private state, then enters the settlement.
+3. Select **Join**. The client validates protocol version `13`, verifies that its roster entry matches its local persistent profile, receives session metadata plus its owner-private state, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
@@ -74,6 +74,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Validated health/life runtime presentation snapshots (separate from save data)
 - Intent-only player attack requests with sequence replay protection
 - Server-only enemy AI, hit resolution, additive `DamageContext.knockback`, health, and death resolution; movement snapshots carry the resulting transform/velocity with no knockback RPC
+- Server-only Player HURT/hit-stun and attack interruption. HURT is not replicated; authoritative movement snapshots expose only its resulting motion, and server command endpoints reject attacks, quick-item use, loot pickup, and gather while HURT
 - Definition-driven enemy actors (`enemy_id -> EnemyDefinition.actor_scene -> EnemyAgent`) on server and clients
 - Stable world-local network entity IDs for enemies and loot
 - Enemy spawn/despawn plus 20 Hz interpolated transform snapshots and reliable health/state events
@@ -152,7 +153,7 @@ Protocol v12 completes the independent runtime boundary. `ServerWorldRoot` is pe
 
 Authoritative actors and presentation mirrors are distinct roles of the existing actor scenes. Runtime actors simulate and presentation actors consume snapshots. Stable `NetworkManager` RPC brokers carry `world_id` and the receiving peer's current world revision for player transform/runtime/attack presentation, enemy spawn/state/despawn, loot spawn/despawn, respawn, and gather consumption. Recipients are selected from ready peers in the same world, and a client rejects packets whose world or revision no longer matches its local assignment. Owner-private item, equipment, quest, and v10 private-state snapshots remain owner-only and are not world filtered; shared settlement/progression mirrors retain their prior global contract.
 
-Enemy and loot managers own an explicit world ID. Entity registration is scoped by `(world_id, entity_id)`, so equal numeric IDs in different worlds do not alias. Combat uses actors in the isolated physics world; enemy targeting additionally requires an authoritative player actor in the same world root. Loot and gather requests derive the sender's current world on the server, validate the world, living runtime, distance, and availability, and broadcast results only to ready peers in that world. Settlement craft, facility, and storage-transfer commands retain server-side Settlement readiness checks.
+Enemy and loot managers own an explicit world ID. Entity registration is scoped by `(world_id, entity_id)`, so equal numeric IDs in different worlds do not alias. Combat uses actors in the isolated physics world; enemy targeting additionally requires an authoritative player actor in the same world root. Loot and gather requests derive the sender's current world on the server, validate the world, living runtime, authoritative Player HURT, distance, and availability, and broadcast results only to ready peers in that world. Settlement craft, facility, and storage-transfer commands retain server-side Settlement readiness checks.
 
 Adventure sessions are indexed by Adventure world and tick independently of the host camera. An individual return removes only that player's authoritative and presentation actor; the shared runtime and the other participants' adventure/loot state remain. Adventure disconnect retains canonical `PlayerState`, forfeits unsecured participation, removes runtime mappings, and resets the reconnect assignment to Settlement.
 
@@ -197,6 +198,25 @@ combat 스냅샷을 자기 자신에게 emit 하지 않는다. 클라이언트�
 `GameSession.get_player_stamina()` / `get_player_max_stamina()` 로 런타임 미러를 읽고,
 `player_combat_runtime_changed` 시그널로 갱신된다. 스태미나는 여전히 transient 이며
 Save v4 에 포함되지 않는다.
+
+## Authoritative Player HURT (Stage 6, Protocol remains v13)
+
+Player HURT는 권위 `PlayerActor` 안의 scene-local combat action이다. 서버의 accepted damage가
+`DamageContext.causes_hurt=true`이고 non-lethal일 때만 `PlayerHurtComponent`가 attack pending
+state/hitbox를 정리하고 0.25초 timer/control lock을 시작한다. knockback은 이 판단과 독립적으로
+권위 velocity에 먼저 더해진다. periodic/starvation은 `causes_hurt=false`라 attack이나 입력을
+중단하지 않는다.
+
+HURT state와 remaining time은 복제하지 않는다. 새 RPC, snapshot field, payload 변경이 없어서
+`NetworkProtocol.VERSION = 13`을 유지한다. 원격 presentation actor는 기존 20 Hz transform/
+velocity snapshot만 받아 서버 knockback 이동을 보간한다. world-runtime process E2E는 실제
+`EnemyAgent.perform_attack()`으로 서버 플레이어를 피격시키고, 서버와 원격 client presentation
+모두 같은 +x 방향으로 이동하는지 tolerance를 두고 확인한다.
+
+클라이언트는 HURT를 모르므로 공격 intent를 계속 보낼 수 있지만 서버 `CombatComponent.attack()`이
+HURT action에서 거절하고 sequence는 기존 정책대로 소비한다. 같은 우회를 막기 위해 consumable
+use, loot pickup, gather의 서버 명령 종착점도 송신자가 아닌 권위 PlayerActor의 HURT를 검사한다.
+HURT animation/event, client prediction, CombatAction replication은 후속 범위다.
 
 ## Not synchronized yet
 

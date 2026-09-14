@@ -11,6 +11,7 @@ signal attack_presented(sequence: int, facing: float)
 @onready var survival: SurvivalComponent = %Survival
 @onready var combat_action: CombatActionController = %CombatAction
 @onready var combat: CombatComponent = %Combat
+@onready var hurt: PlayerHurtComponent = %Hurt
 @onready var interaction: InteractionComponent = %Interaction
 @onready var effects: EffectController = %Effects
 @onready var network: NetworkPlayerComponent = %Network
@@ -61,6 +62,7 @@ func _ready() -> void:
 	movement.configure(self, input, _bound_state.stats)
 	var runtime := GameSession.get_player_runtime(peer_id)
 	combat.configure(self, _bound_state.stats, runtime.combat if runtime != null else null, combat_action)
+	hurt.configure(self, combat_action, combat, movement)
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
 	network_combat.configure(self, input)
@@ -108,7 +110,8 @@ func _physics_process(delta: float) -> void:
 	if not is_simulation_authority():
 		network.presentation_tick(delta)
 		return
-	if absf(input.move_axis) > 0.01:
+	hurt.physics_tick(delta)
+	if not movement.controls_locked and absf(input.move_axis) > 0.01:
 		facing = signf(input.move_axis)
 	movement.physics_tick(delta)
 	network.server_snapshot_tick(delta)
@@ -123,7 +126,7 @@ func _physics_process(delta: float) -> void:
 				_complete_return_channel()
 
 func _on_interact() -> void:
-	if _death_handled:
+	if _death_handled or hurt.is_active():
 		return
 	if not is_simulation_authority():
 		var loot := interaction.current_target as LootActor
@@ -141,7 +144,7 @@ func _on_target_changed(target: InteractionTarget) -> void:
 	_refresh_interaction_prompt()
 
 func _on_quick_item() -> void:
-	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled:
+	if movement.mode == MovementComponent.Mode.CLIMB or _death_handled or hurt.is_active():
 		return
 	if not GameSession.is_peer_in_adventure(peer_id):
 		var item_service := get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
@@ -183,7 +186,7 @@ func is_death_handled() -> bool:
 	return _death_handled
 
 func consume_item(item_id: StringName) -> bool:
-	if _death_handled or not is_simulation_authority():
+	if _death_handled or hurt.is_active() or not is_simulation_authority():
 		return false
 	return ItemUseService.use_item(_bound_state.inventory, survival, effects, item_id, Callable(ContentRegistry, "get_item"))
 
@@ -192,12 +195,15 @@ func _on_survival_changed(hunger: float, thirst: float, hunger_stage: int, thirs
 		return
 	combat.stamina_regen_multiplier = survival.config.critical_stamina_multiplier if hunger_stage >= 2 or thirst_stage >= 2 else 1.0
 	if (hunger_stage == 3 or thirst_stage == 3) and health.current_health > 0.0:
-		health.receive_damage(DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment"))
+		var context := DamageContext.new(survival.config.starvation_damage_per_second * get_process_delta_time(), &"starvation", self, &"environment")
+		context.causes_hurt = false
+		health.receive_damage(context)
 
 func _on_died(_context: DamageContext) -> void:
 	if _death_handled or not is_simulation_authority() or not GameSession.is_current_life(peer_id, _life_id):
 		return
 	_death_handled = true
+	hurt.reset()
 	# A dead actor must not linger mid-attack; this also drops the pending weapon
 	# and damage context. The action axis is scene-local, so this is the only
 	# cleanup point it needs.
@@ -244,6 +250,9 @@ func _on_damaged(context: DamageContext) -> void:
 	var valid_knockback := is_finite(context.knockback.x) and is_finite(context.knockback.y)
 	movement.on_damage(valid_knockback and context.knockback != Vector2.ZERO)
 	movement.apply_external_impulse(context.knockback)
+	if health.current_health <= 0.0 or not context.causes_hurt:
+		return
+	hurt.begin_hurt()
 
 func _refresh_interaction_prompt() -> void:
 	var target: InteractionTarget = interaction.current_target

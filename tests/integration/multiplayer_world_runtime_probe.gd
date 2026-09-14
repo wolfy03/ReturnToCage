@@ -19,6 +19,7 @@ var _sewer_loot_events := 0
 ## would race with regeneration, so the replicated signal records the minimum.
 var _min_mirrored_stamina := INF
 var _mirrored_max_stamina := 0.0
+var _knockback_watch_origin_x := 0.0
 
 func _ready() -> void:
 	_parse_arguments()
@@ -146,6 +147,37 @@ func _run_host_scenario() -> void:
 	if b_actor == null or absf(b_actor.position.x - b_runtime_origin.x) <= 12.0 \
 			or absf(reported_x - b_actor.position.x) > 30.0:
 		_fail("authoritative B movement did not execute")
+		return
+
+	# Exercise the production enemy attack on the authoritative runtime, then
+	# observe its resulting movement through the existing transform snapshots on
+	# B's presentation actor. No HURT/knockback test RPC or payload is introduced.
+	await get_tree().create_timer(0.25).timeout
+	_command.rpc_id(b_peer, "PREPARE_KNOCKBACK_WATCH", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("PREPARE_KNOCKBACK_WATCH", b_peer)):
+		_fail("client did not prepare the knockback presentation watch")
+		return
+	enemy.set_physics_process(false)
+	enemy.global_position = b_actor.global_position - Vector2(20.0, 0.0)
+	enemy.player = b_actor
+	b_actor.health.invulnerable_remaining = 0.0
+	var knockback_health_before := b_actor.health.current_health
+	var knockback_server_origin_x := b_actor.position.x
+	enemy.perform_attack()
+	if b_actor.health.current_health >= knockback_health_before or not b_actor.hurt.is_active() \
+			or b_actor.velocity.x <= 0.0:
+		_fail("production enemy attack did not apply authoritative HURT/knockback")
+		return
+	if not await _wait_until(func() -> bool: return b_actor.position.x > knockback_server_origin_x + 3.0, 2.0):
+		_fail("authoritative knockback did not displace the server player")
+		return
+	_command.rpc_id(b_peer, "REPORT_KNOCKBACK_WATCH", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_KNOCKBACK_WATCH", b_peer), 3.0):
+		_fail("client did not observe replicated knockback movement")
+		return
+	var knockback_report := _confirmation("REPORT_KNOCKBACK_WATCH", b_peer)
+	if float(knockback_report.get("x", -INF)) <= float(knockback_report.get("origin_x", INF)) + 3.0:
+		_fail("client presentation did not move in the authoritative knockback direction")
 		return
 	if _sewer_enemy_events != 0 or _sewer_loot_events != 0:
 		_fail("Sewer entity events leaked into host Settlement presentation")
@@ -374,6 +406,24 @@ func _command(command: String, value: int) -> void:
 				_fail("same-world remote movement mirror did not advance")
 				return
 			_confirm.rpc_id(1, command, {"x": _actor(value).position.x})
+		"PREPARE_KNOCKBACK_WATCH":
+			var actor := _local_actor()
+			if actor == null:
+				_fail("local knockback presentation actor is unavailable")
+				return
+			_knockback_watch_origin_x = actor.position.x
+			_confirm.rpc_id(1, command, {"origin_x": _knockback_watch_origin_x})
+		"REPORT_KNOCKBACK_WATCH":
+			if not await _wait_until(func() -> bool:
+				var actor := _local_actor()
+				return actor != null and actor.position.x > _knockback_watch_origin_x + 3.0
+			, 3.0):
+				_fail("local presentation did not receive positive-x knockback movement")
+				return
+			_confirm.rpc_id(1, command, {
+				"origin_x": _knockback_watch_origin_x,
+				"x": _local_actor().position.x,
+			})
 		"ATTACK":
 			NetworkManager.submit_player_attack(NetworkManager.local_peer_id(), value)
 			_confirm.rpc_id(1, command, {"sequence": value})

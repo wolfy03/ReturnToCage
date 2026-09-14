@@ -10,8 +10,8 @@ extends Node
 ## This controller only stores the current state, validates transitions and
 ## reports changes. It calculates no damage or stamina, looks up no weapon,
 ## drives no hitbox or animation, and knows nothing about the network. It does
-## not own timing either: [CombatComponent] drives the phase durations from the
-## weapon's [AttackDefinition] and calls the transitions below.
+## not own timing either: [CombatComponent] drives attack phase durations and
+## [PlayerHurtComponent] drives hit-stun duration.
 ##
 ## Scene-local by design: an attack has no reason to survive a world transition,
 ## so a new actor simply starts at IDLE. Values that must outlive the scene
@@ -24,6 +24,7 @@ enum State {
 	ATTACK_STARTUP,
 	ATTACK_ACTIVE,
 	ATTACK_RECOVERY,
+	HURT,
 }
 
 var _state: State = State.IDLE
@@ -34,31 +35,37 @@ func current_state() -> State:
 func is_idle() -> bool:
 	return _state == State.IDLE
 
-## Explicit membership rather than "not IDLE", so adding DODGE/HURT/DEAD later
-## cannot silently change what this means.
+## Explicit membership rather than "not IDLE", so HURT and future actions do
+## not silently count as attacking.
 func is_attacking() -> bool:
 	return _state == State.ATTACK_STARTUP \
 		or _state == State.ATTACK_ACTIVE \
 		or _state == State.ATTACK_RECOVERY
 
+func is_hurt() -> bool:
+	return _state == State.HURT
+
 ## The gameplay transition graph. Skipping a phase is rejected, so a caller
 ## cannot jump straight from IDLE into an active hitbox phase.
 ##
 ## [codeblock]
-## IDLE            -> ATTACK_STARTUP
-## ATTACK_STARTUP  -> ATTACK_ACTIVE | IDLE      (cancel)
-## ATTACK_ACTIVE   -> ATTACK_RECOVERY | IDLE    (cancel)
-## ATTACK_RECOVERY -> IDLE
+## IDLE            -> ATTACK_STARTUP | HURT
+## ATTACK_STARTUP  -> ATTACK_ACTIVE | IDLE | HURT
+## ATTACK_ACTIVE   -> ATTACK_RECOVERY | IDLE | HURT
+## ATTACK_RECOVERY -> IDLE | HURT
+## HURT            -> IDLE
 ## [/codeblock]
 static func is_allowed_transition(from: State, to: State) -> bool:
 	match from:
 		State.IDLE:
-			return to == State.ATTACK_STARTUP
+			return to == State.ATTACK_STARTUP or to == State.HURT
 		State.ATTACK_STARTUP:
-			return to == State.ATTACK_ACTIVE or to == State.IDLE
+			return to == State.ATTACK_ACTIVE or to == State.IDLE or to == State.HURT
 		State.ATTACK_ACTIVE:
-			return to == State.ATTACK_RECOVERY or to == State.IDLE
+			return to == State.ATTACK_RECOVERY or to == State.IDLE or to == State.HURT
 		State.ATTACK_RECOVERY:
+			return to == State.IDLE or to == State.HURT
+		State.HURT:
 			return to == State.IDLE
 	return false
 
@@ -84,6 +91,12 @@ func enter_attack_recovery() -> bool:
 	return transition_to(State.ATTACK_RECOVERY)
 
 func finish_attack() -> bool:
+	return transition_to(State.IDLE)
+
+func enter_hurt() -> bool:
+	return transition_to(State.HURT)
+
+func finish_hurt() -> bool:
 	return transition_to(State.IDLE)
 
 ## Aborts an attack that has not reached recovery yet.

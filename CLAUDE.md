@@ -44,7 +44,7 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   **Combat Action State**(`CombatActionController`, `%CombatAction`)가 관리한다. 두 축을
   한 enum 으로 합치면 `AIR + ATTACK`, `CLIMB + HURT`, `GROUND + DODGE` 같은 조합이
   상태 폭발로 이어진다. 현재 구현된 action state 는 `IDLE / ATTACK_STARTUP /
-  ATTACK_ACTIVE / ATTACK_RECOVERY` 이며 `DODGE`/`HURT`/`DEAD` 는 후속 단계다.
+  ATTACK_ACTIVE / ATTACK_RECOVERY / HURT` 이며 `DODGE`/`DEAD` 는 후속 단계다.
 - **공격 타이밍 상수를 코드에 두지 않는다.** 선딜·유효·후딜은 전부
   `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다. 멜리 히트박스가
   열려 있는 시간도 `active_seconds` 하나가 결정한다. 별도 쿨다운을 부활시키지 않는다 —
@@ -66,7 +66,12 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 - **`DamageContext.knockback` 은 권위 물리 impulse 다.** 호스트의 damaged 경로에서 기존
   `CharacterBody2D.velocity` 에 더한다. Player는 `MovementComponent.apply_external_impulse()`,
   Enemy는 같은 finite 검증의 actor helper를 쓴다. 별도 RPC/저장 필드/locomotion mode를 만들지
-  않으며, 넉백만으로 combat action timeline을 취소하지 않는다.
+  않는다. 넉백 자체는 HURT 여부를 결정하지 않는다.
+- **Player HURT 는 scene-local Combat Action 이다.** `PlayerHurtComponent` 하나가 0.25초
+  hit-stun timer와 독립적인 `MovementComponent.controls_locked`를 소유한다. 직접 피해의
+  `DamageContext.causes_hurt`가 true면 공격을 IDLE 중간 전이 없이 HURT로 interrupt한다.
+  knockback은 별도로 먼저 적용되며 zero knockback도 HURT를 만들 수 있다. periodic/starvation은
+  `causes_hurt = false`다. HURT는 기존 contact invulnerability도, 저장/복제 상태도 아니다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.

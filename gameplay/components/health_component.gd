@@ -44,6 +44,7 @@ func receive_periodic_damage(amount: float) -> bool:
 	if god_mode or current_health <= 0.0 or amount <= 0.0:
 		return false
 	var context := DamageContext.new(amount, &"periodic", get_parent(), &"effect")
+	context.causes_hurt = false
 	current_health = maxf(0.0, current_health - amount)
 	damaged.emit(context)
 	health_changed.emit(current_health, max_health)

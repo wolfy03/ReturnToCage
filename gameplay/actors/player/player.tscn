@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource path="res://gameplay/actors/player/player.gd" type="Script" id="1"]
 [ext_resource path="res://gameplay/components/player_input_component.gd" type="Script" id="2"]
@@ -13,6 +13,7 @@
 [ext_resource path="res://gameplay/components/network_player_component.gd" type="Script" id="11"]
 [ext_resource path="res://gameplay/components/network_combat_component.gd" type="Script" id="12"]
 [ext_resource path="res://gameplay/components/combat_action_controller.gd" type="Script" id="13"]
+[ext_resource path="res://gameplay/components/player_hurt_component.gd" type="Script" id="14"]
 
 [sub_resource type="CapsuleShape2D" id="Capsule"]
 radius = 14.0
@@ -72,6 +73,10 @@ script = ExtResource("10")
 [node name="CombatAction" type="Node" parent="."]
 unique_name_in_owner = true
 script = ExtResource("13")
+
+[node name="Hurt" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("14")
 
 [node name="Combat" type="Node" parent="."]
 unique_name_in_owner = true

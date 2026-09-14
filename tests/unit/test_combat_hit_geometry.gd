@@ -103,30 +103,34 @@ func _test_authoritative_actor_knockback(t: Node) -> void:
 	left_enemy.queue_free()
 	await t.get_tree().process_frame
 
-	# Damage and impulse are independent from the action axis. No HURT state or
-	# damage-driven attack cancellation exists in this stage.
+	# Knockback and HURT are independent: a non-reaction impulse preserves the
+	# running attack while still moving the player.
 	actor.velocity = Vector2.ZERO
 	actor.health.invulnerable_remaining = 0.0
 	actor.facing = 1.0
 	t.assert_true(actor.combat.attack(actor.facing), "player attack starts before incoming knockback")
 	var player_health_before := actor.health.current_health
-	t.assert_true(actor.health.receive_damage(DamageContext.new(1.0, &"test", actor, &"hostile", Vector2(100.0, -30.0))), "player accepts non-zero knockback damage")
+	var impulse_only := DamageContext.new(1.0, &"test", actor, &"hostile", Vector2(100.0, -30.0))
+	impulse_only.causes_hurt = false
+	t.assert_true(actor.health.receive_damage(impulse_only), "player accepts non-reaction knockback damage")
 	t.assert_equal(actor.velocity, Vector2(100.0, -30.0), "player receives the exact additive DamageContext impulse")
 	t.assert_true(actor.health.current_health < player_health_before, "player knockback damage still reduces HP")
-	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "incoming knockback does not cancel attack startup")
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "causes_hurt=false keeps attack startup independent from knockback")
 	var player_before := actor.global_position
 	actor.input.move_axis = 0.0
 	actor.input.vertical_axis = 0.0
 	actor.movement.physics_tick(0.016)
 	t.assert_true(actor.global_position.x > player_before.x and actor.global_position.y < player_before.y, "player knockback produces actual displacement")
 	actor.combat._process(attack.total_seconds())
-	t.assert_true(actor.combat_action.is_idle(), "attack timeline completes normally after knockback")
+	t.assert_true(actor.combat_action.is_idle(), "attack timeline completes normally after non-reaction knockback")
 
 	actor.health.invulnerable_remaining = 0.0
 	actor.velocity = Vector2(12.0, -7.0)
 	var zero_velocity_before := actor.velocity
 	var zero_health_before := actor.health.current_health
-	t.assert_true(actor.health.receive_damage(DamageContext.new(1.0, &"test", actor, &"hostile", Vector2.ZERO)), "zero-knockback damage is accepted")
+	var zero_without_reaction := DamageContext.new(1.0, &"test", actor, &"hostile", Vector2.ZERO)
+	zero_without_reaction.causes_hurt = false
+	t.assert_true(actor.health.receive_damage(zero_without_reaction), "zero-knockback damage is accepted")
 	t.assert_true(actor.health.current_health < zero_health_before, "zero-knockback damage reduces HP")
 	t.assert_equal(actor.velocity, zero_velocity_before, "zero-knockback damage does not change velocity")
 

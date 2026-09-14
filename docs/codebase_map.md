@@ -147,7 +147,7 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
 
 `PlayerActor`(CharacterBody2D) 자식:
 `%Input` `%Movement` `%Network` `%NetworkCombat` `%Health` `%Survival` `%Effects`
-`%CombatAction` `%Combat` `Hitbox` `Hurtbox` `%Interaction` `Camera2D`.
+`%CombatAction` `%Combat` `%Hurt` `Hitbox` `Hurtbox` `%Interaction` `Camera2D`.
 
 두 상태 축은 분리돼 있다.
 
@@ -155,9 +155,10 @@ RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 
 PlayerActor
 ├─ MovementComponent      locomotion : GROUND / AIR / CLIMB
 ├─ CombatActionController combat action : IDLE / ATTACK_STARTUP /
-│                                         ATTACK_ACTIVE / ATTACK_RECOVERY
-└─ CombatComponent        pending attack · phase timer · 전략 실행 · 스태미나 commit
-     └─ CombatRuntimeState 참조 (stamina / max_stamina)
+│                                         ATTACK_ACTIVE / ATTACK_RECOVERY / HURT
+├─ CombatComponent        pending attack · phase timer · 전략 실행 · 스태미나 commit
+│    └─ CombatRuntimeState 참조 (stamina / max_stamina)
+└─ PlayerHurtComponent    HURT timer · 공격 interruption · control lock
 
 WeaponDefinition
 └─ AttackDefinition (embedded sub-resource, ContentDefinition 아님)
@@ -186,6 +187,7 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
 | ATTACK_STARTUP | inactive |
 | ATTACK_ACTIVE | **active** |
 | ATTACK_RECOVERY | inactive |
+| HURT | inactive |
 | `abort_attack()` / 사망 | inactive (즉시) |
 
 권위가 아닌(= 원격 표현용) 액터는 `_ready()` 에서 Health/Survival/Combat/Effects 의
@@ -206,7 +208,7 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
 - `HealthComponent` — `receive_damage(DamageContext)`, 접촉 무적 `invulnerability_seconds`
   (기본 0.35), `receive_periodic_damage()` 는 무적을 무시한다.
 - `CombatActionController` — combat action 축(`IDLE / ATTACK_STARTUP / ATTACK_ACTIVE /
-  ATTACK_RECOVERY`). 상태 저장·전이 검증·시그널만 담당하며 데미지·스태미나·무기·히트박스·
+  ATTACK_RECOVERY / HURT`). 상태 저장·전이 검증·시그널만 담당하며 timing·데미지·스태미나·무기·히트박스·
   네트워크를 모른다. scene-local 이라 월드 전환 시 새 액터는 `IDLE` 로 시작한다.
   locomotion(`MovementComponent.Mode`)과 **독립된 축**이다.
 - `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending attack + phase timer),
@@ -220,9 +222,15 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
   `AttackDefinition.hitbox_size/hitbox_offset`으로 rectangle을 구성한다. 활성화 순간 실제
   CollisionShape2D와 같은 shape/transform으로 direct space query를 실행하며, 256 결과 상한은
   방어적 기술 한계일 뿐 gameplay target 수가 아니다. 중복 타격은 `_hit_targets`가 막는다.
+- `PlayerHurtComponent` — scene-local HURT timing owner. 유효한 직접 피해가 들어오면 공격의
+  pending data/hitbox를 정리한 뒤 현재 attack phase에서 HURT로 직접 전환한다. 0.25초 동안
+  별도 `controls_locked`를 유지하고 재피격은 signal 없이 timer만 refresh한다. 종료는 반드시
+  `HURT → IDLE`이며 death/reset과 새 world actor에는 상태가 남지 않는다.
 - 피해 성공 후 `HealthComponent.damaged(context)`를 받은 권위 Player/Enemy가
   `context.knockback`을 기존 velocity에 더한다. Player는 non-zero impulse일 때 CLIMB을 먼저
-  이탈하지만 HURT action state나 공격 취소는 아직 없다.
+  이탈한다. 이 물리 impulse와 `DamageContext.causes_hurt`의 hit reaction은 독립이다. HURT 중
+  입력 가속·점프·climb 조작·공격·상호작용·quick item은 막되 gravity/collision/기존 velocity는
+  계속 처리한다. periodic/starvation은 HP만 줄이고 HURT를 만들지 않는다.
 - `EffectController` — `PlayerState.effects` 모델의 어댑터. 시간은 모델이 소유.
 - `SurvivalComponent` — 허기/갈증. `GameSession.player.survival` 과 같은 객체를 공유.
 
@@ -265,7 +273,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 |---|---|
 | 아트 | 배경 텍스처만 존재. 캐릭터·적·시설·아이템 전부 Polygon2D 플레이스홀더. 애니메이션 0 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
-| 전투 | 스태미나(소유·복제·HUD), Combat Action State, 공격 타임라인, AttackDefinition rectangle geometry/range, 권위 넉백 impulse까지 완료. 플레이어 피격 경직, 회피, 콤보, 보스는 없다 (단계별 계획은 `combat_rework_prep.md`) |
+| 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption까지 완료. 회피/i-frame, 콤보, 보스는 없다 (단계별 계획은 `combat_rework_prep.md`) |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
 | 성장 | 레벨/경험치/스킬 트리 없음. 성장은 장비·시설 해금뿐 |
