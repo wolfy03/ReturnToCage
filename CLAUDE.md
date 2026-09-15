@@ -56,7 +56,10 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `WeaponDefinition.attack_combo` 가 그 순서를 소유한다. 한 번만 휘두르는 무기도
   1-step combo 로 authoring 한다 — `attack_definition` 같은 단일 필드를 되살려 source of
   truth 를 둘로 만들지 않는다. `AttackStrategy` 는 실행 중인 step 을 **인자로 받는다**
-  (무기에서 다시 조회하지 않는다).
+  (무기에서 다시 조회하지 않는다). 단 **attack mode 는 step 단위가 아니다**:
+  `attack_mode` 와 `attack_scene` 은 `WeaponDefinition` 이 소유하고 strategy 도 무기에서
+  고르므로 한 combo 의 모든 step 은 같은 방식으로 실행된다. melee↔projectile 혼합 combo 는
+  그 필드를 step 으로 내려야 하며 현재 범위 밖이다.
 - **chain / dodge cancel 은 authored window 가 결정한다.** 각 step 의 `chain_window` /
   `dodge_cancel_window`(`CombatActionWindowDefinition`, half-open `[start, end)`)만이
   "지금 가능한가" 를 답한다. `CombatActionController` 는 시간을 모르므로 graph 상 허용은
@@ -67,6 +70,20 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `ATTACK_ACTIVE` 진입 시 1회씩 차감한다(combo 전체를 미리 예약하지 않는다).
 - **combo index 는 다음에서 0 으로 초기화된다.** 정상 종료, HURT, dodge cancel, death,
   reset, world transition, commit/strategy 실패.
+- **권위 전투 시간은 단 하나의 physics clock 이다.** attack timeline(phase·`attack_elapsed`),
+  cancel/chain window, input buffer 만료, HURT, dodge, movement 가 전부
+  `PlayerActor._physics_process` 에서 진행한다. `CombatComponent` 에는 `_process` 가 없고
+  `physics_tick(delta)` 만 있다 — render frame 이 공격 phase 나 window 시간을 소유하면
+  "후속타가 들어갔는가" 가 프레임레이트에 대한 질문이 된다. 스태미나 재생도 같은 tick 에 있다.
+  tick 순서는 고정이다:
+
+  ```
+  hurt → dodge → combat → input_buffer → movement
+  ```
+
+  `combat` 이 `input_buffer` 보다 **먼저** 와야 이번 프레임에 열린 window 를 이번 프레임에
+  쓴다. 순서를 뒤집으면 한 프레임 늦고 만료 경계에서 입력이 잘못 버려진다. 비권위 액터는
+  이 분기에 도달하지 않으므로 combat tick 이 돌지 않는다.
 - **Input Buffer 는 client prediction 이 아니라 authoritative scheduler 다.**
   `CombatInputBufferComponent` 는 **검증이 끝난** intent 가 *언제* 실행될지만 정한다.
   slot 은 **하나**이고 **latest input wins**(queue 로 확장하지 않는다). transient combat
@@ -74,6 +91,12 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   거절된 요청은 buffer 하지 않는다 — buffer 는 무효한 행동을 나중에 유효하게 만들지 않는다.
   만료된 intent 는 window 가 열려도 실행되지 않으며, 실행 가능해진 시점에 실패하면 **한 번만**
   시도하고 버린다. 이 컴포넌트는 `NetworkManager`·RPC·peer 를 전혀 모른다.
+- **새 direct hit 가 HURT 를 시작하거나 refresh 하면 그 이전 intent 는 무효화된다.**
+  최초 진입과 재피격이 같은 규칙을 쓴다 — 재피격 시 timer 만 refresh 하고 buffer 는 살려두면
+  피격 이전의 전투 의도가 두 번의 피격을 넘어 혼자 발동한다. 재피격은 여전히 `HURT → HURT`
+  state signal 을 만들지 않고, clear 이후에 들어온 새 입력은 정상적으로 buffer 된다.
+  `causes_hurt = false` 피해와 dodge i-frame 으로 회피된 공격은 HURT 를 만들지 않으므로
+  buffer 도 건드리지 않는다. clear 소유자는 `PlayerHurtComponent` 하나다.
 - **buffer 된 intent 는 presentation event 를 만들지 않는다.** 수신 시점이 아니라 실제
   action 이 시작되는 순간에만 `attack_presented` / `dodge_presented` 가 나간다(정확히 1회).
   즉시 실행과 buffer 실행이 같은 signal 경로(`attack_executed`/`dodge_executed`)를 쓴다.

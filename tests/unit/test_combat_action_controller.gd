@@ -211,21 +211,21 @@ func _test_actor_integration(t: Node) -> void:
 	t.assert_equal(runtime.combat.stamina, stamina_before, "a rejected re-attack spends no stamina")
 	t.assert_equal(events.size(), 1, "a rejected re-attack emits no action change")
 
-	actor.combat._process(attack_definition.startup_seconds)
+	actor.combat.physics_tick(attack_definition.startup_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "the wind-up ends in the active phase")
 	t.assert_equal(runtime.combat.stamina, stamina_before - weapon.stamina_cost, "stamina is spent once, on commit")
 	t.assert_true(not actor.combat.attack(1.0), "a second attack during the active phase is rejected")
 
-	actor.combat._process(attack_definition.active_seconds)
+	actor.combat.physics_tick(attack_definition.active_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the active phase ends in recovery")
 	t.assert_true(not actor.combat.attack(1.0), "a second attack during recovery is rejected")
 
-	actor.combat._process(attack_definition.recovery_seconds)
+	actor.combat.physics_tick(attack_definition.recovery_seconds)
 	t.assert_true(actor.combat_action.is_idle(), "recovery ends at idle")
 	t.assert_equal(events.size(), 4, "one attack emits exactly four action changes")
 	t.assert_equal(events[0], [CombatActionController.State.IDLE, CombatActionController.State.ATTACK_STARTUP], "the cycle starts with the wind-up")
 	t.assert_equal(events[3], [CombatActionController.State.ATTACK_RECOVERY, CombatActionController.State.IDLE], "the cycle ends back at idle")
-	actor.combat._process(1.0)
+	actor.combat.physics_tick(1.0)
 	t.assert_equal(events.size(), 4, "an idle controller is not re-notified every frame")
 	actor.combat_action.state_changed.disconnect(callback)
 

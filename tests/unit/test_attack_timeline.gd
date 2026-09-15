@@ -126,13 +126,13 @@ func _test_phase_durations_and_commit(t: Node) -> void:
 	t.assert_equal(commits.size(), 0, "nothing commits during the wind-up")
 
 	# Part-way through the wind-up nothing has happened yet.
-	actor.combat._process(timing.startup_seconds * 0.5)
+	actor.combat.physics_tick(timing.startup_seconds * 0.5)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "the wind-up is still running one frame early")
 	t.assert_true(not actor.combat.hitbox.active, "the hitbox is not live before the active phase")
 	t.assert_equal(commits.size(), 0, "no commit before the active phase")
 
 	var stamina_before := runtime.combat.stamina
-	actor.combat._process(timing.startup_seconds * 0.5)
+	actor.combat.physics_tick(timing.startup_seconds * 0.5)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "the wind-up hands over to the active phase")
 	t.assert_equal(commits.size(), 1, "entering the active phase commits the attack exactly once")
 	t.assert_true(actor.combat.hitbox.active, "entering the active phase makes the hitbox live")
@@ -140,16 +140,16 @@ func _test_phase_durations_and_commit(t: Node) -> void:
 	t.assert_equal(runtime.combat.stamina, stamina_before - weapon.stamina_cost, "stamina is spent on commit")
 	t.assert_true(absf(actor.combat.phase_remaining() - timing.active_seconds) < 0.001, "the active phase uses active_seconds")
 
-	actor.combat._process(timing.active_seconds)
+	actor.combat.physics_tick(timing.active_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the active phase hands over to recovery")
 	t.assert_equal(commits.size(), 1, "the attack does not re-commit when the active phase ends")
 	t.assert_true(not actor.combat.hitbox.active, "leaving the active phase takes the hitbox down")
 	t.assert_true(absf(actor.combat.phase_remaining() - timing.recovery_seconds) < 0.001, "recovery uses recovery_seconds")
 	t.assert_equal(runtime.combat.stamina, stamina_before - weapon.stamina_cost, "recovery does not spend stamina again")
 
-	actor.combat._process(timing.recovery_seconds * 0.5)
+	actor.combat.physics_tick(timing.recovery_seconds * 0.5)
 	t.assert_true(not actor.combat.attack(1.0), "a new attack is refused while recovery is still running")
-	actor.combat._process(timing.recovery_seconds * 0.5)
+	actor.combat.physics_tick(timing.recovery_seconds * 0.5)
 	t.assert_true(actor.combat_action.is_idle(), "the attack ends at idle")
 	t.assert_true(actor.combat.phase_remaining() <= 0.0, "no phase time is left after the attack")
 	runtime.combat.stamina = runtime.combat.max_stamina
@@ -175,7 +175,7 @@ func _test_large_delta(t: Node) -> void:
 
 	# One frame longer than the whole timeline must still walk every phase once.
 	t.assert_true(actor.combat.attack(1.0), "the large-delta fixture starts an attack")
-	actor.combat._process(timing.total_seconds() + 1.0)
+	actor.combat.physics_tick(timing.total_seconds() + 1.0)
 	t.assert_true(actor.combat_action.is_idle(), "an oversized delta still finishes the attack at idle")
 	t.assert_equal(commits.size(), 1, "an oversized delta commits the attack exactly once")
 	t.assert_equal(events.size(), 4, "an oversized delta still walks all four transitions")
@@ -186,7 +186,7 @@ func _test_large_delta(t: Node) -> void:
 	events.clear()
 	commits.clear()
 	t.assert_true(actor.combat.attack(1.0), "the overflow fixture starts a second attack")
-	actor.combat._process(timing.startup_seconds + timing.active_seconds * 0.5)
+	actor.combat.physics_tick(timing.startup_seconds + timing.active_seconds * 0.5)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "a straddling delta lands inside the active phase")
 	t.assert_true(absf(actor.combat.phase_remaining() - timing.active_seconds * 0.5) < 0.001, "the surplus is carried into the next phase")
 	t.assert_equal(commits.size(), 1, "a straddling delta commits once")
@@ -210,22 +210,22 @@ func _test_projectile_commits_once(t: Node) -> void:
 	# Drive the real CombatComponent timeline, not the strategy directly.
 	t.assert_true(actor.combat.attack(1.0), "the projectile attack request is accepted")
 	t.assert_equal(_projectile_count(parent), before, "no projectile spawns when the wind-up starts")
-	actor.combat._process(timing.startup_seconds * 0.5)
+	actor.combat.physics_tick(timing.startup_seconds * 0.5)
 	t.assert_equal(_projectile_count(parent), before, "no projectile spawns during the wind-up")
 
-	actor.combat._process(timing.startup_seconds * 0.5)
+	actor.combat.physics_tick(timing.startup_seconds * 0.5)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "the projectile attack reaches the active phase")
 	t.assert_equal(_projectile_count(parent), before + 1, "entering the active phase spawns exactly one projectile")
 	var projectile := _first_projectile(parent)
 	t.assert_true(projectile != null and is_equal_approx(projectile.distance_remaining, timing.range), "projectile travel distance comes from AttackDefinition.range")
 	t.assert_equal(projectile.context.knockback, timing.knockback, "projectile reuses the attack-start DamageContext knockback snapshot")
 
-	actor.combat._process(timing.active_seconds * 0.5)
+	actor.combat.physics_tick(timing.active_seconds * 0.5)
 	t.assert_equal(_projectile_count(parent), before + 1, "no extra projectile spawns during the active phase")
-	actor.combat._process(timing.active_seconds)
+	actor.combat.physics_tick(timing.active_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the projectile attack reaches recovery")
 	t.assert_equal(_projectile_count(parent), before + 1, "no extra projectile spawns on entering recovery")
-	actor.combat._process(timing.recovery_seconds)
+	actor.combat.physics_tick(timing.recovery_seconds)
 	t.assert_true(actor.combat_action.is_idle(), "the projectile attack ends at idle")
 	t.assert_equal(_projectile_count(parent), before + 1, "one whole attack cycle spawns exactly one projectile")
 
@@ -312,7 +312,7 @@ func _test_hitbox_lifecycle_and_abort(t: Node) -> void:
 	# Abort during the active phase: the hitbox goes down immediately and the
 	# stamina already committed is not refunded.
 	t.assert_true(actor.combat.attack(1.0), "the abort fixture starts a second attack")
-	actor.combat._process(timing.startup_seconds)
+	actor.combat.physics_tick(timing.startup_seconds)
 	t.assert_true(actor.combat.hitbox.active, "the hitbox is live during the active phase")
 	var stamina_committed := runtime.combat.stamina
 	t.assert_equal(stamina_committed, stamina_before - weapon.stamina_cost, "the active phase committed the stamina")
@@ -326,7 +326,7 @@ func _test_hitbox_lifecycle_and_abort(t: Node) -> void:
 	# Abort during recovery, where the hitbox is already down.
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "the abort fixture starts a third attack")
-	actor.combat._process(timing.startup_seconds + timing.active_seconds)
+	actor.combat.physics_tick(timing.startup_seconds + timing.active_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the third attack reaches recovery")
 	t.assert_true(not actor.combat.hitbox.active, "the hitbox is inactive during recovery")
 	actor.combat.abort_attack()
@@ -357,7 +357,7 @@ func _test_large_delta_still_hits(t: Node) -> void:
 	var enemy_health_before := enemy.health.current_health
 	var stamina_before := runtime.combat.stamina
 	t.assert_true(actor.combat.attack(1.0), "the oversized-delta fixture starts an attack")
-	actor.combat._process(timing.total_seconds() + 1.0)
+	actor.combat.physics_tick(timing.total_seconds() + 1.0)
 	t.assert_equal(commits.size(), 1, "an oversized delta commits exactly once")
 	t.assert_equal(runtime.combat.stamina, stamina_before - weapon.stamina_cost, "an oversized delta spends stamina exactly once")
 	t.assert_true(actor.combat_action.is_idle(), "an oversized delta ends the attack at idle")
@@ -370,7 +370,7 @@ func _test_large_delta_still_hits(t: Node) -> void:
 	runtime.combat.stamina = runtime.combat.max_stamina
 	var second_before := enemy.health.current_health
 	t.assert_true(actor.combat.attack(1.0), "the fixture starts a second oversized attack")
-	actor.combat._process(timing.startup_seconds + timing.active_seconds)
+	actor.combat.physics_tick(timing.startup_seconds + timing.active_seconds)
 	t.assert_equal(commits.size(), 2, "the second oversized delta commits once more")
 	t.assert_true(is_equal_approx(second_before - enemy.health.current_health, expected_damage), "the second oversized hit also lands exactly once")
 	actor.combat.abort_attack()
@@ -392,7 +392,7 @@ func _test_death_during_active(t: Node) -> void:
 	actor.combat.stamina_regen_multiplier = 0.0
 
 	t.assert_true(actor.combat.attack(1.0), "the death fixture starts an attack")
-	actor.combat._process(timing.startup_seconds)
+	actor.combat.physics_tick(timing.startup_seconds)
 	t.assert_true(actor.combat.hitbox.active, "the attack is live before the player dies")
 	var health_after_hit := enemy.health.current_health
 

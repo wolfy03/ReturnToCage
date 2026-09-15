@@ -42,7 +42,7 @@ func run(t: Node) -> void:
 	var attack_timing := CombatTestFixtures.first_step(ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition)
 	t.assert_true(player.combat_action.current_state() == CombatActionController.State.ATTACK_STARTUP, "a server attack intent starts the wind-up")
 	t.assert_equal(enemy.health.current_health, enemy_health_before, "no damage lands during the wind-up")
-	player.combat._process(attack_timing.startup_seconds)
+	player.combat.physics_tick(attack_timing.startup_seconds)
 	await t.get_tree().physics_frame
 	await t.get_tree().physics_frame
 	t.assert_true(attack.success and enemy.health.current_health < enemy_health_before, "player intent executes existing server hitbox combat against an in-range enemy")

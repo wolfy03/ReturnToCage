@@ -5,6 +5,7 @@ extends RefCounted
 func run(t: Node) -> void:
 	_test_component_lifecycle_and_refresh(t)
 	await _test_attack_interruptions_and_controls(t)
+	await _test_hurt_refresh_buffer_lifecycle(t)
 	await _test_world_transition(t)
 	await _test_lethal_without_hurt(t)
 	await _test_death_and_respawn(t)
@@ -86,7 +87,7 @@ func _test_attack_interruptions_and_controls(t: Node) -> void:
 	# ACTIVE: commit remains spent and the live melee hitbox drops immediately.
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "active interruption fixture begins an attack")
-	actor.combat._process(attack.startup_seconds)
+	actor.combat.physics_tick(attack.startup_seconds)
 	var active_stamina := runtime.combat.stamina
 	t.assert_true(actor.combat.hitbox.active, "melee hitbox is live before active interruption")
 	t.assert_true(_damage(actor, Vector2.ZERO), "active interruption damage is accepted")
@@ -98,7 +99,7 @@ func _test_attack_interruptions_and_controls(t: Node) -> void:
 	# RECOVERY: committed stamina remains spent and pending data is discarded.
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "recovery interruption fixture begins an attack")
-	actor.combat._process(attack.startup_seconds + attack.active_seconds)
+	actor.combat.physics_tick(attack.startup_seconds + attack.active_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "fixture reaches recovery")
 	var recovery_stamina := runtime.combat.stamina
 	t.assert_true(_damage(actor, Vector2.ZERO), "recovery interruption damage is accepted")
@@ -249,7 +250,7 @@ func _test_projectile_interruption(t: Node, actor: PlayerActor) -> void:
 
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "projectile active interruption begins")
-	actor.combat._process(CombatTestFixtures.first_step(weapon).startup_seconds)
+	actor.combat.physics_tick(CombatTestFixtures.first_step(weapon).startup_seconds)
 	var projectile := _first_projectile(actor.get_parent())
 	t.assert_true(projectile != null, "projectile exists after ACTIVE commit")
 	var projectile_origin := projectile.global_position
@@ -270,6 +271,82 @@ func _test_projectile_interruption(t: Node, actor: PlayerActor) -> void:
 		actor.player_state().equipment.equip(previous)
 	ContentRegistry._definitions.erase(weapon.id)
 	_finish_hurt(actor)
+
+## A hit ends the exchange the player was in, and the intent they queued for it
+## goes with it. Stage 8 applied that on entering HURT; this covers the refreshing
+## hit, so the first hit and the second follow one rule rather than two.
+func _test_hurt_refresh_buffer_lifecycle(t: Node) -> void:
+	GameSession.start_new_game()
+	var layer := Node.new()
+	t.add_child(layer)
+	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	actor.combat.stamina_regen_multiplier = 0.0
+	runtime.combat.stamina = runtime.combat.max_stamina
+	var buffer := actor.input_buffer
+
+	t.assert_true(_damage(actor, Vector2.ZERO), "the refresh fixture enters hit-stun")
+	t.assert_true(actor.hurt.is_active(), "the first hit landed")
+	t.assert_equal(buffer.submit_attack(400, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "an attack pressed during hit-stun is buffered")
+	t.assert_true(buffer.has_pending(), "the intent is waiting before the second hit")
+
+	actor.hurt.physics_tick(actor.hurt.duration_seconds * 0.5)
+	var partial_remaining := actor.hurt.remaining
+	t.assert_true(partial_remaining < actor.hurt.duration_seconds, "hit-stun has partly run down")
+	var transitions: Array[Array] = []
+	actor.combat_action.state_changed.connect(func(previous: int, current: int) -> void: transitions.append([previous, current]))
+	t.assert_true(_damage(actor, Vector2.ZERO), "a second direct hit lands during hit-stun")
+	t.assert_true(actor.hurt.is_active(), "the second hit keeps the actor in hit-stun")
+	t.assert_true(transitions.is_empty(), "a refreshing hit emits no HURT-to-HURT state change")
+	t.assert_equal(actor.hurt.remaining, actor.hurt.duration_seconds, "a refreshing hit restarts the full duration")
+	t.assert_true(not buffer.has_pending(), "a refreshing hit drops the intent queued before it")
+	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "a dropped intent spends nothing")
+
+	# Clearing is about the hit that just happened, not about hit-stun as a state:
+	# an intent pressed after the refresh is a new decision and still works.
+	t.assert_equal(buffer.submit_attack(401, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "a new attack after the refresh buffers again")
+	_finish_hurt(actor)
+	t.assert_true(actor.combat_action.is_idle(), "hit-stun ended")
+	buffer.physics_tick(0.001)
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "the post-refresh intent runs once hit-stun ends")
+	t.assert_equal(actor.combat.combo_index(), 0, "the post-refresh attack opens a fresh combo")
+
+	# Damage that causes no hit reaction ends no exchange, so it takes no intent.
+	t.assert_equal(buffer.submit_attack(402, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "the non-reaction fixture buffers an attack")
+	var periodic_health := actor.health.current_health
+	t.assert_true(actor.health.receive_periodic_damage(1.0), "periodic damage is accepted")
+	t.assert_true(actor.health.current_health < periodic_health, "periodic damage reduces HP")
+	t.assert_true(buffer.has_pending(), "periodic damage keeps the buffered intent")
+	actor.health.invulnerable_remaining = 0.0
+	var impulse_only := DamageContext.new(1.0, &"test", actor, &"hostile", Vector2(80.0, -20.0))
+	impulse_only.causes_hurt = false
+	t.assert_true(actor.health.receive_damage(impulse_only), "causes_hurt = false damage is accepted")
+	t.assert_true(not actor.hurt.is_active(), "causes_hurt = false damage starts no hit-stun")
+	t.assert_true(buffer.has_pending(), "causes_hurt = false damage keeps the buffered intent")
+	actor.combat.abort_attack()
+	buffer.clear()
+
+	# A hit a dodge turned aside never happened, so it takes nothing either.
+	actor.hurt.reset()
+	actor.combat_action.reset()
+	for frame in 240:
+		if actor.is_on_floor() and actor.movement.mode == MovementComponent.Mode.GROUND:
+			break
+		await t.get_tree().physics_frame
+	actor.combat.stamina_regen_multiplier = 0.0
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.dodge.try_begin(1.0), "the evasion fixture starts a dodge")
+	t.assert_equal(buffer.submit_attack(403, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "the evasion fixture buffers an attack")
+	actor.health.invulnerable_remaining = 0.0
+	t.assert_true(not actor.health.receive_damage(DamageContext.new(5.0, &"test", actor, &"hostile")), "the hit is evaded by the dodge i-frames")
+	t.assert_true(not actor.hurt.is_active() and buffer.has_pending(), "an evaded hit keeps the buffered intent")
+	actor.dodge.reset()
+	buffer.clear()
+
+	layer.queue_free()
+	await t.get_tree().process_frame
+	await t.get_tree().process_frame
+	GameSession.start_new_game()
 
 func _test_world_transition(t: Node) -> void:
 	GameSession.start_new_game()

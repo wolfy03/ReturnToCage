@@ -8,7 +8,14 @@ extends Resource
 ## attack" path to keep in sync.
 ##
 ## The combo length is authored, never assumed: a weapon may have one step or
-## five, and the steps need not share an attack mode.
+## five.
+##
+## Attack mode is not per-step in the current model. [WeaponDefinition] owns
+## `attack_mode` and `attack_scene`, and the strategy is chosen from the weapon,
+## so every step of one combo is executed the same way. A mixed combo
+## (melee into projectile and back) would need those fields to move down here and
+## is deliberately out of scope; each step owns only its timing, geometry,
+## knockback and follow-up windows.
 
 @export var steps: Array[AttackDefinition] = []
 

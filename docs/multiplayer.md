@@ -332,6 +332,20 @@ client intent
   Dodge intent 가 buffer 에만 들어간 상태는 return channel 을 취소하지 않는다 — 취소는 7차
   정책 그대로 실제 dodge commit 시점에만 일어난다.
 
+권위 전투 시간은 **단일 physics clock** 이다. attack timeline, cancel/chain window,
+input buffer 만료, HURT, dodge, movement 가 전부 `PlayerActor._physics_process` 에서
+`hurt → dodge → combat → input_buffer → movement` 순서로 진행한다. 이 순서가 계약이다 —
+combat 이 buffer 보다 먼저 와야 이번 프레임에 열린 window 를 이번 프레임에 쓰고, 만료 경계에서
+callback 종류에 따라 입력이 달리 버려지지 않는다. 비권위 presentation actor 는 이 분기에
+도달하지 않으므로 남의 공격 시간을 진행시키지 않는다. 이 변경은 scheduling 에 국한되며
+presentation timing·sequence 정책·payload 는 그대로다.
+
+또 하나의 lifecycle 규칙: **새 direct hit 가 HURT 를 시작하거나 refresh 하면 그 이전에 buffer
+된 intent 는 폐기된다.** 최초 피격과 재피격이 같은 규칙을 쓰므로, 피격 이전의 의도가 두 번의
+피격을 넘어 살아남아 혼자 발동하지 않는다. 재피격은 여전히 `HURT → HURT` state signal 을
+만들지 않고, clear 이후의 새 입력은 정상적으로 buffer 된다. `causes_hurt = false` 피해와 dodge
+i-frame 으로 회피된 공격은 HURT 를 만들지 않으므로 buffer 도 건드리지 않는다.
+
 world-runtime process E2E 는 이 경계를 한 시나리오로 확인한다: 호스트가 remote B 를
 hit-stun 으로 묶은 뒤 B 의 attack intent 를 받아 **buffer** 하고, 그 동안 클라이언트에는
 presentation 이 가지 않으며, hit-stun 을 풀면 intent 가 실행되고 그때 **한 번** presentation 이

@@ -16,6 +16,7 @@ func run(t: Node) -> void:
 	await _test_dodge_cancel(t)
 	await _test_buffer_lifecycle(t)
 	await _test_presentation_timing(t)
+	await _test_authoritative_clock(t)
 	await _test_full_combo_hits(t)
 
 func _step(startup: float, active: float, recovery: float) -> AttackDefinition:
@@ -179,7 +180,7 @@ func _advance_to_chain_window(actor: PlayerActor, step: AttackDefinition) -> voi
 func _advance_to_elapsed(actor: PlayerActor, target: float) -> void:
 	var delta := target - actor.combat.attack_elapsed()
 	if delta > 0.0:
-		actor.combat._process(delta)
+		actor.combat.physics_tick(delta)
 
 ## Registers a twig_sword variant whose first step closes its follow-up windows
 ## before recovery ends, so a "window has closed" case actually exists. The
@@ -219,12 +220,12 @@ func _test_combo_chaining(t: Node) -> void:
 	t.assert_equal(actor.combat.combo_index(), 0, "an independent attack starts at the first step")
 	t.assert_equal(actor.combat.attack_elapsed(), 0.0, "a new step starts with no elapsed time")
 	t.assert_true(not actor.combat.can_chain_attack_now(), "a wind-up cannot chain")
-	actor.combat._process(combo.step(0).startup_seconds)
+	actor.combat.physics_tick(combo.step(0).startup_seconds)
 	t.assert_equal(runtime.combat.stamina, start_stamina - weapon.stamina_cost, "the first step commits its own stamina")
 	t.assert_true(not actor.combat.can_chain_attack_now(), "the live phase cannot chain")
 	t.assert_true(not actor.combat.can_dodge_cancel_now(), "the live phase cannot be dodge-cancelled")
 
-	actor.combat._process(combo.step(0).active_seconds)
+	actor.combat.physics_tick(combo.step(0).active_seconds)
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the first step reaches recovery")
 	t.assert_true(is_equal_approx(actor.combat.attack_elapsed(), combo.step(0).recovery_start_seconds()), "elapsed tracks the whole step, not the phase")
 	t.assert_true(not actor.combat.can_chain_attack_now(), "recovery cannot chain before its authored window")
@@ -242,22 +243,22 @@ func _test_combo_chaining(t: Node) -> void:
 	t.assert_equal(runtime.combat.stamina, before_second, "starting a step spends nothing; the commit does")
 	t.assert_true(is_equal_approx(actor.combat.phase_remaining(), combo.step(1).startup_seconds), "the second step uses its own authored startup")
 
-	actor.combat._process(combo.step(1).startup_seconds)
+	actor.combat.physics_tick(combo.step(1).startup_seconds)
 	t.assert_equal(runtime.combat.stamina, before_second - weapon.stamina_cost, "the second step commits its own stamina")
 	t.assert_equal(actor.combat._pending_context.knockback, combo.step(1).knockback, "each step builds its own damage context")
-	actor.combat._process(combo.step(1).active_seconds)
+	actor.combat.physics_tick(combo.step(1).active_seconds)
 	_advance_to_chain_window(actor, combo.step(1))
 	transitions.clear()
 	t.assert_true(actor.combat.chain_attack(1.0), "the third step chains out of the second")
 	t.assert_equal(transitions, [[CombatActionController.State.ATTACK_RECOVERY, CombatActionController.State.ATTACK_STARTUP]], "the second chain never passes through IDLE either")
 	t.assert_equal(actor.combat.combo_index(), 2, "the combo reaches its last step")
 
-	actor.combat._process(combo.step(2).startup_seconds)
+	actor.combat.physics_tick(combo.step(2).startup_seconds)
 	t.assert_equal(runtime.combat.stamina, start_stamina - weapon.stamina_cost * 3.0, "a full combo costs one commit per step")
-	actor.combat._process(combo.step(2).active_seconds)
+	actor.combat.physics_tick(combo.step(2).active_seconds)
 	t.assert_true(not actor.combat.can_chain_attack_now(), "the last step has nowhere to chain")
 	t.assert_true(not actor.combat.chain_attack(1.0), "the last step refuses to chain")
-	actor.combat._process(combo.step(2).recovery_seconds)
+	actor.combat.physics_tick(combo.step(2).recovery_seconds)
 	t.assert_true(actor.combat_action.is_idle(), "the combo ends at IDLE")
 	t.assert_equal(actor.combat.combo_index(), 0, "finishing the combo resets the index")
 	t.assert_equal(actor.combat.attack_elapsed(), 0.0, "finishing the combo clears the step clock")
@@ -272,7 +273,7 @@ func _test_combo_chaining(t: Node) -> void:
 	# An oversized frame still walks a step exactly once and reports honest elapsed.
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "the oversized-delta fixture starts a step")
-	actor.combat._process(combo.step(0).total_seconds() + 1.0)
+	actor.combat.physics_tick(combo.step(0).total_seconds() + 1.0)
 	t.assert_true(actor.combat_action.is_idle(), "an oversized delta finishes the step")
 	actor.combat.abort_attack()
 
@@ -300,10 +301,10 @@ func _test_buffered_chain_timing(t: Node) -> void:
 	t.assert_equal(buffer.pending_sequence(), 10, "the buffer keeps the command's own sequence")
 	t.assert_equal(actor.combat.combo_index(), 0, "buffering starts nothing yet")
 
-	actor.combat._process(combo.step(0).startup_seconds)
+	actor.combat.physics_tick(combo.step(0).startup_seconds)
 	buffer.physics_tick(0.001)
 	t.assert_true(buffer.has_pending() and actor.combat.combo_index() == 0, "the live phase is not a chance to chain")
-	actor.combat._process(combo.step(0).active_seconds)
+	actor.combat.physics_tick(combo.step(0).active_seconds)
 	buffer.physics_tick(0.001)
 	t.assert_true(buffer.has_pending(), "recovery before the window is still not a chance to chain")
 
@@ -321,7 +322,7 @@ func _test_buffered_chain_timing(t: Node) -> void:
 	t.assert_equal(buffer.submit_attack(11, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "the expiry fixture buffers an attack")
 	buffer.physics_tick(buffer_seconds + 0.01)
 	t.assert_true(not buffer.has_pending(), "an abandoned intent expires")
-	actor.combat._process(combo.step(0).total_seconds())
+	actor.combat.physics_tick(combo.step(0).total_seconds())
 	buffer.physics_tick(0.016)
 	t.assert_true(actor.combat_action.is_idle() and actor.combat.combo_index() == 0, "an expired intent starts nothing at all")
 
@@ -333,7 +334,7 @@ func _test_buffered_chain_timing(t: Node) -> void:
 	_advance_to_elapsed(actor, combo.step(0).chain_window.end_seconds + 0.001)
 	t.assert_true(not actor.combat.can_chain_attack_now(), "the chain window has closed")
 	t.assert_equal(buffer.submit_attack(12, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "a late attack still buffers")
-	actor.combat._process(combo.step(0).total_seconds())
+	actor.combat.physics_tick(combo.step(0).total_seconds())
 	t.assert_true(actor.combat_action.is_idle(), "the first step ran to completion")
 	buffer.physics_tick(0.001)
 	t.assert_equal(actor.combat.combo_index(), 0, "a late intent opens a new combo instead of resuming the old one")
@@ -397,14 +398,14 @@ func _test_dodge_cancel(t: Node) -> void:
 	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "startup is not cancelled into a dodge")
 	buffer.physics_tick(0.001)
 	t.assert_true(buffer.has_pending(), "a buffered dodge waits through startup")
-	actor.combat._process(step.startup_seconds)
+	actor.combat.physics_tick(step.startup_seconds)
 	buffer.physics_tick(0.001)
 	t.assert_true(buffer.has_pending() and actor.combat_action.current_state() == CombatActionController.State.ATTACK_ACTIVE, "the live phase is not cancelled into a dodge either")
 
 	var committed_attack_stamina := runtime.combat.stamina
 	var transitions: Array[Array] = []
 	actor.combat_action.state_changed.connect(func(previous: int, current: int) -> void: transitions.append([previous, current]))
-	actor.combat._process(step.active_seconds)
+	actor.combat.physics_tick(step.active_seconds)
 	t.assert_true(actor.combat.can_dodge_cancel_now(), "the dodge cancel window is open in recovery")
 	transitions.clear()
 	buffer.physics_tick(0.001)
@@ -518,7 +519,7 @@ func _test_buffer_lifecycle(t: Node) -> void:
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.combat.attack(1.0), "the eligible-failure fixture starts an attack")
 	buffer.submit_dodge(38, 1.0)
-	actor.combat._process(step.recovery_start_seconds())
+	actor.combat.physics_tick(step.recovery_start_seconds())
 	actor.global_position += Vector2(0.0, -220.0)
 	actor.velocity = Vector2.ZERO
 	actor.move_and_slide()
@@ -576,7 +577,7 @@ func _test_presentation_timing(t: Node) -> void:
 	attacks.clear()
 	t.assert_true(actor.network_combat._server_execute_attack(actor.peer_id, 51).success, "an attack command during the wind-up is accepted")
 	t.assert_true(attacks.is_empty(), "a buffered attack is not presented on receipt")
-	actor.combat._process(step.startup_seconds + step.active_seconds)
+	actor.combat.physics_tick(step.startup_seconds + step.active_seconds)
 	_advance_to_chain_window(actor, step)
 	buffer.physics_tick(0.001)
 	t.assert_equal(attacks.size(), 1, "the buffered attack is presented exactly once, when it runs")
@@ -591,7 +592,7 @@ func _test_presentation_timing(t: Node) -> void:
 	t.assert_true(actor.combat.attack(1.0), "the replacement fixture starts an attack")
 	t.assert_true(actor.network_combat._server_execute_attack(actor.peer_id, 52).success, "the replaced attack command is accepted")
 	t.assert_true(actor.network_dodge._server_execute_dodge(actor.peer_id, 53, 1.0).success, "the replacing dodge command is accepted")
-	actor.combat._process(step.recovery_start_seconds() + 0.001)
+	actor.combat.physics_tick(step.recovery_start_seconds() + 0.001)
 	buffer.physics_tick(0.001)
 	t.assert_true(attacks.is_empty(), "the replaced attack is never presented")
 	t.assert_equal(dodges.size(), 1, "the replacing dodge is presented exactly once")
@@ -608,6 +609,132 @@ func _test_presentation_timing(t: Node) -> void:
 	t.assert_true(actor.network_combat._server_execute_attack(actor.peer_id, 61).success, "a newer sequence replaces the buffered intent")
 	t.assert_equal(buffer.pending_sequence(), 61, "the buffer holds the newest sequence")
 	buffer.clear()
+	actor.combat.abort_attack()
+
+	layer.queue_free()
+	await t.get_tree().process_frame
+	await t.get_tree().process_frame
+	GameSession.start_new_game()
+
+## Mirrors PlayerActor's authoritative order exactly. Combat must advance before
+## the buffer is asked, so an intent whose window opens this frame runs this
+## frame instead of next.
+func _authoritative_combat_tick(actor: PlayerActor, delta: float) -> void:
+	actor.hurt.physics_tick(delta)
+	actor.dodge.physics_tick(delta)
+	actor.combat.physics_tick(delta)
+	actor.input_buffer.physics_tick(delta)
+
+## The same tick with combat and the buffer swapped, used only to show what the
+## ordering above buys: the follow-up slips a frame.
+func _reversed_combat_tick(actor: PlayerActor, delta: float) -> void:
+	actor.hurt.physics_tick(delta)
+	actor.dodge.physics_tick(delta)
+	actor.input_buffer.physics_tick(delta)
+	actor.combat.physics_tick(delta)
+
+func _test_authoritative_clock(t: Node) -> void:
+	GameSession.start_new_game()
+	var layer := Node.new()
+	t.add_child(layer)
+	var actor: PlayerActor = await _spawn(t, layer)
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	var weapon := ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition
+	var step := weapon.attack_combo.step(0)
+	var buffer := actor.input_buffer
+	var frame := 0.016
+
+	# The attack timeline has exactly one owner, and it is not the render frame.
+	var script_methods: Array = actor.combat.get_script().get_script_method_list()
+	var declared: Array[String] = []
+	for method: Dictionary in script_methods:
+		declared.append(String(method.get("name", "")))
+	t.assert_true(not declared.has("_process"), "CombatComponent declares no _process; the attack timeline has one clock")
+	t.assert_true(declared.has("physics_tick"), "CombatComponent advances from an explicit physics tick")
+
+	# A chain window that opens inside a tick is usable inside that same tick.
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.combat.attack(1.0), "the same-frame chain fixture starts an attack")
+	_advance_to_elapsed(actor, step.chain_window.start_seconds - 0.001)
+	t.assert_true(not actor.combat.can_chain_attack_now(), "the fixture sits just before the chain window")
+	t.assert_equal(buffer.submit_attack(80, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "the same-frame fixture buffers an attack")
+	_authoritative_combat_tick(actor, frame)
+	t.assert_equal(actor.combat.combo_index(), 1, "a window that opens this tick is used this tick")
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_STARTUP, "the same-frame chain entered the next step")
+	t.assert_true(not buffer.has_pending(), "the same-frame chain consumed the intent")
+	actor.combat.abort_attack()
+
+	# Asking the buffer before the timeline moves costs a frame — this is the
+	# drift the unified clock exists to remove.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.combat.attack(1.0), "the reversed-order fixture starts an attack")
+	_advance_to_elapsed(actor, step.chain_window.start_seconds - 0.001)
+	buffer.submit_attack(81, 1.0)
+	_reversed_combat_tick(actor, frame)
+	t.assert_equal(actor.combat.combo_index(), 0, "asking the buffer first misses the window by a frame")
+	t.assert_true(buffer.has_pending(), "the missed intent is still waiting")
+	_authoritative_combat_tick(actor, frame)
+	t.assert_equal(actor.combat.combo_index(), 1, "it lands on the following tick instead")
+	actor.combat.abort_attack()
+
+	# The same holds for a dodge cancel: the window opens as recovery begins.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.combat.attack(1.0), "the same-frame cancel fixture starts an attack")
+	_advance_to_elapsed(actor, step.dodge_cancel_window.start_seconds - 0.001)
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_ACTIVE, "the cancel fixture is still committed to the swing")
+	t.assert_equal(buffer.submit_dodge(82, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "the cancel fixture buffers a dodge")
+	var transitions: Array[Array] = []
+	actor.combat_action.state_changed.connect(func(previous: int, current: int) -> void: transitions.append([previous, current]))
+	_authoritative_combat_tick(actor, frame)
+	t.assert_true(actor.dodge.is_active(), "a dodge cancel window that opens this tick is used this tick")
+	t.assert_equal(transitions[transitions.size() - 1], [CombatActionController.State.ATTACK_RECOVERY, CombatActionController.State.DODGE], "the same-frame cancel still goes straight from recovery into DODGE")
+	actor.dodge.reset()
+
+	# Expiry is checked before eligibility, so the boundary is decided by the
+	# clock rather than by which callback happened to run first.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.combat.attack(1.0), "the expiry-boundary fixture starts an attack")
+	_advance_to_elapsed(actor, step.chain_window.start_seconds - 0.001)
+	buffer.submit_attack(83, 1.0)
+	# Set directly: the point of the case is the exact remaining time at the tick
+	# where the window opens, which no public call can land on precisely.
+	buffer._remaining = 0.020
+	_authoritative_combat_tick(actor, frame)
+	t.assert_equal(actor.combat.combo_index(), 1, "an intent with time left survives the tick that opens its window")
+	actor.combat.abort_attack()
+
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.combat.attack(1.0), "the expired-boundary fixture starts an attack")
+	_advance_to_elapsed(actor, step.chain_window.start_seconds - 0.001)
+	buffer.submit_attack(84, 1.0)
+	buffer._remaining = 0.010
+	_authoritative_combat_tick(actor, frame)
+	t.assert_true(not buffer.has_pending(), "an intent that runs out during the tick expires")
+	t.assert_equal(actor.combat.combo_index(), 0, "an expired intent does not chain even though the window opened")
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "the original step keeps running")
+	actor.combat.abort_attack()
+
+	# Finally the real thing: no hand-driven ticks, just the actor's own physics.
+	await _settle(t, actor)
+	runtime.combat.stamina = runtime.combat.max_stamina
+	t.assert_true(actor.combat.attack(1.0), "the physics-frame fixture starts an attack")
+	var guard := 0
+	while actor.combat.attack_elapsed() < step.recovery_start_seconds() and guard < 120:
+		await t.get_tree().physics_frame
+		guard += 1
+	t.assert_true(actor.combat.attack_elapsed() >= step.recovery_start_seconds(), "real physics frames advance the attack timeline")
+	t.assert_equal(actor.combat_action.current_state(), CombatActionController.State.ATTACK_RECOVERY, "real physics frames reach recovery")
+	t.assert_equal(buffer.submit_attack(85, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "the physics-frame fixture buffers an attack before the window")
+	guard = 0
+	while actor.combat.combo_index() == 0 and guard < 30:
+		await t.get_tree().physics_frame
+		guard += 1
+	t.assert_equal(actor.combat.combo_index(), 1, "the buffered intent chains on the actor's own physics timeline")
+	t.assert_true(not buffer.has_pending(), "the physics-frame chain consumed the intent")
 	actor.combat.abort_attack()
 
 	layer.queue_free()
@@ -650,12 +777,12 @@ func _test_full_combo_hits(t: Node) -> void:
 		var step := combo.step(index)
 		enemy.global_position = actor.global_position + step.hitbox_offset
 		var step_health := enemy.health.current_health
-		actor.combat._process(step.startup_seconds)
+		actor.combat.physics_tick(step.startup_seconds)
 		t.assert_true(enemy.health.current_health < step_health, "step %d lands a hit" % index)
 		var after_first_hit := enemy.health.current_health
-		actor.combat._process(step.active_seconds * 0.5)
+		actor.combat.physics_tick(step.active_seconds * 0.5)
 		t.assert_equal(enemy.health.current_health, after_first_hit, "step %d hits the same target only once" % index)
-		actor.combat._process(step.active_seconds * 0.5)
+		actor.combat.physics_tick(step.active_seconds * 0.5)
 		if index == 2:
 			break
 		_advance_to_chain_window(actor, step)

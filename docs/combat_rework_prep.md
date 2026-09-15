@@ -17,6 +17,7 @@
 완료  7차  Dodge + i-frame (Protocol v14)
 완료  7차 안정화  종료 velocity · 방향 정책 · 실제 접지 · Return Channel A · strict direction
 완료  8차  Combo + Authoritative Input Buffer + Authored Cancel Window
+완료  8차 안정화  Unified combat physics clock + buffer lifecycle
 다음  9차  Combat Presentation / Animation Integration
 ```
 
@@ -197,6 +198,7 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 7차 | Dodge + i-frame (`DodgeDefinition`·서버 권위 intent·evasion gate, Protocol v14) | 완료 |
 | 7차 안정화 | 종료 velocity 정리·입력 우선 방향·실제 접지 검증·Return Channel 정책 A·exact ±1 | 완료 |
 | 8차 | Combo(`AttackComboDefinition`)·권위 Input Buffer·authored cancel window | 완료 |
+| 8차 안정화 | 전투 시간 physics clock 단일화·HURT refresh buffer lifecycle·combo 계약 문서화 | 완료 |
 | 9차 | Combat Presentation / Animation Integration | 다음 |
 | 이후 | 적 패턴 개편, 히트스톱·카메라 표현, client prediction | 예정 |
 

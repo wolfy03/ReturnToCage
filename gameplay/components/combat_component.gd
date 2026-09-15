@@ -58,7 +58,16 @@ func configure(
 	if hitbox == null:
 		push_error("CombatComponent requires a HitboxComponent")
 
-func _process(delta: float) -> void:
+## Advances the attack timeline and stamina from the authoritative physics tick.
+##
+## Deliberately not `_process`. Phase durations, the step clock behind every
+## cancel window, hit-stun, the dodge and the input buffer are all gameplay time,
+## and they must share one clock: a window that opens on a render frame while the
+## buffer that wants it is checked on a physics frame turns "did the follow-up
+## land" into a question about frame rate. [PlayerActor] is the only caller, and
+## only for an actor it simulates, so a remote presentation actor never advances
+## anyone's attack.
+func physics_tick(delta: float) -> void:
 	_advance_attack(delta)
 	if stats != null and combat_runtime != null:
 		combat_runtime.set_max_stamina(stats.value(&"max_stamina"))
@@ -122,7 +131,10 @@ func equipped_weapon() -> WeaponDefinition:
 func combo_index() -> int:
 	return _combo_index
 
-## Time spent inside the current step. Zero while idle.
+## Time spent inside the current step, measured in authoritative physics time.
+## This is what every authored follow-up window is compared against, and what
+## presentation will read to know where in a swing the actor is; it is never
+## mixed with render-frame time.
 func attack_elapsed() -> float:
 	return _attack_elapsed
 
@@ -226,7 +238,7 @@ func _clear_pending() -> void:
 	_attack_elapsed = 0.0
 
 ## Runs the attack timeline. Only the authoritative simulation reaches this: a
-## presentation actor has this component's processing disabled.
+## presentation actor is never ticked.
 func _advance_attack(delta: float) -> void:
 	if action == null or not action.is_attacking() or delta <= 0.0:
 		return

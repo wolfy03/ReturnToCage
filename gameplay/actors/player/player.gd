@@ -96,7 +96,9 @@ func _ready() -> void:
 	if not is_simulation_authority():
 		health.set_process(false)
 		survival.set_process(false)
-		combat.set_process(false)
+		# Combat needs no equivalent: its timeline advances only from the
+		# authoritative branch of _physics_process above, which a presentation
+		# actor never reaches.
 		effects.set_process(false)
 		interaction.set_process(is_local_player())
 		var client_hurtbox := get_node_or_null("Hurtbox") as HurtboxComponent
@@ -118,12 +120,16 @@ func _physics_process(delta: float) -> void:
 	if not is_simulation_authority():
 		network.presentation_tick(delta)
 		return
+	# One clock for every authoritative combat action, in the order their results
+	# depend on each other: hit-stun and the dodge can free the actor, the attack
+	# timeline then moves the step clock that decides whether a follow-up window
+	# is open, and only then does the buffer ask whether its intent may run — so
+	# an intent whose window opens this frame runs this frame rather than next.
 	hurt.physics_tick(delta)
 	# Before locomotion, so the dodge's roll velocity is what the body moves with
 	# this frame rather than something applied a frame late.
 	dodge.physics_tick(delta)
-	# After both, so a buffered intent sees the action state those ticks just
-	# produced and can start on the very frame a window opens.
+	combat.physics_tick(delta)
 	input_buffer.physics_tick(delta)
 	if not movement.controls_locked and absf(input.move_axis) > 0.01:
 		facing = signf(input.move_axis)

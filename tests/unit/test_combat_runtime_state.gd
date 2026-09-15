@@ -55,7 +55,7 @@ func _test_actor_binding_attack_and_regen(t: Node) -> void:
 	actor.combat.stamina_regen_multiplier = 0.0
 	var before := runtime.combat.stamina
 	t.assert_true(actor.combat.attack(1.0), "attack succeeds with enough stamina")
-	actor.combat._process(CombatTestFixtures.first_step(weapon).startup_seconds)
+	actor.combat.physics_tick(CombatTestFixtures.first_step(weapon).startup_seconds)
 	actor.combat.stamina_regen_multiplier = 1.0
 	t.assert_equal(runtime.combat.stamina, before - weapon.stamina_cost, "committing the attack spends stamina_cost from the runtime state")
 
@@ -71,24 +71,24 @@ func _test_actor_binding_attack_and_regen(t: Node) -> void:
 	actor.combat.abort_attack()
 	runtime.combat.stamina = 50.0
 	actor.combat.stamina_regen_multiplier = 1.0
-	actor.combat._process(1.0)
+	actor.combat.physics_tick(1.0)
 	t.assert_true(is_equal_approx(runtime.combat.stamina, 50.0 + stats.value(&"stamina_regen")), "one second of regeneration adds stamina_regen")
 	actor.combat.stamina_regen_multiplier = 0.5
-	actor.combat._process(1.0)
+	actor.combat.physics_tick(1.0)
 	t.assert_true(is_equal_approx(runtime.combat.stamina, 50.0 + stats.value(&"stamina_regen") * 1.5), "survival multiplier scales regeneration")
 	actor.combat.stamina_regen_multiplier = 1.0
-	actor.combat._process(100.0)
+	actor.combat.physics_tick(100.0)
 	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "regeneration never exceeds max stamina")
 	stats.add_modifier(StatModifier.new(&"test:stamina", &"max_stamina", 20.0, 1.0))
-	actor.combat._process(0.0)
+	actor.combat.physics_tick(0.0)
 	t.assert_equal(runtime.combat.max_stamina, 120.0, "max stamina follows stat modifiers")
 	stats.remove_source(&"test:stamina")
-	actor.combat._process(0.0)
+	actor.combat.physics_tick(0.0)
 	t.assert_true(runtime.combat.max_stamina == 100.0 and runtime.combat.stamina == 100.0, "removing the modifier clamps stamina back to the base max")
 
 	var detached := CombatComponent.new()
 	t.assert_true(not detached.can_spend_stamina(1.0) and not detached.spend_stamina(1.0) and detached.current_stamina() == 0.0, "unbound component denies stamina use instead of crashing")
-	detached._process(1.0)
+	detached.physics_tick(1.0)
 	detached.free()
 	layer.queue_free()
 	await t.get_tree().process_frame

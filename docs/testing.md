@@ -148,6 +148,16 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   실행 가능 시점의 실패는 1회 시도 후 폐기, death 가 buffer 를 비움), presentation timing
   (수신 시 0회, 실행 시 정확히 1회, 교체된 intent 는 영영 0회, buffer 된 sequence 재전송 거절),
   그리고 실제 적을 상대로 한 3타 전부 명중·step 당 1회 타격을 검증한다.
+- 8차 안정화 회귀는 위 두 파일에 들어 있다. `test_attack_combo.gd` 는 `CombatComponent` 가
+  `_process` 를 선언하지 않고 `physics_tick` 만 가진다는 것(단일 clock 고정), 실제 권위 tick
+  순서(`hurt → dodge → combat → input_buffer`)를 모사한 helper 로 chain window 가 열리는
+  프레임에 같은 프레임 chain 이 성립하는지, 같은 조건에서 buffer 를 combat 보다 먼저 tick 하면
+  한 프레임 늦는지(순서가 계약인 이유), dodge cancel window 도 같은 프레임에 열리고 쓰이는지,
+  만료 경계 두 경우(잔여 0.020 은 살아 chain, 0.010 은 만료되어 window 가 열려도 chain 없음),
+  그리고 손으로 tick 하지 않고 실제 physics frame 만으로 buffered intent 가 chain 되는지를
+  검증한다. `test_player_hurt.gd` 는 재피격 refresh 시 timer 갱신·`HURT → HURT` signal 부재·
+  기존 buffer 폐기·폐기 후 새 입력의 재buffer 와 HURT 종료 후 실행, 그리고
+  `causes_hurt = false` 피해와 회피된 공격이 buffer 를 건드리지 않음을 검증한다.
 - unit/test_player_dodge.gd: `DodgeDefinition` 검증(양수 유한 duration/speed/cost, half-open
   i-frame 창의 시작<끝과 duration 내부 포함, 비-ContentDefinition, 배포 리소스 유효성),
   `DODGE` 전이표(IDLE→DODGE만 허용, attack/HURT에서 DODGE 진입 거절, DODGE→IDLE/HURT),

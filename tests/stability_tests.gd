@@ -394,7 +394,7 @@ func test_world_and_climbing() -> void:
 	# The attack commits on entering ATTACK_ACTIVE, so advance past the wind-up
 	# before inspecting the hitbox it arms.
 	var weapon_timing := CombatTestFixtures.first_step(ContentRegistry.get_definition(&"twig_sword") as WeaponDefinition)
-	actor.combat._process(weapon_timing.startup_seconds)
+	actor.combat.physics_tick(weapon_timing.startup_seconds)
 	var shape := actor.combat.hitbox.get_node("CollisionShape2D").shape as RectangleShape2D
 	t.assert_equal(shape.size.x, 52.0, "AttackDefinition hitbox_size controls actual hitbox")
 	var hit := DamageContext.new(2.0, &"test", actor, &"player")

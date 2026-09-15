@@ -181,6 +181,8 @@ PlayerActor
 WeaponDefinition
 └─ AttackComboDefinition (embedded sub-resource, ContentDefinition 아님)
      └─ steps: Array[AttackDefinition]   ← 1타, 2타, 3타 …
+          (attack_mode / attack_scene 는 WeaponDefinition 소유 =
+           한 combo 의 모든 step 이 같은 실행 방식을 공유한다)
           ├─ startup_seconds
           ├─ active_seconds     ← 멜리 히트박스가 열려 있는 시간
           ├─ recovery_seconds
@@ -202,6 +204,20 @@ attack(facing)      →  step 0 STARTUP  →  ACTIVE(commit)  →  RECOVERY
   dodge_cancel_window 안에서 dodge    →  DODGE (IDLE 경유 없음, combo 종료)
   window 밖 / 마지막 step            →  IDLE, combo index 0
 ```
+
+권위 전투 시간은 하나의 physics clock 이며 tick 순서가 고정돼 있다:
+
+```
+PlayerActor._physics_process(delta)
+  hurt.physics_tick(delta)          ← 끝나면 IDLE 로 풀림
+  dodge.physics_tick(delta)         ← 끝나면 IDLE 로 풀림, 롤 속도는 이동 전에 적용
+  combat.physics_tick(delta)        ← attack_elapsed 진행 = window 열림/닫힘 결정
+  input_buffer.physics_tick(delta)  ← 방금 열린 window 를 같은 프레임에 사용
+  movement.physics_tick(delta)
+```
+
+`combat` 이 `input_buffer` 보다 먼저 와야 같은 프레임에 chain/cancel 이 성립한다.
+render frame(`_process`)은 전투 시간을 소유하지 않는다.
 
 입력이 조금 이른 경우:
 
@@ -262,7 +278,8 @@ phase 시간은 `CombatComponent` 만 소유한다. 히트박스 상태는 다�
   네트워크를 모른다. scene-local 이라 월드 전환 시 새 액터는 `IDLE` 로 시작한다.
   locomotion(`MovementComponent.Mode`)과 **독립된 축**이다.
 - `CombatComponent` — 공격 요청 검증, **attack timeline 진행**(pending step + phase timer),
-  `ATTACK_ACTIVE` 진입 시 전략 실행과 스태미나 commit, 스태미나 재생 로직. combo index 와
+  `ATTACK_ACTIVE` 진입 시 전략 실행과 스태미나 commit, 스태미나 재생 로직. `_process` 는 없고
+  `physics_tick(delta)` 하나가 이 전부를 진행한다(권위 액터에서만 호출). combo index 와
   step elapsed 도 여기가 소유하며, `can_chain_attack_now()` / `can_dodge_cancel_now()` 로
   authored window 질의에 답한다. `chain_attack()` 은 `ATTACK_RECOVERY` 에서 다음 step 의
   `ATTACK_STARTUP` 으로 직접 전이한다.

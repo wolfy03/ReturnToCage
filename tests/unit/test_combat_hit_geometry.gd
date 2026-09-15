@@ -78,7 +78,7 @@ func _test_authoritative_actor_knockback(t: Node) -> void:
 	actor.facing = 1.0
 	t.assert_true(actor.combat.attack(actor.facing), "right-facing melee attack starts")
 	t.assert_equal(actor.combat._pending_context.knockback, Vector2(120.0, -40.0), "right-facing knockback is snapshotted at attack start")
-	actor.combat._process(attack.startup_seconds)
+	actor.combat.physics_tick(attack.startup_seconds)
 	t.assert_equal(right_enemy.current_state_id, &"hurt", "melee damage still enters enemy hurt state")
 	t.assert_equal(right_enemy.velocity, Vector2(120.0, -40.0), "right-facing melee applies the authored impulse")
 	var right_before := right_enemy.global_position
@@ -93,7 +93,7 @@ func _test_authoritative_actor_knockback(t: Node) -> void:
 	actor.facing = -1.0
 	t.assert_true(actor.combat.attack(actor.facing), "left-facing melee attack starts")
 	t.assert_equal(actor.combat._pending_context.knockback, Vector2(-120.0, -40.0), "left-facing attack mirrors snapshot x only")
-	actor.combat._process(attack.startup_seconds)
+	actor.combat.physics_tick(attack.startup_seconds)
 	t.assert_equal(left_enemy.current_state_id, &"hurt", "left-facing melee still enters enemy hurt state")
 	t.assert_equal(left_enemy.velocity, Vector2(-120.0, -40.0), "left-facing melee mirrors only the authored impulse x")
 	var left_before := left_enemy.global_position
@@ -121,7 +121,7 @@ func _test_authoritative_actor_knockback(t: Node) -> void:
 	actor.input.vertical_axis = 0.0
 	actor.movement.physics_tick(0.016)
 	t.assert_true(actor.global_position.x > player_before.x and actor.global_position.y < player_before.y, "player knockback produces actual displacement")
-	actor.combat._process(attack.total_seconds())
+	actor.combat.physics_tick(attack.total_seconds())
 	t.assert_true(actor.combat_action.is_idle(), "attack timeline completes normally after non-reaction knockback")
 
 	actor.health.invulnerable_remaining = 0.0
