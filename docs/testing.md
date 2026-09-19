@@ -152,6 +152,20 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   실행 가능 시점의 실패는 1회 시도 후 폐기, death 가 buffer 를 비움), presentation timing
   (수신 시 0회, 실행 시 정확히 1회, 교체된 intent 는 영영 0회, buffer 된 sequence 재전송 거절),
   그리고 실제 적을 상대로 한 3타 전부 명중·step 당 1회 타격을 검증한다.
+- unit/test_player_sprite_pipeline.gd: sprite asset pipeline 회귀. `PlayerSpriteAnimationEntry`
+  검증(grid가 texture를 나누지 못하면 거절, frame_count가 grid 초과 시 거절, texture/semantic 누락,
+  비유한·0·음수 fps 거절, frame_count < cell 수는 정상), 1024×512/4×2/256×256 규격은 통과하고
+  다른 canvas는 error가 아니라 warning이라는 것, `PlayerSpriteManifest`의 중복 semantic·null
+  entry·visual scale/position 검증과 **구조적 유효성 vs 출시 준비 상태 분리**(일부 clip만 있는
+  manifest는 빌드되지만 production ready가 아니고 누락 clip을 이름으로 보고), builder의 row-major
+  slicing을 cell마다 다른 색으로 칠한 synthetic sheet로 frame별 region과 실제 픽셀까지 확인,
+  fps/loop/clip 이름/frame 수 전파, 같은 manifest 두 번 빌드 시 완전 동일(그리고 manifest가 바뀌면
+  달라짐), 생성 resource의 저장·재로드 round trip, frame region이 양수이고 atlas 안에 있으며 한
+  canvas를 공유하는지, shipped profile 상태 검증(art 없으면 placeholder 허용 유지 / art 있으면
+  required clip 12개 존재·`allow_placeholder=false`·attack partition이 실제 frame 수 안), 그리고
+  presentation transform(art 유무에 따른 sprite↔placeholder 전환, visual scale은 presenter에
+  offset은 sprite에만 적용되고 actor root·collision·hitbox·hurtbox는 불변, facing이 authored
+  scale의 부호만 뒤집고 reconfigure해도 현재 facing을 유지)을 검증한다.
 - unit/test_player_animation_presentation.gd: presentation-disabled actor의 visual 미생성,
   presentation-enabled actor의 단일 lazy visual/placeholder, shipped profile 및 synthetic
   SpriteFrames profile 검증, idle/run/jump/fall/climb/climb_idle resolver, 권위 actor의

@@ -18,6 +18,16 @@ extends Resource
 
 @export var faces_right_by_default: bool = true
 @export var climb_ignores_facing: bool = true
+## Applied by the presentation layer only. Production sprite pixels and the
+## placeholder polygon are very different sizes, and that difference must never
+## reach the actor's collision, hitbox, hurtbox or interaction geometry — so the
+## scale lives here and is applied to the visual child, never to PlayerActor.
+## Facing composes with it: the presenter flips the sign of x around this
+## magnitude rather than replacing it.
+@export var visual_scale: Vector2 = Vector2.ONE
+## Nudge for the sprite inside the visual, when a sheet's anchor sits slightly
+## off the actor origin. Per-frame offset correction remains out of scope.
+@export var visual_offset: Vector2 = Vector2.ZERO
 @export var attack_bindings: Array[AttackAnimationBinding] = []
 @export var allow_placeholder: bool = true
 
@@ -29,6 +39,13 @@ func attack_binding(presentation_key: StringName) -> AttackAnimationBinding:
 
 func validation_errors() -> PackedStringArray:
 	var errors := PackedStringArray()
+	if not is_finite(visual_scale.x) or not is_finite(visual_scale.y) \
+			or visual_scale.x <= 0.0 or visual_scale.y <= 0.0:
+		# A negative authored scale would fight the presenter's facing flip and
+		# leave the sprite mirrored in one direction only.
+		errors.append("visual_scale must be positive and finite")
+	if not is_finite(visual_offset.x) or not is_finite(visual_offset.y):
+		errors.append("visual_offset must be finite")
 	var seen: Dictionary[StringName, bool] = {}
 	for index in attack_bindings.size():
 		var binding := attack_bindings[index]

@@ -114,6 +114,32 @@ ContentRegistry 밖의 plain Resource다. `presentation/player/player_visual.tsc
 `PresentationAnchor`만 가지며 presentation actor만 visual scene을 lazy instantiate한다.
 Presenter는 PlayerActor signal만 소비하고 NetworkManager/RPC를 직접 알지 않는다.
 
+sprite asset은 별도 pipeline을 통해 들어온다. 이것도 전부 presentation 전용이며
+ContentRegistry에 등록하지 않는다.
+
+```
+assets/characters/player_hamster/source/*.png   빌드 도구가 낸 정규화된 sheet
+  └─ PlayerSpriteManifest (.tres)               어느 sheet가 어느 clip인지 + grid/fps/loop
+       └─ PlayerSpriteFramesBuilder             row-major 결정적 slicing (AtlasTexture)
+            └─ SpriteFrames (.tres, generated)  게임이 실제로 로드하는 것
+                 └─ CharacterAnimationProfile   semantic 이름 매핑 + visual scale/offset
+                      └─ PlayerAnimationPresenter → AnimatedSprite2D
+```
+
+- `PlayerSpriteAnimationEntry` — sheet 하나: texture, `columns`/`rows`/`frame_count`, `fps`,
+  `loop`. `semantic_name`이 runtime 계약이고 PNG 파일 이름은 import 편의다. 규격은
+  1024×512 / 4×2 / 256×256이며 다른 canvas는 warning(에러 아님). `frame_count`가 grid보다
+  작으면 남는 cell은 쓰지 않는다.
+- `PlayerSpriteManifest` — entry 목록 + `visual_scale`/`visual_position`. 구조적 유효성
+  (`validation_errors`)과 출시 준비 상태(`production_readiness_errors`)를 나눠서 답한다.
+  일부 clip만 있는 manifest도 빌드는 되지만 profile 활성화는 못 한다.
+- `PlayerSpriteFramesBuilder` — manifest → `SpriteFrames`. 결정적이라 같은 manifest는 항상
+  같은 clip 순서·frame 순서·region·fps·loop를 만든다. spawn마다 돌지 않고
+  `presentation/tools/build_player_sprite_frames.tscn`이 한 번 굽는다.
+- `CharacterAnimationProfile.visual_scale`/`visual_offset` — presentation child에만 적용된다.
+  scale은 presenter에, offset은 sprite에 들어가며 facing은 authored scale의 부호만 뒤집는다.
+  PlayerActor root와 collision/hitbox/hurtbox는 건드리지 않는다.
+
 `InteractionTarget.activated`는 로컬 presentation 흐름이며 authority boundary가 아니다. 특히
 remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirror + 표현만 받는다). `_begin_player_world_transition()`과
 `_return_player_to_settlement()`은 공통 `_validate_authoritative_world_interaction()`으로

@@ -106,6 +106,28 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   frame에서 attack commit, hitbox, stamina, dodge, HURT/death lifecycle을 변경하지 않는다.
   권위 clock은 계속 `hurt → dodge → combat → input_buffer → movement`이고 presentation만
   render `_process(delta)`를 쓸 수 있다.
+- **sprite asset 은 pipeline 을 통해서만 들어온다.** 원본 sheet 는
+  `assets/characters/<캐릭터>/source/`, 의미 매핑은 `PlayerSpriteManifest`, 실제로 게임이 쓰는
+  것은 거기서 **생성된** `SpriteFrames` 다. PNG 파일 이름은 import 편의일 뿐이고 runtime
+  계약은 `semantic_name` 이다. 규격은 1024×512 / 4×2 / 256×256 frame, **row-major** 고정
+  (snake ordering 추론 금지). raw 생성형 출력(1774×887 등)을 resize·stretch 하거나 threshold
+  로 배경을 억지로 뚫어 넣지 않는다 — 왜곡과 anchor drift 를 숨길 뿐이다. spawn 마다 PNG 를
+  자르지 않는다: 빌드는
+  `presentation/tools/build_player_sprite_frames.tscn` 이 한 번 하고 결과를 commit 한다.
+  `PlayerSpriteManifest` / `SpriteFrames` / `CharacterAnimationProfile` 은 presentation 전용이라
+  `ContentRegistry` 에 등록하지 않는다.
+- **production art 는 전부 준비됐을 때만 활성화한다.** required clip 12 개가 모두 있고
+  validation 을 통과하면 profile 의 `sprite_frames` 를 연결하고 `allow_placeholder = false` 로
+  바꾼다(그래야 이후 누락이 CI 에서 바로 드러난다). 일부만 있으면 placeholder 를 그대로 쓴다 —
+  clip 별 혼합은 만들지 않는다. `attack_2` 를 `attack_3` 로 복제하거나 `jump` 를 `fall` 로
+  재사용해 완성처럼 보이게 하지 않는다. `PlaceholderVisual` 은 활성화 후에도 fallback 으로
+  씬에 남긴다.
+- **art 때문에 gameplay 를 바꾸지 않는다.** production pose 가 timing 과 안 맞아 보이면
+  `AttackAnimationBinding` 의 frame partition 을 먼저 맞춘다 — `AttackDefinition` 의
+  startup/active/recovery 는 이 단계에서 건드리지 않는다. sprite 크기 때문에 collision·hitbox·
+  hurtbox 를 바꾸지도 않는다: 크기 차이는 `CharacterAnimationProfile.visual_scale` /
+  `visual_offset` 로 흡수하며 이 값은 presentation child 에만 적용된다(root 금지). facing 은
+  authored scale 의 **부호만** 뒤집으므로 `visual_scale` 은 양수여야 한다.
 - **headless actor는 player visual을 만들지 않는다.** `presentation_enabled=false`이면
   `PlayerVisual`, `AnimatedSprite2D`, placeholder, presenter를 load/instantiate하지 않는다.
   visual scene은 문자열 경로로 presentation actor에서만 lazy load하며 실패해도 gameplay는

@@ -26,13 +26,14 @@ var _attack_active: float = 0.0
 var _attack_recovery: float = 0.0
 var _dodge_direction: float = 1.0
 var _restart_requested: bool = false
-var _base_scale_x: float = 1.0
+## Magnitude only. Facing sets the sign of x around it, so an authored visual
+## scale and a left-facing actor compose instead of overwriting each other.
+var _base_scale: Vector2 = Vector2.ONE
 var _warned_missing: Dictionary[StringName, bool] = {}
 
 func configure(p_actor: PlayerActor) -> void:
 	_disconnect_actor()
 	actor = p_actor
-	_base_scale_x = maxf(absf(scale.x), PRESENTATION_EPSILON)
 	_apply_profile()
 	if actor == null:
 		set_process(false)
@@ -89,13 +90,33 @@ func current_combo_step() -> int:
 	return _attack_combo_step
 
 func _apply_profile() -> void:
+	_base_scale = _resolved_base_scale()
+	# The visual child carries the whole presentation transform. PlayerActor's
+	# own transform stays gameplay-only, which is why swapping in art at a very
+	# different pixel size cannot move a hitbox.
+	var facing_sign := -1.0 if scale.x < 0.0 else 1.0
+	scale = Vector2(facing_sign * _base_scale.x, _base_scale.y)
 	if sprite == null or placeholder == null:
 		return
+	sprite.position = profile.visual_offset if profile != null else Vector2.ZERO
 	var has_frames := profile != null and profile.sprite_frames != null
 	sprite.visible = has_frames
 	placeholder.visible = not has_frames
 	if has_frames:
 		sprite.sprite_frames = profile.sprite_frames
+
+## Never zero and never negative: a zero scale would make the character vanish
+## for a reason no one would look for in a Resource field.
+func _resolved_base_scale() -> Vector2:
+	if profile == null:
+		return Vector2.ONE
+	var authored := profile.visual_scale
+	if not is_finite(authored.x) or not is_finite(authored.y):
+		return Vector2.ONE
+	return Vector2(
+		maxf(absf(authored.x), PRESENTATION_EPSILON),
+		maxf(absf(authored.y), PRESENTATION_EPSILON)
+	)
 
 func _resolve_presentation() -> void:
 	if _is_dead():
@@ -219,7 +240,8 @@ func _apply_facing(committed_facing: float) -> void:
 		return
 	var faces_right := committed_facing > 0.0
 	var normal := faces_right == profile.faces_right_by_default
-	scale.x = _base_scale_x if normal else -_base_scale_x
+	scale.x = _base_scale.x if normal else -_base_scale.x
+	scale.y = _base_scale.y
 
 func _advance_remote_transient(delta: float) -> void:
 	if _remote_transient == Transient.NONE or delta <= 0.0:

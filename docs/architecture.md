@@ -50,6 +50,15 @@ server/headless actor에는 `PlayerVisual`, `AnimatedSprite2D`, Polygon placehol
 `PlayerAnimationPresenter`가 생기지 않는다. 현재 shipped profile은 최종 SpriteFrames가 없는
 placeholder 모드이며 기존 햄스터 Polygon은 gameplay scene이 아니라 visual scene에 있다.
 
+sprite asset은 build-time pipeline으로 들어온다. 정규화된 sheet(`assets/characters/<캐릭터>/source/`)
+→ `PlayerSpriteManifest`(어느 sheet가 어느 clip인지, grid·fps·loop) → `PlayerSpriteFramesBuilder`의
+결정적 row-major slicing → 생성된 `SpriteFrames` → `CharacterAnimationProfile`. spawn마다 PNG를
+자르지 않고 한 번 구워서 commit하며, 이 Resource들은 전부 presentation 전용이라 ContentRegistry에
+등록하지 않는다. 캐릭터 그림을 교체해도 gameplay/network 코드는 그대로다 — 크기 차이는
+`visual_scale`/`visual_offset`이 presentation child에서 흡수하고, collision·hitbox·hurtbox는 art와
+무관하게 유지된다. production art는 required clip 12개가 모두 준비돼 검증을 통과했을 때만
+활성화하며(`allow_placeholder = false`), 그 전까지는 placeholder를 통째로 쓴다.
+
 `PlayerAnimationPresenter`는 `CombatActionController`, `CombatComponent.attack_elapsed()`,
 `PlayerHurtComponent`, `PlayerDodgeComponent`, `MovementComponent`를 read-only로 해석한다.
 권위 actor의 실제 gameplay state 우선순위는
