@@ -1,6 +1,7 @@
 extends RefCounted
 
 const PLAYER_SCENE := preload("res://gameplay/actors/player/player.tscn")
+const PLAYER_ANIMATION_PROFILE := preload("res://presentation/player/player_animation_profile.tres")
 
 func run(t: Node) -> void:
 	_test_profile_validation(t)
@@ -12,6 +13,10 @@ func run(t: Node) -> void:
 	GameSession.start_new_game()
 
 func _test_profile_validation(t: Node) -> void:
+	var shipped_profile := PLAYER_ANIMATION_PROFILE as CharacterAnimationProfile
+	t.assert_true(shipped_profile != null, "the shipped player animation profile loads")
+	t.assert_true(shipped_profile.validation_errors().is_empty(), "the shipped placeholder animation profile validates")
+
 	var placeholder := CharacterAnimationProfile.new()
 	t.assert_true(placeholder.validation_errors().is_empty(), "a null SpriteFrames placeholder profile is valid")
 	placeholder.allow_placeholder = false
@@ -156,6 +161,18 @@ func _test_presenter_resolution(t: Node) -> void:
 	actor.velocity.y = 0.0
 	presenter.refresh()
 	t.assert_equal(presenter.current_animation(), &"climb_idle", "stationary CLIMB resolves climb_idle")
+	var actor_scale_before_climb_facing := actor.scale
+	presenter.profile.faces_right_by_default = false
+	presenter.profile.climb_ignores_facing = true
+	actor.facing = 1.0
+	presenter.refresh()
+	t.assert_true(presenter.scale.x > 0.0, "left-canonical climb art remains unflipped when climb ignores live facing")
+	t.assert_equal(actor.scale, actor_scale_before_climb_facing, "left-canonical climb facing leaves the PlayerActor root unchanged")
+	presenter.profile.climb_ignores_facing = false
+	presenter.refresh()
+	t.assert_true(presenter.scale.x < 0.0, "climb follows live RIGHT facing when facing is not ignored for left-canonical art")
+	presenter.profile.faces_right_by_default = true
+	presenter.profile.climb_ignores_facing = true
 
 	actor.movement.mode = MovementComponent.Mode.GROUND
 	actor.facing = 1.0
@@ -212,11 +229,28 @@ func _test_presenter_resolution(t: Node) -> void:
 	t.assert_equal(presenter.current_frame(), 0, "HURT refresh restarts the same clip at frame zero")
 	actor.network_combat._on_attack_presented_received(actor.peer_id, 13, 1.0, 2, &"attack_3", 0.13, 0.14, 0.38)
 	presenter.refresh()
-	t.assert_equal(presenter.current_animation(), &"hurt", "a lower-priority attack cannot displace active HURT")
+	t.assert_equal(presenter.current_animation(), &"attack_3", "a newer remote Attack replaces an active local HURT visual timer")
+	actor.network_combat._on_hurt_presented_received(actor.peer_id, 2, 0.25)
+	presenter.refresh()
+	t.assert_equal(presenter.current_animation(), &"hurt", "a newer remote HURT replaces an Attack visual")
+	actor.network_dodge._on_dodge_presented_received(actor.peer_id, 13, 1.0, 0.30)
+	presenter.refresh()
+	t.assert_equal(presenter.current_animation(), &"dodge", "a newer remote Dodge replaces an active local HURT visual timer")
+	actor.network_combat._on_attack_presented_received(actor.peer_id, 14, -1.0, 0, &"attack_1", 0.10, 0.12, 0.33)
+	presenter.refresh()
+	t.assert_equal(presenter.current_animation(), &"attack_1", "a newer remote Attack replaces an active local Dodge visual timer")
+	actor.network_dodge._on_dodge_presented_received(actor.peer_id, 14, -1.0, 0.30)
+	presenter.refresh()
+	t.assert_equal(presenter.current_animation(), &"dodge", "a newer remote Dodge replaces an active Attack visual")
 
 	actor.health.current_health = 0.0
 	presenter.refresh()
 	t.assert_equal(presenter.current_animation(), &"death", "death overrides every combat transient")
+	actor.network_combat._on_attack_presented_received(actor.peer_id, 15, 1.0, 1, &"attack_2", 0.09, 0.12, 0.30)
+	actor.network_dodge._on_dodge_presented_received(actor.peer_id, 15, 1.0, 0.30)
+	actor.network_combat._on_hurt_presented_received(actor.peer_id, 3, 0.25)
+	presenter.refresh()
+	t.assert_equal(presenter.current_animation(), &"death", "Attack, Dodge and HURT events cannot displace the absolute death visual")
 	actor.health.current_health = health_before
 	t.assert_true(actor.combat_action.is_idle(), "remote presentation events do not mutate CombatAction")
 	t.assert_equal(GameSession.get_player_runtime(actor.peer_id).combat.stamina, stamina_before, "remote presentation events spend no stamina")
@@ -252,7 +286,19 @@ func _test_authoritative_attack_sync(t: Node) -> void:
 	presenter.refresh()
 	t.assert_true(presenter.current_frame() >= 4, "authoritative presenter seeks from attack_elapsed into recovery after a large delta")
 	t.assert_true(is_equal_approx(actor.combat.attack_elapsed(), definition.startup_seconds + definition.active_seconds + 0.12), "presentation reads but does not change the gameplay attack clock")
-	actor.combat.abort_attack()
+	t.assert_true(actor.hurt.begin_hurt(), "authoritative priority fixture enters actual gameplay HURT")
+	actor.attack_presented.emit(
+		999,
+		1.0,
+		0,
+		&"attack_1",
+		definition.startup_seconds,
+		definition.active_seconds,
+		definition.recovery_seconds
+	)
+	presenter.refresh()
+	t.assert_equal(presenter.current_animation(), &"hurt", "authoritative gameplay HURT outranks an event-only Attack presentation")
+	actor.hurt.reset()
 	layer.queue_free()
 	await t.get_tree().process_frame
 	await t.get_tree().process_frame

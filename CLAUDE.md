@@ -113,7 +113,11 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 - **원격 전투 표현은 gameplay state 복제가 아니다.** Attack event는 combo step/key와 authored
   timing, Dodge/HURT event는 duration을 보내며 presenter timer만 움직인다. remote actor의
   CombatAction, stamina, health, physics를 event에서 변경하지 않는다. HURT refresh는 state
-  transition 없이 새 presentation event를 내보낸다.
+  transition 없이 새 presentation event를 내보낸다. 권위 actor는 실제 gameplay state의
+  `DEATH > HURT > DODGE > ATTACK > locomotion` 우선순위를 읽지만, remote actor는 이 상태를
+  추측하지 않는다. remote의 가장 최근 유효 Attack/Dodge/HURT event가 현재 transient를
+  교체하며 cosmetic local timer는 뒤에 도착한 서버 event를 거절할 수 없다. 같은 종류 안의
+  stale/duplicate sequence만 거절하고, death만 절대 visual override다.
 - **공격 공간 정보와 플레이어 공격 넉백도 `AttackDefinition` step 이 소유한다.** 논리적
   reach는 `range`, 현재 rectangle 판정은 `hitbox_size`/`hitbox_offset`, 공격자 기준 impulse는
   `knockback` 에 둔다. `WeaponDefinition.attack_range` 나 Hitbox/Combat 코드 기본값을 다시

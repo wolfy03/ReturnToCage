@@ -374,6 +374,13 @@ CombatAction transition, health/damage, stamina, 위치를 변경하지 않는�
 공개하거나 combo/HURT/Dodge remaining을 복제하지 않는다. 따라서 Protocol은 15로 올랐지만 Save는
 v4 그대로이며 presentation transient는 직렬화되지 않는다.
 
+remote actor는 실제 CombatAction priority를 재구성하지 않는다. Attack, Dodge, HURT event는 이미
+서버에서 action이 시작됐다는 확정 통지이므로 가장 최근에 유효하게 도착한 event가 local transient
+visual을 교체한다. local render timer가 아직 HURT/Dodge를 재생 중이어도 뒤에 도착한 event를
+버리지 않는다. Attack/Dodge/HURT의 sequence namespace는 서로 독립이며 각 종류 안에서만
+stale/duplicate를 거절한다. Death는 health/lifecycle snapshot으로 판정하는 유일한 절대 visual
+override이며 이 ordering 정책도 gameplay state를 변경하지 않는다.
+
 ## Not synchronized yet
 
 - Other-player equipment appearance summaries (full item state remains owner-private)

@@ -52,7 +52,8 @@ placeholder 모드이며 기존 햄스터 Polygon은 gameplay scene이 아니라
 
 `PlayerAnimationPresenter`는 `CombatActionController`, `CombatComponent.attack_elapsed()`,
 `PlayerHurtComponent`, `PlayerDodgeComponent`, `MovementComponent`를 read-only로 해석한다.
-우선순위는 `DEATH > HURT > DODGE > ATTACK > CLIMB > AIR > RUN > IDLE`이다. 공격 frame은
+권위 actor의 실제 gameplay state 우선순위는
+`DEATH > HURT > DODGE > ATTACK > CLIMB > AIR > RUN > IDLE`이다. 공격 frame은
 `AttackAnimationBinding`의 STARTUP/ACTIVE/RECOVERY half-open frame partition에 권위 gameplay
 elapsed를 매핑한다. animation 완료·frame callback은 hitbox, stamina, action transition을 절대
 구동하지 않으며 authoritative combat은 animation을 기다리지 않는다.
@@ -61,7 +62,11 @@ remote actor는 CombatAction/HURT/Dodge/combo runtime을 복제하지 않는다.
 reliable presentation event만 받아 visual timer를 돌리고, locomotion은 기존 replicated
 position/velocity/facing/movement mode를 사용한다. Attack은 committed facing, Dodge는 committed
 direction을 유지하며 HURT refresh는 별도 event로 같은 clip을 frame 0부터 다시 시작한다.
-presentation event는 remote gameplay state를 재구성하거나 mutation하지 않는다.
+presentation event는 remote gameplay state를 재구성하거나 mutation하지 않는다. remote는
+gameplay priority를 알지 못하므로 가장 최근에 도착한 유효 Attack/Dodge/HURT event가 현재
+transient visual을 교체한다. 종류별 sequence의 stale/duplicate 방어는 독립적으로 유지하며
+서로 다른 종류의 sequence 숫자를 비교하지 않는다. cosmetic timer는 새 서버 event를 막지
+못하고 death만 절대 visual override다.
 
 ## 이동과 등반
 

@@ -153,11 +153,13 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   (수신 시 0회, 실행 시 정확히 1회, 교체된 intent 는 영영 0회, buffer 된 sequence 재전송 거절),
   그리고 실제 적을 상대로 한 3타 전부 명중·step 당 1회 타격을 검증한다.
 - unit/test_player_animation_presentation.gd: presentation-disabled actor의 visual 미생성,
-  presentation-enabled actor의 단일 lazy visual/placeholder, synthetic SpriteFrames profile 검증,
-  idle/run/jump/fall/climb/climb_idle resolver, Death/HURT/Dodge/Attack 우선순위, root transform과
+  presentation-enabled actor의 단일 lazy visual/placeholder, shipped profile 및 synthetic
+  SpriteFrames profile 검증, idle/run/jump/fall/climb/climb_idle resolver, 권위 actor의
+  Death/HURT/Dodge/Attack 우선순위와 remote latest-valid-event ordering, root transform과
   분리된 facing flip, committed attack/dodge facing, combo clip 직접 전환, authoritative
   `attack_elapsed()` seek와 8-frame phase partition, HURT refresh frame-0 restart, malformed/stale
-  payload 무시와 remote gameplay isolation, Protocol 15/Save v4를 검증한다.
+  payload 무시, HURT→Attack/Dodge 및 Dodge↔Attack 전환, death absolute override,
+  left-canonical climb facing과 remote gameplay isolation, Protocol 15/Save v4를 검증한다.
 - 8차 안정화 회귀는 위 두 파일에 들어 있다. `test_attack_combo.gd` 는 `CombatComponent` 가
   `_process` 를 선언하지 않고 `physics_tick` 만 가진다는 것(단일 clock 고정), 실제 권위 tick
   순서(`hurt → dodge → combat → input_buffer`)를 모사한 helper 로 chain window 가 열리는

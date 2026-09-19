@@ -146,7 +146,10 @@ func _apply_locomotion() -> void:
 			animation = profile.run_animation if absf(actor.velocity.x) > RUN_VELOCITY_THRESHOLD \
 					else profile.idle_animation
 	_apply_animation(animation, false, 0)
-	_apply_facing(1.0 if ignore_facing and profile.faces_right_by_default else actor.facing)
+	_apply_facing(_canonical_facing() if ignore_facing else actor.facing)
+
+func _canonical_facing() -> float:
+	return 1.0 if profile.faces_right_by_default else -1.0
 
 func _apply_attack(elapsed: float) -> void:
 	var key := _attack_key
@@ -236,8 +239,6 @@ func _on_attack_presented(
 	active_seconds: float,
 	recovery_seconds: float
 ) -> void:
-	if not actor.is_simulation_authority() and _remote_transient > Transient.ATTACK:
-		return
 	_attack_facing = facing
 	_attack_combo_step = combo_step
 	_attack_key = presentation_key
@@ -251,8 +252,6 @@ func _on_attack_presented(
 	_restart_requested = true
 
 func _on_dodge_presented(_sequence: int, direction: float, duration_seconds: float) -> void:
-	if not actor.is_simulation_authority() and _remote_transient > Transient.DODGE:
-		return
 	_dodge_direction = direction
 	_remote_elapsed = 0.0
 	_remote_duration = duration_seconds

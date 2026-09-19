@@ -34,8 +34,9 @@ selects an `AttackAnimationBinding`; it is not a file or texture reference.
 - Keep the pivot and feet position stable so animation does not visibly jitter.
 - Keep character scale consistent between clips. Visual scaling belongs to the presentation scene,
   never collision, hitbox, hurtbox, or interaction geometry.
-- Author canonical art facing right by default. The visual child is horizontally flipped for left;
-  never flip or negatively scale the `PlayerActor` root.
+- Record the profile's canonical art direction with `faces_right_by_default`. Right- and left-facing
+  source art are both supported; when climb ignores live facing it uses that canonical direction.
+  Only the visual child is horizontally flipped; never flip or negatively scale the `PlayerActor` root.
 - Keep source rectangles and `AnimatedSprite2D` position stable. Per-frame offset correction is not
   part of the current pipeline.
 
@@ -59,3 +60,10 @@ The shipped `player_animation_profile.tres` intentionally has no production Spri
 the Polygon hamster placeholder. A missing final sprite asset therefore does not block gameplay,
 headless CI, or dedicated server simulation. `presentation_enabled=false` actors do not load or
 instantiate the visual scene at all.
+
+## Remote event ordering
+
+Remote transient presentation follows authoritative presentation event arrival order. Attack, Dodge,
+and HURT events announce actions that already started on the server, so a cosmetic local timer must
+never reject a later valid event. Same-type stale or duplicate sequences remain rejected, but sequence
+numbers from different action types are never compared. Death is the only absolute visual override.

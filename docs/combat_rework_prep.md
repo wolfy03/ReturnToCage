@@ -19,6 +19,7 @@
 완료  8차  Combo + Authoritative Input Buffer + Authored Cancel Window
 완료  8차 안정화  Unified combat physics clock + buffer lifecycle
 완료  9차  Combat Presentation / Animation Integration (Protocol v15)
+완료  9차 안정화  Remote event ordering + reusable profile contract
 다음  10차  후속 전투/표현 단계
 ```
 
@@ -202,6 +203,7 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 8차 | Combo(`AttackComboDefinition`)·권위 Input Buffer·authored cancel window | 완료 |
 | 8차 안정화 | 전투 시간 physics clock 단일화·HURT refresh buffer lifecycle·combo 계약 문서화 | 완료 |
 | 9차 | Combat Presentation / Animation Integration (Protocol v15) | 완료 |
+| 9차 안정화 | Remote latest-valid-event ordering·canonical climb facing·shipped profile validation | 완료 |
 | 10차 | 후속 전투/표현 단계 | 다음 |
 | 이후 | 적 패턴 개편, 히트스톱·카메라 표현, client prediction | 예정 |
 
