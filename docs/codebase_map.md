@@ -148,7 +148,9 @@ raw 생성형 출력
   경로에 쓸 수 없다(CI가 기본 manifest에서 다시 구워 비교하므로 그 외의 산출물은 곧바로
   stale이 된다). 경로 비교는 `canonical_resource_path()`가 `.`/`..`/중복 `/`를 정규화한
   뒤에 하므로 철자만 바꿔서 보호를 우회할 수 없고, `res://`·`user://` 외의 경로는 아예
-  거절한다. 순수 함수라 프로세스를 띄우지 않고 테스트한다.
+  거절한다. 경로 유효성은 manifest 존재 여부보다 먼저 판단하므로, art 가 없는 상태에서도
+  잘못된 `--manifest`/`--output` 은 skip 이 아니라 REJECT 다. 순수 함수라 프로세스를 띄우지
+  않고 테스트한다.
 - `PlayerSpritePipelineValidator` — manifest / 생성된 frames / shipped profile 세 artefact의
   정합성. 각각 따로 commit될 수 있고 그 조합 대부분이 실수라서, manifest에서 다시 구워
   `production_signature`로 비교하고 profile이 생성 resource를 가리키는지까지 본다(이 비교도

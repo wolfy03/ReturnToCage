@@ -103,33 +103,43 @@ static func is_production_manifest(path: String) -> bool:
 ## which is the normal state before the art exists and is not a failure.
 ## [param manifest_path] is where that manifest was loaded from; it decides
 ## whether this build is allowed to write the shipped resource at all.
+##
+## The paths are judged before the manifest is. "This file does not exist yet"
+## and "you typed a path this tool cannot use" are different answers, and
+## checking existence first collapses them: with no art committed, every
+## `--manifest=C:/typo.tres` would load nothing, skip, and exit 0 as though the
+## argument had been fine. A path the tool cannot own is wrong whether or not
+## anything happens to be sitting at it.
 static func decide(
 	manifest: PlayerSpriteManifest,
 	manifest_path: String,
 	output_path: String,
 	allow_incomplete: bool
 ) -> Result:
-	# No manifest means no build and therefore no write, which is the state the
-	# project is in before the art exists rather than a failure.
-	if manifest == null:
-		return Result.new(Decision.SKIP, "there is no manifest to build from")
-	if canonical_resource_path(output_path).is_empty():
-		return Result.new(
-			Decision.REJECT,
-			"'%s' is not a writable project path; --output must be a res:// or user:// path" % output_path
-		)
-	if canonical_resource_path(manifest_path).is_empty():
+	var canonical_manifest := canonical_resource_path(manifest_path)
+	if canonical_manifest.is_empty():
 		return Result.new(
 			Decision.REJECT,
 			"'%s' is not a readable project path; --manifest must be a res:// or user:// path" % manifest_path
 		)
+	var canonical_output := canonical_resource_path(output_path)
+	if canonical_output.is_empty():
+		return Result.new(
+			Decision.REJECT,
+			"'%s' is not a writable project path; --output must be a res:// or user:// path" % output_path
+		)
+	# Both paths are usable; there is simply nothing at this one yet. That is
+	# where the project is before the art exists, and it is not a failure.
+	if manifest == null:
+		return Result.new(Decision.SKIP, "there is no manifest to build from")
 	var structural := manifest.validation_errors()
 	if not structural.is_empty():
 		return Result.new(Decision.REJECT, "; ".join(structural))
+	var writes_production := canonical_output == canonical_resource_path(DEFAULT_OUTPUT)
 	# Only the manifest the repository check regenerates from may write the
 	# resource that check compares against. A complete manifest is no exception:
 	# completeness says the art is all there, not that this is the shipped art.
-	if is_production_output(output_path) and not is_production_manifest(manifest_path):
+	if writes_production and canonical_manifest != canonical_resource_path(DEFAULT_MANIFEST):
 		return Result.new(
 			Decision.REJECT,
 			"only %s may write the production path %s; '%s' must choose another --output"
@@ -137,7 +147,7 @@ static func decide(
 		)
 	# A preview build never writes the shipped resource, complete or not. The
 	# flag is how someone says "this output is not the real thing".
-	if allow_incomplete and is_production_output(output_path):
+	if allow_incomplete and writes_production:
 		return Result.new(
 			Decision.REJECT,
 			"an incomplete build may not write the production path %s; choose another --output" % DEFAULT_OUTPUT

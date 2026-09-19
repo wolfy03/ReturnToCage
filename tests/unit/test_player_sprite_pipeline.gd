@@ -344,6 +344,32 @@ func _test_build_policy(t: Node) -> void:
 		"no manifest skips a preview build too"
 	)
 
+	# "Nothing is committed there yet" and "that is not a path this tool can
+	# use" are different answers, and with no art committed every unusable path
+	# loads nothing. If existence were checked first, a mistyped argument would
+	# come back as a clean skip and exit 0.
+	for bad_manifest in ["", "C:/invalid_manifest.tres", "/tmp/manifest.tres", "manifest.tres"]:
+		var verdict := PlayerSpriteBuildPolicy.decide(null, bad_manifest, production_output, false)
+		t.assert_true(verdict.is_reject(), "'%s' is refused even with no manifest committed" % bad_manifest)
+		t.assert_true(verdict.reason.findn("--manifest") >= 0, "the refusal names the argument at fault")
+	for bad_output in ["", "/tmp/frames.tres", "C:/frames.tres", "frames.tres"]:
+		var verdict := PlayerSpriteBuildPolicy.decide(null, production_manifest, bad_output, false)
+		t.assert_true(verdict.is_reject(), "output '%s' is refused even with no manifest committed" % bad_output)
+		t.assert_true(verdict.reason.findn("--output") >= 0, "the refusal names the argument at fault")
+
+	# An equivalent spelling of a usable path is still a usable path, so the
+	# repository's real state — valid defaults, nothing committed yet — stays a
+	# skip rather than becoming a refusal.
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(
+			null,
+			"res://assets/characters/player_hamster/tmp/../player_hamster_sprite_manifest.tres",
+			"res://assets/characters/player_hamster/./player_hamster_sprite_frames.tres",
+			false
+		).is_skip(),
+		"equivalent spellings of the default paths still skip when nothing is committed"
+	)
+
 	var complete := _complete_manifest()
 	t.assert_true(
 		PlayerSpriteBuildPolicy.decide(complete, production_manifest, production_output, false).is_build(),

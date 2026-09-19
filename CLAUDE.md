@@ -136,6 +136,12 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   (`PlayerSpriteBuildPolicy.canonical_resource_path`). 지원 scheme 은 `res://` 와 `user://`
   뿐이고 그 외 경로·빈 문자열·root 밖으로 나가는 경로는 거절이다 — 이 도구는 임의 파일을
   덮어쓰는 도구가 아니다.
+  **경로 유효성은 resource 존재 여부보다 먼저 판단한다.** "아직 파일이 없다" 와 "쓸 수 없는
+  경로를 입력했다" 는 다른 답이다. art 가 없는 현재 상태에서는 잘못된 경로도 load 에 실패하므로,
+  존재 여부를 먼저 보면 오타 argument 가 정상 skip + exit 0 이 된다. 유효한 기본 경로에
+  manifest 가 아직 없는 상태만 SKIP 이고, 쓸 수 없는 경로는 항상 REJECT 다. build script 는
+  policy 가 통과시킨 canonical 경로로 load/save 하고, 존재하지만 타입이 다른 파일은 "없음" 이
+  아니라 FAIL 이다.
 - **generated resource 는 commit 했다고 믿지 않는다.** `check_project.py` 가
   `presentation/tools/validate_player_sprite_pipeline.tscn` 을 돌려 manifest / 생성된
   `SpriteFrames` / shipped profile 셋의 정합성을 검사한다. manifest 에서 다시 구워

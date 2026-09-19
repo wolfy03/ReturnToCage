@@ -102,6 +102,12 @@ a doubled slash all name the shipped resource and are treated as it. Only `res:/
 accepted; an empty path, a bare filesystem path and anything climbing above its own root are refused
 rather than guessed at.
 
+Whether a path is usable is decided before whether anything is sitting at it. Those are different
+answers, and with no art committed every unusable path loads nothing — so checking existence first
+would turn `--manifest=C:/typo.tres` into a clean skip and exit 0. A usable default path with no
+manifest behind it yet, which is where the repository is, is still the skip it should be. A file
+that exists at that path but is some other resource type is not an absent manifest, and fails.
+
 With no manifest present the tool reports `SPRITE BUILD SKIPPED` and succeeds: the pipeline exists
 before the art does.
 

@@ -185,7 +185,9 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   10B 최종 hardening 으로 두 가지가 더 붙었다: canonical path 비교
   (`./`·`foo/../`·중복 `/` 로 쓴 production 경로를 전부 같은 파일로 인식하고, custom manifest 가
   그 철자로 shipped 경로에 쓰려는 시도를 거절하며, `res://`/`user://` 밖의 경로와 빈 경로는
-  아예 거절), 그리고 error aggregation(duplicate semantic·null texture·invalid fps 를 한 번에
+  아예 거절 — 이 판단은 manifest 존재 여부보다 **먼저** 하므로 art 가 없는 상태에서도 오타
+  argument 가 skip 으로 새지 않고, 반대로 equivalent 철자의 유효한 기본 경로는 계속 SKIP 이다),
+  그리고 error aggregation(duplicate semantic·null texture·invalid fps 를 한 번에
   보고, 누락 clip 전부 나열, profile 의 여러 binding 오류도 함께 보고). 앞선 사전 안정화에서는
   두 가지가 붙었다: `production_signature`가 frame별 duration까지 담아
   editor에서 한 frame만 손으로 retime한 generated resource를 stale로 잡아내고(`describe()`는
