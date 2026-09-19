@@ -50,14 +50,19 @@ server/headless actor에는 `PlayerVisual`, `AnimatedSprite2D`, Polygon placehol
 `PlayerAnimationPresenter`가 생기지 않는다. 현재 shipped profile은 최종 SpriteFrames가 없는
 placeholder 모드이며 기존 햄스터 Polygon은 gameplay scene이 아니라 visual scene에 있다.
 
-sprite asset은 build-time pipeline으로 들어온다. 정규화된 sheet(`assets/characters/<캐릭터>/source/`)
-→ `PlayerSpriteManifest`(어느 sheet가 어느 clip인지, grid·fps·loop) → `PlayerSpriteFramesBuilder`의
-결정적 row-major slicing → 생성된 `SpriteFrames` → `CharacterAnimationProfile`. spawn마다 PNG를
+sprite asset은 build-time pipeline으로 들어온다. raw 생성형 출력을 **Python Sprite Asset Build
+Tool**이 정규화해 `assets/characters/<캐릭터>/source/`에 놓고, 거기서부터 `PlayerSpriteManifest`
+(어느 sheet가 어느 clip인지, grid·fps·loop) → **Godot** `PlayerSpriteFramesBuilder`의 결정적
+row-major slicing → 생성된 `SpriteFrames` → `CharacterAnimationProfile`이다. 두 도구의 책임은
+겹치지 않는다: Godot builder는 이미 정규화된 sheet를 자를 뿐 resize·배경 제거·재배치를 하지 않는다.
+manifest는 sheet를 어떻게 자를지만 정하고, 화면에서의 크기·방향·위치는 profile 단독 소유다. spawn마다 PNG를
 자르지 않고 한 번 구워서 commit하며, 이 Resource들은 전부 presentation 전용이라 ContentRegistry에
 등록하지 않는다. 캐릭터 그림을 교체해도 gameplay/network 코드는 그대로다 — 크기 차이는
 `visual_scale`/`visual_offset`이 presentation child에서 흡수하고, collision·hitbox·hurtbox는 art와
 무관하게 유지된다. production art는 required clip 12개가 모두 준비돼 검증을 통과했을 때만
-활성화하며(`allow_placeholder = false`), 그 전까지는 placeholder를 통째로 쓴다.
+활성화하며(`allow_placeholder = false`), 그 전까지는 placeholder를 통째로 쓴다. 기본 빌드는
+불완전한 manifest를 shipped 경로에 쓰지 않고, `check_project.py`가 manifest·생성 resource·profile
+셋의 정합성을 매번 검사하므로 셋 중 하나만 갱신된 상태는 master에 남지 않는다.
 
 `PlayerAnimationPresenter`는 `CombatActionController`, `CombatComponent.attack_elapsed()`,
 `PlayerHurtComponent`, `PlayerDodgeComponent`, `MovementComponent`를 read-only로 해석한다.

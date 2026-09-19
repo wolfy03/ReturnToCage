@@ -152,6 +152,14 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   실행 가능 시점의 실패는 1회 시도 후 폐기, death 가 buffer 를 비움), presentation timing
   (수신 시 0회, 실행 시 정확히 1회, 교체된 intent 는 영영 0회, buffer 된 sequence 재전송 거절),
   그리고 실제 적을 상대로 한 3타 전부 명중·step 당 1회 타격을 검증한다.
+- presentation/tools/validate_player_sprite_pipeline.tscn: `check_project.py`가 content
+  validation 직후 실행하는 저장소 상태 검사(`SPRITE PIPELINE VALIDATION PASS`). manifest·생성
+  `SpriteFrames`·shipped profile 셋이 서로 맞는지 본다. **art 없음 + placeholder는 PASS**,
+  **partial manifest 작업 중도 PASS**, 그러나 preview 산출물이 production 경로에 올라왔거나
+  manifest 없이 frames만 있거나 완성 manifest인데 굽지 않았거나 활성화가 반쯤 된 상태는 FAIL이다.
+  production state에서는 manifest를 메모리에서 다시 구워 `production_signature`(clip·speed·loop·
+  region·**source texture resource_path**·atlas 크기)로 committed resource와 비교하므로 stale
+  generated resource가 조용히 통과하지 않는다.
 - unit/test_player_sprite_pipeline.gd: sprite asset pipeline 회귀. `PlayerSpriteAnimationEntry`
   검증(grid가 texture를 나누지 못하면 거절, frame_count가 grid 초과 시 거절, texture/semantic 누락,
   비유한·0·음수 fps 거절, frame_count < cell 수는 정상), 1024×512/4×2/256×256 규격은 통과하고
@@ -165,7 +173,15 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   required clip 12개 존재·`allow_placeholder=false`·attack partition이 실제 frame 수 안), 그리고
   presentation transform(art 유무에 따른 sprite↔placeholder 전환, visual scale은 presenter에
   offset은 sprite에만 적용되고 actor root·collision·hitbox·hurtbox는 불변, facing이 authored
-  scale의 부호만 뒤집고 reconfigure해도 현재 facing을 유지)을 검증한다.
+  scale의 부호만 뒤집고 reconfigure해도 현재 facing을 유지)을 검증한다. 10A 안정화로 다음이
+  추가됐다: manifest가 `faces_right_by_default`/`visual_scale`/`visual_position`을 더 이상 갖지
+  않고 `CharacterAnimationProfile`이 단독 소유라는 source-of-truth 고정, build policy 행렬
+  (manifest 없음 → skip, 완성 manifest → production 경로 허용, 불완전 manifest + production →
+  거절, 불완전 + preview + 비production 출력 → 허용, preview flag + production 경로 → 완성
+  여부와 무관하게 거절, 구조적으로 깨진 manifest → 항상 거절), `production_signature`가
+  `describe()`와 달리 같은 크기의 다른 source sheet 교체를 잡아낸다는 것, 그리고 pipeline
+  state A~G 전부를 synthetic resource로 재현한 검증(profile이 다른 SpriteFrames를 가리키는 경우와
+  manifest가 앞서 나가 committed resource가 stale해진 경우 포함, 실제 저장소 상태도 PASS 확인).
 - unit/test_player_animation_presentation.gd: presentation-disabled actor의 visual 미생성,
   presentation-enabled actor의 단일 lazy visual/placeholder, shipped profile 및 synthetic
   SpriteFrames profile 검증, idle/run/jump/fall/climb/climb_idle resolver, 권위 actor의

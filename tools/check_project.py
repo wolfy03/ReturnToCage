@@ -33,6 +33,7 @@ def main():
         raise RuntimeError("Engine pin does not match project.godot features")
     run(args.godot, ["--editor", "--quit"])
     run(args.godot, ["res://core/validation/validate_content.tscn"], "CONTENT VALIDATION PASS")
+    run(args.godot, ["res://presentation/tools/validate_player_sprite_pipeline.tscn"], "SPRITE PIPELINE VALIDATION PASS")
     run(args.godot, ["res://tests/test_runner.tscn"], "TEST PASS:")
     for mode in ("--restart-write", "--restart-read"):
         run(args.godot, ["res://tests/test_runner.tscn", "--", mode], "TEST PASS:")

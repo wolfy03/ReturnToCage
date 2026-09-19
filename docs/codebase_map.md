@@ -118,24 +118,38 @@ sprite asset은 별도 pipeline을 통해 들어온다. 이것도 전부 present
 ContentRegistry에 등록하지 않는다.
 
 ```
-assets/characters/player_hamster/source/*.png   빌드 도구가 낸 정규화된 sheet
-  └─ PlayerSpriteManifest (.tres)               어느 sheet가 어느 clip인지 + grid/fps/loop
-       └─ PlayerSpriteFramesBuilder             row-major 결정적 slicing (AtlasTexture)
-            └─ SpriteFrames (.tres, generated)  게임이 실제로 로드하는 것
-                 └─ CharacterAnimationProfile   semantic 이름 매핑 + visual scale/offset
-                      └─ PlayerAnimationPresenter → AnimatedSprite2D
+raw 생성형 출력
+  └─ Python Sprite Asset Build Tool             추출·배경 제거·정렬·canvas 합성 (Godot 밖)
+       └─ assets/characters/player_hamster/source/*.png   정규화된 production sheet
+            └─ PlayerSpriteManifest (.tres)     어느 sheet가 어느 clip인지 + grid/fps/loop
+                 └─ PlayerSpriteFramesBuilder   row-major 결정적 slicing (AtlasTexture)
+                      └─ SpriteFrames (.tres)   생성물. 게임이 실제로 로드하는 것
+                           └─ CharacterAnimationProfile   semantic 매핑 + facing/scale/offset
+                                └─ PlayerAnimationPresenter → AnimatedSprite2D
 ```
 
 - `PlayerSpriteAnimationEntry` — sheet 하나: texture, `columns`/`rows`/`frame_count`, `fps`,
   `loop`. `semantic_name`이 runtime 계약이고 PNG 파일 이름은 import 편의다. 규격은
   1024×512 / 4×2 / 256×256이며 다른 canvas는 warning(에러 아님). `frame_count`가 grid보다
   작으면 남는 cell은 쓰지 않는다.
-- `PlayerSpriteManifest` — entry 목록 + `visual_scale`/`visual_position`. 구조적 유효성
+- `PlayerSpriteManifest` — entry 목록. **sheet semantics/grid/fps/loop만** 소유하며 visual
+  transform이나 facing은 갖지 않는다(그건 profile 단독). 구조적 유효성
   (`validation_errors`)과 출시 준비 상태(`production_readiness_errors`)를 나눠서 답한다.
   일부 clip만 있는 manifest도 빌드는 되지만 profile 활성화는 못 한다.
 - `PlayerSpriteFramesBuilder` — manifest → `SpriteFrames`. 결정적이라 같은 manifest는 항상
   같은 clip 순서·frame 순서·region·fps·loop를 만든다. spawn마다 돌지 않고
-  `presentation/tools/build_player_sprite_frames.tscn`이 한 번 굽는다.
+  `presentation/tools/build_player_sprite_frames.tscn`이 한 번 굽는다. `describe()`는
+  synthetic determinism 비교용, `production_signature()`는 여기에 **source texture의
+  resource_path와 atlas 크기**까지 더해 저장소 재생성 비교에 쓴다(같은 크기의 다른 sheet로
+  바뀐 경우를 잡는다).
+- `PlayerSpriteBuildPolicy` — 어떤 빌드가 어디에 쓸 수 있는지. 기본은 production build라
+  required clip 12개가 전부 있어야 하고, `--allow-incomplete`는 production 경로 쓰기를
+  거절당한다. 순수 함수라 프로세스를 띄우지 않고 테스트한다.
+- `PlayerSpritePipelineValidator` — manifest / 생성된 frames / shipped profile 세 artefact의
+  정합성. 각각 따로 commit될 수 있고 그 조합 대부분이 실수라서, manifest에서 다시 구워
+  `production_signature`로 비교하고 profile이 생성 resource를 가리키는지까지 본다.
+  art가 없는 현재 상태는 정상 PASS. `check_project.py`가
+  `presentation/tools/validate_player_sprite_pipeline.tscn`으로 실행한다.
 - `CharacterAnimationProfile.visual_scale`/`visual_offset` — presentation child에만 적용된다.
   scale은 presenter에, offset은 sprite에 들어가며 facing은 authored scale의 부호만 뒤집는다.
   PlayerActor root와 collision/hitbox/hurtbox는 건드리지 않는다.

@@ -9,6 +9,11 @@ extends Resource
 ##
 ## The manifest is an editor/build-time input. It produces a [SpriteFrames] once,
 ## which is what ships; nothing slices PNGs at spawn time.
+##
+## Its authority stops at the sheet. How the character is cut up belongs here;
+## how big it appears, which way it faces and where it sits are runtime
+## presentation and belong to [CharacterAnimationProfile] alone. Holding either
+## in both places would let someone tune a value that never reaches the screen.
 
 ## Every clip the presenter needs before production art can replace the
 ## placeholder. Partial art keeps the placeholder: half a hamster and half a
@@ -19,13 +24,6 @@ const REQUIRED_SEMANTICS: Array[StringName] = [
 ]
 
 @export var animations: Array[PlayerSpriteAnimationEntry] = []
-## Which way the source art faces. The presenter flips only the visual child.
-@export var faces_right_by_default: bool = true
-## Applied by the presentation layer alone. Production sprite pixels and the
-## placeholder polygon are wildly different sizes, and that difference must never
-## reach collision, hitbox or hurtbox geometry.
-@export var visual_scale: Vector2 = Vector2.ONE
-@export var visual_position: Vector2 = Vector2.ZERO
 
 func entry(semantic: StringName) -> PlayerSpriteAnimationEntry:
 	for animation in animations:
@@ -65,11 +63,6 @@ func validation_errors() -> PackedStringArray:
 		if seen.has(animation.semantic_name):
 			errors.append("duplicate sprite manifest semantic '%s'" % animation.semantic_name)
 		seen[animation.semantic_name] = true
-	if not is_finite(visual_scale.x) or not is_finite(visual_scale.y) \
-			or visual_scale.x <= 0.0 or visual_scale.y <= 0.0:
-		errors.append("sprite manifest visual_scale must be positive and finite")
-	if not is_finite(visual_position.x) or not is_finite(visual_position.y):
-		errors.append("sprite manifest visual_position must be finite")
 	return errors
 
 ## Everything [method validation_errors] checks, plus the completeness a shipped

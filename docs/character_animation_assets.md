@@ -30,32 +30,86 @@ selects an `AttackAnimationBinding`; it is not a file or texture reference.
 ## Asset pipeline
 
 ```
-build-tool PNG sheets              assets/characters/player_hamster/source/
-        -> PlayerSpriteManifest    player_hamster_sprite_manifest.tres
-        -> SpriteFrames            player_hamster_sprite_frames.tres   (generated)
-        -> CharacterAnimationProfile
-        -> PlayerAnimationPresenter -> AnimatedSprite2D
+raw generative output
+  -> Python Sprite Asset Build Tool       outside Godot
+  -> normalized PNG sheets                assets/characters/player_hamster/source/
+  -> PlayerSpriteManifest                 player_hamster_sprite_manifest.tres
+  -> Godot PlayerSpriteFramesBuilder
+  -> SpriteFrames                         player_hamster_sprite_frames.tres   (generated)
+  -> CharacterAnimationProfile
+  -> PlayerAnimationPresenter -> AnimatedSprite2D
 ```
 
-The manifest is the source of truth for what each sheet means. PNG file names are an import
-convenience; `PlayerSpriteAnimationEntry.semantic_name` is what the game binds to, so sheets may be
-named anything.
+### Two tools, two jobs
 
-Regenerate the SpriteFrames after changing sheets or the manifest:
+The word "build tool" covers two separate stages and they must not be confused.
+
+The **Python Sprite Asset Build Tool** turns raw generative output into a production sheet: frame
+extraction, background cleanup and transparent alpha, frame normalisation, canvas composition,
+alignment, and the 1024x512 output. It is the only place raw art is reshaped.
+
+The **Godot `PlayerSpriteFramesBuilder`** takes an already-normalised sheet and slices it: grid to
+`AtlasTexture`, semantic clip, fps, loop, `SpriteFrames`. It never resizes an image, removes a
+background, repositions a character or corrects identity drift. If a sheet needs any of that, it is
+not ready to be in `source/`.
+
+### What the manifest owns
+
+The manifest is the source of truth for **sprite sheet semantic identity and slicing/playback
+metadata** — and only that. PNG file names are an import convenience;
+`PlayerSpriteAnimationEntry.semantic_name` is what the game binds to, so sheets may be named
+anything.
+
+It is deliberately not the source of truth for presentation. How large the character appears, which
+way it faces and where it sits are runtime concerns owned solely by `CharacterAnimationProfile`
+(`visual_scale`, `visual_offset`, `faces_right_by_default`). The presenter reads only the profile, so
+a copy of those values in the manifest would be a setting that never reaches the screen.
+
+### Building
+
+Production build — the default. It refuses an incomplete manifest, because the default output is the
+resource the game ships and a partial one would make the repository claim art it does not have:
+
+```sh
+godot --headless --path . res://presentation/tools/build_player_sprite_frames.tscn
+```
+
+Preview build, for art that is still arriving. It needs the explicit flag *and* its own output path;
+the shipped resource is off limits to a preview whether the manifest is complete or not:
 
 ```sh
 godot --headless --path . res://presentation/tools/build_player_sprite_frames.tscn -- \
-    --manifest=res://assets/characters/player_hamster/player_hamster_sprite_manifest.tres \
-    --output=res://assets/characters/player_hamster/player_hamster_sprite_frames.tres
+    --allow-incomplete --output=user://player_hamster_preview_frames.tres
 ```
 
 With no manifest present the tool reports `SPRITE BUILD SKIPPED` and succeeds: the pipeline exists
-before the art does. A partial manifest still builds — it reports which clips are missing — because
-previewing the art in hand is useful. Activating it in the shipped profile is the step that requires
-every clip.
+before the art does.
 
 The build is deterministic: the same manifest always yields the same animation order, frame order,
 regions, speeds and loop flags, so regenerating and diffing is a meaningful check after a re-export.
+
+### Repository state check
+
+`tools/check_project.py` runs `validate_player_sprite_pipeline.tscn`, which checks that the manifest,
+the generated `SpriteFrames` and the shipped profile agree. Any one of them can be committed without
+the others, and most of those combinations are mistakes that an ordinary test run would not notice:
+
+```text
+no manifest, no frames, placeholder profile            PASS   (where the project is now)
+partial manifest, no frames, placeholder profile       PASS   (art arriving)
+partial manifest with frames on the production path    FAIL   (preview artefact committed)
+frames with no manifest                                FAIL   (nobody can regenerate it)
+complete manifest, no frames                           FAIL   (source finished, never baked)
+complete manifest and frames, placeholder profile      FAIL   (activation left half done)
+profile using frames with no sources behind it         FAIL
+complete, regenerated, activated                       PASS
+```
+
+For the last case it rebuilds from the manifest in memory and compares a production signature — clip
+names, speeds, loop flags, regions, **and which texture resource each frame came from** — against the
+committed resource. That last part matters: swapping `old_run.png` for a same-sized `new_run.png`
+leaves regions identical, so region metadata alone would call a stale resource current. Pixel content
+is not hashed; repainting a PNG in place does not change how it is sliced.
 
 ### Sheet layout
 
@@ -130,6 +184,13 @@ polygon are very different sizes, and that difference must never reach collision
 interaction geometry. Facing composes with the authored scale: the presenter flips the sign of x
 around its magnitude rather than replacing it, which is why `visual_scale` must be positive.
 
+## Stage status
+
+```text
+10A  pipeline ready, placeholder active     <- the repository is here
+10B  production PNG + manifest + generated frames + profile activation
+```
+
 ## Placeholder policy
 
 The shipped `player_animation_profile.tres` intentionally has no production SpriteFrames and permits
@@ -143,6 +204,10 @@ scene after activation as a runtime fallback.
 
 ### Production activation
 
+Land it as one commit — normalised PNGs, manifest, generated `SpriteFrames`, the profile's
+`sprite_frames`, `allow_placeholder = false` and the real attack partitions together. Any partial
+combination is one of the FAIL states above, so a half-finished activation cannot sit on master.
+
 Only once every required clip exists and validates:
 
 1. Generate `player_hamster_sprite_frames.tres` from the manifest.
@@ -150,6 +215,9 @@ Only once every required clip exists and validates:
 3. Set `allow_placeholder = false`, so a clip that goes missing later fails CI instead of silently
    falling back.
 4. Re-check each `AttackAnimationBinding`'s frame partitions against the real pose count.
+
+Facing and visual transform are tuned in `player_animation_profile.tres` at this point, never added
+back to the manifest.
 
 Never substitute one clip for another to reach completeness — duplicating `attack_2` into `attack_3`,
 or reusing `jump` as `fall`, is an art decision disguised as a build step.

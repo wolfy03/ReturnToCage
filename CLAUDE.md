@@ -106,16 +106,33 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   frame에서 attack commit, hitbox, stamina, dodge, HURT/death lifecycle을 변경하지 않는다.
   권위 clock은 계속 `hurt → dodge → combat → input_buffer → movement`이고 presentation만
   render `_process(delta)`를 쓸 수 있다.
-- **sprite asset 은 pipeline 을 통해서만 들어온다.** 원본 sheet 는
-  `assets/characters/<캐릭터>/source/`, 의미 매핑은 `PlayerSpriteManifest`, 실제로 게임이 쓰는
-  것은 거기서 **생성된** `SpriteFrames` 다. PNG 파일 이름은 import 편의일 뿐이고 runtime
+- **sprite asset 은 pipeline 을 통해서만 들어온다.** raw 생성형 출력은 **Python Sprite Asset
+  Build Tool** 이 정규화한 뒤에야 `assets/characters/<캐릭터>/source/` 에 들어가고, 거기서부터는
+  `PlayerSpriteManifest` → **Godot** `PlayerSpriteFramesBuilder` → 생성된 `SpriteFrames` 다.
+  두 도구의 책임을 섞지 않는다: Python 쪽이 frame 추출·배경 제거·정렬·canvas 합성을 하고,
+  Godot builder 는 **이미 정규화된** sheet 를 grid 로 자를 뿐 resize·배경 제거·캐릭터 재배치를
+  하지 않는다. raw sheet(1774×887 등)를 그냥 resize 하거나 threshold 로 배경을 뚫어 넣지
+  않는다 — 왜곡과 anchor drift 를 숨길 뿐이다. PNG 파일 이름은 import 편의일 뿐이고 runtime
   계약은 `semantic_name` 이다. 규격은 1024×512 / 4×2 / 256×256 frame, **row-major** 고정
-  (snake ordering 추론 금지). raw 생성형 출력(1774×887 등)을 resize·stretch 하거나 threshold
-  로 배경을 억지로 뚫어 넣지 않는다 — 왜곡과 anchor drift 를 숨길 뿐이다. spawn 마다 PNG 를
-  자르지 않는다: 빌드는
+  (snake ordering 추론 금지). spawn 마다 PNG 를 자르지 않는다: 빌드는
   `presentation/tools/build_player_sprite_frames.tscn` 이 한 번 하고 결과를 commit 한다.
   `PlayerSpriteManifest` / `SpriteFrames` / `CharacterAnimationProfile` 은 presentation 전용이라
   `ContentRegistry` 에 등록하지 않는다.
+- **manifest 는 sheet 만, profile 은 화면만 소유한다.** `PlayerSpriteManifest` 는 어느 sheet 가
+  어느 clip 이고 어떻게 잘리며 어떤 fps·loop 로 재생되는지까지다. 캐릭터가 화면에서 **얼마나
+  크고 어느 방향을 보는지**(`faces_right_by_default` / `visual_scale` / `visual_offset`)는
+  `CharacterAnimationProfile` **단독** 소유다. presenter 가 읽는 것이 profile 뿐이므로, 같은
+  값을 manifest 에 다시 두면 게임에 반영되지 않는 값을 튜닝하게 된다. 두 곳에 다시 만들지 않는다.
+- **incomplete build 는 shipped 경로를 덮을 수 없다.** 기본 build 는 production build 이고
+  required clip 12 개가 모두 있어야 쓴다. 일부만 있는 manifest 를 굽고 싶으면
+  `--allow-incomplete` 와 **production 이 아닌** `--output` 을 함께 줘야 한다
+  (`PlayerSpriteBuildPolicy`). preview flag 는 완성 여부와 무관하게 shipped 경로 쓰기를 거절한다 —
+  그렇지 않으면 저장소가 갖고 있지도 않은 아트를 갖고 있다고 주장하게 된다.
+- **generated resource 는 commit 했다고 믿지 않는다.** `check_project.py` 가
+  `presentation/tools/validate_player_sprite_pipeline.tscn` 을 돌려 manifest / 생성된
+  `SpriteFrames` / shipped profile 셋의 정합성을 검사한다. manifest 에서 다시 구워
+  `production_signature`(clip·region·**source texture resource path**·fps·loop)로 비교하므로,
+  셋 중 하나만 갱신된 상태는 CI 에서 막힌다. art 가 아예 없는 현재 상태는 정상 PASS 다.
 - **production art 는 전부 준비됐을 때만 활성화한다.** required clip 12 개가 모두 있고
   validation 을 통과하면 profile 의 `sprite_frames` 를 연결하고 `allow_placeholder = false` 로
   바꾼다(그래야 이후 누락이 CI 에서 바로 드러난다). 일부만 있으면 placeholder 를 그대로 쓴다 —

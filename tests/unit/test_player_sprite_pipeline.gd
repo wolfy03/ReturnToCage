@@ -16,6 +16,9 @@ func run(t: Node) -> void:
 	_test_builder_slicing(t)
 	_test_builder_metadata(t)
 	_test_determinism(t)
+	_test_production_signature(t)
+	_test_build_policy(t)
+	_test_pipeline_states(t)
 	_test_save_round_trip(t)
 	_test_frame_integrity(t)
 	_test_shipped_profile_state(t)
@@ -156,13 +159,21 @@ func _test_manifest_validation(t: Node) -> void:
 	t.assert_equal(missing.size(), PlayerSpriteManifest.REQUIRED_SEMANTICS.size() - 3, "every absent required clip is reported")
 	t.assert_true(missing.has(&"death") and missing.has(&"attack_3"), "the report names the clips that are absent")
 
+	# The manifest's authority stops at the sheet. Facing and visual transform are
+	# runtime presentation and live in exactly one place, so nobody can tune a
+	# value here that never reaches the screen.
+	for absent: String in ["faces_right_by_default", "visual_scale", "visual_position", "visual_offset"]:
+		t.assert_true(not absent in manifest, "the manifest does not own '%s'" % absent)
+	var profile := CharacterAnimationProfile.new()
+	for owned: String in ["faces_right_by_default", "visual_scale", "visual_offset"]:
+		t.assert_true(owned in profile, "the animation profile owns '%s'" % owned)
 	for invalid_scale: Vector2 in [Vector2.ZERO, Vector2(-1.0, 1.0), Vector2(1.0, NAN), Vector2(INF, 1.0)]:
-		var scaled := _complete_manifest()
+		var scaled := CharacterAnimationProfile.new()
 		scaled.visual_scale = invalid_scale
-		t.assert_true(_has(scaled.validation_errors(), "visual_scale"), "visual_scale %s is rejected" % invalid_scale)
-	var offset := _complete_manifest()
-	offset.visual_position = Vector2(NAN, 0.0)
-	t.assert_true(_has(offset.validation_errors(), "visual_position"), "a non-finite visual_position is rejected")
+		t.assert_true(_has(scaled.validation_errors(), "visual_scale"), "profile visual_scale %s is rejected" % invalid_scale)
+	var offset_profile := CharacterAnimationProfile.new()
+	offset_profile.visual_offset = Vector2(NAN, 0.0)
+	t.assert_true(_has(offset_profile.validation_errors(), "visual_offset"), "a non-finite profile visual_offset is rejected")
 
 func _test_builder_slicing(t: Node) -> void:
 	var manifest := PlayerSpriteManifest.new()
@@ -249,6 +260,184 @@ func _test_determinism(t: Node) -> void:
 		PlayerSpriteFramesBuilder.describe(first) != PlayerSpriteFramesBuilder.describe(PlayerSpriteFramesBuilder.build(reordered)),
 		"a changed manifest produces a different build"
 	)
+
+## A partial manifest with a named subset of clips, for the states and policies
+## that only exist because production art can arrive in pieces.
+func _partial_manifest() -> PlayerSpriteManifest:
+	var manifest := PlayerSpriteManifest.new()
+	manifest.animations = [_entry(&"idle"), _entry(&"run"), _entry(&"attack_1")] as Array[PlayerSpriteAnimationEntry]
+	return manifest
+
+func _test_production_signature(t: Node) -> void:
+	var manifest := _complete_manifest()
+	var first := PlayerSpriteFramesBuilder.build(manifest)
+	t.assert_equal(
+		PlayerSpriteFramesBuilder.production_signature(first),
+		PlayerSpriteFramesBuilder.production_signature(PlayerSpriteFramesBuilder.build(manifest)),
+		"the production signature of two builds of one manifest matches"
+	)
+
+	# describe() compares regions and playback, which cannot tell one sheet from
+	# another of the same size. The production signature records which texture
+	# each frame came from, so a swapped source sheet is visible.
+	var swapped := _complete_manifest()
+	var replacement := _sheet_texture(4, 2)
+	replacement.take_over_path("res://test_swapped_run_sheet.tres")
+	swapped.entry(&"run").texture = replacement
+	var swapped_frames := PlayerSpriteFramesBuilder.build(swapped)
+	t.assert_equal(
+		PlayerSpriteFramesBuilder.describe(first),
+		PlayerSpriteFramesBuilder.describe(swapped_frames),
+		"describe() cannot tell two same-sized source sheets apart"
+	)
+	t.assert_true(
+		PlayerSpriteFramesBuilder.production_signature(first)
+			!= PlayerSpriteFramesBuilder.production_signature(swapped_frames),
+		"the production signature catches a swapped source sheet"
+	)
+
+	var retimed := _complete_manifest()
+	retimed.entry(&"idle").fps = 30.0
+	t.assert_true(
+		PlayerSpriteFramesBuilder.production_signature(first)
+			!= PlayerSpriteFramesBuilder.production_signature(PlayerSpriteFramesBuilder.build(retimed)),
+		"the production signature catches a changed fps"
+	)
+
+func _test_build_policy(t: Node) -> void:
+	var preview_output := "user://player_hamster_preview_frames.tres"
+	var production_output := PlayerSpriteBuildPolicy.DEFAULT_OUTPUT
+
+	# No manifest is the state the project is in, and it is not a failure.
+	t.assert_true(PlayerSpriteBuildPolicy.decide(null, production_output, false).is_skip(), "no manifest skips the build")
+	t.assert_true(PlayerSpriteBuildPolicy.decide(null, preview_output, true).is_skip(), "no manifest skips a preview build too")
+
+	var complete := _complete_manifest()
+	t.assert_true(PlayerSpriteBuildPolicy.decide(complete, production_output, false).is_build(), "a complete manifest builds to the production path")
+
+	# The rule that matters: an incomplete manifest must never become the shipped
+	# resource, because the repository would then claim art it does not have.
+	var partial := _partial_manifest()
+	var rejected := PlayerSpriteBuildPolicy.decide(partial, production_output, false)
+	t.assert_true(rejected.is_reject(), "a production build refuses an incomplete manifest")
+	t.assert_true(rejected.reason.findn("missing") >= 0, "the refusal names what is missing")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(partial, preview_output, true).is_build(),
+		"an incomplete manifest previews to its own output"
+	)
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(partial, production_output, true).is_reject(),
+		"a preview build may not write the production path"
+	)
+	# Even a complete manifest loses the shipped path once the build is declared
+	# a preview: the flag is how someone says this output is not the real thing.
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(complete, production_output, true).is_reject(),
+		"the preview flag never writes the production path, complete or not"
+	)
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(complete, preview_output, true).is_build(),
+		"a complete manifest may still be previewed elsewhere"
+	)
+
+	var broken := _complete_manifest()
+	broken.animations[0].texture = null
+	t.assert_true(PlayerSpriteBuildPolicy.decide(broken, preview_output, true).is_reject(), "a structurally invalid manifest never builds")
+
+## The repository can hold each of the three artefacts independently, and most
+## of those combinations are mistakes. Every state is exercised in memory so
+## none of this needs committed art.
+func _test_pipeline_states(t: Node) -> void:
+	var path := "res://generated_frames.tres"
+
+	# A: nothing authored yet. This is where the project is.
+	var placeholder := CharacterAnimationProfile.new()
+	t.assert_true(
+		PlayerSpritePipelineValidator.state_errors(null, null, path, placeholder).is_empty(),
+		"state A: no art with a placeholder profile passes"
+	)
+
+	# B: art arriving, nothing generated, placeholder still on.
+	t.assert_true(
+		PlayerSpritePipelineValidator.state_errors(_partial_manifest(), null, path, placeholder).is_empty(),
+		"state B: a partial manifest with no generated resource passes"
+	)
+
+	# C: a preview artefact parked on the shipped path.
+	var partial_frames := PlayerSpriteFramesBuilder.build(_partial_manifest())
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(_partial_manifest(), partial_frames, path, placeholder), "incomplete"),
+		"state C: generated frames from an incomplete manifest fail"
+	)
+
+	# D: generated art nobody can rebuild.
+	var complete_frames := PlayerSpriteFramesBuilder.build(_complete_manifest())
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(null, complete_frames, path, placeholder), "no manifest"),
+		"state D: generated frames without a manifest fail"
+	)
+
+	# E: finished source that was never baked.
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(_complete_manifest(), null, path, placeholder), "not regenerated"),
+		"state E: a complete manifest with no generated resource fails"
+	)
+
+	# F: everything built, nobody turned it on.
+	var manifest := _complete_manifest()
+	var frames := PlayerSpriteFramesBuilder.build(manifest)
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(manifest, frames, "", placeholder), "still has no sprite_frames"),
+		"state F: production art with a placeholder profile fails"
+	)
+	var half_activated := _production_profile()
+	half_activated.sprite_frames = frames
+	half_activated.allow_placeholder = true
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(manifest, frames, "", half_activated), "still allows the placeholder"),
+		"state F: art wired up but the placeholder left enabled fails"
+	)
+
+	# G: the one legal production state.
+	var activated := _production_profile()
+	activated.sprite_frames = frames
+	t.assert_true(
+		PlayerSpritePipelineValidator.state_errors(manifest, frames, "", activated).is_empty(),
+		"state G: a complete, regenerated, activated pipeline passes"
+	)
+
+	# A profile switched on with nothing behind it.
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(null, null, path, activated), "without a complete manifest"),
+		"a profile referencing frames with no sources behind it fails"
+	)
+
+	# The shipped profile must use the generated resource, not a lookalike.
+	var lookalike := _production_profile()
+	lookalike.sprite_frames = PlayerSpriteFramesBuilder.build(_complete_manifest())
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(manifest, frames, path, lookalike), "points at"),
+		"a profile pointing at a different SpriteFrames resource fails"
+	)
+
+	# Stale generated resource: the manifest moved on, the committed frames did not.
+	var moved_on := _complete_manifest()
+	moved_on.entry(&"run").fps = 30.0
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(moved_on, frames, "", activated), "stale"),
+		"a generated resource that no longer matches its manifest fails"
+	)
+	var swapped := _complete_manifest()
+	var replacement := _sheet_texture(4, 2)
+	replacement.take_over_path("res://test_state_swapped_sheet.tres")
+	swapped.entry(&"run").texture = replacement
+	t.assert_true(
+		_has(PlayerSpritePipelineValidator.state_errors(swapped, frames, "", activated), "stale"),
+		"a swapped source sheet makes the committed resource stale"
+	)
+
+	# The repository as it actually stands must pass.
+	t.assert_true(PlayerSpritePipelineValidator.validate_repository().is_empty(), "the repository's real sprite pipeline state is legal")
 
 ## The generated resource is what gets committed, so it has to survive being
 ## written and read back unchanged — otherwise "regenerate and diff" compares

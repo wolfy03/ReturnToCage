@@ -49,6 +49,43 @@ static func describe(frames: SpriteFrames) -> Array:
 		})
 	return description
 
+## Everything a committed SpriteFrames must still agree on after the manifest is
+## rebuilt from source. Stronger than [method describe] in one way that matters
+## for a repository check: it records which texture resource each frame came
+## from, so swapping `old_run.png` for `new_run.png` at the same size is caught
+## rather than looking identical.
+##
+## Pixel content is deliberately not hashed. Repainting a PNG in place changes
+## nothing about how it is sliced, so the generated resource is still correct and
+## a content hash would only produce churn.
+static func production_signature(frames: SpriteFrames) -> Array:
+	var signature: Array = []
+	if frames == null:
+		return signature
+	var names := frames.get_animation_names()
+	names.sort()
+	for name in names:
+		var animation := StringName(name)
+		var entries: Array = []
+		for index in frames.get_frame_count(animation):
+			var atlas := frames.get_frame_texture(animation, index) as AtlasTexture
+			if atlas == null or atlas.atlas == null:
+				entries.append({"region": Rect2(), "source": "", "atlas_size": Vector2i.ZERO})
+				continue
+			entries.append({
+				"region": atlas.region,
+				"source": atlas.atlas.resource_path,
+				"atlas_size": Vector2i(atlas.atlas.get_width(), atlas.atlas.get_height()),
+			})
+		signature.append({
+			"name": String(animation),
+			"speed": frames.get_animation_speed(animation),
+			"loop": frames.get_animation_loop(animation),
+			"frame_count": frames.get_frame_count(animation),
+			"frames": entries,
+		})
+	return signature
+
 static func _add_animation(frames: SpriteFrames, entry: PlayerSpriteAnimationEntry) -> void:
 	if entry == null or entry.semantic_name.is_empty():
 		return
