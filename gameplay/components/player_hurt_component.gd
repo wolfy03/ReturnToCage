@@ -13,6 +13,10 @@ extends Node
 ## whatever combat intent was buffered for the exchange the hit just ended —
 ## on a refreshing hit as well as on the first one, so both follow one rule.
 
+## Presentation notification only. It fires for both a new HURT and a refresh;
+## it never drives the gameplay transition or timer.
+signal hurt_triggered(duration: float)
+
 @export_range(0.01, 5.0, 0.01) var duration_seconds: float = 0.25
 
 var remaining: float = 0.0
@@ -41,6 +45,14 @@ func configure(
 func is_active() -> bool:
 	return action != null and action.is_hurt()
 
+func elapsed_seconds() -> float:
+	return clampf(duration_seconds - remaining, 0.0, duration_seconds) \
+			if is_finite(duration_seconds) and duration_seconds > 0.0 else 0.0
+
+func normalized_progress() -> float:
+	return elapsed_seconds() / duration_seconds \
+			if is_finite(duration_seconds) and duration_seconds > 0.0 else 0.0
+
 ## Starts hit-stun or refreshes its timer. Attack cleanup happens only after the
 ## direct HURT transition has been validated, and never inserts an IDLE state.
 func begin_hurt() -> bool:
@@ -55,6 +67,7 @@ func begin_hurt() -> bool:
 			input_buffer.clear()
 		remaining = duration_seconds
 		movement.set_control_lock(MovementComponent.CONTROL_LOCK_HURT, true)
+		hurt_triggered.emit(duration_seconds)
 		return true
 	if not action.can_transition_to(CombatActionController.State.HURT):
 		return false
@@ -73,6 +86,7 @@ func begin_hurt() -> bool:
 		input_buffer.clear()
 	remaining = duration_seconds
 	movement.set_control_lock(MovementComponent.CONTROL_LOCK_HURT, true)
+	hurt_triggered.emit(duration_seconds)
 	return true
 
 ## Ticked explicitly by the authoritative PlayerActor before locomotion.

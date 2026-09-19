@@ -18,7 +18,8 @@
 완료  7차 안정화  종료 velocity · 방향 정책 · 실제 접지 · Return Channel A · strict direction
 완료  8차  Combo + Authoritative Input Buffer + Authored Cancel Window
 완료  8차 안정화  Unified combat physics clock + buffer lifecycle
-다음  9차  Combat Presentation / Animation Integration
+완료  9차  Combat Presentation / Animation Integration (Protocol v15)
+다음  10차  후속 전투/표현 단계
 ```
 
 > **주의.** 이 문서의 일부는 구현 이전에 쓰인 분석이다. 문서와 코드가 충돌하면
@@ -46,7 +47,7 @@
      → action.begin_attack()  =  ATTACK_STARTUP, phase = startup_seconds
   → NetworkManager.broadcast_player_attack(...)  ← 클라이언트는 공격 "시작" 표현만
 
-[호스트 tick] CombatComponent._process(delta) → _advance_attack()
+[호스트 physics tick] CombatComponent.physics_tick(delta) → _advance_attack()
   ATTACK_STARTUP 종료
      → 스태미나 재확인 → action.enter_attack_active()
      → strategy.execute()   ← geometry 구성 후 히트박스 activate 또는 투사체 생성
@@ -55,7 +56,7 @@
   ATTACK_RECOVERY 종료 → action.finish_attack() → IDLE, pending clear
 ```
 
-phase 길이는 전부 `WeaponDefinition.attack_definition`(`AttackDefinition`)에서 읽는다.
+phase 길이는 전부 `WeaponDefinition.attack_combo`의 현재 `AttackDefinition` step에서 읽는다.
 코드에 하드코딩된 타이밍 상수는 없고, 별도의 무기 쿨다운도 없다. 한 프레임 delta 가
 phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지지 않게 한다.
 
@@ -82,11 +83,12 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 적 예고 텔레그래프 | 없음 | 색/애니메이션 자산 자체가 없음 |
 | 보스·엘리트 | 없음 | 적 1종 |
 | 히트스톱·카메라 흔들림 | 없음 | 표현 계층 전무 |
-| 애니메이션 | 없음 | `Polygon2D` 플레이스홀더. `attack_presented` 시그널만 이미 준비됨 |
+| 애니메이션 | **9차 기반 완료** | 분리된 PlayerVisual + profile/presenter. 최종 SpriteFrames 전에는 Polygon placeholder |
 
 이미 **깔려 있는** 확장점:
 - `CombatComponent.strategies: Dictionary[int, AttackStrategy]` — 공격 방식 추가 지점.
-- `PlayerActor.attack_presented(sequence, facing)` — 클라이언트 표현 훅(이미 복제됨).
+- `PlayerActor.attack_presented(...)` / `dodge_presented(...)` / `hurt_presented(...)` —
+  gameplay state를 복제하지 않는 presentation-only 시작 이벤트.
 - `EffectRuntimeModel` / `EffectDefinition` — 상태이상·버프를 데이터로 넣을 수 있음.
 - `EnemyState` 상태 노드 — 적 패턴 추가는 노드 추가 + `change_state` 만으로 가능.
 - `PlayerRuntimeState.combat`(`CombatRuntimeState`) — 전투 런타임 값을 추가로 얹을 자리.
@@ -199,7 +201,8 @@ window를 요구할 때 배열/하위 phase Resource를 별도 설계한다. 그
 | 7차 안정화 | 종료 velocity 정리·입력 우선 방향·실제 접지 검증·Return Channel 정책 A·exact ±1 | 완료 |
 | 8차 | Combo(`AttackComboDefinition`)·권위 Input Buffer·authored cancel window | 완료 |
 | 8차 안정화 | 전투 시간 physics clock 단일화·HURT refresh buffer lifecycle·combo 계약 문서화 | 완료 |
-| 9차 | Combat Presentation / Animation Integration | 다음 |
+| 9차 | Combat Presentation / Animation Integration (Protocol v15) | 완료 |
+| 10차 | 후속 전투/표현 단계 | 다음 |
 | 이후 | 적 패턴 개편, 히트스톱·카메라 표현, client prediction | 예정 |
 
 ### 완료된 1차·2차 요약
@@ -241,13 +244,13 @@ HURT            → IDLE
 
 `data/definitions/attack_definition.gd` 의 `AttackDefinition` 은 **평범한 `Resource`** 이며
 `ContentDefinition` 이 아니다. 독립 id 로 ContentRegistry 에 등록되는 콘텐츠가 아니라
-`WeaponDefinition.attack_definition` 에 박히는 sub-resource 다.
+현재는 `WeaponDefinition.attack_combo`에 들어가는 step sub-resource다.
 
 - timing은 `startup_seconds` / `active_seconds` / `recovery_seconds`이며 전부 유한 양수다.
   5차부터 `range`(양수 finite), `hitbox_size`(각 성분 양수 finite), `hitbox_offset`(각 성분
   finite), `knockback`(각 성분 finite)도 같은 Resource가 소유한다. knockback은 zero와 음수
   x/y를 허용한다. `validation_errors(owner_id)` 결과는 `WeaponDefinition.validate_definition()`에
-  합쳐지며 `attack_definition`이 null인 무기도 실패한다.
+  합쳐지며 combo가 null/empty이거나 step이 null인 무기도 실패한다.
 - `twig_sword` 는 `0.10 / 0.12 / 0.33` 으로 이관했다. 합 0.55초로 **기존 공격 cadence 를
   유지**하되 판정은 입력 직후가 아니라 0.10초 뒤에 발생한다. `active_seconds = 0.12` 는
   기존 히트박스 활성 시간을 그대로 옮긴 값이며, 이제 이 값이 유일한 source 다
@@ -267,8 +270,9 @@ HURT            → IDLE
 - 3차의 임시 edge `enter_recovery_from_immediate_attack()` 과 `WeaponDefinition.attack_cooldown`,
   `CombatComponent.cooldown_remaining` 은 모두 제거했다. 재공격 가능 여부의 유일한 기준은
   action state 가 `IDLE` 인지다.
-- 네트워크는 그대로다. action state 를 복제하지 않으며 `NetworkProtocol.VERSION` 은 **13**
-  이다. `attack_presented` 는 이제 "공격 시작" 표현 이벤트로 읽으면 된다.
+- 4차 당시 네트워크는 그대로였고 action state를 복제하지 않아 Protocol v13을 유지했다.
+  현재 v15에서도 action state 자체는 복제하지 않으며 `attack_presented`는 실제 공격 시작의
+  presentation-only event다.
 - 4차에서 건드리지 않았던 히트박스 geometry/range와 넉백 적용은 5차에 완료했고 Player
   피격 경직은 6차에 완료했다. 적 공격 파이프라인은 여전히 후속 범위다.
 
@@ -353,15 +357,27 @@ pending transition, spawn assignment를 변경하지 않으며 HURT 종료 직�
 기존 attack, quick-item, loot, gather의 서버 HURT guard도 유지한다. 새 RPC/payload/replication은
 없고 Protocol v13과 Save v4가 그대로다.
 
-### 7차 NEXT
+### 9차 — Combat Presentation / Animation Integration (완료)
 
-다음 단계는 Dodge + i-frame이다. 로컬 presentation latency 정책을 함께 검토하되 HURT와 기존
-contact invulnerability를 Dodge 무적과 합치지 않는다. Combo/input buffer/cancel window와 적
-pattern 재구성은 계속 후속 범위다.
+Player core scene에는 `PresentationAnchor`만 남고 visual은 presentation actor에서 lazy load하는
+`PlayerVisual`로 분리됐다. `presentation_enabled=false`인 server/headless actor는 visual scene,
+SpriteFrames, AnimatedSprite2D, presenter, Polygon placeholder를 만들지 않는다. shipped profile은
+최종 art가 없는 placeholder mode다.
+
+`CharacterAnimationProfile`/`AttackAnimationBinding`이 semantic clip과 attack phase frame 범위를
+소유하고, `PlayerAnimationPresenter`가 gameplay/action/velocity를 read-only로 해석한다. remote는
+Attack step/key/timing, Dodge duration, HURT duration의 reliable presentation event만 받으며
+CombatAction/remaining/combo runtime은 복제하지 않는다. 이 wire 변경으로 Protocol은 v15이며
+Save는 v4 그대로다.
+
+### 10차 NEXT
+
+최종 production SpriteFrames import와 다음 전투/표현 범위를 선택할 수 있다. equipment/weapon
+attachment, enemy/NPC presenter, hit flash/hitstop/camera/particle은 9차에 포함하지 않았다.
 
 ## 5. 개편 중 깨지기 쉬운 것
 
-- `NetworkProtocol.VERSION`(현재 13) — 페이로드 모양이 바뀌면 반드시 올린다. 핸드셰이크에서
+- `NetworkProtocol.VERSION`(현재 15) — 페이로드 모양이 바뀌면 반드시 올린다. 핸드셰이크에서
   거절되며 `tests/unit/test_network_input_validation.gd` 가 정확한 숫자를 검증한다.
   Combat Action state 가 네트워크 payload 에 추가되는 시점에는 payload shape 변경 여부에
   따라 protocol version 을 검토한다.

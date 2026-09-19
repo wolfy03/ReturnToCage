@@ -36,13 +36,8 @@ collision_layer = 1
 collision_mask = 1
 script = ExtResource("1")
 
-[node name="Body" type="Polygon2D" parent="."]
-polygon = PackedVector2Array(-17, -15, 17, -15, 19, 10, 10, 18, -10, 18, -19, 10)
-color = Color(0.94, 0.68, 0.38, 1)
-
-[node name="Ear" type="Polygon2D" parent="."]
-polygon = PackedVector2Array(-12, -15, -7, -25, 0, -15)
-color = Color(0.96, 0.5, 0.5, 1)
+[node name="PresentationAnchor" type="Node2D" parent="."]
+unique_name_in_owner = true
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 shape = SubResource("Capsule")

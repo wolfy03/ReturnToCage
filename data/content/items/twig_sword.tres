@@ -18,6 +18,7 @@ end_seconds = 0.55
 
 [sub_resource type="Resource" id="Step1"]
 script = ExtResource("2")
+presentation_key = &"attack_1"
 startup_seconds = 0.1
 active_seconds = 0.12
 recovery_seconds = 0.33
@@ -42,6 +43,7 @@ end_seconds = 0.51
 
 [sub_resource type="Resource" id="Step2"]
 script = ExtResource("2")
+presentation_key = &"attack_2"
 startup_seconds = 0.09
 active_seconds = 0.12
 recovery_seconds = 0.3
@@ -60,6 +62,7 @@ end_seconds = 0.65
 
 [sub_resource type="Resource" id="Step3"]
 script = ExtResource("2")
+presentation_key = &"attack_3"
 startup_seconds = 0.13
 active_seconds = 0.14
 recovery_seconds = 0.38

@@ -564,14 +564,28 @@ func _test_presentation_timing(t: Node) -> void:
 	var buffer := actor.input_buffer
 	var attacks: Array[Array] = []
 	var dodges: Array[Array] = []
-	actor.network_combat.attack_presented.connect(func(_peer_id: int, sequence: int, facing: float) -> void: attacks.append([sequence, facing]))
-	actor.network_dodge.dodge_presented.connect(func(_peer_id: int, sequence: int, direction: float) -> void: dodges.append([sequence, direction]))
+	actor.network_combat.attack_presented.connect(func(
+		_peer_id: int,
+		sequence: int,
+		facing: float,
+		_combo_step: int,
+		_presentation_key: StringName,
+		startup: float,
+		active: float,
+		recovery: float
+	) -> void: attacks.append([
+		sequence, facing, _combo_step, _presentation_key, startup, active, recovery,
+	]))
+	actor.network_dodge.dodge_presented.connect(func(
+		_peer_id: int, sequence: int, direction: float, _duration: float
+	) -> void: dodges.append([sequence, direction]))
 
 	# Immediate execution still announces exactly once.
 	runtime.combat.stamina = runtime.combat.max_stamina
 	t.assert_true(actor.network_combat._server_execute_attack(actor.peer_id, 50).success, "an IDLE attack command is accepted")
 	t.assert_equal(attacks.size(), 1, "an immediate attack is presented exactly once")
 	t.assert_equal(attacks[0][0], 50, "the presentation carries the command's sequence")
+	t.assert_equal(attacks[0].slice(2), [0, &"attack_1", step.startup_seconds, step.active_seconds, step.recovery_seconds], "the presentation carries step 0 semantic key and authored timing")
 
 	# A buffered intent announces nothing until it actually runs.
 	attacks.clear()
@@ -582,6 +596,8 @@ func _test_presentation_timing(t: Node) -> void:
 	buffer.physics_tick(0.001)
 	t.assert_equal(attacks.size(), 1, "the buffered attack is presented exactly once, when it runs")
 	t.assert_equal(attacks[0][0], 51, "the buffered presentation keeps the original command sequence")
+	t.assert_equal(attacks[0][2], 1, "the buffered chain presentation carries combo step 1")
+	t.assert_equal(attacks[0][3], &"attack_2", "the buffered chain presentation selects attack_2")
 	actor.combat.abort_attack()
 
 	# A replaced intent never happened, so it is never presented.

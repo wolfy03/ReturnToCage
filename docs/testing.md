@@ -56,6 +56,10 @@ presentation 방향 동기화, loot claim/despawn, shared gather consumption, wo
 same-world roster를 검증한다. Sewer player의 Settlement command와 Host의 cross-world
 attack/pickup은 실패해야 한다. remote presentation actor가 HURT를 모르는 상태에서도 escape
 요청은 서버 authoritative HURT로 거절되고, HURT 종료 후 같은 return은 성공해야 한다. B의
+실제 combat presentation event도 함께 검증한다: enemy direct hit의 HURT event와 duration,
+buffered `attack_1 → attack_2`의 sequence/combo step/key/timing, Dodge direction/duration이
+원격 actor에 도착하지만 그 actor의 CombatAction/health/stamina/position을 직접 변경하지 않는다.
+이 이벤트는 기존 reliable world/revision routing을 사용한다. B의
 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
@@ -148,6 +152,12 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   실행 가능 시점의 실패는 1회 시도 후 폐기, death 가 buffer 를 비움), presentation timing
   (수신 시 0회, 실행 시 정확히 1회, 교체된 intent 는 영영 0회, buffer 된 sequence 재전송 거절),
   그리고 실제 적을 상대로 한 3타 전부 명중·step 당 1회 타격을 검증한다.
+- unit/test_player_animation_presentation.gd: presentation-disabled actor의 visual 미생성,
+  presentation-enabled actor의 단일 lazy visual/placeholder, synthetic SpriteFrames profile 검증,
+  idle/run/jump/fall/climb/climb_idle resolver, Death/HURT/Dodge/Attack 우선순위, root transform과
+  분리된 facing flip, committed attack/dodge facing, combo clip 직접 전환, authoritative
+  `attack_elapsed()` seek와 8-frame phase partition, HURT refresh frame-0 restart, malformed/stale
+  payload 무시와 remote gameplay isolation, Protocol 15/Save v4를 검증한다.
 - 8차 안정화 회귀는 위 두 파일에 들어 있다. `test_attack_combo.gd` 는 `CombatComponent` 가
   `_process` 를 선언하지 않고 `physics_tick` 만 가진다는 것(단일 clock 고정), 실제 권위 tick
   순서(`hurt → dodge → combat → input_buffer`)를 모사한 helper 로 chain window 가 열리는

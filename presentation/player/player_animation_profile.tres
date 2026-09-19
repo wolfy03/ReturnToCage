@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="CharacterAnimationProfile" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://presentation/definitions/character_animation_profile.gd" id="1_profile"]
+[ext_resource type="Script" path="res://presentation/definitions/attack_animation_binding.gd" id="2_binding"]
+
+[sub_resource type="Resource" id="Attack1"]
+script = ExtResource("2_binding")
+presentation_key = &"attack_1"
+animation_name = &"attack_1"
+startup_end_frame = 2
+active_end_frame = 4
+
+[sub_resource type="Resource" id="Attack2"]
+script = ExtResource("2_binding")
+presentation_key = &"attack_2"
+animation_name = &"attack_2"
+startup_end_frame = 2
+active_end_frame = 4
+
+[sub_resource type="Resource" id="Attack3"]
+script = ExtResource("2_binding")
+presentation_key = &"attack_3"
+animation_name = &"attack_3"
+startup_end_frame = 2
+active_end_frame = 4
+
+[resource]
+script = ExtResource("1_profile")
+attack_bindings = Array[AttackAnimationBinding]([SubResource("Attack1"), SubResource("Attack2"), SubResource("Attack3")])
+allow_placeholder = true

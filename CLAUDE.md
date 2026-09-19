@@ -101,6 +101,19 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   action 이 시작되는 순간에만 `attack_presented` / `dodge_presented` 가 나간다(정확히 1회).
   즉시 실행과 buffer 실행이 같은 signal 경로(`attack_executed`/`dodge_executed`)를 쓴다.
   교체되어 버려진 intent 는 영영 presentation 을 만들지 않는다(sequence 는 이미 소비됨).
+- **애니메이션은 gameplay 를 표현할 뿐 결정하지 않는다.** `PlayerAnimationPresenter`는
+  action/movement/health와 presentation-only event를 읽기만 한다. `animation_finished`나 sprite
+  frame에서 attack commit, hitbox, stamina, dodge, HURT/death lifecycle을 변경하지 않는다.
+  권위 clock은 계속 `hurt → dodge → combat → input_buffer → movement`이고 presentation만
+  render `_process(delta)`를 쓸 수 있다.
+- **headless actor는 player visual을 만들지 않는다.** `presentation_enabled=false`이면
+  `PlayerVisual`, `AnimatedSprite2D`, placeholder, presenter를 load/instantiate하지 않는다.
+  visual scene은 문자열 경로로 presentation actor에서만 lazy load하며 실패해도 gameplay는
+  계속 돈다. Player root를 flip하지 않고 presentation child만 좌우 반전한다.
+- **원격 전투 표현은 gameplay state 복제가 아니다.** Attack event는 combo step/key와 authored
+  timing, Dodge/HURT event는 duration을 보내며 presenter timer만 움직인다. remote actor의
+  CombatAction, stamina, health, physics를 event에서 변경하지 않는다. HURT refresh는 state
+  transition 없이 새 presentation event를 내보낸다.
 - **공격 공간 정보와 플레이어 공격 넉백도 `AttackDefinition` step 이 소유한다.** 논리적
   reach는 `range`, 현재 rectangle 판정은 `hitbox_size`/`hitbox_offset`, 공격자 기준 impulse는
   `knockback` 에 둔다. `WeaponDefinition.attack_range` 나 Hitbox/Combat 코드 기본값을 다시
@@ -217,7 +230,7 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 
 ### payload 를 바꿀 때 함께 볼 것
 
-`NetworkProtocol.VERSION`(현재 **14**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
+`NetworkProtocol.VERSION`(현재 **15**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
 validator → 관련 unit test(인라인 payload 를 쓰는 테스트 포함) → handshake mismatch 테스트.
 같은 버전 안에서 구/신 payload 를 섞어 허용하지 않는다.
 

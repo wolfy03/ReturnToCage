@@ -19,9 +19,19 @@ signal player_transform_snapshot_received(peer_id: int, position: Vector2, veloc
 signal player_runtime_snapshot_received(payload: Dictionary)
 signal player_combat_runtime_snapshot_received(payload: Dictionary)
 signal player_attack_command_received(peer_id: int, sequence: int)
-signal player_attack_presented_received(peer_id: int, sequence: int, facing: float)
+signal player_attack_presented_received(
+	peer_id: int,
+	sequence: int,
+	facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
+)
 signal player_dodge_command_received(peer_id: int, sequence: int, direction: float)
-signal player_dodge_presented_received(peer_id: int, sequence: int, direction: float)
+signal player_dodge_presented_received(peer_id: int, sequence: int, direction: float, duration_seconds: float)
+signal player_hurt_presented_received(peer_id: int, sequence: int, duration_seconds: float)
 signal player_respawn_received(world_id: StringName, peer_id: int, position: Vector2)
 signal enemy_spawn_received(world_id: StringName, payload: Dictionary)
 signal enemy_despawn_received(world_id: StringName, entity_id: int)
@@ -43,6 +53,7 @@ const END_REASON_CONNECTION_FAILED := "connection_failed"
 const END_REASON_SERVER_DISCONNECTED := "server_disconnected"
 const PROFILE_PATH_ARGUMENT := "--local-profile-path="
 const REPLICATION_ACTOR_GRACE_MSEC := 150
+const MAX_COMBAT_PRESENTATION_SECONDS := 10.0
 
 var state: ConnectionState = ConnectionState.OFFLINE
 var last_error: String = ""
@@ -537,32 +548,93 @@ func _request_player_dodge(sequence: int, direction: float) -> void:
 	if sender > 1 and has_peer(sender) and GameSession.has_player(sender) and is_peer_world_ready(sender):
 		player_dodge_command_received.emit(sender, sequence, direction)
 
-func broadcast_player_dodge(source_peer_id: int, sequence: int, direction: float) -> void:
-	if not is_host_session_ready():
+func broadcast_player_dodge(
+	source_peer_id: int, sequence: int, direction: float, duration_seconds: float
+) -> void:
+	if not is_host_session_ready() \
+			or not valid_dodge_presentation(sequence, direction, duration_seconds):
 		return
 	var world_id := GameSession.get_peer_world_id(source_peer_id)
 	for peer_id in ready_remote_peer_ids(world_id):
 		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
-		_receive_player_dodge.rpc_id(peer_id, world_id, ready.revision, source_peer_id, sequence, direction)
+		_receive_player_dodge.rpc_id(
+			peer_id, world_id, ready.revision, source_peer_id, sequence, direction, duration_seconds
+		)
 	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
-		player_dodge_presented_received.emit(source_peer_id, sequence, direction)
+		player_dodge_presented_received.emit(source_peer_id, sequence, direction, duration_seconds)
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_player_dodge(
-	world_id: StringName, world_revision: int, peer_id: int, sequence: int, direction: float
+	world_id: StringName,
+	world_revision: int,
+	peer_id: int,
+	sequence: int,
+	direction: float,
+	duration_seconds: float
 ) -> void:
-	if _accept_current_world_packet(world_id, world_revision):
-		player_dodge_presented_received.emit(peer_id, sequence, direction)
+	if _accept_current_world_packet(world_id, world_revision) \
+			and valid_dodge_presentation(sequence, direction, duration_seconds):
+		player_dodge_presented_received.emit(peer_id, sequence, direction, duration_seconds)
 
-func broadcast_player_attack(source_peer_id: int, sequence: int, facing: float) -> void:
-	if not is_host_session_ready():
+func broadcast_player_attack(
+	source_peer_id: int,
+	sequence: int,
+	facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
+) -> void:
+	if not is_host_session_ready() or not valid_attack_presentation(
+		sequence,
+		facing,
+		combo_step,
+		presentation_key,
+		startup_seconds,
+		active_seconds,
+		recovery_seconds
+	):
 		return
 	var world_id := GameSession.get_peer_world_id(source_peer_id)
 	for peer_id in ready_remote_peer_ids(world_id):
 		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
-		_receive_player_attack.rpc_id(peer_id, world_id, ready.revision, source_peer_id, sequence, facing)
+		_receive_player_attack.rpc_id(
+			peer_id,
+			world_id,
+			ready.revision,
+			source_peer_id,
+			sequence,
+			facing,
+			combo_step,
+			presentation_key,
+			startup_seconds,
+			active_seconds,
+			recovery_seconds
+		)
 	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
-		player_attack_presented_received.emit(source_peer_id, sequence, facing)
+		player_attack_presented_received.emit(
+			source_peer_id,
+			sequence,
+			facing,
+			combo_step,
+			presentation_key,
+			startup_seconds,
+			active_seconds,
+			recovery_seconds
+		)
+
+func broadcast_player_hurt(source_peer_id: int, sequence: int, duration_seconds: float) -> void:
+	if not is_host_session_ready() or not valid_hurt_presentation(sequence, duration_seconds):
+		return
+	var world_id := GameSession.get_peer_world_id(source_peer_id)
+	for peer_id in ready_remote_peer_ids(world_id):
+		var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+		_receive_player_hurt.rpc_id(
+			peer_id, world_id, ready.revision, source_peer_id, sequence, duration_seconds
+		)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		player_hurt_presented_received.emit(source_peer_id, sequence, duration_seconds)
 
 func broadcast_player_respawn(world_id: StringName, source_peer_id: int, position: Vector2) -> void:
 	if not is_host_session_ready() or world_id.is_empty() or not position.is_finite():
@@ -582,10 +654,73 @@ func _receive_player_respawn(
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_player_attack(
-	world_id: StringName, world_revision: int, peer_id: int, sequence: int, facing: float
+	world_id: StringName,
+	world_revision: int,
+	peer_id: int,
+	sequence: int,
+	facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
 ) -> void:
-	if _accept_current_world_packet(world_id, world_revision):
-		player_attack_presented_received.emit(peer_id, sequence, facing)
+	if _accept_current_world_packet(world_id, world_revision) and valid_attack_presentation(
+		sequence,
+		facing,
+		combo_step,
+		presentation_key,
+		startup_seconds,
+		active_seconds,
+		recovery_seconds
+	):
+		player_attack_presented_received.emit(
+			peer_id,
+			sequence,
+			facing,
+			combo_step,
+			presentation_key,
+			startup_seconds,
+			active_seconds,
+			recovery_seconds
+		)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_player_hurt(
+	world_id: StringName,
+	world_revision: int,
+	peer_id: int,
+	sequence: int,
+	duration_seconds: float
+) -> void:
+	if _accept_current_world_packet(world_id, world_revision) \
+			and valid_hurt_presentation(sequence, duration_seconds):
+		player_hurt_presented_received.emit(peer_id, sequence, duration_seconds)
+
+func valid_attack_presentation(
+	sequence: int,
+	facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
+) -> bool:
+	return sequence >= 0 and (facing == -1.0 or facing == 1.0) and combo_step >= 0 \
+		and not presentation_key.is_empty() \
+		and _valid_presentation_duration(startup_seconds) \
+		and _valid_presentation_duration(active_seconds) \
+		and _valid_presentation_duration(recovery_seconds)
+
+func valid_dodge_presentation(sequence: int, direction: float, duration_seconds: float) -> bool:
+	return sequence >= 0 and (direction == -1.0 or direction == 1.0) \
+		and _valid_presentation_duration(duration_seconds)
+
+func valid_hurt_presentation(sequence: int, duration_seconds: float) -> bool:
+	return sequence >= 0 and _valid_presentation_duration(duration_seconds)
+
+func _valid_presentation_duration(value: float) -> bool:
+	return is_finite(value) and value > 0.0 and value <= MAX_COMBAT_PRESENTATION_SECONDS
 
 func broadcast_enemy_spawn(world_id: StringName, payload: Dictionary) -> void:
 	_broadcast_world_payload(world_id, &"enemy_spawn", payload)

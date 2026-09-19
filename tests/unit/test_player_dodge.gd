@@ -239,7 +239,9 @@ func _test_direction_priority(t: Node) -> void:
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
 	var submitted: Array[float] = []
-	actor.network_dodge.dodge_presented.connect(func(_peer_id: int, _sequence: int, direction: float) -> void: submitted.append(direction))
+	actor.network_dodge.dodge_presented.connect(func(
+		_peer_id: int, _sequence: int, direction: float, _duration: float
+	) -> void: submitted.append(direction))
 
 	# No horizontal intent falls back to the actor's current facing.
 	for facing in [1.0, -1.0]:
@@ -772,14 +774,16 @@ func _test_network_intent(t: Node) -> void:
 	var definition := actor.dodge.definition
 	runtime.combat.stamina = runtime.combat.max_stamina
 	var presented: Array[Array] = []
-	actor.network_dodge.dodge_presented.connect(func(peer_id: int, sequence: int, direction: float) -> void: presented.append([peer_id, sequence, direction]))
+	actor.network_dodge.dodge_presented.connect(func(
+		peer_id: int, sequence: int, direction: float, duration: float
+	) -> void: presented.append([peer_id, sequence, direction, duration]))
 
 	t.assert_true(not actor.network_dodge._server_execute_dodge(actor.peer_id + 7, 10, 1.0).success, "a command for another peer is rejected")
 	t.assert_true(actor.network_dodge._server_execute_dodge(actor.peer_id, 10, 1.0).success, "the authoritative dodge path accepts a valid command")
 	t.assert_true(actor.dodge.is_active(), "an accepted command starts the authoritative dodge")
 	t.assert_equal(presented.size(), 1, "an accepted dodge is presented exactly once")
 	if not presented.is_empty():
-		t.assert_equal(presented[0], [actor.peer_id, 10, 1.0], "the presentation carries the committed direction")
+		t.assert_equal(presented[0], [actor.peer_id, 10, 1.0, definition.duration_seconds], "the presentation carries direction and authored duration")
 	t.assert_true(not actor.network_dodge._server_execute_dodge(actor.peer_id, 10, 1.0).success, "a duplicate sequence is rejected")
 	t.assert_true(not actor.network_dodge._server_execute_dodge(actor.peer_id, 9, 1.0).success, "a stale sequence is rejected")
 	actor.dodge.reset()
@@ -803,7 +807,7 @@ func _test_network_intent(t: Node) -> void:
 	# The presentation path mirrors, it does not simulate.
 	await _settle(t, actor)
 	var presented_count := presented.size()
-	actor.network_dodge._on_dodge_presented_received(actor.peer_id, 99, -1.0)
+	actor.network_dodge._on_dodge_presented_received(actor.peer_id, 99, -1.0, definition.duration_seconds)
 	t.assert_equal(presented.size(), presented_count, "an authoritative actor ignores presentation packets about itself")
 	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "a presentation packet spends no stamina")
 	t.assert_true(not actor.dodge.is_active(), "a presentation packet starts no authoritative dodge")

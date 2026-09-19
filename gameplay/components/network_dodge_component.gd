@@ -10,12 +10,13 @@ extends Node
 ## [CombatInputBufferComponent] and announces nothing until that buffer reports
 ## the dodge actually started.
 
-signal dodge_presented(peer_id: int, sequence: int, direction: float)
+signal dodge_presented(peer_id: int, sequence: int, direction: float, duration_seconds: float)
 
 var actor: PlayerActor
 var input: PlayerInputComponent
 var _local_sequence: int = -1
 var _last_server_sequence: int = -1
+var _last_presentation_sequence: int = -1
 
 func configure(p_actor: PlayerActor, p_input: PlayerInputComponent) -> void:
 	actor = p_actor
@@ -106,15 +107,20 @@ func _server_execute_dodge(peer_id: int, sequence: int, direction: float) -> Com
 func _on_dodge_started(sequence: int, direction: float) -> void:
 	if actor == null or not actor.is_simulation_authority():
 		return
-	dodge_presented.emit(actor.peer_id, sequence, direction)
+	var duration_seconds := actor.dodge.total_duration()
+	dodge_presented.emit(actor.peer_id, sequence, direction, duration_seconds)
 	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
-		NetworkManager.broadcast_player_dodge(actor.peer_id, sequence, direction)
+		NetworkManager.broadcast_player_dodge(actor.peer_id, sequence, direction, duration_seconds)
 
 ## Presentation only: the client mirrors the facing the host committed and plays
 ## the roll. It starts no timeline, opens no i-frames and touches no stamina.
-func _on_dodge_presented_received(peer_id: int, sequence: int, replicated_direction: float) -> void:
+func _on_dodge_presented_received(
+	peer_id: int, sequence: int, replicated_direction: float, duration_seconds: float
+) -> void:
 	if actor == null or actor.is_simulation_authority() or peer_id != actor.peer_id \
-		or sequence < 0 or not PlayerDodgeCommand.new(sequence, replicated_direction).has_valid_direction():
+			or sequence <= _last_presentation_sequence \
+			or not NetworkManager.valid_dodge_presentation(sequence, replicated_direction, duration_seconds):
 		return
+	_last_presentation_sequence = sequence
 	actor.facing = replicated_direction
-	dodge_presented.emit(peer_id, sequence, replicated_direction)
+	dodge_presented.emit(peer_id, sequence, replicated_direction, duration_seconds)

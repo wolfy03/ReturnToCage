@@ -8,12 +8,25 @@ extends Node
 ## point: an intent that is merely waiting has not happened, so the presentation
 ## broadcast is driven by the buffer's execution signal instead.
 
-signal attack_presented(peer_id: int, sequence: int, facing: float)
+signal attack_presented(
+	peer_id: int,
+	sequence: int,
+	facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
+)
+signal hurt_presented(peer_id: int, sequence: int, duration_seconds: float)
 
 var actor: PlayerActor
 var input: PlayerInputComponent
 var _local_sequence: int = -1
 var _last_server_sequence: int = -1
+var _last_attack_presentation_sequence: int = -1
+var _hurt_presentation_sequence: int = -1
+var _last_hurt_presentation_sequence: int = -1
 
 func configure(p_actor: PlayerActor, p_input: PlayerInputComponent) -> void:
 	actor = p_actor
@@ -22,13 +35,18 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent) -> void:
 	input.attack_requested.connect(_on_attack_requested)
 	if actor.input_buffer != null:
 		actor.input_buffer.attack_executed.connect(_on_attack_started)
+	if actor.hurt != null:
+		actor.hurt.hurt_triggered.connect(_on_hurt_triggered)
 	NetworkManager.player_attack_presented_received.connect(_on_attack_presented_received)
+	NetworkManager.player_hurt_presented_received.connect(_on_hurt_presented_received)
 	if actor.is_simulation_authority() and NetworkManager.is_server():
 		NetworkManager.player_attack_command_received.connect(_on_attack_command_received)
 
 func _exit_tree() -> void:
 	if NetworkManager.player_attack_presented_received.is_connected(_on_attack_presented_received):
 		NetworkManager.player_attack_presented_received.disconnect(_on_attack_presented_received)
+	if NetworkManager.player_hurt_presented_received.is_connected(_on_hurt_presented_received):
+		NetworkManager.player_hurt_presented_received.disconnect(_on_hurt_presented_received)
 	if NetworkManager.player_attack_command_received.is_connected(_on_attack_command_received):
 		NetworkManager.player_attack_command_received.disconnect(_on_attack_command_received)
 
@@ -76,14 +94,80 @@ func _server_execute_attack(peer_id: int, sequence: int) -> CombatResult:
 func _on_attack_started(sequence: int, facing: float) -> void:
 	if actor == null or not actor.is_simulation_authority():
 		return
-	actor.cancel_return_channel_for_combat()
-	attack_presented.emit(actor.peer_id, sequence, facing)
-	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
-		NetworkManager.broadcast_player_attack(actor.peer_id, sequence, facing)
-
-func _on_attack_presented_received(peer_id: int, sequence: int, replicated_facing: float) -> void:
-	if actor == null or actor.is_simulation_authority() or peer_id != actor.peer_id \
-		or sequence < 0 or not is_finite(replicated_facing):
+	var definition := actor.combat.current_attack_definition()
+	if definition == null:
 		return
+	actor.cancel_return_channel_for_combat()
+	attack_presented.emit(
+		actor.peer_id,
+		sequence,
+		facing,
+		actor.combat.combo_index(),
+		definition.presentation_key,
+		definition.startup_seconds,
+		definition.active_seconds,
+		definition.recovery_seconds
+	)
+	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
+		NetworkManager.broadcast_player_attack(
+			actor.peer_id,
+			sequence,
+			facing,
+			actor.combat.combo_index(),
+			definition.presentation_key,
+			definition.startup_seconds,
+			definition.active_seconds,
+			definition.recovery_seconds
+		)
+
+func _on_attack_presented_received(
+	peer_id: int,
+	sequence: int,
+	replicated_facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
+) -> void:
+	if actor == null or actor.is_simulation_authority() or peer_id != actor.peer_id \
+			or sequence <= _last_attack_presentation_sequence \
+			or not NetworkManager.valid_attack_presentation(
+				sequence,
+				replicated_facing,
+				combo_step,
+				presentation_key,
+				startup_seconds,
+				active_seconds,
+				recovery_seconds
+			):
+		return
+	_last_attack_presentation_sequence = sequence
 	actor.facing = replicated_facing
-	attack_presented.emit(peer_id, sequence, replicated_facing)
+	attack_presented.emit(
+		peer_id,
+		sequence,
+		replicated_facing,
+		combo_step,
+		presentation_key,
+		startup_seconds,
+		active_seconds,
+		recovery_seconds
+	)
+
+func _on_hurt_triggered(duration_seconds: float) -> void:
+	if actor == null or not actor.is_simulation_authority() \
+			or not NetworkManager.valid_hurt_presentation(_hurt_presentation_sequence + 1, duration_seconds):
+		return
+	_hurt_presentation_sequence += 1
+	hurt_presented.emit(actor.peer_id, _hurt_presentation_sequence, duration_seconds)
+	if NetworkManager.is_multiplayer_active() and NetworkManager.is_server():
+		NetworkManager.broadcast_player_hurt(actor.peer_id, _hurt_presentation_sequence, duration_seconds)
+
+func _on_hurt_presented_received(peer_id: int, sequence: int, duration_seconds: float) -> void:
+	if actor == null or actor.is_simulation_authority() or peer_id != actor.peer_id \
+			or sequence <= _last_hurt_presentation_sequence \
+			or not NetworkManager.valid_hurt_presentation(sequence, duration_seconds):
+		return
+	_last_hurt_presentation_sequence = sequence
+	hurt_presented.emit(peer_id, sequence, duration_seconds)

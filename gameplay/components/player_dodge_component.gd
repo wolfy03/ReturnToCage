@@ -57,6 +57,15 @@ func remaining() -> float:
 		return 0.0
 	return maxf(0.0, definition.duration_seconds - elapsed)
 
+## Read-only presentation duration. The dodge component remains the gameplay
+## timing owner; callers can only observe the authored total.
+func total_duration() -> float:
+	return definition.duration_seconds if definition != null else 0.0
+
+func normalized_progress() -> float:
+	var duration := total_duration()
+	return clampf(elapsed / duration, 0.0, 1.0) if duration > 0.0 else 0.0
+
 ## Starts a dodge. Returns true only when the dodge actually began, in which case
 ## stamina has been committed exactly once — a dodge is never refunded, not by
 ## a wall, not by a ledge, and not by being interrupted with hit-stun.

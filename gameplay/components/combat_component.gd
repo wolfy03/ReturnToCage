@@ -138,6 +138,16 @@ func combo_index() -> int:
 func attack_elapsed() -> float:
 	return _attack_elapsed
 
+## Immutable authored definition currently being executed. Presentation may
+## read it, but runtime code must never mutate the Resource.
+func current_attack_definition() -> AttackDefinition:
+	return _pending_attack
+
+## Facing committed when the current combo step began. It deliberately differs
+## from a player's live movement facing while that swing is in progress.
+func current_attack_facing() -> float:
+	return _pending_facing
+
 ## True only while the current step's authored chain window is open and there is
 ## another step to chain into.
 func can_chain_attack_now() -> bool:
@@ -193,7 +203,7 @@ func _begin_step(weapon: WeaponDefinition, index: int, facing: float, chained: b
 	_pending_weapon = weapon
 	_pending_attack = attack_definition
 	_pending_context = context
-	_pending_facing = facing
+	_pending_facing = direction
 	_combo_index = index
 	_attack_elapsed = 0.0
 	_phase_remaining = attack_definition.startup_seconds

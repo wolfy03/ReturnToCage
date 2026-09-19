@@ -42,6 +42,27 @@ Player HURT는 locomotion이 아니라 scene-local Combat Action이다. `PlayerH
 
 따라서 remote presentation actor는 서버 HURT를 모를 수 있고 `InteractionTarget.activated`도 권위 검증이 아니다. 실제 multiplayer mutation은 서버 command boundary가 현재 peer/world의 authoritative PlayerActor를 다시 찾아 검증한다. HURT 동안 attack, quick item, loot, gather, region entry, Settlement return/escape를 거절하며, dialog/crafting/facility의 향후 제한은 각 명령 정책으로 별도 확장한다.
 
+## 전투 표현과 애니메이션
+
+Gameplay simulation과 presentation은 분리된다. `PlayerActor`의 `PresentationAnchor`는
+`presentation_enabled=true`일 때만 `presentation/player/player_visual.tscn`을 lazy load한다.
+server/headless actor에는 `PlayerVisual`, `AnimatedSprite2D`, Polygon placeholder,
+`PlayerAnimationPresenter`가 생기지 않는다. 현재 shipped profile은 최종 SpriteFrames가 없는
+placeholder 모드이며 기존 햄스터 Polygon은 gameplay scene이 아니라 visual scene에 있다.
+
+`PlayerAnimationPresenter`는 `CombatActionController`, `CombatComponent.attack_elapsed()`,
+`PlayerHurtComponent`, `PlayerDodgeComponent`, `MovementComponent`를 read-only로 해석한다.
+우선순위는 `DEATH > HURT > DODGE > ATTACK > CLIMB > AIR > RUN > IDLE`이다. 공격 frame은
+`AttackAnimationBinding`의 STARTUP/ACTIVE/RECOVERY half-open frame partition에 권위 gameplay
+elapsed를 매핑한다. animation 완료·frame callback은 hitbox, stamina, action transition을 절대
+구동하지 않으며 authoritative combat은 animation을 기다리지 않는다.
+
+remote actor는 CombatAction/HURT/Dodge/combo runtime을 복제하지 않는다. 실제 시작 순간의
+reliable presentation event만 받아 visual timer를 돌리고, locomotion은 기존 replicated
+position/velocity/facing/movement mode를 사용한다. Attack은 committed facing, Dodge는 committed
+direction을 유지하며 HURT refresh는 별도 event로 같은 clip을 frame 0부터 다시 시작한다.
+presentation event는 remote gameplay state를 재구성하거나 mutation하지 않는다.
+
 ## 이동과 등반
 
 PlayerInputComponent는 Input Map에서 수평·수직 축을 제공한다. MovementComponent는 GROUND/AIR/CLIMB을 구분한다. ClimbableArea2D와 겹치고 중심선 허용 거리 안에서 W/S를 눌러야 진입한다. CLIMB은 중력을 끄고 Resource 속도·정렬·이탈 정책을 사용한다. 공격과 귀환 채널링은 등반과 함께 실행할 수 없다. 피격은 drop_on_damage, non-zero 넉백·사망은 강제 이탈이며 넉백은 locomotion mode가 아닌 additive external impulse다. 영역 이탈·상하단·점프·장면 변경도 일반 이동으로 복구한다.

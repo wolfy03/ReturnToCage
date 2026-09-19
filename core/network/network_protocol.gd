@@ -11,7 +11,10 @@ extends RefCounted
 # strict facing) and the authoritative dodge presentation broadcast that mirrors
 # it. i-frames, stamina and position stay host-side and are never sent as a
 # client decision.
-const VERSION := 14
+# v15 expands presentation-only attack/dodge events with semantic animation
+# metadata and adds a HURT presentation event. Gameplay action state and timers
+# remain server-only; Save data is unchanged.
+const VERSION := 15
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

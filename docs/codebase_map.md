@@ -98,14 +98,21 @@ Phase: `MENU → SETTLEMENT → ADVENTURE → SETTLEMENT`, 사망 시 `RESPAWNIN
 
 ## 4. 멀티플레이 축
 
-`NetworkManager` (ENet, 기본 포트 7777, 최대 4인, `NetworkProtocol.VERSION = 13`).
+`NetworkManager` (ENet, 기본 포트 7777, 최대 4인, `NetworkProtocol.VERSION = 15`).
 
 프로토콜 이력: v11 이 월드 배정, v12 가 월드/revision 에 묶인 게임플레이 복제(이동·적·전리품·
-전투 표현·필드 상호작용)를 도입했고, **v13 이 authoritative 스태미나 복제**를 추가했다.
+전투 표현·필드 상호작용), v13 이 authoritative 스태미나, v14 가 Dodge intent/event,
+**v15가 combat presentation metadata와 HURT event**를 추가했다.
 v13 의 내용은 `PlayerRuntimeSnapshot` 에 `stamina`/`max_stamina` 포함, 지속 스태미나용
 `PlayerCombatRuntimeSnapshot` 신설, `unreliable_ordered` 채널 3 이다.
 
 RPC 는 전부 `NetworkManager` 안에만 있고, 다른 노드는 시그널로 받는다. 이 구조를 깨지 말 것.
+
+`presentation/definitions/`의 `CharacterAnimationProfile`과 `AttackAnimationBinding`은
+ContentRegistry 밖의 plain Resource다. `presentation/player/player_visual.tscn`은
+`PlayerAnimationPresenter → AnimatedSprite2D/PlaceholderVisual`을 소유한다. Player core scene은
+`PresentationAnchor`만 가지며 presentation actor만 visual scene을 lazy instantiate한다.
+Presenter는 PlayerActor signal만 소비하고 NetworkManager/RPC를 직접 알지 않는다.
 
 `InteractionTarget.activated`는 로컬 presentation 흐름이며 authority boundary가 아니다. 특히
 remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirror + 표현만 받는다). `_begin_player_world_transition()`과
@@ -118,7 +125,8 @@ remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirro
   `_request_enter_region`, `_request_return_to_settlement`, `_request_world_roster`,
   `_confirm_world_ready`, `_request_handshake`.
 - 호스트 → 클라이언트 (`authority`): `_receive_player_transform`(unreliable_ordered ch1),
-  `_receive_player_runtime`, `_receive_player_attack`, `_receive_player_respawn`,
+  `_receive_player_runtime`, `_receive_player_attack`, `_receive_player_dodge`,
+  `_receive_player_hurt`, `_receive_player_respawn`,
   `_receive_enemy_spawn/_transform(ch2)/_runtime/_despawn`,
   `_receive_loot_spawn/_despawn/_pickup_result`, `_receive_gather_consumed`,
   `_receive_player_combat_runtime`(unreliable_ordered ch3),

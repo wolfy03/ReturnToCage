@@ -18,13 +18,16 @@ func _test_component_lifecycle_and_refresh(t: Node) -> void:
 	combat.action = action
 	hurt.configure(null, action, combat, movement)
 	var events: Array[Array] = []
+	var presentation_events: Array[float] = []
 	action.state_changed.connect(func(previous: int, current: int) -> void: events.append([previous, current]))
+	hurt.hurt_triggered.connect(func(duration: float) -> void: presentation_events.append(duration))
 
 	t.assert_true(not hurt.is_active() and hurt.remaining == 0.0, "a fresh hurt component is inactive")
 	t.assert_true(hurt.begin_hurt(), "begin_hurt accepts IDLE")
 	t.assert_true(action.is_hurt() and hurt.is_active(), "begin_hurt enters the HURT combat action")
 	t.assert_equal(hurt.remaining, hurt.duration_seconds, "begin_hurt starts the authored duration")
 	t.assert_true(movement.controls_locked, "begin_hurt locks player controls")
+	t.assert_equal(presentation_events, [hurt.duration_seconds] as Array[float], "initial HURT emits one presentation trigger")
 	hurt.physics_tick(hurt.duration_seconds - 0.01)
 	t.assert_true(hurt.is_active() and hurt.remaining > 0.0, "HURT remains active just before its duration")
 	var event_count := events.size()
@@ -32,6 +35,7 @@ func _test_component_lifecycle_and_refresh(t: Node) -> void:
 	t.assert_equal(events.size(), event_count, "HURT refresh emits no HURT-to-HURT state signal")
 	t.assert_equal(hurt.remaining, hurt.duration_seconds, "a re-hit refreshes the full duration")
 	t.assert_true(movement.controls_locked, "controls remain locked after refresh")
+	t.assert_equal(presentation_events.size(), 2, "HURT refresh emits a second presentation trigger without a state transition")
 	hurt.physics_tick(hurt.duration_seconds + 0.01)
 	t.assert_true(not hurt.is_active() and action.is_idle(), "duration completion transitions HURT to IDLE")
 	t.assert_true(not movement.controls_locked and hurt.remaining == 0.0, "duration completion clears timer and control lock")
@@ -284,8 +288,11 @@ func _test_hurt_refresh_buffer_lifecycle(t: Node) -> void:
 	actor.combat.stamina_regen_multiplier = 0.0
 	runtime.combat.stamina = runtime.combat.max_stamina
 	var buffer := actor.input_buffer
+	var hurt_presentations: Array[int] = []
+	actor.hurt_presented.connect(func(sequence: int, _duration: float) -> void: hurt_presentations.append(sequence))
 
 	t.assert_true(_damage(actor, Vector2.ZERO), "the refresh fixture enters hit-stun")
+	t.assert_equal(hurt_presentations.size(), 1, "a direct hit presents HURT exactly once")
 	t.assert_true(actor.hurt.is_active(), "the first hit landed")
 	t.assert_equal(buffer.submit_attack(400, 1.0), CombatInputBufferComponent.SubmitResult.BUFFERED, "an attack pressed during hit-stun is buffered")
 	t.assert_true(buffer.has_pending(), "the intent is waiting before the second hit")
@@ -300,6 +307,7 @@ func _test_hurt_refresh_buffer_lifecycle(t: Node) -> void:
 	t.assert_true(transitions.is_empty(), "a refreshing hit emits no HURT-to-HURT state change")
 	t.assert_equal(actor.hurt.remaining, actor.hurt.duration_seconds, "a refreshing hit restarts the full duration")
 	t.assert_true(not buffer.has_pending(), "a refreshing hit drops the intent queued before it")
+	t.assert_equal(hurt_presentations.size(), 2, "a re-hit restarts HURT presentation exactly once")
 	t.assert_equal(runtime.combat.stamina, runtime.combat.max_stamina, "a dropped intent spends nothing")
 
 	# Clearing is about the hit that just happened, not about hit-stun as a state:
@@ -317,12 +325,14 @@ func _test_hurt_refresh_buffer_lifecycle(t: Node) -> void:
 	t.assert_true(actor.health.receive_periodic_damage(1.0), "periodic damage is accepted")
 	t.assert_true(actor.health.current_health < periodic_health, "periodic damage reduces HP")
 	t.assert_true(buffer.has_pending(), "periodic damage keeps the buffered intent")
+	t.assert_equal(hurt_presentations.size(), 2, "periodic damage starts no HURT presentation")
 	actor.health.invulnerable_remaining = 0.0
 	var impulse_only := DamageContext.new(1.0, &"test", actor, &"hostile", Vector2(80.0, -20.0))
 	impulse_only.causes_hurt = false
 	t.assert_true(actor.health.receive_damage(impulse_only), "causes_hurt = false damage is accepted")
 	t.assert_true(not actor.hurt.is_active(), "causes_hurt = false damage starts no hit-stun")
 	t.assert_true(buffer.has_pending(), "causes_hurt = false damage keeps the buffered intent")
+	t.assert_equal(hurt_presentations.size(), 2, "causes_hurt=false damage starts no HURT presentation")
 	actor.combat.abort_attack()
 	buffer.clear()
 
@@ -340,6 +350,7 @@ func _test_hurt_refresh_buffer_lifecycle(t: Node) -> void:
 	actor.health.invulnerable_remaining = 0.0
 	t.assert_true(not actor.health.receive_damage(DamageContext.new(5.0, &"test", actor, &"hostile")), "the hit is evaded by the dodge i-frames")
 	t.assert_true(not actor.hurt.is_active() and buffer.has_pending(), "an evaded hit keeps the buffered intent")
+	t.assert_equal(hurt_presentations.size(), 2, "an evaded hit starts no HURT presentation")
 	actor.dodge.reset()
 	buffer.clear()
 
@@ -364,6 +375,8 @@ func _test_world_transition(t: Node) -> void:
 	t.assert_true(replacement != null and replacement != actor, "world transition creates a new player actor")
 	t.assert_true(replacement.combat_action.is_idle() and not replacement.hurt.is_active(), "new world actor starts IDLE without HURT")
 	t.assert_true(not replacement.movement.controls_locked, "new world actor starts with controls unlocked")
+	var replacement_visual := replacement.player_visual() as PlayerVisual
+	t.assert_true(replacement_visual == null or replacement_visual.presenter.current_transient() == PlayerAnimationPresenter.Transient.NONE, "new world actor starts with fresh presentation state")
 	t.assert_equal(runtime.combat.stamina, stamina_before, "scene-local HURT does not replace persistent stamina")
 	layer.queue_free()
 	await t.get_tree().process_frame
@@ -376,11 +389,14 @@ func _test_lethal_without_hurt(t: Node) -> void:
 	t.add_child(layer)
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
 	var transitions: Array[Array] = []
+	var hurt_presentations: Array[int] = []
 	actor.combat_action.state_changed.connect(func(previous: int, current: int) -> void: transitions.append([previous, current]))
+	actor.hurt_presented.connect(func(sequence: int, _duration: float) -> void: hurt_presentations.append(sequence))
 	t.assert_true(actor.health.receive_damage(DamageContext.new(9999.0, &"test", actor, &"hostile")), "an IDLE lethal hit is accepted")
 	t.assert_true(actor.is_death_handled(), "an IDLE lethal hit enters the existing death lifecycle")
 	t.assert_true(not actor.hurt.is_active() and actor.hurt.remaining == 0.0, "an IDLE lethal hit never starts HURT")
 	t.assert_true(transitions.is_empty(), "an IDLE lethal hit emits no transient HURT transition")
+	t.assert_true(hurt_presentations.is_empty(), "an IDLE lethal hit emits no HURT presentation")
 	layer.queue_free()
 	await t.get_tree().process_frame
 	await t.get_tree().process_frame
@@ -391,6 +407,8 @@ func _test_death_and_respawn(t: Node) -> void:
 	var layer := Node.new()
 	t.add_child(layer)
 	var actor: PlayerActor = await _spawn_settlement_player(t, layer)
+	var hurt_presentations: Array[int] = []
+	actor.hurt_presented.connect(func(sequence: int, _duration: float) -> void: hurt_presentations.append(sequence))
 	t.assert_true(_damage(actor, Vector2.ZERO), "death fixture enters HURT")
 	t.assert_true(actor.hurt.is_active(), "HURT is active before lethal damage")
 	actor.health.invulnerable_remaining = 0.0
@@ -401,6 +419,7 @@ func _test_death_and_respawn(t: Node) -> void:
 	t.assert_true(not actor.hurt.is_active() and actor.hurt.remaining == 0.0, "death clears active HURT and its timer")
 	t.assert_true(actor.combat_action.is_idle() and not actor.movement.controls_locked, "death resets combat action and HURT control lock")
 	t.assert_equal(lethal_transitions, [[CombatActionController.State.HURT, CombatActionController.State.IDLE]], "lethal damage creates no transient new HURT state")
+	t.assert_equal(hurt_presentations.size(), 1, "lethal damage during HURT does not emit another HURT presentation")
 
 	for frame in 75:
 		await t.get_tree().physics_frame
@@ -408,6 +427,8 @@ func _test_death_and_respawn(t: Node) -> void:
 	t.assert_true(respawned != null and respawned != actor, "death creates a replacement player actor")
 	t.assert_true(respawned.combat_action.is_idle() and not respawned.hurt.is_active(), "respawned actor starts IDLE without HURT")
 	t.assert_true(not respawned.movement.controls_locked, "respawned actor starts with controls unlocked")
+	var respawned_visual := respawned.player_visual() as PlayerVisual
+	t.assert_true(respawned_visual == null or respawned_visual.presenter.current_transient() == PlayerAnimationPresenter.Transient.NONE, "respawned actor retains no death/HURT presentation transient")
 
 	layer.queue_free()
 	await t.get_tree().process_frame

@@ -23,6 +23,9 @@ var _knockback_watch_origin_x := 0.0
 ## Attack presentation sequences this client has been told about. A buffered
 ## intent must produce none until the host actually starts the swing.
 var _presented_attack_sequences: Array[int] = []
+var _presented_attack_events: Array[Dictionary] = []
+var _presented_hurt_events: Array[Dictionary] = []
+var _presented_dodge_events: Array[Dictionary] = []
 
 func _ready() -> void:
 	_parse_arguments()
@@ -179,7 +182,10 @@ func _run_host_scenario() -> void:
 		_fail("client did not observe replicated knockback movement")
 		return
 	var knockback_report := _confirmation("REPORT_KNOCKBACK_WATCH", b_peer)
-	if float(knockback_report.get("x", -INF)) <= float(knockback_report.get("origin_x", INF)) + 3.0:
+	if float(knockback_report.get("x", -INF)) <= float(knockback_report.get("origin_x", INF)) + 3.0 \
+			or int(knockback_report.get("hurt_count", 0)) != 1 \
+			or not is_equal_approx(float(knockback_report.get("hurt_duration", 0.0)), b_actor.hurt.duration_seconds) \
+			or bool(knockback_report.get("gameplay_hurt", true)):
 		_fail("client presentation did not move in the authoritative knockback direction")
 		return
 	if _sewer_enemy_events != 0 or _sewer_loot_events != 0:
@@ -322,6 +328,13 @@ func _run_host_scenario() -> void:
 	if b_actor.input_buffer.has_pending():
 		_fail("an executed intent stayed in the buffer")
 		return
+	var chained_sequence := buffered_sequence + 1
+	_command.rpc_id(b_peer, "ATTACK", chained_sequence)
+	if not await _wait_until(func() -> bool:
+		return b_actor.combat.combo_index() == 1 and b_actor.combat_action.is_attacking()
+	, 3.0):
+		_fail("remote buffered follow-up did not chain into combo step 1")
+		return
 	_command.rpc_id(b_peer, "REPORT_ATTACK_PRESENTED", buffered_sequence)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_ATTACK_PRESENTED", b_peer), 4.0):
 		_fail("buffered attack presentation never reached the client")
@@ -329,6 +342,20 @@ func _run_host_scenario() -> void:
 	var presentation_report := _confirmation("REPORT_ATTACK_PRESENTED", b_peer)
 	if int(presentation_report.get("count", 0)) != 1:
 		_fail("buffered attack was presented %s times instead of once" % presentation_report.get("count", 0))
+		return
+	if int(presentation_report.get("combo_step", -1)) != 0 \
+			or StringName(presentation_report.get("presentation_key", &"")) != &"attack_1":
+		_fail("remote step 0 presentation metadata was incorrect")
+		return
+	_command.rpc_id(b_peer, "REPORT_ATTACK_PRESENTED", chained_sequence)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_ATTACK_PRESENTED_%d" % chained_sequence, b_peer), 4.0):
+		_fail("chained attack presentation never reached the client")
+		return
+	var chained_report := _confirmation("REPORT_ATTACK_PRESENTED_%d" % chained_sequence, b_peer)
+	if int(chained_report.get("count", 0)) != 1 \
+			or int(chained_report.get("combo_step", -1)) != 1 \
+			or StringName(chained_report.get("presentation_key", &"")) != &"attack_2":
+		_fail("remote combo presentation did not advance attack_1 -> attack_2 exactly once")
 		return
 	b_actor.combat.abort_attack()
 	b_actor.hurt.duration_seconds = buffer_hurt_duration
@@ -375,6 +402,16 @@ func _run_host_scenario() -> void:
 	if not b_actor.health.evasion_invulnerable or b_combat.stamina >= dodge_stamina_before \
 			or not b_actor.movement.has_control_lock(MovementComponent.CONTROL_LOCK_DODGE):
 		_fail("authoritative dodge did not open i-frames, commit stamina and lock controls")
+		return
+	_command.rpc_id(b_peer, "REPORT_DODGE_PRESENTED", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_DODGE_PRESENTED", b_peer), 4.0):
+		_fail("remote dodge presentation metadata did not arrive")
+		return
+	var presented_dodge := _confirmation("REPORT_DODGE_PRESENTED", b_peer)
+	if int(presented_dodge.get("count", 0)) != 1 \
+			or not is_equal_approx(float(presented_dodge.get("duration", 0.0)), probe_dodge.duration_seconds) \
+			or bool(presented_dodge.get("gameplay_dodge", true)):
+		_fail("remote dodge presentation mutated gameplay or lost authored duration")
 		return
 	var dodge_health_before := b_actor.health.current_health
 	b_actor.health.invulnerable_remaining = 0.0
@@ -532,8 +569,26 @@ func _command(command: String, value: int) -> void:
 				_fail("local attack presentation actor is unavailable")
 				return
 			_presented_attack_sequences.clear()
-			watch_actor.attack_presented.connect(func(sequence: int, _facing: float) -> void:
+			_presented_attack_events.clear()
+			watch_actor.attack_presented.connect(func(
+				sequence: int,
+				facing: float,
+				combo_step: int,
+				presentation_key: StringName,
+				startup: float,
+				active: float,
+				recovery: float
+			) -> void:
 				_presented_attack_sequences.append(sequence)
+				_presented_attack_events.append({
+					"sequence": sequence,
+					"facing": facing,
+					"combo_step": combo_step,
+					"presentation_key": presentation_key,
+					"startup": startup,
+					"active": active,
+					"recovery": recovery,
+				})
 			)
 			_confirm.rpc_id(1, command, {})
 		"REPORT_NO_ATTACK_PRESENTED":
@@ -550,7 +605,13 @@ func _command(command: String, value: int) -> void:
 				_fail("client never received the buffered attack presentation")
 				return
 			await get_tree().create_timer(0.2).timeout
-			_confirm.rpc_id(1, command, {"count": _presented_attack_sequences.count(value)})
+			var event: Dictionary = {}
+			for candidate in _presented_attack_events:
+				if int(candidate.get("sequence", -1)) == value:
+					event = candidate
+					break
+			event["count"] = _presented_attack_sequences.count(value)
+			_confirm.rpc_id(1, command if value == 700 else "%s_%d" % [command, value], event)
 		"DODGE":
 			NetworkManager.submit_player_dodge(NetworkManager.local_peer_id(), value, 1.0)
 			_confirm.rpc_id(1, command, {"sequence": value})
@@ -655,6 +716,16 @@ func _command(command: String, value: int) -> void:
 				_fail("local knockback presentation actor is unavailable")
 				return
 			_knockback_watch_origin_x = actor.position.x
+			_presented_hurt_events.clear()
+			_presented_dodge_events.clear()
+			actor.hurt_presented.connect(func(sequence: int, duration: float) -> void:
+				_presented_hurt_events.append({"sequence": sequence, "duration": duration})
+			)
+			actor.dodge_presented.connect(func(sequence: int, direction: float, duration: float) -> void:
+				_presented_dodge_events.append({
+					"sequence": sequence, "direction": direction, "duration": duration,
+				})
+			)
 			_confirm.rpc_id(1, command, {"origin_x": _knockback_watch_origin_x})
 		"REPORT_KNOCKBACK_WATCH":
 			if not await _wait_until(func() -> bool:
@@ -666,6 +737,18 @@ func _command(command: String, value: int) -> void:
 			_confirm.rpc_id(1, command, {
 				"origin_x": _knockback_watch_origin_x,
 				"x": _local_actor().position.x,
+				"hurt_count": _presented_hurt_events.size(),
+				"hurt_duration": float(_presented_hurt_events[0].get("duration", 0.0)) if not _presented_hurt_events.is_empty() else 0.0,
+				"gameplay_hurt": _local_actor().combat_action.is_hurt(),
+			})
+		"REPORT_DODGE_PRESENTED":
+			if not await _wait_until(func() -> bool: return not _presented_dodge_events.is_empty(), 3.0):
+				_fail("client never received dodge presentation")
+				return
+			_confirm.rpc_id(1, command, {
+				"count": _presented_dodge_events.size(),
+				"duration": float(_presented_dodge_events[-1].get("duration", 0.0)),
+				"gameplay_dodge": _local_actor().combat_action.is_dodging(),
 			})
 		"ATTACK":
 			NetworkManager.submit_player_attack(NetworkManager.local_peer_id(), value)

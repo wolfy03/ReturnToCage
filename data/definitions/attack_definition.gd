@@ -24,6 +24,10 @@ extends Resource
 ## Lock-out after the attack. Replaces the old per-weapon attack cooldown.
 @export_range(0.01, 10.0, 0.01) var recovery_seconds: float = 0.33
 
+## Semantic key consumed only by the presentation profile. Gameplay and
+## headless validation never resolve this to a texture or animation asset.
+@export var presentation_key: StringName = &"attack"
+
 ## Logical reach metadata. Melee collision is defined independently by the
 ## rectangle geometry below; projectiles use this as their travel distance.
 @export_range(1.0, 2000.0, 1.0) var range: float = 52.0
@@ -72,6 +76,8 @@ func validation_errors(owner_id: StringName = &"") -> PackedStringArray:
 		var value: float = phase[1]
 		if not is_finite(value) or value <= 0.0:
 			errors.append("%sattack %s must be a positive finite duration" % [prefix, phase[0]])
+	if presentation_key.is_empty():
+		errors.append("%sattack presentation_key must not be empty" % prefix)
 	if not is_finite(range) or range <= 0.0:
 		errors.append("%sattack range must be positive and finite" % prefix)
 	if not is_finite(hitbox_size.x) or not is_finite(hitbox_size.y) \

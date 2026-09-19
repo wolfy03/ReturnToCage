@@ -3,8 +3,19 @@ extends CharacterBody2D
 
 signal interaction_prompt_changed(text: String)
 signal return_channel_changed(active: bool, progress: float)
-signal attack_presented(sequence: int, facing: float)
-signal dodge_presented(sequence: int, direction: float)
+signal attack_presented(
+	sequence: int,
+	facing: float,
+	combo_step: int,
+	presentation_key: StringName,
+	startup_seconds: float,
+	active_seconds: float,
+	recovery_seconds: float
+)
+signal dodge_presented(sequence: int, direction: float, duration_seconds: float)
+signal hurt_presented(sequence: int, duration_seconds: float)
+
+const PLAYER_VISUAL_SCENE_PATH := "res://presentation/player/player_visual.tscn"
 
 @onready var input: PlayerInputComponent = %Input
 @onready var movement: MovementComponent = %Movement
@@ -20,6 +31,7 @@ signal dodge_presented(sequence: int, direction: float)
 @onready var network: NetworkPlayerComponent = %Network
 @onready var network_combat: NetworkCombatComponent = %NetworkCombat
 @onready var network_dodge: NetworkDodgeComponent = %NetworkDodge
+@onready var presentation_anchor: Node2D = %PresentationAnchor
 @export var peer_id: int = GameSession.LOCAL_SINGLEPLAYER_PEER_ID
 var simulation_enabled: bool = true
 var presentation_enabled: bool = true
@@ -31,6 +43,7 @@ var facing: float = 1.0
 var return_channel: float = 0.0
 var return_channel_required: float = 3.0
 var return_channel_origin: Vector2
+var _player_visual: Node2D
 
 func setup_player(
 	p_peer_id: int,
@@ -72,9 +85,37 @@ func _ready() -> void:
 	effects.configure(_bound_state.stats, _bound_state.effects)
 	network.configure(self, input, movement)
 	network_combat.configure(self, input)
-	network_combat.attack_presented.connect(func(_peer_id: int, sequence: int, replicated_facing: float) -> void: attack_presented.emit(sequence, replicated_facing))
+	network_combat.attack_presented.connect(func(
+		_peer_id: int,
+		sequence: int,
+		replicated_facing: float,
+		combo_step: int,
+		presentation_key: StringName,
+		startup_seconds: float,
+		active_seconds: float,
+		recovery_seconds: float
+	) -> void:
+		attack_presented.emit(
+			sequence,
+			replicated_facing,
+			combo_step,
+			presentation_key,
+			startup_seconds,
+			active_seconds,
+			recovery_seconds
+		)
+	)
 	network_dodge.configure(self, input)
-	network_dodge.dodge_presented.connect(func(_peer_id: int, sequence: int, replicated_direction: float) -> void: dodge_presented.emit(sequence, replicated_direction))
+	network_dodge.dodge_presented.connect(func(
+		_peer_id: int, sequence: int, replicated_direction: float, duration_seconds: float
+	) -> void:
+		dodge_presented.emit(sequence, replicated_direction, duration_seconds)
+	)
+	network_combat.hurt_presented.connect(func(
+		_peer_id: int, sequence: int, duration_seconds: float
+	) -> void:
+		hurt_presented.emit(sequence, duration_seconds)
+	)
 	input.interact_requested.connect(_on_interact)
 	input.quick_item_requested.connect(_on_quick_item)
 	interaction.target_changed.connect(_on_target_changed)
@@ -105,6 +146,28 @@ func _ready() -> void:
 		if client_hurtbox != null:
 			client_hurtbox.monitoring = false
 			client_hurtbox.monitorable = false
+	_setup_presentation()
+
+## Loads presentation assets only for actors that can actually be rendered.
+## A missing/broken visual is reported but never disables gameplay simulation.
+func _setup_presentation() -> void:
+	if not presentation_enabled or presentation_anchor == null or _player_visual != null:
+		return
+	var resource := load(PLAYER_VISUAL_SCENE_PATH) as PackedScene
+	if resource == null:
+		push_error("Player presentation scene could not be loaded")
+		return
+	var visual := resource.instantiate() as Node2D
+	if visual == null:
+		push_error("Player presentation scene could not be instantiated")
+		return
+	presentation_anchor.add_child(visual)
+	_player_visual = visual
+	if visual.has_method("configure"):
+		visual.call("configure", self)
+
+func player_visual() -> Node2D:
+	return _player_visual
 
 func _exit_tree() -> void:
 	if _bound_state == null:

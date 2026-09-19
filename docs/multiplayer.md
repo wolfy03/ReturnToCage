@@ -29,7 +29,7 @@ Godot's inherited `Object.is_connected(signal, callable)` reserves the requested
 
 1. Run another game instance.
 2. Enter `127.0.0.1` for a same-machine host, or the host machine's LAN IPv4 address.
-3. Select **Join**. The client validates protocol version `14`, verifies that its roster entry matches its local persistent profile, receives session metadata plus its owner-private state, then enters the settlement.
+3. Select **Join**. The client validates protocol version `15`, verifies that its roster entry matches its local persistent profile, receives session metadata plus its owner-private state, then enters the settlement.
 4. Select **Disconnect** to leave safely.
 
 Ending an entered multiplayer session always performs transport cleanup, resets `GameSession` to one offline local player, removes the current world, and returns the AppRoot to **Main Menu**. This applies to manual host/client leave and server disconnect. A connection failure before session synchronization remains on the existing menu without a redundant world transition.
@@ -99,7 +99,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
 - Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
 - Host Saved Game orchestration with pre-transport Save staging and a restoring-state handshake gate
-- Protocol v14 synchronization: v13 world/revision-bound gameplay replication plus authoritative stamina, and the dodge intent channel
+- Protocol v15 synchronization: v14 gameplay contracts plus semantic Attack/Dodge/HURT presentation-only events
 
 `inventory_changed` remains a local-player UI compatibility signal. `quest_changed` is a compatibility notification; `quest_state_changed` carries scope and logical owner for replication. Peer-specific health/life presentation remains separate.
 
@@ -216,7 +216,8 @@ velocity snapshot만 받아 서버 knockback 이동을 보간한다. world-runti
 클라이언트는 HURT를 모르므로 공격 intent를 계속 보낼 수 있지만 서버 `CombatComponent.attack()`이
 HURT action에서 거절하고 sequence는 기존 정책대로 소비한다. 같은 우회를 막기 위해 consumable
 use, loot pickup, gather의 서버 명령 종착점도 송신자가 아닌 권위 PlayerActor의 HURT를 검사한다.
-HURT animation/event, client prediction, CombatAction replication은 후속 범위다.
+HURT gameplay state 자체는 여전히 복제하지 않는다. Protocol v15부터 실제 HURT 시작/refresh를
+알리는 presentation-only event만 전송하며 client prediction과 CombatAction replication은 없다.
 
 `InteractionTarget.activated`는 client presentation에서 실행될 수 있으므로 authority boundary가
 아니다. enter-region과 return/escape는 최종 `NetworkManager` mutation 함수에서 공통
@@ -285,8 +286,8 @@ Dodge는 HURT와 같은 scene-local combat action이지만, HURT와 달리 **클
 
 `_validate_authoritative_world_interaction()` 은 HURT 와 함께 DODGE 도 검사하고, loot pickup /
 gather / consumable use 의 서버 종착점도 동일하게 확장했다. dodge state·i-frame·남은 시간은
-복제하지 않으며 Save v4 에도 들어가지 않는다(transient). dodge animation/event 와
-CombatAction replication 은 후속 범위다.
+복제하지 않으며 Save v4 에도 들어가지 않는다(transient). Protocol v15의 dodge event에는
+presentation duration만 추가됐고 CombatAction replication은 여전히 없다.
 
 ## Combo, authoritative input buffer and cancel windows (Stage 8, Protocol remains v14)
 
@@ -325,8 +326,8 @@ client intent
   과 `ATTACK_RECOVERY → DODGE` 가 추가됐지만, graph 상 허용은 필요조건일 뿐 실제 허가는
   window 가 낸다. 두 전이 모두 IDLE 을 거치지 않으므로 관찰자가 콤보 도중 IDLE 을 보지 않는다.
 - **combo index·step elapsed·pending intent·buffer 잔여시간은 복제하지 않는다.** 전부
-  scene-local 이며 Save v4 에도 들어가지 않는다. remote presentation actor 는 기존
-  transform/stamina 스냅샷만 받고, combo 나 buffer 상태를 스스로 판단하지 않는다.
+  scene-local 이며 Save v4 에도 들어가지 않는다. Protocol v15 remote presentation actor는
+  실제 시작된 step 번호/key만 event로 받고 combo나 buffer gameplay 상태를 스스로 판단하지 않는다.
 - **권위 interaction guard 는 그대로다.** HURT/DODGE 중 item·loot·gather·world transition
   거절 정책은 유지되며, intent 가 buffer 에 들어 있다는 사실만으로 우회되지 않는다. 마찬가지로
   Dodge intent 가 buffer 에만 들어간 상태는 return channel 을 취소하지 않는다 — 취소는 7차
@@ -349,7 +350,29 @@ i-frame 으로 회피된 공격은 HURT 를 만들지 않으므로 buffer 도 �
 world-runtime process E2E 는 이 경계를 한 시나리오로 확인한다: 호스트가 remote B 를
 hit-stun 으로 묶은 뒤 B 의 attack intent 를 받아 **buffer** 하고, 그 동안 클라이언트에는
 presentation 이 가지 않으며, hit-stun 을 풀면 intent 가 실행되고 그때 **한 번** presentation 이
-도착하는지 검증한다. 정확한 chain 타이밍은 왕복 지연에 민감하므로 unit/integration 이 맡는다.
+도착하는지 검증한다. Protocol v15 회귀는 이어서 buffered follow-up이 step 1로 chain되어
+`attack_1 → attack_2` metadata가 순서대로 도착하는지도 확인한다.
+
+## Combat presentation / animation (Stage 9, Protocol v15)
+
+v15는 gameplay state snapshot이 아니라 실제로 시작된 visual action의 reliable event 계약을
+확장한다. 모든 RPC는 계속 `NetworkManager`에만 있고 기존 world id/revision routing과 channel을
+재사용한다.
+
+- Attack: `(peer_id, sequence, facing, combo_step, presentation_key,
+  startup_seconds, active_seconds, recovery_seconds)`
+- Dodge: `(peer_id, sequence, direction, duration_seconds)`
+- HURT: `(peer_id, sequence, duration_seconds)`
+
+Attack/Dodge event는 command receipt나 buffer 진입이 아니라 action이 실제 시작될 때 한 번만
+발생한다. HURT event는 최초 진입과 HURT refresh 모두 발생하며 lethal/non-reaction/evaded hit은
+발생시키지 않는다. 수신 측은 non-negative sequence, exact `±1` direction/facing, non-empty key,
+finite positive bounded duration을 검사하고 stale/duplicate/malformed event를 무시한다.
+
+remote `PlayerAnimationPresenter`는 event timer와 기존 transform snapshot만 사용한다. event 수신은
+CombatAction transition, health/damage, stamina, 위치를 변경하지 않는다. private equipment를
+공개하거나 combo/HURT/Dodge remaining을 복제하지 않는다. 따라서 Protocol은 15로 올랐지만 Save는
+v4 그대로이며 presentation transient는 직렬화되지 않는다.
 
 ## Not synchronized yet
 
