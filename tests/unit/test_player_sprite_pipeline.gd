@@ -304,45 +304,100 @@ func _test_production_signature(t: Node) -> void:
 		"the production signature catches a changed fps"
 	)
 
+	# fps belongs to the clip, but Godot also stores a per-frame multiplier that
+	# the editor lets someone change on a single frame. Nothing in the manifest
+	# produces that, so a rebuild would not reproduce it: the signature has to
+	# see it, or a hand-retimed generated resource passes the repository check.
+	var hand_edited := PlayerSpriteFramesBuilder.build(_complete_manifest())
+	t.assert_equal(
+		PlayerSpriteFramesBuilder.production_signature(first),
+		PlayerSpriteFramesBuilder.production_signature(hand_edited),
+		"an untouched rebuild still matches before the hand edit"
+	)
+	hand_edited.set_frame(&"idle", 2, hand_edited.get_frame_texture(&"idle", 2), 2.5)
+	t.assert_true(
+		PlayerSpriteFramesBuilder.production_signature(first)
+			!= PlayerSpriteFramesBuilder.production_signature(hand_edited),
+		"the production signature catches a hand-edited frame duration"
+	)
+	t.assert_equal(
+		PlayerSpriteFramesBuilder.describe(first),
+		PlayerSpriteFramesBuilder.describe(hand_edited),
+		"describe() cannot see a per-frame duration edit"
+	)
+
 func _test_build_policy(t: Node) -> void:
 	var preview_output := "user://player_hamster_preview_frames.tres"
 	var production_output := PlayerSpriteBuildPolicy.DEFAULT_OUTPUT
+	var production_manifest := PlayerSpriteBuildPolicy.DEFAULT_MANIFEST
+	var other_manifest := "res://sandbox/experiment_manifest.tres"
 
 	# No manifest is the state the project is in, and it is not a failure.
-	t.assert_true(PlayerSpriteBuildPolicy.decide(null, production_output, false).is_skip(), "no manifest skips the build")
-	t.assert_true(PlayerSpriteBuildPolicy.decide(null, preview_output, true).is_skip(), "no manifest skips a preview build too")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(null, production_manifest, production_output, false).is_skip(),
+		"no manifest skips the build"
+	)
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(null, production_manifest, preview_output, true).is_skip(),
+		"no manifest skips a preview build too"
+	)
 
 	var complete := _complete_manifest()
-	t.assert_true(PlayerSpriteBuildPolicy.decide(complete, production_output, false).is_build(), "a complete manifest builds to the production path")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(complete, production_manifest, production_output, false).is_build(),
+		"the production manifest builds to the production path"
+	)
+
+	# The shipped resource is what CI regenerates from the shipped manifest and
+	# diffs. A build from anywhere else may be perfectly valid and still must
+	# not become that file, or the next check calls it stale.
+	var foreign := PlayerSpriteBuildPolicy.decide(complete, other_manifest, production_output, false)
+	t.assert_true(foreign.is_reject(), "a non-default manifest may not write the production path")
+	t.assert_true(foreign.reason.findn(other_manifest) >= 0, "the refusal names the manifest that was refused")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(complete, other_manifest, production_output, true).is_reject(),
+		"a non-default manifest is refused the production path as a preview too"
+	)
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(complete, other_manifest, preview_output, false).is_build(),
+		"a complete non-default manifest builds to its own output"
+	)
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(_partial_manifest(), other_manifest, preview_output, true).is_build(),
+		"an incomplete non-default manifest previews to its own output"
+	)
 
 	# The rule that matters: an incomplete manifest must never become the shipped
 	# resource, because the repository would then claim art it does not have.
 	var partial := _partial_manifest()
-	var rejected := PlayerSpriteBuildPolicy.decide(partial, production_output, false)
+	var rejected := PlayerSpriteBuildPolicy.decide(partial, production_manifest, production_output, false)
 	t.assert_true(rejected.is_reject(), "a production build refuses an incomplete manifest")
 	t.assert_true(rejected.reason.findn("missing") >= 0, "the refusal names what is missing")
 	t.assert_true(
-		PlayerSpriteBuildPolicy.decide(partial, preview_output, true).is_build(),
+		PlayerSpriteBuildPolicy.decide(partial, production_manifest, preview_output, true).is_build(),
 		"an incomplete manifest previews to its own output"
 	)
 	t.assert_true(
-		PlayerSpriteBuildPolicy.decide(partial, production_output, true).is_reject(),
+		PlayerSpriteBuildPolicy.decide(partial, production_manifest, production_output, true).is_reject(),
 		"a preview build may not write the production path"
 	)
 	# Even a complete manifest loses the shipped path once the build is declared
 	# a preview: the flag is how someone says this output is not the real thing.
 	t.assert_true(
-		PlayerSpriteBuildPolicy.decide(complete, production_output, true).is_reject(),
+		PlayerSpriteBuildPolicy.decide(complete, production_manifest, production_output, true).is_reject(),
 		"the preview flag never writes the production path, complete or not"
 	)
 	t.assert_true(
-		PlayerSpriteBuildPolicy.decide(complete, preview_output, true).is_build(),
+		PlayerSpriteBuildPolicy.decide(complete, production_manifest, preview_output, true).is_build(),
 		"a complete manifest may still be previewed elsewhere"
 	)
 
 	var broken := _complete_manifest()
 	broken.animations[0].texture = null
-	t.assert_true(PlayerSpriteBuildPolicy.decide(broken, preview_output, true).is_reject(), "a structurally invalid manifest never builds")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(broken, production_manifest, preview_output, true).is_reject(),
+		"a structurally invalid manifest never builds"
+	)
 
 ## The repository can hold each of the three artefacts independently, and most
 ## of those combinations are mistakes. Every state is exercised in memory so

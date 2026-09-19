@@ -158,13 +158,13 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   **partial manifest 작업 중도 PASS**, 그러나 preview 산출물이 production 경로에 올라왔거나
   manifest 없이 frames만 있거나 완성 manifest인데 굽지 않았거나 활성화가 반쯤 된 상태는 FAIL이다.
   production state에서는 manifest를 메모리에서 다시 구워 `production_signature`(clip·speed·loop·
-  region·**source texture resource_path**·atlas 크기)로 committed resource와 비교하므로 stale
-  generated resource가 조용히 통과하지 않는다.
+  region·**source texture resource_path**·atlas 크기·**frame별 duration**)로 committed resource와
+  비교하므로 stale generated resource가 조용히 통과하지 않는다.
 - unit/test_player_sprite_pipeline.gd: sprite asset pipeline 회귀. `PlayerSpriteAnimationEntry`
   검증(grid가 texture를 나누지 못하면 거절, frame_count가 grid 초과 시 거절, texture/semantic 누락,
   비유한·0·음수 fps 거절, frame_count < cell 수는 정상), 1024×512/4×2/256×256 규격은 통과하고
   다른 canvas는 error가 아니라 warning이라는 것, `PlayerSpriteManifest`의 중복 semantic·null
-  entry·visual scale/position 검증과 **구조적 유효성 vs 출시 준비 상태 분리**(일부 clip만 있는
+  entry 검증과 **구조적 유효성 vs 출시 준비 상태 분리**(일부 clip만 있는
   manifest는 빌드되지만 production ready가 아니고 누락 clip을 이름으로 보고), builder의 row-major
   slicing을 cell마다 다른 색으로 칠한 synthetic sheet로 frame별 region과 실제 픽셀까지 확인,
   fps/loop/clip 이름/frame 수 전파, 같은 manifest 두 번 빌드 시 완전 동일(그리고 manifest가 바뀌면
@@ -176,12 +176,17 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   scale의 부호만 뒤집고 reconfigure해도 현재 facing을 유지)을 검증한다. 10A 안정화로 다음이
   추가됐다: manifest가 `faces_right_by_default`/`visual_scale`/`visual_position`을 더 이상 갖지
   않고 `CharacterAnimationProfile`이 단독 소유라는 source-of-truth 고정, build policy 행렬
-  (manifest 없음 → skip, 완성 manifest → production 경로 허용, 불완전 manifest + production →
+  (manifest 없음 → skip, 기본 manifest + production 경로 → 허용, 불완전 manifest + production →
   거절, 불완전 + preview + 비production 출력 → 허용, preview flag + production 경로 → 완성
   여부와 무관하게 거절, 구조적으로 깨진 manifest → 항상 거절), `production_signature`가
   `describe()`와 달리 같은 크기의 다른 source sheet 교체를 잡아낸다는 것, 그리고 pipeline
   state A~G 전부를 synthetic resource로 재현한 검증(profile이 다른 SpriteFrames를 가리키는 경우와
   manifest가 앞서 나가 committed resource가 stale해진 경우 포함, 실제 저장소 상태도 PASS 확인).
+  10B 사전 안정화로 두 가지가 더 붙었다: `production_signature`가 frame별 duration까지 담아
+  editor에서 한 frame만 손으로 retime한 generated resource를 stale로 잡아내고(`describe()`는
+  같은 편집을 보지 못한다), build policy가 manifest 출처까지 본다는 것 — 기본이 아닌 manifest는
+  완성돼 있어도 production 경로에 쓰지 못하고(preview flag 유무와 무관), 자기 출력 경로에는
+  완성/불완전 모두 정상적으로 쓴다.
 - unit/test_player_animation_presentation.gd: presentation-disabled actor의 visual 미생성,
   presentation-enabled actor의 단일 lazy visual/placeholder, shipped profile 및 synthetic
   SpriteFrames profile 검증, idle/run/jump/fall/climb/climb_idle resolver, 권위 actor의

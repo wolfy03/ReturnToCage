@@ -40,6 +40,10 @@ godot --headless --path . res://presentation/tools/build_player_sprite_frames.ts
     --allow-incomplete --output=user://player_hamster_preview_frames.tres
 ```
 
+The shipped resource belongs to the manifest in this directory and to no other. A build run with
+`--manifest` pointed somewhere else is refused the production output path whether or not it is
+complete, because CI regenerates that file from this manifest and would find anything else stale.
+
 The manifest decides how sheets are cut and played. How large the character
 appears and which way it faces belong to
 `presentation/player/player_animation_profile.tres`, not here.

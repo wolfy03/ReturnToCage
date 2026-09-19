@@ -140,11 +140,13 @@ raw 생성형 출력
   같은 clip 순서·frame 순서·region·fps·loop를 만든다. spawn마다 돌지 않고
   `presentation/tools/build_player_sprite_frames.tscn`이 한 번 굽는다. `describe()`는
   synthetic determinism 비교용, `production_signature()`는 여기에 **source texture의
-  resource_path와 atlas 크기**까지 더해 저장소 재생성 비교에 쓴다(같은 크기의 다른 sheet로
-  바뀐 경우를 잡는다).
+  resource_path·atlas 크기·frame별 duration**까지 더해 저장소 재생성 비교에 쓴다(같은 크기의
+  다른 sheet로 바뀐 경우와, editor에서 한 frame만 손으로 retime한 경우를 잡는다).
 - `PlayerSpriteBuildPolicy` — 어떤 빌드가 어디에 쓸 수 있는지. 기본은 production build라
   required clip 12개가 전부 있어야 하고, `--allow-incomplete`는 production 경로 쓰기를
-  거절당한다. 순수 함수라 프로세스를 띄우지 않고 테스트한다.
+  거절당한다. 출처도 본다: `DEFAULT_MANIFEST`가 아닌 manifest는 완성돼 있어도 production
+  경로에 쓸 수 없다(CI가 기본 manifest에서 다시 구워 비교하므로 그 외의 산출물은 곧바로
+  stale이 된다). 순수 함수라 프로세스를 띄우지 않고 테스트한다.
 - `PlayerSpritePipelineValidator` — manifest / 생성된 frames / shipped profile 세 artefact의
   정합성. 각각 따로 commit될 수 있고 그 조합 대부분이 실수라서, manifest에서 다시 구워
   `production_signature`로 비교하고 profile이 생성 resource를 가리키는지까지 본다.

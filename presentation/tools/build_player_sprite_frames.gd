@@ -12,6 +12,13 @@ extends Node
 ##   godot --headless --path . res://presentation/tools/build_player_sprite_frames.tscn -- \
 ##       --allow-incomplete --output=user://player_hamster_preview_frames.tres
 ##
+## A build from a manifest other than the shipped one is a preview by
+## definition and must name its own output, whether or not it is complete:
+##
+##   godot --headless --path . res://presentation/tools/build_player_sprite_frames.tscn -- \
+##       --manifest=res://sandbox/experiment_manifest.tres \
+##       --output=user://experiment_frames.tres
+##
 ## With no manifest at all it reports that there is nothing to build and
 ## succeeds: the pipeline exists before the art does, and an absent manifest is
 ## a normal state rather than a broken build.
@@ -29,7 +36,7 @@ func _run() -> int:
 		if manifest == null:
 			printerr("SPRITE BUILD FAIL: %s is not a PlayerSpriteManifest" % manifest_path)
 			return 1
-	var decision := PlayerSpriteBuildPolicy.decide(manifest, output_path, allow_incomplete)
+	var decision := PlayerSpriteBuildPolicy.decide(manifest, manifest_path, output_path, allow_incomplete)
 	if decision.is_skip():
 		print("SPRITE BUILD SKIPPED: %s (%s)" % [manifest_path, decision.reason])
 		return 0

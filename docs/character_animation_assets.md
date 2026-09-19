@@ -82,6 +82,20 @@ godot --headless --path . res://presentation/tools/build_player_sprite_frames.ts
     --allow-incomplete --output=user://player_hamster_preview_frames.tres
 ```
 
+The shipped resource also belongs to one manifest. `--manifest` pointed anywhere other than
+`player_hamster_sprite_manifest.tres` is refused the production output path, complete or not, flag or
+no flag — it has to name its own:
+
+```sh
+godot --headless --path . res://presentation/tools/build_player_sprite_frames.tscn -- \
+    --manifest=res://sandbox/experiment_manifest.tres \
+    --output=user://experiment_frames.tres
+```
+
+The reason is the check below: it regenerates the shipped resource from the shipped manifest and
+diffs. A build from some other manifest can be entirely valid and still not be that file, so writing
+it to the shipped path produces a resource that is stale the moment it lands.
+
 With no manifest present the tool reports `SPRITE BUILD SKIPPED` and succeeds: the pipeline exists
 before the art does.
 
@@ -106,10 +120,13 @@ complete, regenerated, activated                       PASS
 ```
 
 For the last case it rebuilds from the manifest in memory and compares a production signature — clip
-names, speeds, loop flags, regions, **and which texture resource each frame came from** — against the
-committed resource. That last part matters: swapping `old_run.png` for a same-sized `new_run.png`
-leaves regions identical, so region metadata alone would call a stale resource current. Pixel content
-is not hashed; repainting a PNG in place does not change how it is sliced.
+names, speeds, loop flags, regions, **which texture resource each frame came from**, and **each
+frame's duration** — against the committed resource. Both of those last parts matter. Swapping
+`old_run.png` for a same-sized `new_run.png` leaves regions identical, so region metadata alone would
+call a stale resource current. And Godot stores a playback multiplier on every individual frame that
+the editor will let someone retime by hand; nothing in the manifest produces that value, so a rebuild
+would not reproduce it and the edit would survive unnoticed. Pixel content is not hashed; repainting
+a PNG in place does not change how it is sliced.
 
 ### Sheet layout
 
@@ -188,8 +205,13 @@ around its magnitude rather than replacing it, which is why `visual_scale` must 
 
 ```text
 10A  pipeline ready, placeholder active     <- the repository is here
-10B  production PNG + manifest + generated frames + profile activation
+10B  pre-activation stabilization done; activation waiting on production art
 ```
+
+10B tightened the pipeline in three places before any art lands: the production signature now covers
+per-frame duration, the shipped output path accepts only the shipped manifest, and the manifest's
+ownership scope is stated the same way in every document. The activation steps below are unchanged
+and still waiting on `source/`, which is empty.
 
 ## Placeholder policy
 

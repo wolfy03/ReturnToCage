@@ -60,9 +60,11 @@ manifest는 sheet를 어떻게 자를지만 정하고, 화면에서의 크기·�
 등록하지 않는다. 캐릭터 그림을 교체해도 gameplay/network 코드는 그대로다 — 크기 차이는
 `visual_scale`/`visual_offset`이 presentation child에서 흡수하고, collision·hitbox·hurtbox는 art와
 무관하게 유지된다. production art는 required clip 12개가 모두 준비돼 검증을 통과했을 때만
-활성화하며(`allow_placeholder = false`), 그 전까지는 placeholder를 통째로 쓴다. 기본 빌드는
-불완전한 manifest를 shipped 경로에 쓰지 않고, `check_project.py`가 manifest·생성 resource·profile
-셋의 정합성을 매번 검사하므로 셋 중 하나만 갱신된 상태는 master에 남지 않는다.
+활성화하며(`allow_placeholder = false`), 그 전까지는 placeholder를 통째로 쓴다. shipped 경로는
+출처와 완성도 양쪽으로 잠겨 있다 — 불완전한 manifest도, 기본이 아닌 manifest도 그 자리에 쓰지
+못한다. `check_project.py`가 manifest·생성 resource·profile 셋의 정합성을 매번 검사하므로 셋 중
+하나만 갱신된 상태는 master에 남지 않고, 비교에 frame별 duration까지 들어가서 editor에서 손으로
+retime한 generated resource도 stale로 잡힌다.
 
 `PlayerAnimationPresenter`는 `CombatActionController`, `CombatComponent.attack_elapsed()`,
 `PlayerHurtComponent`, `PlayerDodgeComponent`, `MovementComponent`를 read-only로 해석한다.

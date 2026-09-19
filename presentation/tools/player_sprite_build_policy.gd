@@ -10,6 +10,14 @@ extends RefCounted
 ## that over the production SpriteFrames would leave the repository claiming to
 ## have art it does not have. So an incomplete build has to say so, and when it
 ## does it loses the right to the shipped path.
+##
+## The same reasoning covers where a build reads from. The repository check
+## regenerates the shipped resource from the default manifest and diffs it, so
+## the shipped resource has to be the default manifest's output and nothing
+## else. A build from some other manifest may be entirely valid and still not
+## be that file — writing it to the shipped path would produce a resource that
+## no longer matches its declared source, which CI would then report as stale
+## long after whoever ran the build had moved on.
 
 enum Decision { BUILD, SKIP, REJECT }
 
@@ -35,8 +43,11 @@ class Result extends RefCounted:
 
 ## [param manifest] is null when there is no manifest to build from at all,
 ## which is the normal state before the art exists and is not a failure.
+## [param manifest_path] is where that manifest was loaded from; it decides
+## whether this build is allowed to write the shipped resource at all.
 static func decide(
 	manifest: PlayerSpriteManifest,
+	manifest_path: String,
 	output_path: String,
 	allow_incomplete: bool
 ) -> Result:
@@ -45,6 +56,15 @@ static func decide(
 	var structural := manifest.validation_errors()
 	if not structural.is_empty():
 		return Result.new(Decision.REJECT, "; ".join(structural))
+	# Only the manifest the repository check regenerates from may write the
+	# resource that check compares against. A complete manifest is no exception:
+	# completeness says the art is all there, not that this is the shipped art.
+	if output_path == DEFAULT_OUTPUT and manifest_path != DEFAULT_MANIFEST:
+		return Result.new(
+			Decision.REJECT,
+			"only %s may write the production path %s; %s must choose another --output"
+				% [DEFAULT_MANIFEST, DEFAULT_OUTPUT, manifest_path]
+		)
 	# A preview build never writes the shipped resource, complete or not. The
 	# flag is how someone says "this output is not the real thing".
 	if allow_incomplete and output_path == DEFAULT_OUTPUT:

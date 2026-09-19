@@ -128,11 +128,16 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `--allow-incomplete` 와 **production 이 아닌** `--output` 을 함께 줘야 한다
   (`PlayerSpriteBuildPolicy`). preview flag 는 완성 여부와 무관하게 shipped 경로 쓰기를 거절한다 —
   그렇지 않으면 저장소가 갖고 있지도 않은 아트를 갖고 있다고 주장하게 된다.
+  **shipped 경로는 shipped manifest 만 쓴다.** `--manifest` 로 다른 manifest 를 가리키면 그것이
+  완성돼 있어도 production `--output` 은 거절이다. CI 는 기본 manifest 에서 다시 구워 비교하므로,
+  다른 곳에서 나온 산출물을 그 자리에 두면 쓴 직후부터 stale 로 잡힌다.
 - **generated resource 는 commit 했다고 믿지 않는다.** `check_project.py` 가
   `presentation/tools/validate_player_sprite_pipeline.tscn` 을 돌려 manifest / 생성된
   `SpriteFrames` / shipped profile 셋의 정합성을 검사한다. manifest 에서 다시 구워
-  `production_signature`(clip·region·**source texture resource path**·fps·loop)로 비교하므로,
-  셋 중 하나만 갱신된 상태는 CI 에서 막힌다. art 가 아예 없는 현재 상태는 정상 PASS 다.
+  `production_signature`(clip·region·**source texture resource path**·fps·loop·**frame 별
+  duration**)로 비교하므로, 셋 중 하나만 갱신된 상태는 CI 에서 막힌다. editor 에서 특정 frame 의
+  duration 만 손으로 고친 경우도 manifest 가 만들어내지 못하는 값이라 stale 로 잡힌다.
+  art 가 아예 없는 현재 상태는 정상 PASS 다.
 - **production art 는 전부 준비됐을 때만 활성화한다.** required clip 12 개가 모두 있고
   validation 을 통과하면 profile 의 `sprite_frames` 를 연결하고 `allow_placeholder = false` 로
   바꾼다(그래야 이후 누락이 CI 에서 바로 드러난다). 일부만 있으면 placeholder 를 그대로 쓴다 —

@@ -55,6 +55,12 @@ static func describe(frames: SpriteFrames) -> Array:
 ## from, so swapping `old_run.png` for `new_run.png` at the same size is caught
 ## rather than looking identical.
 ##
+## Per-frame duration is recorded for the same reason. A clip's fps lives on the
+## animation, but Godot stores a multiplier on every individual frame and the
+## editor will happily let someone retime a single one by hand. That edit does
+## not come from the manifest, so a rebuild would not reproduce it: recording it
+## is what turns it into a stale-resource failure instead of a silent drift.
+##
 ## Pixel content is deliberately not hashed. Repainting a PNG in place changes
 ## nothing about how it is sliced, so the generated resource is still correct and
 ## a content hash would only produce churn.
@@ -68,14 +74,21 @@ static func production_signature(frames: SpriteFrames) -> Array:
 		var animation := StringName(name)
 		var entries: Array = []
 		for index in frames.get_frame_count(animation):
+			var duration := frames.get_frame_duration(animation, index)
 			var atlas := frames.get_frame_texture(animation, index) as AtlasTexture
 			if atlas == null or atlas.atlas == null:
-				entries.append({"region": Rect2(), "source": "", "atlas_size": Vector2i.ZERO})
+				entries.append({
+					"region": Rect2(),
+					"source": "",
+					"atlas_size": Vector2i.ZERO,
+					"duration": duration,
+				})
 				continue
 			entries.append({
 				"region": atlas.region,
 				"source": atlas.atlas.resource_path,
 				"atlas_size": Vector2i(atlas.atlas.get_width(), atlas.atlas.get_height()),
+				"duration": duration,
 			})
 		signature.append({
 			"name": String(animation),
