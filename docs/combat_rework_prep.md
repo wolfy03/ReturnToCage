@@ -68,9 +68,7 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 
 | 요소 | 현재 | 비고 |
 |---|---|---|
-| 회피/구르기 | 없음 | 입력 액션도 없음. 무적 프레임 개념 없음 |
-| 스태미나 소비처 | 공격만 | 소유·복제·commit 시점 확정. 회피·대시가 쓸 소비처만 남음 |
-| 콤보 | 없음 | 공격은 단발. `sequence` 는 네트워크용 일련번호일 뿐 콤보 인덱스가 아님 |
+| 스태미나 소비처 | **완료** | 공격은 step 마다 `ATTACK_ACTIVE` 진입 시, dodge 는 시작 시 1회(환불 없음) |
 | 공격 모션/선후딜 | **완료(4차)** | `AttackDefinition` 의 startup/active/recovery. 판정은 ACTIVE 진입 시 |
 | 넉백 적용 | **완료(5차)** | 권위 Player/Enemy가 `DamageContext.knockback`을 velocity에 additive 적용 |
 | 피격 경직(플레이어) | **완료(6차)** | scene-local HURT action + 0.25초 input lock |
@@ -81,7 +79,7 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 방향 공격(위/아래) | 없음 | 히트박스가 항상 수평 |
 | 무기별 패턴 | 2종(근접/투사체) | `AttackStrategy` 확장점은 이미 있음 |
 | 방패/패링 | 없음 | |
-| 적 예고 텔레그래프 | 없음 | 색/애니메이션 자산 자체가 없음 |
+| 적 예고 텔레그래프 | 없음 | presenter 구조는 player 쪽에만 있고 적 art 는 placeholder |
 | 보스·엘리트 | 없음 | 적 1종 |
 | 히트스톱·카메라 흔들림 | 없음 | 표현 계층 전무 |
 | 애니메이션 | **9차 기반 완료** | 분리된 PlayerVisual + profile/presenter. 최종 SpriteFrames 전에는 Polygon placeholder |

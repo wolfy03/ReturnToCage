@@ -8,8 +8,11 @@ func _ready() -> void:
 func _run() -> int:
 	var errors := PlayerSpritePipelineValidator.validate_repository()
 	if not errors.is_empty():
+		# One header and every finding under it, so a run tells an author
+		# everything that is wrong rather than the first thing.
+		printerr("SPRITE PIPELINE FAIL:")
 		for error in errors:
-			printerr("SPRITE PIPELINE FAIL: %s" % error)
+			printerr("  - %s" % error)
 		return 1
 	# An in-progress state is legal and must not look like a problem: printing it
 	# as a warning would fail check_project.py, which treats warnings as errors.

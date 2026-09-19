@@ -11,6 +11,14 @@ extends RefCounted
 ##
 ## Having no art at all is not one of those states. It is where the project is
 ## now, and it passes.
+##
+## Everything it can report, it reports at once. Whoever is authoring sheets is
+## usually fixing several things in one pass, and a check that stops at the
+## first duplicate semantic turns one round of fixes into five runs. The one
+## place it does stop is a structurally broken manifest: nothing downstream of
+## it — completeness, the rebuild comparison, the generated clips — means
+## anything until the manifest parses, so those would be noise rather than
+## findings.
 
 const MANIFEST_PATH := "res://assets/characters/player_hamster/player_hamster_sprite_manifest.tres"
 const GENERATED_FRAMES_PATH := "res://assets/characters/player_hamster/player_hamster_sprite_frames.tres"
@@ -18,16 +26,22 @@ const SHIPPED_PROFILE_PATH := "res://presentation/player/player_animation_profil
 
 ## Loads whatever is actually committed and evaluates it.
 static func validate_repository() -> PackedStringArray:
+	var load_errors := PackedStringArray()
 	var manifest: PlayerSpriteManifest = null
 	if ResourceLoader.exists(MANIFEST_PATH):
 		manifest = ResourceLoader.load(MANIFEST_PATH, "", ResourceLoader.CACHE_MODE_IGNORE) as PlayerSpriteManifest
 		if manifest == null:
-			return PackedStringArray(["%s is not a PlayerSpriteManifest" % MANIFEST_PATH])
+			load_errors.append("%s is not a PlayerSpriteManifest" % MANIFEST_PATH)
 	var generated: SpriteFrames = null
 	if ResourceLoader.exists(GENERATED_FRAMES_PATH):
 		generated = ResourceLoader.load(GENERATED_FRAMES_PATH, "", ResourceLoader.CACHE_MODE_IGNORE) as SpriteFrames
 		if generated == null:
-			return PackedStringArray(["%s is not a SpriteFrames" % GENERATED_FRAMES_PATH])
+			load_errors.append("%s is not a SpriteFrames" % GENERATED_FRAMES_PATH)
+	# A file that exists but is the wrong type is not an absent file, so the
+	# state rules below would read it as a state it is not in. Report what is
+	# wrong with each of them and stop there.
+	if not load_errors.is_empty():
+		return load_errors
 	var profile := ResourceLoader.load(SHIPPED_PROFILE_PATH, "", ResourceLoader.CACHE_MODE_IGNORE) as CharacterAnimationProfile
 	return state_errors(manifest, generated, GENERATED_FRAMES_PATH, profile)
 
@@ -52,11 +66,14 @@ static func state_errors(
 	var profile_uses_art := profile.sprite_frames != null
 
 	if has_manifest:
-		for error in manifest.validation_errors():
+		# Every structural error, not the first one: an author fixing sheets
+		# wants the whole list in one run.
+		var structural := manifest.validation_errors()
+		for error in structural:
 			errors.append("manifest: %s" % error)
-			# A manifest that does not even parse cleanly makes every downstream
-			# comparison meaningless, so stop rather than pile on.
-		if not errors.is_empty() and not manifest.validation_errors().is_empty():
+		# But nothing downstream of a broken manifest is worth computing, so
+		# this is the one place the check stops early.
+		if not structural.is_empty():
 			return errors
 
 	var production_ready := has_manifest and manifest.production_readiness_errors().is_empty()
@@ -96,7 +113,15 @@ static func _production_errors(
 	var errors := PackedStringArray()
 	# The profile must use the resource the manifest produces, not some other
 	# SpriteFrames that happens to satisfy the animation names.
-	if profile.sprite_frames.resource_path != generated_path:
+	# Identical spelling, or the same file reached by a different one. The
+	# canonical comparison is what stops `a/../b.tres` from being reported as a
+	# different resource than `b.tres`; the plain comparison is what keeps
+	# in-memory resources, which have no path at all, comparing as themselves.
+	var profile_frames_path := PlayerSpriteBuildPolicy.canonical_resource_path(profile.sprite_frames.resource_path)
+	var points_at_generated := profile.sprite_frames.resource_path == generated_path \
+			or (not profile_frames_path.is_empty() \
+				and profile_frames_path == PlayerSpriteBuildPolicy.canonical_resource_path(generated_path))
+	if not points_at_generated:
 		errors.append(
 			"the shipped profile points at '%s' instead of the generated %s"
 				% [profile.sprite_frames.resource_path, generated_path]
@@ -118,20 +143,20 @@ static func _production_errors(
 		elif generated.get_frame_count(semantic) <= 0:
 			errors.append("generated clip '%s' has no frames" % semantic)
 	errors.append_array(frame_integrity_errors(generated))
-	for binding in profile.attack_bindings:
-		if binding == null or binding.animation_name.is_empty():
-			continue
-		var count := generated.get_frame_count(binding.animation_name)
-		if count <= 0:
-			continue
-		# The authored partitions were written against a synthetic frame count
-		# once; production poses have to be checked against the real one.
-		if binding.startup_end_frame <= 0 or binding.startup_end_frame >= binding.active_end_frame:
-			errors.append("attack '%s' has no real ACTIVE range" % binding.presentation_key)
-		if binding.active_end_frame >= count:
-			errors.append(
-				"attack '%s' leaves no RECOVERY frames in a %d-frame clip" % [binding.presentation_key, count]
-			)
+	# The authored partitions were written against a synthetic frame count once;
+	# production poses have to be checked against the real one. When the profile
+	# already points at the generated resource, `profile.validation_errors()`
+	# above has checked exactly that and repeating it here would print every
+	# binding fault twice in two different wordings. It is only when the profile
+	# points somewhere else that these bindings have never been measured against
+	# the frames the repository actually generated.
+	if not points_at_generated:
+		for index in profile.attack_bindings.size():
+			var binding := profile.attack_bindings[index]
+			if binding == null:
+				continue
+			for error in binding.validation_errors(generated, StringName("attack binding %d" % index)):
+				errors.append("against the generated resource, %s" % error)
 	return errors
 
 ## Region sanity shared by the repository check and the presentation tests.

@@ -146,10 +146,14 @@ raw 생성형 출력
   required clip 12개가 전부 있어야 하고, `--allow-incomplete`는 production 경로 쓰기를
   거절당한다. 출처도 본다: `DEFAULT_MANIFEST`가 아닌 manifest는 완성돼 있어도 production
   경로에 쓸 수 없다(CI가 기본 manifest에서 다시 구워 비교하므로 그 외의 산출물은 곧바로
-  stale이 된다). 순수 함수라 프로세스를 띄우지 않고 테스트한다.
+  stale이 된다). 경로 비교는 `canonical_resource_path()`가 `.`/`..`/중복 `/`를 정규화한
+  뒤에 하므로 철자만 바꿔서 보호를 우회할 수 없고, `res://`·`user://` 외의 경로는 아예
+  거절한다. 순수 함수라 프로세스를 띄우지 않고 테스트한다.
 - `PlayerSpritePipelineValidator` — manifest / 생성된 frames / shipped profile 세 artefact의
   정합성. 각각 따로 commit될 수 있고 그 조합 대부분이 실수라서, manifest에서 다시 구워
-  `production_signature`로 비교하고 profile이 생성 resource를 가리키는지까지 본다.
+  `production_signature`로 비교하고 profile이 생성 resource를 가리키는지까지 본다(이 비교도
+  canonical path 기준). 발견한 오류는 한 번에 전부 보고한다 — 구조적으로 깨진 manifest 만
+  예외로, 그 아래 검사는 의미가 없으므로 거기서 멈춘다.
   art가 없는 현재 상태는 정상 PASS. `check_project.py`가
   `presentation/tools/validate_player_sprite_pipeline.tscn`으로 실행한다.
 - `CharacterAnimationProfile.visual_scale`/`visual_offset` — presentation child에만 적용된다.
@@ -408,9 +412,9 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 
 | 영역 | 현황 |
 |---|---|
-| 아트 | 배경 텍스처만 존재. 캐릭터·적·시설·아이템 전부 Polygon2D 플레이스홀더. 애니메이션 0 |
+| 아트 | Player presentation/animation pipeline 과 semantic presenter 는 완성. production player SpriteFrames 는 아직 활성화되지 않아 player 도 Polygon placeholder 를 쓴다 (`assets/characters/player_hamster/source/` 가 비어 있음). 적·NPC·시설·아이템 art 는 여전히 placeholder. 배경만 실제 텍스처 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
-| 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption, 서버 권위 Dodge + i-frame 까지 완료. 콤보·입력 버퍼·보스는 없다 (단계별 계획은 `combat_rework_prep.md`) |
+| 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption, 서버 권위 Dodge + i-frame, 3-step combo, authoritative single-slot input buffer, authored chain/dodge cancel window, combat presentation 연동까지 완료. 남은 것: boss 전용 전투, 공중/혼합 mode 전투, 추가 weapon profile, client prediction/reconciliation |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
 | 성장 | 레벨/경험치/스킬 트리 없음. 성장은 장비·시설 해금뿐 |

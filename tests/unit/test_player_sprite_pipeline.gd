@@ -18,6 +18,8 @@ func run(t: Node) -> void:
 	_test_determinism(t)
 	_test_production_signature(t)
 	_test_build_policy(t)
+	_test_canonical_paths(t)
+	_test_error_aggregation(t)
 	_test_pipeline_states(t)
 	_test_save_round_trip(t)
 	_test_frame_integrity(t)
@@ -398,6 +400,167 @@ func _test_build_policy(t: Node) -> void:
 		PlayerSpriteBuildPolicy.decide(broken, production_manifest, preview_output, true).is_reject(),
 		"a structurally invalid manifest never builds"
 	)
+
+## Two spellings of one file must not be two files to the policy, or every rule
+## about which build may write the shipped resource is one `../` from useless.
+func _test_canonical_paths(t: Node) -> void:
+	var production := PlayerSpriteBuildPolicy.DEFAULT_OUTPUT
+	var canonical := PlayerSpriteBuildPolicy.canonical_resource_path(production)
+	t.assert_equal(canonical, production, "the shipped output constant is already canonical")
+	t.assert_equal(
+		PlayerSpriteBuildPolicy.canonical_resource_path(PlayerSpriteBuildPolicy.DEFAULT_MANIFEST),
+		PlayerSpriteBuildPolicy.DEFAULT_MANIFEST,
+		"the shipped manifest constant is already canonical"
+	)
+
+	var directory := "res://assets/characters/player_hamster"
+	var equivalents: Array[String] = [
+		production,
+		"%s/./player_hamster_sprite_frames.tres" % directory,
+		"%s/tmp/../player_hamster_sprite_frames.tres" % directory,
+		"%s/a/b/../../player_hamster_sprite_frames.tres" % directory,
+		"res://assets//characters/player_hamster/player_hamster_sprite_frames.tres",
+		"res://./assets/characters/player_hamster//./player_hamster_sprite_frames.tres",
+	]
+	for spelling in equivalents:
+		t.assert_equal(
+			PlayerSpriteBuildPolicy.canonical_resource_path(spelling),
+			canonical,
+			"'%s' resolves to the shipped output" % spelling
+		)
+		t.assert_true(
+			PlayerSpriteBuildPolicy.is_production_output(spelling),
+			"'%s' is recognised as the production output" % spelling
+		)
+
+	# Nearby paths that genuinely are not the shipped resource.
+	for spelling in [
+		"user://player_hamster_sprite_frames.tres",
+		"res://assets/characters/player_hamster/tmp/player_hamster_sprite_frames.tres",
+		"res://assets/characters/player_hamster/player_hamster_sprite_frames_v2.tres",
+	]:
+		t.assert_true(
+			not PlayerSpriteBuildPolicy.is_production_output(spelling),
+			"'%s' is not the production output" % spelling
+		)
+	# res:// and user:// are different roots and must never collapse together.
+	t.assert_true(
+		PlayerSpriteBuildPolicy.canonical_resource_path("res://a/b.tres")
+			!= PlayerSpriteBuildPolicy.canonical_resource_path("user://a/b.tres"),
+		"res:// and user:// stay distinct roots"
+	)
+
+	# Anything that is not a usable project path is refused rather than guessed
+	# at: this tool writes resources, not arbitrary files on the machine.
+	for rejected in ["", "player_hamster_sprite_frames.tres", "/etc/passwd", "C:/frames.tres",
+			"http://example.com/frames.tres", "res://", "res://../outside.tres"]:
+		t.assert_equal(
+			PlayerSpriteBuildPolicy.canonical_resource_path(rejected),
+			"",
+			"'%s' is not a usable project path" % rejected
+		)
+
+	var complete := _complete_manifest()
+	var production_manifest := PlayerSpriteBuildPolicy.DEFAULT_MANIFEST
+
+	# The bypass this exists to stop: a manifest that is not the shipped one
+	# reaching the shipped output by spelling it differently.
+	var detour := "res://assets/characters/player_hamster/tmp/../player_hamster_sprite_frames.tres"
+	var bypass := PlayerSpriteBuildPolicy.decide(complete, "res://sandbox/experiment_manifest.tres", detour, false)
+	t.assert_true(bypass.is_reject(), "a custom manifest cannot reach the shipped output through ../")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(_partial_manifest(), production_manifest, detour, true).is_reject(),
+		"a preview build cannot reach the shipped output through ../ either"
+	)
+
+	# And the other direction: the shipped manifest spelled differently is still
+	# the shipped manifest, so it keeps the shipped output.
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(
+			complete,
+			"res://assets/characters/player_hamster/./player_hamster_sprite_manifest.tres",
+			detour,
+			false
+		).is_build(),
+		"an equivalent spelling of the shipped manifest still owns the shipped output"
+	)
+
+	# A path the tool cannot own is refused before anything is written.
+	var unusable := PlayerSpriteBuildPolicy.decide(complete, production_manifest, "/tmp/frames.tres", false)
+	t.assert_true(unusable.is_reject(), "a bare filesystem output path is refused")
+	t.assert_true(unusable.reason.findn("project path") >= 0, "the refusal says what kind of path is wanted")
+	t.assert_true(
+		PlayerSpriteBuildPolicy.decide(complete, "sandbox/manifest.tres", "user://frames.tres", false).is_reject(),
+		"a manifest path outside the project schemes is refused"
+	)
+
+	# The repository check has to resolve paths the same way, or a profile that
+	# reaches the generated resource by an equivalent spelling reads as pointing
+	# at something else entirely.
+	var manifest := _complete_manifest()
+	var frames := PlayerSpriteFramesBuilder.build(manifest)
+	frames.take_over_path("res://canonical_generated_frames.tres")
+	var activated := _production_profile()
+	activated.sprite_frames = frames
+	t.assert_true(
+		PlayerSpritePipelineValidator.state_errors(
+			manifest, frames, "res://tmp/../canonical_generated_frames.tres", activated
+		).is_empty(),
+		"the validator accepts the generated resource reached by an equivalent path"
+	)
+	var elsewhere := PlayerSpritePipelineValidator.state_errors(
+		manifest, frames, "res://a_different_frames.tres", activated
+	)
+	t.assert_true(
+		_has(elsewhere, "instead of the generated"),
+		"the validator still reports a profile pointing at a genuinely different resource"
+	)
+
+## An author fixing sheets should see every authoring fault in one run, not the
+## first one and then the next one after each rebuild.
+func _test_error_aggregation(t: Node) -> void:
+	var broken := PlayerSpriteManifest.new()
+	var duplicate := _entry(&"idle")
+	var untextured := _entry(&"run")
+	untextured.texture = null
+	var mistimed := _entry(&"jump")
+	mistimed.fps = 0.0
+	broken.animations = [_entry(&"idle"), duplicate, untextured, mistimed] as Array[PlayerSpriteAnimationEntry]
+
+	var errors := broken.validation_errors()
+	t.assert_true(_has(errors, "duplicate"), "the duplicate semantic is reported")
+	t.assert_true(_has(errors, "run"), "the entry with no texture is reported")
+	t.assert_true(_has(errors, "jump"), "the entry with an invalid fps is reported")
+	t.assert_true(errors.size() >= 3, "all three authoring faults are reported together")
+
+	# And they survive the trip through the repository check rather than being
+	# collapsed into whichever one happened to come first.
+	var placeholder := CharacterAnimationProfile.new()
+	var state := PlayerSpritePipelineValidator.state_errors(broken, null, "res://generated_frames.tres", placeholder)
+	t.assert_true(_has(state, "duplicate"), "the validator reports the duplicate semantic")
+	t.assert_true(_has(state, "run"), "the validator reports the untextured entry")
+	t.assert_true(_has(state, "jump"), "the validator reports the invalid fps")
+	for error in state:
+		t.assert_true(error.begins_with("manifest: "), "a broken manifest reports only manifest faults")
+
+	# A manifest missing several clips names all of them, not just the first.
+	var missing := _partial_manifest().missing_required_semantics()
+	t.assert_equal(missing.size(), 9, "every missing required clip is listed")
+	t.assert_true(missing.has(&"death") and missing.has(&"climb"), "the list is the real set of gaps")
+
+	# The same for a profile: a production profile with two bad bindings and a
+	# clip that is not there reports all of it.
+	var frames := PlayerSpriteFramesBuilder.build(_complete_manifest())
+	var profile := _production_profile()
+	profile.sprite_frames = frames
+	profile.death_animation = &"not_a_clip"
+	profile.attack_bindings[0].active_end_frame = profile.attack_bindings[0].startup_end_frame
+	profile.attack_bindings[1].animation_name = &"also_not_a_clip"
+	var profile_errors := profile.validation_errors()
+	t.assert_true(_has(profile_errors, "not_a_clip"), "the missing death clip is reported")
+	t.assert_true(_has(profile_errors, "also_not_a_clip"), "the binding pointing at nothing is reported")
+	t.assert_true(_has(profile_errors, "active frame range"), "the empty ACTIVE range is reported")
+	t.assert_true(profile_errors.size() >= 3, "profile faults are reported together")
 
 ## The repository can hold each of the three artefacts independently, and most
 ## of those combinations are mistakes. Every state is exercised in memory so

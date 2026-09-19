@@ -53,11 +53,14 @@ func _run() -> int:
 	if frames == null:
 		printerr("SPRITE BUILD FAIL: builder rejected the manifest")
 		return 1
-	var status := ResourceSaver.save(frames, output_path)
+	# Write the spelling the policy checked, not the one that was typed, so the
+	# path that was cleared is the path that ends up on disk.
+	var resolved_output := PlayerSpriteBuildPolicy.canonical_resource_path(output_path)
+	var status := ResourceSaver.save(frames, resolved_output)
 	if status != OK:
-		printerr("SPRITE BUILD FAIL: could not write %s (error %d)" % [output_path, status])
+		printerr("SPRITE BUILD FAIL: could not write %s (error %d)" % [resolved_output, status])
 		return 1
-	print("SPRITE BUILD PASS: %d clips -> %s" % [frames.get_animation_names().size(), output_path])
+	print("SPRITE BUILD PASS: %d clips -> %s" % [frames.get_animation_names().size(), resolved_output])
 	return 0
 
 func _argument(prefix: String, fallback: String) -> String:

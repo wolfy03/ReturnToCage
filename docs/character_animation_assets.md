@@ -96,6 +96,12 @@ The reason is the check below: it regenerates the shipped resource from the ship
 diffs. A build from some other manifest can be entirely valid and still not be that file, so writing
 it to the shipped path produces a resource that is stale the moment it lands.
 
+Both paths are compared canonically, so the rule cannot be stepped around by spelling the same file
+differently — `tmp/../player_hamster_sprite_frames.tres`, `./player_hamster_sprite_frames.tres` and
+a doubled slash all name the shipped resource and are treated as it. Only `res://` and `user://` are
+accepted; an empty path, a bare filesystem path and anything climbing above its own root are refused
+rather than guessed at.
+
 With no manifest present the tool reports `SPRITE BUILD SKIPPED` and succeeds: the pipeline exists
 before the art does.
 
@@ -107,6 +113,12 @@ regions, speeds and loop flags, so regenerating and diffing is a meaningful chec
 `tools/check_project.py` runs `validate_player_sprite_pipeline.tscn`, which checks that the manifest,
 the generated `SpriteFrames` and the shipped profile agree. Any one of them can be committed without
 the others, and most of those combinations are mistakes that an ordinary test run would not notice:
+
+Everything it can report, it reports in one run — an author fixing sheets should not have to
+rebuild five times to discover five faults. A duplicate semantic, a missing texture and an invalid
+fps come back together, as do every missing required clip and every bad attack partition. The one
+thing it stops after is a structurally broken manifest: completeness, the rebuild comparison and the
+generated clips all mean nothing until the manifest parses, so reporting them would be noise.
 
 ```text
 no manifest, no frames, placeholder profile            PASS   (where the project is now)
@@ -205,11 +217,12 @@ around its magnitude rather than replacing it, which is why `visual_scale` must 
 
 ```text
 10A  pipeline ready, placeholder active     <- the repository is here
-10B  pre-activation stabilization done; activation waiting on production art
+10B  hardening done; activation waiting on production art
 ```
 
-10B tightened the pipeline in three places before any art lands: the production signature now covers
-per-frame duration, the shipped output path accepts only the shipped manifest, and the manifest's
+10B tightened the pipeline before any art lands. The production signature covers per-frame duration;
+the shipped output path accepts only the shipped manifest, compared canonically so a different
+spelling is not a different file; the check reports every authoring fault in one run; and the
 ownership scope is stated the same way in every document. The activation steps below are unchanged
 and still waiting on `source/`, which is empty.
 

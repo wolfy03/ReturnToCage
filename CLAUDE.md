@@ -131,6 +131,11 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   **shipped 경로는 shipped manifest 만 쓴다.** `--manifest` 로 다른 manifest 를 가리키면 그것이
   완성돼 있어도 production `--output` 은 거절이다. CI 는 기본 manifest 에서 다시 구워 비교하므로,
   다른 곳에서 나온 산출물을 그 자리에 두면 쓴 직후부터 stale 로 잡힌다.
+  이 비교는 **canonical path** 기준이다. `foo/../frames.tres`, `./frames.tres`, `a//frames.tres`
+  는 전부 같은 파일이므로 raw string 비교로는 보호를 우회할 수 있다
+  (`PlayerSpriteBuildPolicy.canonical_resource_path`). 지원 scheme 은 `res://` 와 `user://`
+  뿐이고 그 외 경로·빈 문자열·root 밖으로 나가는 경로는 거절이다 — 이 도구는 임의 파일을
+  덮어쓰는 도구가 아니다.
 - **generated resource 는 commit 했다고 믿지 않는다.** `check_project.py` 가
   `presentation/tools/validate_player_sprite_pipeline.tscn` 을 돌려 manifest / 생성된
   `SpriteFrames` / shipped profile 셋의 정합성을 검사한다. manifest 에서 다시 구워
@@ -347,7 +352,10 @@ func run(t: Node) -> void:            # 비동기가 필요하면 -> void 유지
   스폰 포인트, RegionPoint, 등반 Area, 매니저 노드만 있다. TileMap 기반 레벨로 갈 거라면
   이건 교체 대상이며, 교체 시 `server_runtime_mode` 경로에서 표현 노드가 생기지 않도록
   주의한다.
-- 아트는 사실상 없다. 플레이어·적·시설은 전부 `Polygon2D` 플레이스홀더다.
+- **아트가 없는 것과 아트 구조가 없는 것은 다르다.** player 쪽은 presentation/animation
+  구조가 전부 서 있다(manifest → builder → `SpriteFrames` → profile → presenter). 다만
+  production sheet 가 아직 `assets/characters/player_hamster/source/` 에 없어서 player 도
+  `Polygon2D` placeholder 로 그려진다. 적·NPC·시설·아이템은 구조도 아트도 placeholder 다.
   배경만 `assets/backgrounds/` 에 실제 텍스처가 있다
   (단, `stars_overlay_3840x2160.png` 는 잘린 파일이라 임포트 실패 상태 — 재출력 필요).
 - z-index 규약: Backdrop `-1100`, 배경 `-1000..-100`, 게임플레이 `0`, 전경(미구현) `100..900`.

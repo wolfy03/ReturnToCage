@@ -182,7 +182,12 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   `describe()`와 달리 같은 크기의 다른 source sheet 교체를 잡아낸다는 것, 그리고 pipeline
   state A~G 전부를 synthetic resource로 재현한 검증(profile이 다른 SpriteFrames를 가리키는 경우와
   manifest가 앞서 나가 committed resource가 stale해진 경우 포함, 실제 저장소 상태도 PASS 확인).
-  10B 사전 안정화로 두 가지가 더 붙었다: `production_signature`가 frame별 duration까지 담아
+  10B 최종 hardening 으로 두 가지가 더 붙었다: canonical path 비교
+  (`./`·`foo/../`·중복 `/` 로 쓴 production 경로를 전부 같은 파일로 인식하고, custom manifest 가
+  그 철자로 shipped 경로에 쓰려는 시도를 거절하며, `res://`/`user://` 밖의 경로와 빈 경로는
+  아예 거절), 그리고 error aggregation(duplicate semantic·null texture·invalid fps 를 한 번에
+  보고, 누락 clip 전부 나열, profile 의 여러 binding 오류도 함께 보고). 앞선 사전 안정화에서는
+  두 가지가 붙었다: `production_signature`가 frame별 duration까지 담아
   editor에서 한 frame만 손으로 retime한 generated resource를 stale로 잡아내고(`describe()`는
   같은 편집을 보지 못한다), build policy가 manifest 출처까지 본다는 것 — 기본이 아닌 manifest는
   완성돼 있어도 production 경로에 쓰지 못하고(preview flag 유무와 무관), 자기 출력 경로에는

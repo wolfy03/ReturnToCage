@@ -24,6 +24,11 @@ enum Decision { BUILD, SKIP, REJECT }
 const DEFAULT_MANIFEST := "res://assets/characters/player_hamster/player_hamster_sprite_manifest.tres"
 const DEFAULT_OUTPUT := "res://assets/characters/player_hamster/player_hamster_sprite_frames.tres"
 
+## The only schemes a build may read from or write to. A build tool that
+## accepts a bare filesystem path is a tool that can overwrite anything on the
+## machine, which is not what this one is for.
+const SUPPORTED_SCHEMES: PackedStringArray = ["res://", "user://"]
+
 class Result extends RefCounted:
 	var decision: Decision
 	var reason: String
@@ -41,6 +46,59 @@ class Result extends RefCounted:
 	func is_reject() -> bool:
 		return decision == Decision.REJECT
 
+## One spelling per file, so that protection cannot be stepped around by
+## writing the same path differently.
+##
+## `foo/../bar.tres`, `./bar.tres` and `a//bar.tres` all name the file that
+## `bar.tres` names, and a raw string comparison says none of them is it. That
+## is the whole bypass: a production build that reaches the shipped resource
+## through a detour passes a check that was supposed to stop it.
+##
+## Resolution is textual and self-contained rather than going through
+## [method ProjectSettings.globalize_path], because the policy is a pure
+## function tested in memory and must not depend on where — or whether — the
+## project is mounted on disk. `res://` and `user://` stay distinct: they are
+## different roots, and collapsing them would let a preview path claim to be
+## the shipped one.
+##
+## Returns an empty string for anything that is not a usable project path: an
+## empty path, an unsupported scheme, a path that climbs out of its own root,
+## or one that resolves to the root itself. Callers treat that as a refusal.
+static func canonical_resource_path(path: String) -> String:
+	var scheme := ""
+	for candidate in SUPPORTED_SCHEMES:
+		if path.begins_with(candidate):
+			scheme = candidate
+			break
+	if scheme.is_empty():
+		return ""
+	# split(..., false) drops empty pieces, which is what collapses `a//b`.
+	var segments := path.substr(scheme.length()).split("/", false)
+	var resolved := PackedStringArray()
+	for segment in segments:
+		if segment == ".":
+			continue
+		if segment == "..":
+			if resolved.is_empty():
+				# Climbing above res:// or user:// names nothing this tool owns.
+				return ""
+			resolved.remove_at(resolved.size() - 1)
+			continue
+		resolved.append(segment)
+	if resolved.is_empty():
+		return ""
+	return scheme + "/".join(resolved)
+
+## Whether [param path] names the resource the game ships, however it is spelled.
+static func is_production_output(path: String) -> bool:
+	var canonical := canonical_resource_path(path)
+	return not canonical.is_empty() and canonical == canonical_resource_path(DEFAULT_OUTPUT)
+
+## Whether [param path] names the manifest the repository check regenerates from.
+static func is_production_manifest(path: String) -> bool:
+	var canonical := canonical_resource_path(path)
+	return not canonical.is_empty() and canonical == canonical_resource_path(DEFAULT_MANIFEST)
+
 ## [param manifest] is null when there is no manifest to build from at all,
 ## which is the normal state before the art exists and is not a failure.
 ## [param manifest_path] is where that manifest was loaded from; it decides
@@ -51,23 +109,35 @@ static func decide(
 	output_path: String,
 	allow_incomplete: bool
 ) -> Result:
+	# No manifest means no build and therefore no write, which is the state the
+	# project is in before the art exists rather than a failure.
 	if manifest == null:
 		return Result.new(Decision.SKIP, "there is no manifest to build from")
+	if canonical_resource_path(output_path).is_empty():
+		return Result.new(
+			Decision.REJECT,
+			"'%s' is not a writable project path; --output must be a res:// or user:// path" % output_path
+		)
+	if canonical_resource_path(manifest_path).is_empty():
+		return Result.new(
+			Decision.REJECT,
+			"'%s' is not a readable project path; --manifest must be a res:// or user:// path" % manifest_path
+		)
 	var structural := manifest.validation_errors()
 	if not structural.is_empty():
 		return Result.new(Decision.REJECT, "; ".join(structural))
 	# Only the manifest the repository check regenerates from may write the
 	# resource that check compares against. A complete manifest is no exception:
 	# completeness says the art is all there, not that this is the shipped art.
-	if output_path == DEFAULT_OUTPUT and manifest_path != DEFAULT_MANIFEST:
+	if is_production_output(output_path) and not is_production_manifest(manifest_path):
 		return Result.new(
 			Decision.REJECT,
-			"only %s may write the production path %s; %s must choose another --output"
+			"only %s may write the production path %s; '%s' must choose another --output"
 				% [DEFAULT_MANIFEST, DEFAULT_OUTPUT, manifest_path]
 		)
 	# A preview build never writes the shipped resource, complete or not. The
 	# flag is how someone says "this output is not the real thing".
-	if allow_incomplete and output_path == DEFAULT_OUTPUT:
+	if allow_incomplete and is_production_output(output_path):
 		return Result.new(
 			Decision.REJECT,
 			"an incomplete build may not write the production path %s; choose another --output" % DEFAULT_OUTPUT
