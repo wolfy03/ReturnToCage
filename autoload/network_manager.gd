@@ -40,6 +40,7 @@ signal loot_spawn_received(world_id: StringName, payload: Dictionary)
 signal loot_despawn_received(world_id: StringName, entity_id: int)
 signal loot_pickup_requested(peer_id: int, world_id: StringName, entity_id: int)
 signal loot_pickup_result_received(success: bool, item_id: StringName, quantity: int, message: String)
+signal return_channel_received(active: bool, progress: float)
 signal gather_requested(peer_id: int, world_id: StringName, interaction_id: StringName)
 signal gather_consumed_received(world_id: StringName, interaction_id: StringName)
 
@@ -885,7 +886,8 @@ func request_enter_region(exit_id: StringName, region_id: StringName) -> Command
 		return _begin_player_world_transition(local_peer_id(), exit_id, region_id)
 	if not is_session_connected() or not is_local_world_ready():
 		return CommandResult.make(false, "Local world is not ready")
-	_request_enter_region.rpc_id(1, exit_id, region_id)
+	var world := GameSession.get_local_player_world()
+	_request_enter_region.rpc_id(1, exit_id, region_id, world.world_id, world.revision)
 	return CommandResult.make(true, "World transition requested")
 
 func request_return_to_settlement(
@@ -897,19 +899,94 @@ func request_return_to_settlement(
 			return CommandResult.make(false, message)
 		return CommandResult.make(true, message) \
 				if SceneRouter.go_to_settlement() else CommandResult.make(false, "Cannot load Settlement")
+	# Multiplayer callers submit a point intent. A result is never authorization.
+	if result != AdventureSession.Result.NORMAL_ESCAPE:
+		return CommandResult.make(false, "Return items require a server channel")
+	var actor := authoritative_actor(local_peer_id()) if is_server() else _local_presentation_actor()
+	if actor != null:
+		for child in actor.get_parent().get_children():
+			if child is EscapePoint2D and child.is_in_range(actor):
+				return request_escape_at_point(child.interaction_id)
+	return CommandResult.make(false, "No nearby escape point")
+
+func request_escape_at_point(point_id: StringName) -> CommandResult:
+	if not is_multiplayer_active():
+		return request_return_to_settlement(AdventureSession.Result.NORMAL_ESCAPE)
 	if is_authoritative_simulation():
-		return _return_player_to_settlement(local_peer_id(), result)
-	if not is_session_connected() or not is_local_world_ready():
+		return _escape_at_point(local_peer_id(), point_id)
+	if not is_local_world_ready():
 		return CommandResult.make(false, "Local world is not ready")
-	_request_return_to_settlement.rpc_id(1, int(result))
-	return CommandResult.make(true, "Settlement return requested")
+	var world := GameSession.get_local_player_world()
+	_request_escape_at_point.rpc_id(1, point_id, world.world_id, world.revision)
+	return CommandResult.make(true, "Escape intent requested")
 
 @rpc("any_peer", "call_remote", "reliable")
-func _request_enter_region(exit_id: StringName, region_id: StringName) -> void:
+func _request_escape_at_point(point_id: StringName, world_id: StringName, revision: int) -> void:
 	if not is_host_session_ready():
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	var result := _begin_player_world_transition(sender, exit_id, region_id)
+	var check := _validate_intent_world(sender, world_id, revision)
+	if check.success:
+		check = _escape_at_point(sender, point_id)
+	if not check.success:
+		_send_world_transition_failure(sender, check.message)
+
+func _validate_intent_world(peer_id: int, world_id: StringName, revision: int) -> CommandResult:
+	var world := GameSession.get_peer_world(peer_id)
+	return CommandResult.make(world != null and world.world_id == world_id and world.revision == revision,
+		"Stale or wrong-world intent")
+
+func server_world_runtime(world_id: StringName) -> ServerWorldRuntime:
+	var root := get_tree().get_first_node_in_group(&"server_world_root") as ServerWorldRoot
+	return root.runtime(world_id) if root != null else null
+
+func authoritative_actor(peer_id: int) -> PlayerActor:
+	var world_id := GameSession.get_peer_world_id(peer_id)
+	if is_multiplayer_active():
+		var runtime := server_world_runtime(world_id)
+		return runtime.player_manager().get_actor(peer_id) if runtime != null and runtime.player_manager() != null else null
+	for actor in get_tree().get_nodes_in_group(&"authoritative_player"):
+		if actor is PlayerActor and actor.peer_id == peer_id and actor.is_simulation_authority():
+			return actor
+	return null
+
+func _local_presentation_actor() -> PlayerActor:
+	for actor in get_tree().get_nodes_in_group(&"local_player"):
+		if actor is PlayerActor:
+			return actor
+	return null
+
+func _escape_at_point(peer_id: int, point_id: StringName) -> CommandResult:
+	return _return_player_to_settlement(peer_id, AdventureSession.Result.NORMAL_ESCAPE, point_id)
+
+func _validate_escape_point(peer_id: int, point_id: StringName) -> CommandResult:
+	if not GameSession.is_peer_in_adventure(peer_id):
+		return CommandResult.make(false, "Escape requires an Adventure world")
+	var runtime := server_world_runtime(GameSession.get_peer_world_id(peer_id))
+	var actor := authoritative_actor(peer_id)
+	var definition := ContentRegistry.get_definition(GameSession.get_peer_world(peer_id).region_id) as RegionDefinition
+	if runtime == null or actor == null or definition == null:
+		return CommandResult.make(false, "Escape world is unavailable")
+	# Internal compatibility callers may ask for the nearby authored point.
+	if point_id.is_empty():
+		for child in runtime.runtime_scene.get_children():
+			if child is EscapePoint2D and child.is_in_range(actor) and child.can_interact(actor):
+				point_id = child.interaction_id
+				break
+	var target := runtime.interaction_target(point_id) as EscapePoint2D
+	if not definition.escape_point_ids.has(point_id) or target == null \
+			or not target.can_interact(actor) or not target.is_in_range(actor):
+		return CommandResult.make(false, "Escape point unavailable or outside interaction range")
+	return CommandResult.make(true)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_enter_region(exit_id: StringName, region_id: StringName, world_id: StringName = &"", revision: int = -1) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var result := _validate_intent_world(sender, world_id, revision)
+	if result.success:
+		result = _begin_player_world_transition(sender, exit_id, region_id)
 	if not result.success:
 		_send_world_transition_failure(sender, result.message)
 
@@ -918,13 +995,8 @@ func _request_return_to_settlement(result_value: int) -> void:
 	if not is_host_session_ready():
 		return
 	var sender := multiplayer.get_remote_sender_id()
-	if result_value < AdventureSession.Result.NORMAL_ESCAPE \
-			or result_value > AdventureSession.Result.RETURN_ITEM_ESCAPE:
-		_send_world_transition_failure(sender, "Invalid adventure return result")
-		return
-	var result := _return_player_to_settlement(sender, result_value as AdventureSession.Result)
-	if not result.success:
-		_send_world_transition_failure(sender, result.message)
+	# Kept as a rejecting endpoint so a forged legacy result cannot bypass intent checks.
+	_send_world_transition_failure(sender, "Client-selected adventure results are not accepted")
 
 func _begin_player_world_transition(
 	peer_id: int,
@@ -941,52 +1013,154 @@ func _begin_player_world_transition(
 	var check := GameSession.can_peer_use_exit(peer_id, exit_id, region_id)
 	if not check.success or exit == null or region == null:
 		return check if not check.success else CommandResult.make(false, "Unknown world destination")
+	var source_runtime := server_world_runtime(PlayerWorldState.SETTLEMENT_WORLD_ID)
+	var target := source_runtime.interaction_target(exit_id) if source_runtime != null else null
+	var actor := authoritative_actor(peer_id)
+	if target == null or actor == null or not target.can_interact(actor) or not target.is_in_range(actor):
+		return CommandResult.make(false, "Settlement exit unavailable or outside interaction range")
 	var destination_world := PlayerWorldState.adventure_world_id(region_id)
-	var position := _configured_world_spawn(region.scene_path, exit.entry_point_id, GameSession.peer_ids_in_world(destination_world).size())
-	if not position.is_finite():
-		return CommandResult.make(false, "Adventure entry spawn is unavailable")
+	var root := get_tree().get_first_node_in_group(&"server_world_root") as ServerWorldRoot
+	var destination := root.preflight(PlayerWorldState.adventure(player_id_for_peer(peer_id), region_id, exit.entry_point_id,
+		GameSession.get_peer_world(peer_id).revision + 1)) if root != null else null
+	if destination == null:
+		return CommandResult.make(false, "Destination server runtime unavailable")
+	var spawn := destination.player_manager().transition_spawn(peer_id, exit.entry_point_id)
+	if not spawn.error_message.is_empty():
+		root.release_preflight(destination_world)
+		return CommandResult.make(false, spawn.error_message)
 	var old_world := GameSession.get_peer_world_id(peer_id)
-	var spawn := PlayerSpawnAssignment.create(
-		GameSession.session_id, player_id_for_peer(peer_id), PlayerSpawnAssignment.SpawnKind.FRESH_SLOT, position
-	)
 	var previous_spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
 	if not register_authoritative_spawn_assignment(peer_id, spawn):
+		root.release_preflight(destination_world)
 		return CommandResult.make(false, "Cannot prepare the destination spawn")
 	var moved := GameSession.begin_player_adventure(peer_id, exit_id, region_id)
 	if not moved.success:
 		_restore_spawn_assignment(peer_id, previous_spawn)
+		root.release_preflight(destination_world)
 		return moved
+	root.release_preflight(destination_world)
+	actor.cancel_return_channel_for_combat()
 	_place_player_in_loaded_host_world(peer_id, spawn)
 	return _dispatch_world_assignment(peer_id, old_world)
 
-func _return_player_to_settlement(peer_id: int, result: AdventureSession.Result) -> CommandResult:
+func _return_player_to_settlement(peer_id: int, result: AdventureSession.Result, point_id: StringName = &"", channel_actor: PlayerActor = null) -> CommandResult:
 	var interaction_check := _validate_authoritative_world_interaction(peer_id)
 	if not interaction_check.success:
 		return interaction_check
 	if _pending_world_transitions.has(peer_id):
 		return CommandResult.make(false, "A world transition is already pending")
-	var player_state := GameSession.get_player(peer_id)
-	var position := player_state.last_safe_position if player_state != null else Vector2.INF
-	if not position.is_finite():
-		position = _configured_world_spawn(SceneRouter.SETTLEMENT_SCENE, &"", 0)
-	if not position.is_finite():
-		return CommandResult.make(false, "Settlement return spawn is unavailable")
+	var actor := authoritative_actor(peer_id)
+	if result == AdventureSession.Result.NORMAL_ESCAPE:
+		var escape_check := _validate_escape_point(peer_id, point_id)
+		if not escape_check.success:
+			return escape_check
+	elif result == AdventureSession.Result.RETURN_ITEM_ESCAPE:
+		var item_check := _validate_return_item(peer_id, false)
+		if not item_check.success:
+			return item_check
+		if channel_actor == null or channel_actor != actor or not actor.is_return_channel_complete():
+			return CommandResult.make(false, "Return requires a completed authoritative channel")
+	else:
+		return CommandResult.make(false, "Invalid escape method")
+	var root := get_tree().get_first_node_in_group(&"server_world_root") as ServerWorldRoot
+	var destination := root.preflight(PlayerWorldState.settlement(player_id_for_peer(peer_id),
+		GameSession.get_peer_world(peer_id).revision + 1)) if root != null else null
+	if destination == null:
+		return CommandResult.make(false, "Settlement server runtime unavailable")
+	var spawn := destination.player_manager().transition_spawn(peer_id)
+	if not spawn.error_message.is_empty():
+		root.release_preflight(&"settlement")
+		return CommandResult.make(false, spawn.error_message)
 	var old_world := GameSession.get_peer_world_id(peer_id)
-	var spawn := PlayerSpawnAssignment.create(
-		GameSession.session_id,
-		player_id_for_peer(peer_id),
-		PlayerSpawnAssignment.SpawnKind.RETURNING_SAFE_POSITION,
-		position
-	)
 	var previous_spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
 	if not register_authoritative_spawn_assignment(peer_id, spawn):
+		root.release_preflight(&"settlement")
 		return CommandResult.make(false, "Cannot prepare the Settlement spawn")
-	var finished := GameSession.finish_player_adventure(peer_id, result)
+	var finished := GameSession.finish_player_adventure(peer_id, result, result == AdventureSession.Result.RETURN_ITEM_ESCAPE, spawn.position)
 	if not finished.success:
 		_restore_spawn_assignment(peer_id, previous_spawn)
+		root.release_preflight(&"settlement")
 		return finished
+	root.release_preflight(&"settlement")
+	actor.cancel_return_channel_for_combat()
 	_place_player_in_loaded_host_world(peer_id, spawn)
 	return _dispatch_world_assignment(peer_id, old_world)
+
+func request_use_return_item() -> CommandResult:
+	if is_authoritative_simulation():
+		return _start_return_item(local_peer_id())
+	if not is_local_world_ready():
+		return CommandResult.make(false, "Local world is not ready")
+	var world := GameSession.get_local_player_world()
+	_request_use_return_item.rpc_id(1, world.world_id, world.revision)
+	return CommandResult.make(true, "Return item intent requested")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_use_return_item(world_id: StringName, revision: int) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var check := _validate_intent_world(sender, world_id, revision)
+	if check.success:
+		check = _start_return_item(sender)
+	if not check.success:
+		_send_world_transition_failure(sender, check.message)
+
+func _validate_return_item(peer_id: int, starting: bool = true) -> CommandResult:
+	var check := _validate_authoritative_world_interaction(peer_id) if is_multiplayer_active() else CommandResult.make(is_authoritative_simulation())
+	if not check.success:
+		return check
+	var actor := authoritative_actor(peer_id)
+	var world := GameSession.get_peer_world(peer_id)
+	var region := ContentRegistry.get_definition(world.region_id) as RegionDefinition if world != null else null
+	if actor == null or actor.is_death_handled() or actor.hurt.is_active() or actor.dodge.is_active() \
+			or actor.movement.mode == MovementComponent.Mode.CLIMB \
+			or world == null or world.world_kind != PlayerWorldState.WorldKind.ADVENTURE \
+			or region == null or not region.allow_return_item:
+		return CommandResult.make(false, "Return item unavailable in this state or world")
+	if GameSession.get_player(peer_id).inventory.count(&"return_seed") < 1:
+		return CommandResult.make(false, "No return_seed available")
+	if starting and actor.return_channel > 0.0:
+		return CommandResult.make(false, "Return channel already active")
+	return CommandResult.make(true)
+
+func _start_return_item(peer_id: int) -> CommandResult:
+	var check := _validate_return_item(peer_id)
+	if not check.success:
+		return check
+	return CommandResult.make(authoritative_actor(peer_id).begin_return_channel(), "Server return channel started")
+
+func complete_return_item(actor: PlayerActor) -> CommandResult:
+	if actor == null or not actor.is_return_channel_complete():
+		return CommandResult.make(false, "Server return channel incomplete")
+	if not is_multiplayer_active():
+		var check := _validate_return_item(actor.peer_id, false)
+		if not check.success:
+			return check
+		var inventory := actor.player_state().inventory
+		if inventory.remove_item(&"return_seed", 1).changed != 1:
+			return CommandResult.make(false, "Return item unavailable")
+		var returned := request_return_to_settlement(AdventureSession.Result.RETURN_ITEM_ESCAPE)
+		if not returned.success:
+			inventory.add_item(&"return_seed", 1)
+		return returned
+	return _return_player_to_settlement(actor.peer_id, AdventureSession.Result.RETURN_ITEM_ESCAPE, &"", actor)
+
+func publish_return_channel(actor: PlayerActor, active: bool, progress: float) -> void:
+	if actor == null or not actor.is_simulation_authority() or not is_multiplayer_active():
+		return
+	var world := GameSession.get_peer_world(actor.peer_id)
+	if world == null or world.world_id != actor.world_id:
+		return
+	if actor.peer_id == local_peer_id():
+		return_channel_received.emit(active, progress)
+	elif can_send_to_peer(actor.peer_id):
+		_receive_return_channel.rpc_id(actor.peer_id, world.world_id, world.revision, active, progress)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_return_channel(world_id: StringName, revision: int, active: bool, progress: float) -> void:
+	if _accept_current_world_packet(world_id, revision) and is_finite(progress) and progress >= 0.0 and progress <= 1.0:
+		return_channel_received.emit(active, progress)
 
 ## Final server-authoritative guard for gameplay-mutating world interactions.
 ## A remote presentation actor does not replicate HURT or DODGE and is never
@@ -996,6 +1170,8 @@ func _validate_authoritative_world_interaction(peer_id: int) -> CommandResult:
 	if not is_authoritative_simulation() or not players.has(peer_id) \
 			or not GameSession.has_player(peer_id) or not is_peer_world_ready(peer_id):
 		return CommandResult.make(false, "Player world is not ready for transition")
+	if player_id_for_peer(peer_id) != GameSession.get_player_id(peer_id) or _pending_world_transitions.has(peer_id):
+		return CommandResult.make(false, "Invalid attachment or pending transition")
 	var runtime := GameSession.get_player_runtime(peer_id)
 	if runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
 		return CommandResult.make(false, "Only a living player can change worlds")

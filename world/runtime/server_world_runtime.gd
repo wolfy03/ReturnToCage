@@ -12,9 +12,11 @@ func configure(p_model: WorldRuntime, scene_path: String) -> bool:
 	var packed := ResourceLoader.load(scene_path) as PackedScene
 	if packed == null:
 		return false
-	var instance := packed.instantiate() as Node2D
-	if instance == null:
+	var created := packed.instantiate()
+	if not created is Node2D or not created.has_method("configure_server_runtime"):
+		created.free()
 		return false
+	var instance := created as Node2D
 	model = p_model
 	name = "Runtime_%s" % String(model.world_id).replace(":", "_")
 	_viewport = SubViewport.new()
@@ -41,3 +43,11 @@ func loot_manager() -> LootSpawnManager:
 
 func player_manager() -> PlayerSpawnManager:
 	return runtime_scene.get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager if runtime_scene != null else null
+
+func interaction_target(id: StringName) -> InteractionTarget:
+	if runtime_scene == null or id.is_empty():
+		return null
+	for child in runtime_scene.get_children():
+		if child is InteractionTarget and child.interaction_id == id and not child.is_queued_for_deletion():
+			return child
+	return null

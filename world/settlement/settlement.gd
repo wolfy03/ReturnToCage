@@ -77,8 +77,8 @@ func _create_facility() -> void:
 func _create_exits() -> void:
 	var sewer_data := ContentRegistry.get_definition(&"sewer_gate") as SettlementExitDefinition
 	var sewer := WorldHelpers.add_interaction(self, sewer_data.id, "%s - %s" % [sewer_data.prompt, sewer_data.display_name], Vector2(865, 510), Vector2(96, 90), Color("264653"), 5)
-	sewer.activated.connect(func(_actor: Node) -> void:
-		var result := NetworkManager.request_enter_region(sewer_data.id, &"sewer_region")
+	sewer.activated.connect(func(actor: Node) -> void:
+		var result := NetworkManager._begin_player_world_transition(actor.peer_id, sewer_data.id, &"sewer_region") if server_runtime_mode and actor is PlayerActor else NetworkManager.request_enter_region(sewer_data.id, &"sewer_region")
 		GameSession.last_message = result.message
 	)
 	var field := WorldHelpers.add_interaction(self, &"field_gate", "Locked: improve settlement", Vector2(1160, 510), Vector2(100, 90), Color("4b4b4b"), 1)

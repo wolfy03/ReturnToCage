@@ -266,7 +266,38 @@ func _remember_slot(peer_id: int, position: Vector2, points: Array[PlayerSpawnPo
 			_slots[peer_id] = point.spawn_index
 			return
 
-func _position_issue(position: Vector2) -> String:
+func transition_spawn(peer_id: int, entry_id: StringName = &"") -> PlayerSpawnAssignment:
+	if spawn_validation_collision_mask == 0:
+		return _failed_assignment("INVALID_COLLISION_MASK: transition spawn validation is not configured")
+	var state := GameSession.get_player(peer_id)
+	if state == null:
+		return _failed_assignment("Unknown transition player")
+	var candidates: Array[Vector2] = []
+	var points := _spawn_points()
+	if settlement_spawn_policy:
+		for point in points:
+			candidates.append(point.position)
+	else:
+		var entries: Array[RegionPoint] = []
+		RegionPoint.collect(get_parent(), entries)
+		var entry: RegionPoint
+		for point in entries:
+			if point.kind == RegionPoint.Kind.ENTRY and point.point_id == entry_id:
+				entry = point
+		if entry == null:
+			return _failed_assignment("Adventure entry marker unavailable")
+		var index := GameSession.peer_ids_in_world(world_id).size()
+		if points.is_empty():
+			candidates.append(entry.position)
+		else:
+			for step in points.size():
+				var offset := points[(index + step) % points.size()].position - points[0].position
+				candidates.append(entry.position + offset)
+	return PlayerSpawnPolicy.decide(GameSession.session_id, GameSession.get_player_id(peer_id),
+		settlement_spawn_policy, state.last_safe_position, candidates, candidates,
+		Callable(self, "_position_issue").bind(true))
+
+func _position_issue(position: Vector2, preflight: bool = false, excluded: Array[RID] = []) -> String:
 	if not position.is_finite():
 		return "NON_FINITE"
 	if spawn_validation_collision_mask == 0:
@@ -276,6 +307,10 @@ func _position_issue(position: Vector2) -> String:
 	var world_root := get_parent() as Node2D
 	if not is_inside_tree() or world_root == null or world_root.get_world_2d() == null:
 		return "WORLD_UNAVAILABLE"
+	if preflight:
+		# A new World2D has not had a broadphase tick yet. Test the same authored
+		# collision shapes directly; do not accept an empty physics query as safe.
+		return _authored_geometry_issue(world_root, position)
 	var space: PhysicsDirectSpaceState2D = world_root.get_world_2d().direct_space_state
 	var clearance := CircleShape2D.new()
 	clearance.radius = clearance_radius
@@ -285,6 +320,7 @@ func _position_issue(position: Vector2) -> String:
 	shape_query.collision_mask = spawn_validation_collision_mask
 	shape_query.collide_with_areas = false
 	shape_query.collide_with_bodies = true
+	shape_query.exclude = excluded
 	if not space.intersect_shape(shape_query, 1).is_empty():
 		return "BLOCKED"
 	var origin := world_root.to_global(position)
@@ -293,9 +329,29 @@ func _position_issue(position: Vector2) -> String:
 	)
 	ray.collide_with_areas = false
 	ray.collide_with_bodies = true
+	ray.exclude = excluded
 	if space.intersect_ray(ray).is_empty():
 		return "NO_WALKABLE_SUPPORT"
 	return ""
+
+func _authored_geometry_issue(world_root: Node2D, position: Vector2) -> String:
+	var clearance := CircleShape2D.new()
+	clearance.radius = clearance_radius
+	var support := RectangleShape2D.new()
+	support.size = Vector2(0.01, support_distance)
+	var origin := world_root.to_global(position)
+	var supported := false
+	var shapes := world_root.find_children("*", "CollisionShape2D", true, false)
+	for node in shapes:
+		var shape := node as CollisionShape2D
+		var body := shape.get_parent() as PhysicsBody2D
+		if body == null or shape.disabled or shape.shape == null or body.collision_layer & spawn_validation_collision_mask == 0:
+			continue
+		if clearance.collide(Transform2D(0.0, origin), shape.shape, shape.global_transform):
+			return "BLOCKED"
+		if body is StaticBody2D and support.collide(Transform2D(0.0, origin + Vector2.DOWN * support_distance * 0.5), shape.shape, shape.global_transform):
+			supported = true
+	return "" if supported else "NO_WALKABLE_SUPPORT"
 
 func _spawn_local(peer_id: int, spawn_position: Vector2) -> bool:
 	if _actors.has(peer_id) or not GameSession.has_player(peer_id) or not spawn_position.is_finite() \
@@ -323,7 +379,11 @@ func respawn_player(peer_id: int) -> bool:
 			or NetworkManager.is_multiplayer_active() and not authoritative_runtime:
 		return false
 	var spawn_position := _spawn_position(_slots[peer_id])
-	if not _position_issue(spawn_position).is_empty():
+	var retiring := get_actor(peer_id)
+	var excluded: Array[RID] = []
+	if retiring != null:
+		excluded.append(retiring.get_rid())
+	if not _position_issue(spawn_position, false, excluded).is_empty():
 		return false
 	_replace_actor_local(peer_id, spawn_position)
 	NetworkManager.broadcast_player_respawn(world_id, peer_id, spawn_position)

@@ -43,6 +43,9 @@ var facing: float = 1.0
 var return_channel: float = 0.0
 var return_channel_required: float = 3.0
 var return_channel_origin: Vector2
+var _return_world_id: StringName
+var _return_world_revision: int = -1
+var _return_progress_step: int = -1
 var _player_visual: Node2D
 
 func setup_player(
@@ -66,6 +69,7 @@ func player_state() -> PlayerState:
 	return _bound_state
 
 func _ready() -> void:
+	NetworkManager.return_channel_received.connect(_on_return_channel_received)
 	add_to_group(&"player")
 	add_to_group(&"authoritative_player" if is_simulation_authority() else &"presentation_player")
 	if is_local_player():
@@ -128,7 +132,7 @@ func _ready() -> void:
 	_bound_state.stats.stat_changed.connect(_on_stat_changed)
 	_on_stat_changed(&"defense", _bound_state.stats.value(&"defense"))
 	var config := GameSession.get_start_definition().survival_config
-	var difficulty := GameSession.current_difficulty()
+	var difficulty := GameSession.current_difficulty_for_world(world_id) if not world_id.is_empty() else GameSession.current_difficulty()
 	survival.configure(config, difficulty.survival_drain_multiplier if difficulty != null else 1.0, _bound_state.survival)
 	survival.survival_changed.connect(_on_survival_changed)
 	movement.climb_hint_changed.connect(_refresh_interaction_prompt)
@@ -170,6 +174,9 @@ func player_visual() -> Node2D:
 	return _player_visual
 
 func _exit_tree() -> void:
+	_cancel_return_channel()
+	if NetworkManager.return_channel_received.is_connected(_on_return_channel_received):
+		NetworkManager.return_channel_received.disconnect(_on_return_channel_received)
 	if _bound_state == null:
 		return
 	if _bound_state.vitals_changed.is_connected(_sync_persistent_health):
@@ -200,11 +207,11 @@ func _physics_process(delta: float) -> void:
 	network.server_snapshot_tick(delta)
 	network.combat_snapshot_tick(delta)
 	if return_channel > 0.0:
-		if input.move_vector.length() > 0.01 or global_position.distance_to(return_channel_origin) > 3.0:
+		if not _return_context_valid() or input.move_vector.length() > 0.01 or global_position.distance_to(return_channel_origin) > 3.0:
 			_cancel_return_channel()
 		else:
 			return_channel += delta
-			return_channel_changed.emit(true, return_channel / return_channel_required)
+			_emit_return_channel(true, minf(1.0, return_channel / return_channel_required))
 			if return_channel >= return_channel_required:
 				_complete_return_channel()
 
@@ -236,31 +243,59 @@ func _on_quick_item() -> void:
 		elif is_simulation_authority():
 			consume_item(&"berry")
 		return
-	if not is_simulation_authority():
-		return
-	if _bound_state.inventory.count(&"return_seed") <= 0 or return_channel > 0.0:
-		return
-	var local_world := GameSession.get_peer_world(peer_id)
-	var region := ContentRegistry.get_definition(local_world.region_id) as RegionDefinition \
-			if local_world != null else null
-	if region == null or not region.allow_return_item:
-		GameSession.last_message = "Return items cannot be used in this area"
-		return
+	GameSession.last_message = NetworkManager.request_use_return_item().message
+
+func begin_return_channel() -> bool:
+	if not is_simulation_authority() or return_channel > 0.0 or _death_handled:
+		return false
+	var world := GameSession.get_peer_world(peer_id)
+	if world == null:
+		return false
+	_return_world_id = world.world_id
+	_return_world_revision = world.revision
 	return_channel = 0.001
 	return_channel_origin = global_position
 	movement.enabled = false
-	return_channel_changed.emit(true, 0.0)
+	_return_progress_step = -1
+	_emit_return_channel(true, 0.0)
+	return true
+
+func _return_context_valid() -> bool:
+	var world := GameSession.get_peer_world(peer_id)
+	return is_simulation_authority() and world != null and world.world_id == _return_world_id \
+		and world.revision == _return_world_revision and not _death_handled \
+		and not hurt.is_active() and not dodge.is_active() \
+		and (not NetworkManager.is_multiplayer_active() or NetworkManager.is_peer_world_ready(peer_id))
+
+func is_return_channel_complete() -> bool:
+	return return_channel >= return_channel_required and _return_context_valid() \
+		and input.move_vector.length() <= 0.01 and global_position.distance_to(return_channel_origin) <= 3.0
 
 func _complete_return_channel() -> void:
-	if _bound_state.inventory.remove_item(&"return_seed", 1).changed == 1:
-		NetworkManager.request_return_to_settlement(AdventureSession.Result.RETURN_ITEM_ESCAPE)
+	if not is_simulation_authority() or return_channel <= 0.0:
+		return
+	GameSession.last_message = NetworkManager.complete_return_item(self).message
 	_cancel_return_channel()
 
 func _cancel_return_channel() -> void:
 	if return_channel > 0.0:
 		return_channel = 0.0
 		movement.enabled = true
-		return_channel_changed.emit(false, 0.0)
+		_return_world_id = &""
+		_return_world_revision = -1
+		_emit_return_channel(false, 0.0)
+
+func _emit_return_channel(active: bool, progress: float) -> void:
+	return_channel_changed.emit(active, progress)
+	var step := int(progress * 20.0)
+	if not active or step != _return_progress_step:
+		_return_progress_step = step
+		if is_inside_tree():
+			NetworkManager.publish_return_channel(self, active, progress)
+
+func _on_return_channel_received(active: bool, progress: float) -> void:
+	if is_local_player() and not is_simulation_authority():
+		return_channel_changed.emit(active, progress)
 
 func cancel_return_channel_for_combat() -> void:
 	_cancel_return_channel()

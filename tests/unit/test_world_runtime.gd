@@ -63,6 +63,7 @@ func _test_authoritative_hurt_world_transition_guard(t: Node) -> void:
 	t.assert_true(NetworkManager.spawn_assignment_for_peer(1) == settlement_spawn, "rejected enter-region preserves spawn assignment")
 
 	actor.hurt.physics_tick(actor.hurt.duration_seconds + 0.01)
+	actor.position = Vector2(865, 510)
 	var accepted_enter := NetworkManager._begin_player_world_transition(1, &"sewer_gate", &"sewer_region")
 	t.assert_true(accepted_enter.success, "enter-region is re-enabled immediately after HURT")
 	var adventure_world := GameSession.get_peer_world(1)
@@ -94,6 +95,7 @@ func _test_authoritative_hurt_world_transition_guard(t: Node) -> void:
 	t.assert_true(NetworkManager.spawn_assignment_for_peer(1) == adventure_spawn, "rejected return preserves spawn assignment")
 
 	actor.hurt.physics_tick(actor.hurt.duration_seconds + 0.01)
+	actor.position = Vector2(70, 510)
 	var accepted_return := NetworkManager._return_player_to_settlement(1, AdventureSession.Result.NORMAL_ESCAPE)
 	t.assert_true(accepted_return.success, "return-to-Settlement is re-enabled immediately after HURT")
 	var returned_world := GameSession.get_peer_world(1)

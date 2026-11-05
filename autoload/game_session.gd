@@ -531,7 +531,10 @@ func adventure_session_for_peer(peer_id: int) -> AdventureSession:
 
 func current_difficulty_for_world(world_id: StringName) -> DifficultyDefinition:
 	var session := adventure_session_for_world(world_id)
-	return session.rules.effective() if session != null and session.rules != null else current_difficulty()
+	if session == null and not NetworkManager.is_multiplayer_active() and adventure.active_session != null \
+			and world_id == PlayerWorldState.adventure_world_id(adventure.active_session.context.region_id):
+		session = adventure.active_session
+	return session.rules.effective() if session != null and session.rules != null else difficulty.effective(ContentRegistry)
 
 func can_mutate_authoritative_state() -> bool:
 	return NetworkManager.is_authoritative_simulation()
@@ -794,7 +797,7 @@ func handle_player_death(peer_id: int, death_position: Vector2, life_id: int = -
 		return RespawnResult.failure("Death unavailable in this session phase")
 	# Validate all dependencies before changing phase, pause flags or possessions.
 	var start: GameStartDefinition = get_start_definition(false)
-	var rules: DifficultyDefinition = current_difficulty()
+	var rules: DifficultyDefinition = current_difficulty_for_world(get_peer_world_id(peer_id))
 	if start == null or rules == null or not death_position.is_finite():
 		return RespawnResult.failure("Cannot resolve death: invalid start configuration, difficulty or position")
 	var individual_multiplayer_death := NetworkManager.is_multiplayer_active()
@@ -961,7 +964,7 @@ func begin_player_adventure(peer_id: int, exit_id: StringName, region_id: String
 	adventure_started.emit(session.context)
 	return CommandResult.make(true, "Entering %s" % region.display_name)
 
-func finish_player_adventure(peer_id: int, result: AdventureSession.Result) -> CommandResult:
+func finish_player_adventure(peer_id: int, result: AdventureSession.Result, consume_return_item: bool = false, return_position: Vector2 = Vector2.INF) -> CommandResult:
 	if not can_mutate_authoritative_state():
 		return CommandResult.make(false, "Only the server can finish a player adventure")
 	var world_state: PlayerWorldState = _player_world_states.get(get_player_id(peer_id))
@@ -973,20 +976,42 @@ func finish_player_adventure(peer_id: int, result: AdventureSession.Result) -> C
 	var personal := session.get_player_adventure(peer_id) if session != null else null
 	if personal == null:
 		return CommandResult.make(false, "Adventure participation is unavailable")
+	# Stage all fallible checks before any item, participation or world mutation.
+	var candidate := PlayerWorldState.settlement(get_player_id(peer_id), world_state.revision + 1)
+	if not candidate.is_valid() or not players.has(peer_id):
+		return CommandResult.make(false, "Invalid Settlement destination")
 	var loot := personal.unsecured_loot.stacks()
-	var secured: CommandResult = settlement.secure_loot(loot)
+	var loot_error := settlement._secure_items_error(loot)
+	if not loot_error.is_empty():
+		return CommandResult.make(false, loot_error)
+	var state := get_player(peer_id)
+	if consume_return_item and (result != AdventureSession.Result.RETURN_ITEM_ESCAPE or state.inventory.count(&"return_seed") < 1):
+		return CommandResult.make(false, "Return item unavailable")
+	# Observers (including synchronous saves) only see the complete transaction.
+	state.begin_item_update()
+	state.inventory.begin_update()
+	settlement.begin_update()
+	if consume_return_item:
+		if state.inventory.remove_item(&"return_seed", 1).changed != 1:
+			settlement.end_update()
+			state.inventory.end_update()
+			state.end_item_update()
+			return CommandResult.make(false, "Return item cannot be consumed")
+	var secured := settlement.secure_loot(loot)
 	session.discard_player_adventure(peer_id)
 	if peer_id == get_local_peer_id() and adventure.active_session == session:
 		adventure.active_session = null
 	if session.player_adventures.is_empty():
 		_adventure_sessions_by_world.erase(world_state.world_id)
-	var moved := move_player_to_world(
-		peer_id, PlayerWorldState.WorldKind.SETTLEMENT, PlayerWorldState.SETTLEMENT_WORLD_ID
-	)
-	if not moved.success:
-		return moved
-	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success \
-			else "Storage full: %d loot stacks retained in pending storage" % loot.size()
+	_player_world_states[candidate.player_id] = candidate
+	if return_position.is_finite():
+		state.last_safe_position = return_position
+	# The destination and loot are valid; the remaining commit cannot fail.
+	player_world_changed.emit(candidate.player_id, candidate.copy())
+	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success else "Storage full: %d loot stacks retained in pending storage" % loot.size()
+	settlement.end_update()
+	state.inventory.end_update()
+	state.end_item_update()
 	adventure_finished.emit(result, last_message)
 	return CommandResult.make(true, last_message)
 

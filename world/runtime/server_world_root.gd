@@ -2,6 +2,25 @@ class_name ServerWorldRoot
 extends Node
 
 var _runtimes: Dictionary[StringName, ServerWorldRuntime] = {}
+var _preflight_worlds: Dictionary[StringName, bool] = {}
+
+## Reserve the actual destination simulation before touching canonical state.
+func preflight(state: PlayerWorldState) -> ServerWorldRuntime:
+	if state == null or not state.is_valid() or not NetworkManager.is_host_session_ready():
+		return null
+	_preflight_worlds[state.world_id] = true
+	var instance := runtime(state.world_id)
+	if instance == null:
+		instance = _create_runtime(state)
+	if instance == null or instance.player_manager() == null:
+		release_preflight(state.world_id)
+		return null
+	return instance
+
+func release_preflight(world_id: StringName) -> void:
+	_preflight_worlds.erase(world_id)
+	if GameSession.peer_ids_in_world(world_id).is_empty():
+		_remove_runtime(world_id)
 
 func _ready() -> void:
 	add_to_group(&"server_world_root")
@@ -54,10 +73,11 @@ func reconcile() -> void:
 		if not _runtimes.has(world_id):
 			_create_runtime(required[world_id])
 	for world_id in _runtimes.keys():
-		if not required.has(world_id):
+		if not required.has(world_id) and not _preflight_worlds.has(world_id):
 			_remove_runtime(world_id)
 
 func clear_runtimes() -> void:
+	_preflight_worlds.clear()
 	for world_id in _runtimes.keys():
 		_remove_runtime(world_id)
 

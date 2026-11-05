@@ -14,7 +14,9 @@ extends RefCounted
 # v15 expands presentation-only attack/dodge events with semantic animation
 # metadata and adds a HURT presentation event. Gameplay action state and timers
 # remain server-only; Save data is unchanged.
-const VERSION := 15
+# v16 replaces client-selected escape results with world/revision-bound intents,
+# and adds authoritative return-channel and death-drop replication. Save is unchanged.
+const VERSION := 16
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

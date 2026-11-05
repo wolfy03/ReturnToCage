@@ -5,7 +5,7 @@ const PLAYER_TWO := "player_22222222222222222222222222222222"
 const PLAYER_TEST: StringName = &"player_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func run(t: Node) -> void:
-	t.assert_equal(NetworkProtocol.VERSION, 15, "combat presentation metadata uses protocol v15")
+	t.assert_equal(NetworkProtocol.VERSION, 16, "gameplay intent channels use protocol v16")
 	var valid := PlayerMoveCommand.new(1, 1.0, -1.0, true)
 	t.assert_true(valid.is_valid_after(0), "bounded movement command is accepted")
 	t.assert_true(not valid.is_valid_after(1), "duplicate movement sequence is rejected")

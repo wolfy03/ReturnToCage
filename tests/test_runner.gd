@@ -9,6 +9,10 @@ func _ready() -> void:
 		test_restart_persistence(arguments.has("--restart-write"))
 		_finish_tests()
 		return
+	if arguments.has("--authority-only"):
+		await preload("res://tests/unit/test_gameplay_authority.gd").new().run(self)
+		_finish_tests()
+		return
 	run_all()
 
 func run_all() -> void:
@@ -45,6 +49,7 @@ func run_all() -> void:
 	preload("res://tests/unit/test_player_private_state_snapshot.gd").new().run(self)
 	preload("res://tests/unit/test_player_world_state.gd").new().run(self)
 	await preload("res://tests/unit/test_world_runtime.gd").new().run(self)
+	await preload("res://tests/unit/test_gameplay_authority.gd").new().run(self)
 	await preload("res://tests/unit/test_environment_presentation.gd").new().run(self)
 	await preload("res://tests/unit/test_player_spawn_policy.gd").new().run(self)
 	preload("res://tests/unit/test_local_player_profile.gd").new().run(self)

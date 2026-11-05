@@ -84,7 +84,7 @@ func _test_payload_validation(t: Node) -> void:
 	t.assert_true(not NetworkManager.valid_hurt_presentation(-1, 0.25), "negative HURT presentation sequence is rejected")
 	t.assert_true(not NetworkManager.valid_hurt_presentation(0, INF), "infinite HURT duration is rejected")
 	t.assert_true(not NetworkManager.valid_hurt_presentation(0, 0.0), "zero HURT duration is rejected")
-	t.assert_equal(NetworkProtocol.VERSION, 15, "presentation wire expansion uses protocol v15")
+	t.assert_equal(NetworkProtocol.VERSION, 16, "gameplay intent wire expansion uses protocol v16")
 	t.assert_equal(SaveManager.CURRENT_VERSION, 4, "presentation runtime does not change Save v4")
 	GameSession.start_new_game()
 	var save_text := JSON.stringify(GameSession.export_persistent_state())

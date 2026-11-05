@@ -77,7 +77,7 @@ func _run_host_scenario() -> void:
 	var b_peer := _remote_peers[0]
 	var c_peer := _remote_peers[1] if _remote_peers.size() > 1 else 0
 	for peer_id in _remote_peers:
-		_command.rpc_id(peer_id, "ENTER", 0)
+		_send_command(peer_id, "ENTER", 0)
 	if not await _wait_until(func() -> bool:
 		for peer_id in _remote_peers:
 			if not _confirmed("ENTER", peer_id):
@@ -101,7 +101,7 @@ func _run_host_scenario() -> void:
 	if runtime.participant_peer_ids() != _remote_peers or _presentation_roster().size() != 1:
 		_fail("host presentation/runtime participant isolation failed")
 		return
-	_command.rpc_id(b_peer, "SETTLEMENT_REJECT", 0)
+	_send_command(b_peer, "SETTLEMENT_REJECT", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("SETTLEMENT_REJECT", b_peer)):
 		_fail("Sewer player did not receive a Settlement-command rejection")
 		return
@@ -132,7 +132,7 @@ func _run_host_scenario() -> void:
 		return
 
 	if c_peer > 0:
-		_command.rpc_id(c_peer, "WATCH_B_MOVE", b_peer)
+		_send_command(c_peer, "WATCH_B_MOVE", b_peer)
 	var b_runtime_origin := runtime.player_manager().get_actor(b_peer).position
 	var move_direction := 1
 	if c_peer > 0:
@@ -142,7 +142,7 @@ func _run_host_scenario() -> void:
 		print("WORLD RUNTIME MOVE b=%d bx=%.2f c=%d cx=%.2f direction=%d" % [
 			b_peer, b_runtime_origin.x, c_peer, c_actor.position.x if c_actor != null else -1.0, move_direction,
 		])
-	_command.rpc_id(b_peer, "MOVE", move_direction)
+	_send_command(b_peer, "MOVE", move_direction)
 	if not await _wait_until(func() -> bool:
 		return _confirmed("MOVE", b_peer) and (c_peer == 0 or _confirmed("WATCH_B_MOVE", c_peer))
 	):
@@ -159,7 +159,7 @@ func _run_host_scenario() -> void:
 	# observe its resulting movement through the existing transform snapshots on
 	# B's presentation actor. No HURT/knockback test RPC or payload is introduced.
 	await get_tree().create_timer(0.25).timeout
-	_command.rpc_id(b_peer, "PREPARE_KNOCKBACK_WATCH", 0)
+	_send_command(b_peer, "PREPARE_KNOCKBACK_WATCH", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("PREPARE_KNOCKBACK_WATCH", b_peer)):
 		_fail("client did not prepare the knockback presentation watch")
 		return
@@ -177,7 +177,7 @@ func _run_host_scenario() -> void:
 	if not await _wait_until(func() -> bool: return b_actor.position.x > knockback_server_origin_x + 3.0, 2.0):
 		_fail("authoritative knockback did not displace the server player")
 		return
-	_command.rpc_id(b_peer, "REPORT_KNOCKBACK_WATCH", 0)
+	_send_command(b_peer, "REPORT_KNOCKBACK_WATCH", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_KNOCKBACK_WATCH", b_peer), 3.0):
 		_fail("client did not observe replicated knockback movement")
 		return
@@ -208,7 +208,7 @@ func _run_host_scenario() -> void:
 	var previous_health := enemy.health.current_health
 	while enemy != null and is_instance_valid(enemy) and enemy.health.current_health > 0.0 and attack_sequence < 105:
 		enemy.global_position = b_actor.global_position + Vector2(34, 0)
-		_command.rpc_id(b_peer, "ATTACK", attack_sequence)
+		_send_command(b_peer, "ATTACK", attack_sequence)
 		if not await _wait_until(func() -> bool:
 			return not is_instance_valid(enemy) or enemy.health.current_health < previous_health
 		, 2.0):
@@ -225,7 +225,7 @@ func _run_host_scenario() -> void:
 	if b_combat == null or b_combat.max_stamina <= 0.0:
 		_fail("authoritative B combat runtime is unavailable")
 		return
-	_command.rpc_id(b_peer, "REPORT_STAMINA_SPENT", 0)
+	_send_command(b_peer, "REPORT_STAMINA_SPENT", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_STAMINA_SPENT", b_peer), 4.0):
 		_fail("client did not mirror the authoritative stamina spend")
 		return
@@ -238,7 +238,7 @@ func _run_host_scenario() -> void:
 	if not await _wait_until(func() -> bool: return is_equal_approx(b_combat.stamina, b_combat.max_stamina), 8.0):
 		_fail("authoritative B stamina did not regenerate back to max")
 		return
-	_command.rpc_id(b_peer, "REPORT_STAMINA_REGEN", 0)
+	_send_command(b_peer, "REPORT_STAMINA_REGEN", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_STAMINA_REGEN", b_peer), 6.0):
 		_fail("client did not mirror authoritative stamina regeneration")
 		return
@@ -254,12 +254,12 @@ func _run_host_scenario() -> void:
 		return
 	var loot := runtime.loot_manager().get_loot(loot_id)
 	b_actor.global_position = loot.global_position
-	_command.rpc_id(b_peer, "PICKUP", loot_id)
+	_send_command(b_peer, "PICKUP", loot_id)
 	if not await _wait_until(func() -> bool: return runtime.loot_manager().get_loot(loot_id) == null, 3.0):
 		_fail("same-world loot pickup did not commit")
 		return
 	if c_peer > 0:
-		_command.rpc_id(c_peer, "REPORT_EMPTY_LOOT", 0)
+		_send_command(c_peer, "REPORT_EMPTY_LOOT", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("REPORT_EMPTY_LOOT", c_peer)):
 			_fail("C retained loot after B claim")
 			return
@@ -271,13 +271,13 @@ func _run_host_scenario() -> void:
 		_fail("authoritative gather fixture is unavailable")
 		return
 	gather_actor.global_position = gather_target.global_position
-	_command.rpc_id(gather_peer, "GATHER", 0)
+	_send_command(gather_peer, "GATHER", 0)
 	if not await _wait_until(func() -> bool: return runtime_region._consumed_gather.has(&"scrap_cache_a")):
 		_fail("same-world gather did not commit")
 		return
 	var observe_gather_peer := b_peer if gather_peer == c_peer else c_peer
 	if observe_gather_peer > 0:
-		_command.rpc_id(observe_gather_peer, "REPORT_GATHER_ABSENT", 0)
+		_send_command(observe_gather_peer, "REPORT_GATHER_ABSENT", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("REPORT_GATHER_ABSENT", observe_gather_peer)):
 			_fail("consumed gather remained visible to a same-world peer")
 			return
@@ -286,7 +286,7 @@ func _run_host_scenario() -> void:
 	# dropped and not executed early. Hit-stun is used as the lock because the
 	# host can end it on demand, which keeps the check deterministic instead of
 	# racing a round trip against an authored chain window.
-	_command.rpc_id(b_peer, "WATCH_ATTACK_PRESENTED", 0)
+	_send_command(b_peer, "WATCH_ATTACK_PRESENTED", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("WATCH_ATTACK_PRESENTED", b_peer)):
 		_fail("client did not prepare the attack presentation watch")
 		return
@@ -305,7 +305,7 @@ func _run_host_scenario() -> void:
 		_fail("could not lock the authoritative actor for the input buffer check")
 		return
 	var buffered_sequence := 700
-	_command.rpc_id(b_peer, "ATTACK", buffered_sequence)
+	_send_command(b_peer, "ATTACK", buffered_sequence)
 	if not await _wait_until(func() -> bool: return b_actor.input_buffer.has_pending(), 4.0):
 		_fail("remote attack intent was not buffered by the host")
 		return
@@ -313,7 +313,7 @@ func _run_host_scenario() -> void:
 			or not b_actor.combat_action.is_hurt() or b_actor.combat.combo_index() != 0:
 		_fail("buffered remote intent started an attack instead of waiting")
 		return
-	_command.rpc_id(b_peer, "REPORT_NO_ATTACK_PRESENTED", buffered_sequence)
+	_send_command(b_peer, "REPORT_NO_ATTACK_PRESENTED", buffered_sequence)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_NO_ATTACK_PRESENTED", b_peer)):
 		_fail("client presentation check for the buffered intent did not complete")
 		return
@@ -329,13 +329,13 @@ func _run_host_scenario() -> void:
 		_fail("an executed intent stayed in the buffer")
 		return
 	var chained_sequence := buffered_sequence + 1
-	_command.rpc_id(b_peer, "ATTACK", chained_sequence)
+	_send_command(b_peer, "ATTACK", chained_sequence)
 	if not await _wait_until(func() -> bool:
 		return b_actor.combat.combo_index() == 1 and b_actor.combat_action.is_attacking()
 	, 3.0):
 		_fail("remote buffered follow-up did not chain into combo step 1")
 		return
-	_command.rpc_id(b_peer, "REPORT_ATTACK_PRESENTED", buffered_sequence)
+	_send_command(b_peer, "REPORT_ATTACK_PRESENTED", buffered_sequence)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_ATTACK_PRESENTED", b_peer), 4.0):
 		_fail("buffered attack presentation never reached the client")
 		return
@@ -347,7 +347,7 @@ func _run_host_scenario() -> void:
 			or StringName(presentation_report.get("presentation_key", &"")) != &"attack_1":
 		_fail("remote step 0 presentation metadata was incorrect")
 		return
-	_command.rpc_id(b_peer, "REPORT_ATTACK_PRESENTED", chained_sequence)
+	_send_command(b_peer, "REPORT_ATTACK_PRESENTED", chained_sequence)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_ATTACK_PRESENTED_%d" % chained_sequence, b_peer), 4.0):
 		_fail("chained attack presentation never reached the client")
 		return
@@ -391,7 +391,7 @@ func _run_host_scenario() -> void:
 		, 4.0):
 			continue
 		dodge_stamina_before = b_combat.stamina
-		_command.rpc_id(b_peer, "DODGE", 700 + attempt)
+		_send_command(b_peer, "DODGE", 700 + attempt)
 		if await _wait_until(func() -> bool: return b_actor.dodge.is_active(), 1.5):
 			dodge_started = true
 			break
@@ -403,7 +403,7 @@ func _run_host_scenario() -> void:
 			or not b_actor.movement.has_control_lock(MovementComponent.CONTROL_LOCK_DODGE):
 		_fail("authoritative dodge did not open i-frames, commit stamina and lock controls")
 		return
-	_command.rpc_id(b_peer, "REPORT_DODGE_PRESENTED", 0)
+	_send_command(b_peer, "REPORT_DODGE_PRESENTED", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REPORT_DODGE_PRESENTED", b_peer), 4.0):
 		_fail("remote dodge presentation metadata did not arrive")
 		return
@@ -419,7 +419,7 @@ func _run_host_scenario() -> void:
 	if evaded or b_actor.health.current_health != dodge_health_before:
 		_fail("an evadable hit landed during authoritative i-frames")
 		return
-	_command.rpc_id(b_peer, "RETURN_DURING_SERVER_DODGE", 0)
+	_send_command(b_peer, "RETURN_DURING_SERVER_DODGE", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN_DURING_SERVER_DODGE", b_peer)):
 		_fail("remote dodge escape rejection did not complete")
 		return
@@ -445,7 +445,7 @@ func _run_host_scenario() -> void:
 		return
 	# A direction that is not exactly one of the two facings is refused outright
 	# rather than normalised into a usable roll.
-	_command.rpc_id(b_peer, "DODGE_MALFORMED", 800)
+	_send_command(b_peer, "DODGE_MALFORMED", 800)
 	if not await _wait_until(func() -> bool: return _confirmed("DODGE_MALFORMED", b_peer)):
 		_fail("malformed dodge command was not delivered")
 		return
@@ -464,7 +464,7 @@ func _run_host_scenario() -> void:
 	if not b_actor.hurt.begin_hurt():
 		_fail("could not start authoritative HURT for remote escape rejection")
 		return
-	_command.rpc_id(b_peer, "RETURN_DURING_SERVER_HURT", 0)
+	_send_command(b_peer, "RETURN_DURING_SERVER_HURT", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN_DURING_SERVER_HURT", b_peer)):
 		_fail("remote HURT escape rejection did not complete")
 		return
@@ -483,7 +483,7 @@ func _run_host_scenario() -> void:
 	b_actor.hurt.physics_tick(b_actor.hurt.remaining + 0.01)
 	b_actor.hurt.duration_seconds = 0.25
 
-	_command.rpc_id(b_peer, "RETURN", 0)
+	_send_command(b_peer, "RETURN", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN", b_peer)):
 		_fail("B did not return independently")
 		return
@@ -492,7 +492,7 @@ func _run_host_scenario() -> void:
 				or _server_root.runtime(SEWER).get_instance_id() != runtime_identity:
 			_fail("B exit destroyed C's Sewer runtime")
 			return
-		_command.rpc_id(c_peer, "RETURN", 0)
+		_send_command(c_peer, "RETURN", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("RETURN", c_peer)):
 			_fail("C did not return")
 			return
@@ -501,7 +501,7 @@ func _run_host_scenario() -> void:
 	if _server_root.runtime(SEWER) != null:
 		_fail("empty Sewer runtime was not cleaned up")
 		return
-	_command.rpc_id(b_peer, "REENTER", 0)
+	_send_command(b_peer, "REENTER", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REENTER", b_peer)):
 		_fail("B did not re-enter a fresh Sewer runtime")
 		return
@@ -514,17 +514,18 @@ func _run_host_scenario() -> void:
 		# Reverse the presentation split as well: the host enters Sewer while the
 		# remote player remains in Settlement. The host presentation is still a
 		# mirror; authoritative movement continues in the isolated Sewer runtime.
-		_command.rpc_id(b_peer, "RETURN_FOR_HOST", 0)
+		_send_command(b_peer, "RETURN_FOR_HOST", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("RETURN_FOR_HOST", b_peer)):
 			_fail("B did not return before the host-only Sewer scenario")
 			return
+		NetworkManager.authoritative_actor(1).position = Vector2(865, 510)
 		var host_enter := NetworkManager.request_enter_region(&"sewer_gate", &"sewer_region")
 		if not host_enter.success or not await _wait_until(func() -> bool:
 			return NetworkManager.is_local_world_ready() and SceneRouter.current_world_id() == SEWER
 		):
 			_fail("host did not enter its independently presented Sewer world")
 			return
-		_command.rpc_id(b_peer, "REPORT_SETTLEMENT", 0)
+		_send_command(b_peer, "REPORT_SETTLEMENT", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("REPORT_SETTLEMENT", b_peer)):
 			_fail("Settlement client was affected by the host transition")
 			return
@@ -558,7 +559,7 @@ func _command(command: String, value: int) -> void:
 				return
 			await _confirm_when_world_ready(command, SEWER)
 		"RETURN", "RETURN_FOR_HOST":
-			var result := NetworkManager.request_return_to_settlement()
+			var result := NetworkManager.request_escape_at_point(&"sewer_entrance")
 			if not result.success:
 				_fail(result.message)
 				return
@@ -623,7 +624,7 @@ func _command(command: String, value: int) -> void:
 			if dodge_actor == null or dodge_actor.dodge.is_active() or dodge_actor.health.evasion_invulnerable:
 				_fail("remote presentation unexpectedly runs the authoritative dodge")
 				return
-			var dodge_result := NetworkManager.request_return_to_settlement()
+			var dodge_result := NetworkManager.request_escape_at_point(&"sewer_entrance")
 			if not dodge_result.success:
 				_fail("client could not submit the escape intent during a server dodge")
 				return
@@ -643,7 +644,7 @@ func _command(command: String, value: int) -> void:
 			if actor == null or actor.hurt.is_active():
 				_fail("remote presentation unexpectedly knows authoritative HURT")
 				return
-			var result := NetworkManager.request_return_to_settlement()
+			var result := NetworkManager.request_escape_at_point(&"sewer_entrance")
 			if not result.success:
 				_fail("client could not submit the escape intent")
 				return
@@ -935,3 +936,12 @@ func _parse_arguments() -> void:
 			port = int(argument.trim_prefix("--port="))
 		elif argument.begins_with("--players="):
 			expected_players = int(argument.trim_prefix("--players="))
+
+# Arrange only authoritative fixture geometry; production RPCs still decide access.
+func _send_command(peer_id: int, command: String, value: int) -> void:
+	if command in ["ENTER", "REENTER", "RETURN", "RETURN_FOR_HOST"]:
+		var actor := NetworkManager.authoritative_actor(peer_id)
+		if actor != null:
+			actor.position = Vector2(865, 510) if command in ["ENTER", "REENTER"] else Vector2(70, 510)
+			actor.velocity = Vector2.ZERO
+	_command.rpc_id(peer_id, command, value)

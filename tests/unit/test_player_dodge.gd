@@ -720,6 +720,7 @@ func _test_authoritative_guards(t: Node) -> void:
 	# world-ready peer, so the single-player fixture registers itself first.
 	var world_state := GameSession.get_peer_world(actor.peer_id)
 	NetworkManager.players[actor.peer_id] = NetworkPlayerInfo.new(actor.peer_id, GameSession.get_player_id(actor.peer_id), "Dodge", true)
+	NetworkManager._set_identity(actor.peer_id, GameSession.get_player_id(actor.peer_id))
 	NetworkManager.world_ready_peers[actor.peer_id] = PeerWorldReadyState.new(world_state.world_id, world_state.revision)
 
 	var item_service := actor.get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
@@ -757,6 +758,7 @@ func _test_authoritative_guards(t: Node) -> void:
 	if owns_item_service:
 		item_service.queue_free()
 	NetworkManager.players.erase(actor.peer_id)
+	NetworkManager._remove_identity(actor.peer_id)
 	NetworkManager.world_ready_peers.erase(actor.peer_id)
 	await t.get_tree().process_frame
 

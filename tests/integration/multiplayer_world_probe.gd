@@ -68,26 +68,27 @@ func _process_host() -> void:
 		_b_peer = remotes[0]
 		_c_peer = remotes[1] if remotes.size() > 1 else 0
 		_started = true
-		_command.rpc_id(_b_peer, "ENTER1")
+		_send_command(_b_peer, "ENTER1")
 		return
 	if _confirmed("ENTER1", _b_peer) and not _confirmations.has("SPLIT_ADVANCED"):
 		if not _assert_host_worlds([_b_peer], [_c_peer] if _c_peer > 0 else []):
 			return
 		_confirmations["SPLIT_ADVANCED"] = {}
 		if _c_peer > 0:
-			_command.rpc_id(_c_peer, "CHECK_STAY")
+			_send_command(_c_peer, "CHECK_STAY")
 		else:
-			_command.rpc_id(_b_peer, "RETURN")
+			_send_command(_b_peer, "RETURN")
 	if _c_peer > 0 and _confirmed("CHECK_STAY", _c_peer) and not _confirmations.has("RETURN_SENT"):
 		_confirmations["RETURN_SENT"] = {}
-		_command.rpc_id(_b_peer, "RETURN")
+		_send_command(_b_peer, "RETURN")
 	if _confirmed("RETURN", _b_peer) and not _confirmations.has("RETURN_ADVANCED"):
 		if not _assert_host_worlds([], [_b_peer, _c_peer] if _c_peer > 0 else [_b_peer]):
 			return
 		_confirmations["RETURN_ADVANCED"] = {}
 		if _c_peer > 0:
-			_command.rpc_id(_c_peer, "CHECK_ALL")
+			_send_command(_c_peer, "CHECK_ALL")
 		else:
+			NetworkManager.authoritative_actor(1).position = Vector2(865, 510)
 			var host_transition := NetworkManager.request_enter_region(&"sewer_gate", &"sewer_region")
 			if not host_transition.success:
 				_fail(host_transition.message)
@@ -101,10 +102,11 @@ func _process_host() -> void:
 			_fail("host Sewer roster was not isolated: %s" % [roster])
 			return
 		_confirmations["HOST_AWAY_CHECK_SENT"] = {}
-		_command.rpc_id(_b_peer, "CHECK_HOST_AWAY")
+		_send_command(_b_peer, "CHECK_HOST_AWAY")
 	if _c_peer == 0 and _confirmed("CHECK_HOST_AWAY", _b_peer) \
 			and not _confirmations.has("HOST_RETURN_SENT"):
-		var host_return := NetworkManager.request_return_to_settlement()
+		NetworkManager.authoritative_actor(1).position = Vector2(70, 510)
+		var host_return := NetworkManager.request_escape_at_point(&"sewer_entrance")
 		if not host_return.success:
 			_fail(host_return.message)
 			return
@@ -115,13 +117,13 @@ func _process_host() -> void:
 			_finish_success()
 	if _c_peer > 0 and _confirmed("CHECK_ALL", _c_peer) and not _confirmations.has("ENTER2_B_SENT"):
 		_confirmations["ENTER2_B_SENT"] = {}
-		_command.rpc_id(_b_peer, "ENTER2")
+		_send_command(_b_peer, "ENTER2")
 	if _confirmed("ENTER2", _b_peer) and not _confirmations.has("ENTER2_C_SENT"):
 		_confirmations["ENTER2_C_SENT"] = {}
-		_command.rpc_id(_c_peer, "ENTER2")
+		_send_command(_c_peer, "ENTER2")
 	if _c_peer > 0 and _confirmed("ENTER2", _c_peer) and not _confirmations.has("CHECK_SEWER_SENT"):
 		_confirmations["CHECK_SEWER_SENT"] = {}
-		_command.rpc_id(_b_peer, "CHECK_SEWER")
+		_send_command(_b_peer, "CHECK_SEWER")
 	if _c_peer > 0 and _confirmed("CHECK_SEWER", _b_peer):
 		if _assert_host_worlds([_b_peer, _c_peer], []):
 			_finish_success()
@@ -161,7 +163,7 @@ func _command(name: String) -> void:
 		if not result.success:
 			_fail(result.message)
 	elif name == "RETURN":
-		var result := NetworkManager.request_return_to_settlement()
+		var result := NetworkManager.request_escape_at_point(&"sewer_entrance")
 		if not result.success:
 			_fail(result.message)
 
@@ -247,3 +249,12 @@ func _parse_arguments() -> void:
 			port = int(argument.trim_prefix("--port="))
 		elif argument.begins_with("--players="):
 			expected_players = int(argument.trim_prefix("--players="))
+
+# Arrange only authoritative fixture geometry; production RPCs still decide access.
+func _send_command(peer_id: int, command: String) -> void:
+	if command in ["ENTER1", "ENTER2", "RETURN"]:
+		var actor := NetworkManager.authoritative_actor(peer_id)
+		if actor != null:
+			actor.position = Vector2(865, 510) if command.begins_with("ENTER") else Vector2(70, 510)
+			actor.velocity = Vector2.ZERO
+	_command.rpc_id(peer_id, command)

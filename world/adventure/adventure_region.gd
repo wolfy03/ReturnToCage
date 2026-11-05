@@ -121,7 +121,7 @@ func _create_escape_points() -> void:
 		target.prompt = "Escape to settlement"
 		target.interaction_priority = 4
 		target.requires_landing = point.requires_landing
-		target.display_policy = GameSession.current_difficulty().escape_display
+		target.display_policy = GameSession.current_difficulty_for_world(PlayerWorldState.adventure_world_id(context.region_id)).escape_display
 		target.position = to_local(point.global_position)
 		target.collision_layer = 8
 		target.collision_mask = 0
@@ -135,7 +135,10 @@ func _create_escape_points() -> void:
 		visual.color = Color("315b63")
 		target.add_child(visual)
 		add_child(target)
-		target.activated.connect(func(_actor: Node) -> void: _escape(AdventureSession.Result.NORMAL_ESCAPE))
+		target.activated.connect(func(actor: Node) -> void:
+			var result := NetworkManager._escape_at_point(actor.peer_id, point.point_id) if server_runtime_mode and actor is PlayerActor else NetworkManager.request_escape_at_point(point.point_id)
+			GameSession.last_message = result.message
+		)
 
 func _create_death_drops() -> void:
 	for record in GameSession.adventure.death_drops:
