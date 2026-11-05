@@ -41,13 +41,14 @@ var last_death_result: RespawnResult:
 	get:
 		return get_player_death_result(get_local_peer_id())
 
-const DEFAULT_START_ID: StringName = &"default_game_start"
+const DEFAULT_START_ID: StringName = ContentRegistry.REQUIRED_START_ID
 const LOCAL_SINGLEPLAYER_PEER_ID := 1
 const LOCAL_EVENT_ACTOR: StringName = &"__local_player__"
 
 var session_id: String = ""
 var play_time_seconds: float = 0.0
 var last_message: String = ""
+var last_network_snapshot_error: String = ""
 # Active peer attachment view. Canonical PlayerState ownership is keyed by the
 # persistent logical player_id in _player_states_by_id.
 var players: Dictionary[int, PlayerState] = {}
@@ -1241,13 +1242,10 @@ func to_network_snapshot(protocol_version: int) -> Dictionary:
 	}
 
 func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
-	if NetworkManager.is_server() or snapshot == null or not snapshot.error_message.is_empty():
+	last_network_snapshot_error = _network_snapshot_issue(snapshot)
+	if not last_network_snapshot_error.is_empty():
 		return false
-	if snapshot.phase < Phase.MENU or snapshot.phase > Phase.RESPAWNING:
-		return false
-	var start := get_start_definition()
-	if start == null:
-		return false
+	var start := get_start_definition(false)
 	_clear_player_state_registry()
 	settlement.reset(start, ContentRegistry)
 	progression.reset(start)
@@ -1260,7 +1258,11 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	for peer_id in snapshot.player_ids:
 		attach_player(peer_id, get_player_id(peer_id))
 	_create_quest_system()
-	if get_local_player() == null or not difficulty.set_id(snapshot.difficulty_id, ContentRegistry):
+	if get_local_player() == null:
+		last_network_snapshot_error = "Local player attachment failed"
+		return false
+	if not difficulty.set_id(snapshot.difficulty_id, ContentRegistry):
+		last_network_snapshot_error = "Unknown difficulty: %s" % snapshot.difficulty_id
 		return false
 	session_id = snapshot.session_id
 	play_time_seconds = 0.0
@@ -1269,6 +1271,40 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	phase_changed.emit()
 	session_reset.emit()
 	return true
+
+## Validate dependencies and identities before retiring any existing models.
+## Failure details survive until NetworkManager copies them to its UI error.
+func _network_snapshot_issue(snapshot: NetworkSessionSnapshot) -> String:
+	if NetworkManager.is_server():
+		return "A server cannot apply a client session snapshot"
+	if snapshot == null:
+		return "Missing multiplayer session snapshot"
+	if not snapshot.error_message.is_empty():
+		return snapshot.error_message
+	if snapshot.phase < Phase.MENU or snapshot.phase > Phase.RESPAWNING:
+		return "Invalid multiplayer phase: %d" % snapshot.phase
+	var start_resource := ContentRegistry.get_definition(DEFAULT_START_ID)
+	if start_resource == null:
+		return "Missing GameStartDefinition: %s" % DEFAULT_START_ID
+	if not start_resource is GameStartDefinition:
+		return "Invalid GameStartDefinition type: %s" % DEFAULT_START_ID
+	if not ContentRegistry.get_definition(snapshot.difficulty_id) is DifficultyDefinition:
+		return "Unknown difficulty: %s" % snapshot.difficulty_id
+	var errors := (start_resource as GameStartDefinition).validate_definition(ContentRegistry)
+	if not errors.is_empty():
+		return "Invalid GameStartDefinition %s: %s" % [DEFAULT_START_ID, "; ".join(errors)]
+	var content_errors := ContentRegistry.validate_all()
+	if not content_errors.is_empty():
+		return "Content validation failed: %s" % "; ".join(content_errors)
+	if not snapshot.player_ids.has(get_local_peer_id()):
+		return "Server omitted the local player"
+	var identities: Array[StringName] = []
+	for peer_id in snapshot.player_ids:
+		var player_id := NetworkManager.player_id_for_peer(peer_id)
+		if not LocalPlayerProfile.is_valid_player_id(player_id) or identities.has(player_id):
+			return "Invalid multiplayer identity mapping for peer %d" % peer_id
+		identities.append(player_id)
+	return ""
 
 func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 	var retained_state := get_player(previous_local_peer_id)

@@ -1751,8 +1751,10 @@ func _receive_session_snapshot(payload: Dictionary) -> void:
 			connection_failed.emit()
 			return
 	if not GameSession.apply_network_snapshot(snapshot):
+		var reason := GameSession.last_network_snapshot_error
 		leave_game()
-		last_error = "Invalid multiplayer session snapshot"
+		last_error = "Session snapshot rejected: %s" % reason
+		printerr("[NET] %s" % last_error)
 		connection_failed.emit()
 		return
 	players.clear()

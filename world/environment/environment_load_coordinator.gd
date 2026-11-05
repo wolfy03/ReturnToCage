@@ -33,7 +33,9 @@ func request(path: String, callback: Callable) -> int:
 	if path.is_empty() or not callback.is_valid():
 		return 0
 	if not _path_request_ids.has(path):
-		if ResourceLoader.load_threaded_request(path, "EnvironmentDefinition") != OK:
+		# The binary .res loader recognizes native types, not GDScript class_name
+		# hints. EnvironmentPresenter still validates the loaded custom resource.
+		if ResourceLoader.load_threaded_request(path, "Resource") != OK:
 			return 0
 		_path_request_ids[path] = []
 	var request_id := _next_request_id

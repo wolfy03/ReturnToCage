@@ -13,9 +13,14 @@ func _ready() -> void:
 		await preload("res://tests/unit/test_gameplay_authority.gd").new().run(self)
 		_finish_tests()
 		return
+	if arguments.has("--export-content-only"):
+		preload("res://tests/unit/test_export_content.gd").new().run(self)
+		_finish_tests()
+		return
 	run_all()
 
 func run_all() -> void:
+	preload("res://tests/unit/test_export_content.gd").new().run(self)
 	test_item_stack_and_inventory()
 	test_equipment()
 	test_survival_and_item_use()
