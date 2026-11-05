@@ -383,6 +383,11 @@ override이며 이 ordering 정책도 gameplay state를 변경하지 않는다.
 
 ## Not synchronized yet
 
+Protocol 16 gameplay authority, server return channels, death-drop recovery,
+world-specific discovery, and transition preflight are documented in
+[gameplay_authority_hardening.md](gameplay_authority_hardening.md), including the
+additional real ENet negative/lifecycle regression commands.
+
 - Other-player equipment appearance summaries (full item state remains owner-private)
 - Unsecured-loot item use
 - Resident runtime movement and animation (resident persistent/domain state is mirrored)
