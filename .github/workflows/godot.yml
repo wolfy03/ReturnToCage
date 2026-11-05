@@ -40,3 +40,49 @@ jobs:
           python tools/test_multiplayer_authority.py --godot "$GODOT" --players 2
           python tools/test_multiplayer_authority.py --godot "$GODOT" --players 3
           python tools/test_multiplayer_protocol.py --godot "$GODOT" --players 2
+  windows-demo:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure pinned Godot paths
+        shell: pwsh
+        run: |
+          "RTC_GODOT=$env:RUNNER_TEMP\godot" >> $env:GITHUB_ENV
+          "RTC_TEMPLATES=$env:APPDATA\Godot\export_templates" >> $env:GITHUB_ENV
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.RTC_TEMPLATES }}
+          key: rtc-windows-templates-${{ hashFiles('.godot-version') }}
+      - name: Install official Windows editor and export templates
+        shell: pwsh
+        run: |
+          python tools/install_windows_godot.py --editor-dir "$env:RTC_GODOT" --templates-dir "$env:RTC_TEMPLATES"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content .godot-version).Trim()
+          "GODOT=$env:RTC_GODOT\Godot_v$version-stable_win64_console.exe" >> $env:GITHUB_ENV
+      - name: Build release EXE and execute content and ENet validation
+        shell: pwsh
+        run: python tools/build_windows_demo.py --godot "$env:GODOT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReturnToCage-Windows-Demo-x86_64
+          path: |
+            build/windows/ReturnToCage_Demo.exe
+            build/windows/build_manifest.json
+            build/windows/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-Export-Validation-Logs
+          path: |
+            build/validation/**/*.log
+            build/validation/**/result.json
+            build/validation/**/summary.json
+          if-no-files-found: warn
+          retention-days: 14

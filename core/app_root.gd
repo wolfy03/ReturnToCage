@@ -50,6 +50,12 @@ func _ready() -> void:
 		error_label.text = "Content validation failed:\n%s" % "\n".join(errors)
 		error_label.visible = true
 	refresh_identity_gate()
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--export-validation="):
+			var probe := preload("res://core/validation/export_runtime_probe.gd").new()
+			probe.configure(self)
+			add_child(probe)
+			break
 
 func refresh_identity_gate(open_dialog: bool = true) -> void:
 	identity_gate_state = IdentityGateState.CHECKING
