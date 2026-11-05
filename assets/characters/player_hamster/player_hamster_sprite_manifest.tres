@@ -1,0 +1,137 @@
+[gd_resource type="Resource" script_class="PlayerSpriteManifest" load_steps=24 format=3]
+
+[ext_resource type="Script" path="res://presentation/definitions/player_sprite_manifest.gd" id="1_manifest"]
+[ext_resource type="Script" path="res://presentation/definitions/player_sprite_animation_entry.gd" id="2_entry"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_idle.png" id="3_idle"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_run_run.png" id="4_run"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_jump_jump.png" id="5_jump"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_fall.png" id="6_fall"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_climb_ladder.png" id="7_climb"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_dodge.png" id="8_dodge"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_hurt.png" id="9_hurt"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_death.png" id="10_death"]
+[ext_resource type="Texture2D" path="res://assets/characters/player_hamster/source/hamster_attack_one_handed.png" id="11_attack"]
+
+[sub_resource type="Resource" id="Idle"]
+script = ExtResource("2_entry")
+semantic_name = &"idle"
+texture = ExtResource("3_idle")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 9.0
+loop = true
+
+[sub_resource type="Resource" id="Run"]
+script = ExtResource("2_entry")
+semantic_name = &"run"
+texture = ExtResource("4_run")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 14.0
+loop = true
+
+[sub_resource type="Resource" id="Jump"]
+script = ExtResource("2_entry")
+semantic_name = &"jump"
+texture = ExtResource("5_jump")
+columns = 3
+rows = 2
+frame_count = 6
+fps = 11.0
+loop = false
+
+[sub_resource type="Resource" id="Fall"]
+script = ExtResource("2_entry")
+semantic_name = &"fall"
+texture = ExtResource("6_fall")
+columns = 3
+rows = 2
+frame_count = 6
+fps = 9.0
+loop = true
+
+[sub_resource type="Resource" id="Climb"]
+script = ExtResource("2_entry")
+semantic_name = &"climb"
+texture = ExtResource("7_climb")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 10.0
+loop = true
+
+[sub_resource type="Resource" id="ClimbIdle"]
+script = ExtResource("2_entry")
+semantic_name = &"climb_idle"
+texture = ExtResource("7_climb")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 6.0
+loop = false
+
+[sub_resource type="Resource" id="Dodge"]
+script = ExtResource("2_entry")
+semantic_name = &"dodge"
+texture = ExtResource("8_dodge")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 12.0
+loop = false
+
+[sub_resource type="Resource" id="Hurt"]
+script = ExtResource("2_entry")
+semantic_name = &"hurt"
+texture = ExtResource("9_hurt")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 12.0
+loop = false
+
+[sub_resource type="Resource" id="Death"]
+script = ExtResource("2_entry")
+semantic_name = &"death"
+texture = ExtResource("10_death")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 10.0
+loop = false
+
+[sub_resource type="Resource" id="Attack1"]
+script = ExtResource("2_entry")
+semantic_name = &"attack_1"
+texture = ExtResource("11_attack")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 12.0
+loop = false
+
+[sub_resource type="Resource" id="Attack2"]
+script = ExtResource("2_entry")
+semantic_name = &"attack_2"
+texture = ExtResource("11_attack")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 12.0
+loop = false
+
+[sub_resource type="Resource" id="Attack3"]
+script = ExtResource("2_entry")
+semantic_name = &"attack_3"
+texture = ExtResource("11_attack")
+columns = 4
+rows = 2
+frame_count = 8
+fps = 12.0
+loop = false
+
+[resource]
+script = ExtResource("1_manifest")
+animations = Array[PlayerSpriteAnimationEntry]([SubResource("Idle"), SubResource("Run"), SubResource("Jump"), SubResource("Fall"), SubResource("Climb"), SubResource("ClimbIdle"), SubResource("Dodge"), SubResource("Hurt"), SubResource("Death"), SubResource("Attack1"), SubResource("Attack2"), SubResource("Attack3")])

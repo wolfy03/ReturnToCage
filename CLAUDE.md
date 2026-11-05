@@ -148,13 +148,15 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
   `production_signature`(clip·region·**source texture resource path**·fps·loop·**frame 별
   duration**)로 비교하므로, 셋 중 하나만 갱신된 상태는 CI 에서 막힌다. editor 에서 특정 frame 의
   duration 만 손으로 고친 경우도 manifest 가 만들어내지 못하는 값이라 stale 로 잡힌다.
-  art 가 아예 없는 현재 상태는 정상 PASS 다.
-- **production art 는 전부 준비됐을 때만 활성화한다.** required clip 12 개가 모두 있고
+  art 가 아예 없는 초기 상태도 정상 PASS 다. 현재 shipped player 경로는 production manifest,
+  generated `SpriteFrames`, profile이 모두 연결된 complete/activated 상태다.
+- **production art 는 semantic completeness를 만족할 때만 활성화한다.** required clip 12 개가 모두 있고
   validation 을 통과하면 profile 의 `sprite_frames` 를 연결하고 `allow_placeholder = false` 로
   바꾼다(그래야 이후 누락이 CI 에서 바로 드러난다). 일부만 있으면 placeholder 를 그대로 쓴다 —
-  clip 별 혼합은 만들지 않는다. `attack_2` 를 `attack_3` 로 복제하거나 `jump` 를 `fall` 로
-  재사용해 완성처럼 보이게 하지 않는다. `PlaceholderVisual` 은 활성화 후에도 fallback 으로
-  씬에 남긴다.
+  Polygon clip과 sprite clip을 섞지 않는다. 전용 sheet가 아직 없는 semantic은 manifest에서
+  명시적인 별도 entry로 같은 texture를 임시 참조할 수 있다. 현재 `climb_idle → climb`,
+  `attack_2/attack_3 → attack_1`만 문서화된 temporary alias이며 gameplay/presenter 코드에 alias
+  분기를 만들지 않는다. `PlaceholderVisual` 은 활성화 후에도 diagnostic fallback으로 씬에 남긴다.
 - **art 때문에 gameplay 를 바꾸지 않는다.** production pose 가 timing 과 안 맞아 보이면
   `AttackAnimationBinding` 의 frame partition 을 먼저 맞춘다 — `AttackDefinition` 의
   startup/active/recovery 는 이 단계에서 건드리지 않는다. sprite 크기 때문에 collision·hitbox·
@@ -359,9 +361,9 @@ func run(t: Node) -> void:            # 비동기가 필요하면 -> void 유지
   이건 교체 대상이며, 교체 시 `server_runtime_mode` 경로에서 표현 노드가 생기지 않도록
   주의한다.
 - **아트가 없는 것과 아트 구조가 없는 것은 다르다.** player 쪽은 presentation/animation
-  구조가 전부 서 있다(manifest → builder → `SpriteFrames` → profile → presenter). 다만
-  production sheet 가 아직 `assets/characters/player_hamster/source/` 에 없어서 player 도
-  `Polygon2D` placeholder 로 그려진다. 적·NPC·시설·아이템은 구조도 아트도 placeholder 다.
+  구조(manifest → builder → `SpriteFrames` → profile → presenter)와 production 햄스터 sheet가
+  연결되어 기본 실행에서 `AnimatedSprite2D`로 그려진다. Polygon은 diagnostic fallback으로만
+  남아 있다. 적·NPC·시설·아이템은 구조도 아트도 placeholder 다.
   배경만 `assets/backgrounds/` 에 실제 텍스처가 있다
   (단, `stars_overlay_3840x2160.png` 는 잘린 파일이라 임포트 실패 상태 — 재출력 필요).
 - z-index 규약: Backdrop `-1100`, 배경 `-1000..-100`, 게임플레이 `0`, 전경(미구현) `100..900`.

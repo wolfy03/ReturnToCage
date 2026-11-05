@@ -2,8 +2,9 @@
 
 Gameplay simulation and presentation are separate. `CharacterAnimationProfile` maps semantic names
 to a `SpriteFrames` resource; gameplay code never references textures, files, frame callbacks, or
-animation lengths. Replacing the placeholder with production art should require changes only to the
-profile and visual assets.
+animation lengths. The shipped player profile now uses the generated production hamster
+`SpriteFrames`; future art replacements remain confined to the manifest, generated resource, profile,
+and visual assets.
 
 ## Required semantic clips
 
@@ -127,14 +128,14 @@ thing it stops after is a structurally broken manifest: completeness, the rebuil
 generated clips all mean nothing until the manifest parses, so reporting them would be noise.
 
 ```text
-no manifest, no frames, placeholder profile            PASS   (where the project is now)
+no manifest, no frames, placeholder profile            PASS   (legal initial state)
 partial manifest, no frames, placeholder profile       PASS   (art arriving)
 partial manifest with frames on the production path    FAIL   (preview artefact committed)
 frames with no manifest                                FAIL   (nobody can regenerate it)
 complete manifest, no frames                           FAIL   (source finished, never baked)
 complete manifest and frames, placeholder profile      FAIL   (activation left half done)
 profile using frames with no sources behind it         FAIL
-complete, regenerated, activated                       PASS
+complete, regenerated, activated                       PASS   (current shipped state)
 ```
 
 For the last case it rebuilds from the manifest in memory and compares a production signature — clip
@@ -222,26 +223,53 @@ around its magnitude rather than replacing it, which is why `visual_scale` must 
 ## Stage status
 
 ```text
-10A  pipeline ready, placeholder active     <- the repository is here
-10B  hardening done; activation waiting on production art
+10A  pipeline ready
+10B  hardening done
+10C  production hamster SpriteFrames active <- the repository is here
 ```
 
 10B tightened the pipeline before any art lands. The production signature covers per-frame duration;
 the shipped output path accepts only the shipped manifest, compared canonically so a different
 spelling is not a different file; the check reports every authoring fault in one run; and the
-ownership scope is stated the same way in every document. The activation steps below are unchanged
-and still waiting on `source/`, which is empty.
+ownership scope is stated the same way in every document. 10C added the normalized source sheets,
+complete manifest, deterministic generated resource, and activated production profile as one unit.
+
+## Shipped player mapping
+
+| Semantic | Source sheet | Grid | Frames | FPS | Loop |
+|---|---|---:|---:|---:|---:|
+| `idle` | `hamster_idle.png` | 4×2 | 8 | 9 | yes |
+| `run` | `hamster_run_run.png` | 4×2 | 8 | 14 | yes |
+| `jump` | `hamster_jump_jump.png` | 3×2 | 6 | 11 | no |
+| `fall` | `hamster_fall.png` | 3×2 | 6 | 9 | yes |
+| `climb` | `hamster_climb_ladder.png` | 4×2 | 8 | 10 | yes |
+| `climb_idle` | `hamster_climb_ladder.png` | 4×2 | 8 | 6 | no |
+| `dodge` | `hamster_dodge.png` | 4×2 | 8 | 12 | no |
+| `hurt` | `hamster_hurt.png` | 4×2 | 8 | 12 | no |
+| `death` | `hamster_death.png` | 4×2 | 8 | 10 | no |
+| `attack_1` | `hamster_attack_one_handed.png` | 4×2 | 8 | 12 | no |
+| `attack_2` | `hamster_attack_one_handed.png` | 4×2 | 8 | 12 | no |
+| `attack_3` | `hamster_attack_one_handed.png` | 4×2 | 8 | 12 | no |
+
+`climb_idle → climb` and `attack_2/attack_3 → attack_1` are explicit temporary semantic aliases.
+They are separate manifest entries, not gameplay or presenter branches, so a dedicated sheet can
+replace only the corresponding texture later. `hamster_walk.png` is retained as an unused source
+asset; there is no walk semantic or walk/run gameplay split yet.
+
+The production profile uses `visual_scale = (0.35, 0.35)` and `visual_offset = (0, -72)`. These
+transforms affect only the presentation child. Attack clips use frame partitions `[0,3)`, `[3,5)`,
+and `[5,8)` for STARTUP, ACTIVE, and RECOVERY; gameplay timing remains authoritative.
 
 ## Placeholder policy
 
-The shipped `player_animation_profile.tres` intentionally has no production SpriteFrames and permits
-the Polygon hamster placeholder. A missing final sprite asset therefore does not block gameplay,
-headless CI, or dedicated server simulation. `presentation_enabled=false` actors do not load or
-instantiate the visual scene at all.
+The shipped `player_animation_profile.tres` points to production SpriteFrames and has
+`allow_placeholder=false`. Normal presentation therefore shows `AnimatedSprite2D` and hides the
+Polygon hamster. `PlaceholderVisual` remains in the visual scene only as a diagnostic/runtime safety
+fallback. `presentation_enabled=false` actors still do not load or instantiate the visual scene at all.
 
-The placeholder is all-or-nothing. Mixing a production `idle` with a polygon `run` would look worse
-than either, so partial art keeps the placeholder for everything. `PlaceholderVisual` stays in the
-scene after activation as a runtime fallback.
+The placeholder remains all-or-nothing. Mixing a production `idle` with a polygon `run` is forbidden;
+all 12 semantic animations must exist before activation. Multiple semantic entries may deliberately
+reference the same production texture when that temporary alias is documented above.
 
 ### Production activation
 
@@ -260,13 +288,14 @@ Only once every required clip exists and validates:
 Facing and visual transform are tuned in `player_animation_profile.tres` at this point, never added
 back to the manifest.
 
-Never substitute one clip for another to reach completeness — duplicating `attack_2` into `attack_3`,
-or reusing `jump` as `fall`, is an art decision disguised as a build step.
+Do not hide missing art in gameplay or presenter code. A temporary semantic alias must be an explicit
+manifest entry and documented in the shipped mapping. The currently approved aliases are only
+`climb_idle → climb` and `attack_2/attack_3 → attack_1`.
 
 ### Asset readiness checklist
 
 ```text
-[ ] all 12 required clips exist
+[x] all 12 required semantic clips exist
 [ ] transparent background, no baked floor or ground shadow
 [ ] no baked weapon, slash, impact, afterimage, dust, blood or scene props
 [ ] climb sheets show the back view without a baked rope or ladder

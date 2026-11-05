@@ -3,11 +3,12 @@ extends RefCounted
 ## the SpriteFrames the game ships, and the rules that keep art swaps from
 ## reaching gameplay.
 ##
-## Production art is not required for any of this: the pipeline is tested on
-## synthetic sheets, and the shipped profile is checked in whichever state it is
-## actually in.
+## Synthetic sheets keep the builder contract deterministic, while the shipped
+## manifest/profile assertions lock the active production hamster resources.
 
 const PLAYER_ANIMATION_PROFILE := preload("res://presentation/player/player_animation_profile.tres")
+const PLAYER_SPRITE_MANIFEST := preload("res://assets/characters/player_hamster/player_hamster_sprite_manifest.tres")
+const PLAYER_SPRITE_FRAMES := preload("res://assets/characters/player_hamster/player_hamster_sprite_frames.tres")
 const CELL := 16
 
 func run(t: Node) -> void:
@@ -731,9 +732,43 @@ func _test_frame_integrity(t: Node) -> void:
 
 func _test_shipped_profile_state(t: Node) -> void:
 	var profile := PLAYER_ANIMATION_PROFILE as CharacterAnimationProfile
+	var manifest := PLAYER_SPRITE_MANIFEST as PlayerSpriteManifest
+	var frames := PLAYER_SPRITE_FRAMES as SpriteFrames
+	t.assert_true(manifest != null, "the production player sprite manifest loads")
+	t.assert_true(manifest.validation_errors().is_empty(), "the production player sprite manifest validates")
+	t.assert_true(manifest.production_readiness_errors().is_empty(), "the production manifest provides all required semantics")
+	t.assert_equal(manifest.animations.size(), PlayerSpriteManifest.REQUIRED_SEMANTICS.size(), "the production manifest authors exactly the 12 required semantic clips")
+	t.assert_true(frames != null, "the generated production SpriteFrames resource loads")
+	t.assert_equal(frames.get_animation_names().size(), PlayerSpriteManifest.REQUIRED_SEMANTICS.size(), "the generated resource contains exactly 12 semantic animations")
 	t.assert_true(profile != null, "the shipped player animation profile loads")
-	t.assert_true(profile.validation_errors().is_empty(), "the shipped profile validates in whatever state it ships")
-	t.assert_true(profile.visual_scale.x > 0.0 and profile.visual_scale.y > 0.0, "the shipped visual scale is usable")
+	t.assert_true(profile.validation_errors().is_empty(), "the active production animation profile validates")
+	t.assert_true(profile.sprite_frames == frames, "the shipped profile uses the generated production SpriteFrames")
+	t.assert_true(not profile.allow_placeholder, "the production profile disables the placeholder")
+	t.assert_equal(profile.visual_scale, Vector2(0.35, 0.35), "the production profile owns the tuned visual scale")
+	t.assert_equal(profile.visual_offset, Vector2(0.0, -72.0), "the production profile owns the tuned feet offset")
+
+	var expected := {
+		&"idle": [4, 2, 8, 9.0, true, "hamster_idle.png"],
+		&"run": [4, 2, 8, 14.0, true, "hamster_run_run.png"],
+		&"jump": [3, 2, 6, 11.0, false, "hamster_jump_jump.png"],
+		&"fall": [3, 2, 6, 9.0, true, "hamster_fall.png"],
+		&"climb": [4, 2, 8, 10.0, true, "hamster_climb_ladder.png"],
+		&"climb_idle": [4, 2, 8, 6.0, false, "hamster_climb_ladder.png"],
+		&"dodge": [4, 2, 8, 12.0, false, "hamster_dodge.png"],
+		&"hurt": [4, 2, 8, 12.0, false, "hamster_hurt.png"],
+		&"death": [4, 2, 8, 10.0, false, "hamster_death.png"],
+		&"attack_1": [4, 2, 8, 12.0, false, "hamster_attack_one_handed.png"],
+		&"attack_2": [4, 2, 8, 12.0, false, "hamster_attack_one_handed.png"],
+		&"attack_3": [4, 2, 8, 12.0, false, "hamster_attack_one_handed.png"],
+	}
+	for semantic: StringName in PlayerSpriteManifest.REQUIRED_SEMANTICS:
+		var entry := manifest.entry(semantic)
+		var authored: Array = expected[semantic]
+		t.assert_true(entry != null, "the production manifest authors '%s'" % semantic)
+		t.assert_equal([entry.columns, entry.rows, entry.frame_count], [authored[0], authored[1], authored[2]], "'%s' uses its inspected grid and frame count" % semantic)
+		t.assert_equal(entry.fps, authored[3], "'%s' uses its authored playback rate" % semantic)
+		t.assert_equal(entry.loop, authored[4], "'%s' uses its authored loop policy" % semantic)
+		t.assert_true(entry.texture.resource_path.ends_with(authored[5]), "'%s' maps to its intended source sheet" % semantic)
 
 	# The player profile specifically needs all three combo clips bound. That is
 	# a player rule, not a rule for every character, so it lives here rather than
@@ -743,14 +778,7 @@ func _test_shipped_profile_state(t: Node) -> void:
 		t.assert_true(binding != null, "the player profile binds '%s'" % key)
 		t.assert_true(binding != null and not binding.animation_name.is_empty(), "'%s' names a clip" % key)
 
-	if profile.sprite_frames == null:
-		# Placeholder mode: the pipeline exists, the art does not yet.
-		t.assert_true(profile.allow_placeholder, "a profile without art must permit the placeholder")
-		return
-
-	# Production mode: everything the presenter can ask for must be there, and
-	# the placeholder must be switched off so a missing clip fails loudly.
-	t.assert_true(not profile.allow_placeholder, "a profile with production art disables the placeholder")
+	# Everything the presenter can ask for must be there.
 	for semantic in PlayerSpriteManifest.REQUIRED_SEMANTICS:
 		t.assert_true(profile.sprite_frames.has_animation(semantic), "production art provides the '%s' clip" % semantic)
 		t.assert_true(profile.sprite_frames.get_frame_count(semantic) > 0, "production clip '%s' has frames" % semantic)

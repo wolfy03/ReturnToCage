@@ -47,8 +47,9 @@ Player HURT는 locomotion이 아니라 scene-local Combat Action이다. `PlayerH
 Gameplay simulation과 presentation은 분리된다. `PlayerActor`의 `PresentationAnchor`는
 `presentation_enabled=true`일 때만 `presentation/player/player_visual.tscn`을 lazy load한다.
 server/headless actor에는 `PlayerVisual`, `AnimatedSprite2D`, Polygon placeholder,
-`PlayerAnimationPresenter`가 생기지 않는다. 현재 shipped profile은 최종 SpriteFrames가 없는
-placeholder 모드이며 기존 햄스터 Polygon은 gameplay scene이 아니라 visual scene에 있다.
+`PlayerAnimationPresenter`가 생기지 않는다. 현재 shipped profile은 generated production
+`SpriteFrames`를 사용하고 `allow_placeholder=false`다. 기존 햄스터 Polygon은 gameplay scene이
+아니라 visual scene에 diagnostic fallback으로만 남아 있다.
 
 sprite asset은 build-time pipeline으로 들어온다. raw 생성형 출력을 **Python Sprite Asset Build
 Tool**이 정규화해 `assets/characters/<캐릭터>/source/`에 놓고, 거기서부터 `PlayerSpriteManifest`

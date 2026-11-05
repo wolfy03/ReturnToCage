@@ -169,8 +169,9 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   slicing을 cell마다 다른 색으로 칠한 synthetic sheet로 frame별 region과 실제 픽셀까지 확인,
   fps/loop/clip 이름/frame 수 전파, 같은 manifest 두 번 빌드 시 완전 동일(그리고 manifest가 바뀌면
   달라짐), 생성 resource의 저장·재로드 round trip, frame region이 양수이고 atlas 안에 있으며 한
-  canvas를 공유하는지, shipped profile 상태 검증(art 없으면 placeholder 허용 유지 / art 있으면
-  required clip 12개 존재·`allow_placeholder=false`·attack partition이 실제 frame 수 안), 그리고
+  canvas를 공유하는지, shipped production manifest/profile 상태 검증(정확한 12 semantic mapping,
+  grid/frame count/fps/loop, generated frames 연결, `allow_placeholder=false`, attack partition이 실제
+  frame 수 안), 그리고
   presentation transform(art 유무에 따른 sprite↔placeholder 전환, visual scale은 presenter에
   offset은 sprite에만 적용되고 actor root·collision·hitbox·hurtbox는 불변, facing이 authored
   scale의 부호만 뒤집고 reconfigure해도 현재 facing을 유지)을 검증한다. 10A 안정화로 다음이
@@ -195,7 +196,7 @@ Visual smoke는 Settlement의 비동기 EnvironmentPresenter 로드 완료를 �
   완성돼 있어도 production 경로에 쓰지 못하고(preview flag 유무와 무관), 자기 출력 경로에는
   완성/불완전 모두 정상적으로 쓴다.
 - unit/test_player_animation_presentation.gd: presentation-disabled actor의 visual 미생성,
-  presentation-enabled actor의 단일 lazy visual/placeholder, shipped profile 및 synthetic
+  presentation-enabled actor의 단일 lazy production visual/placeholder fallback, shipped profile 및 synthetic
   SpriteFrames profile 검증, idle/run/jump/fall/climb/climb_idle resolver, 권위 actor의
   Death/HURT/Dodge/Attack 우선순위와 remote latest-valid-event ordering, root transform과
   분리된 facing flip, committed attack/dodge facing, combo clip 직접 전환, authoritative

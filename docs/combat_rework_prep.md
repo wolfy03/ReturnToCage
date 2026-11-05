@@ -82,7 +82,7 @@ phase 보다 길면 잉여분을 다음 phase 로 넘겨 timeline 이 늘어지�
 | 적 예고 텔레그래프 | 없음 | presenter 구조는 player 쪽에만 있고 적 art 는 placeholder |
 | 보스·엘리트 | 없음 | 적 1종 |
 | 히트스톱·카메라 흔들림 | 없음 | 표현 계층 전무 |
-| 애니메이션 | **9차 기반 완료** | 분리된 PlayerVisual + profile/presenter. 최종 SpriteFrames 전에는 Polygon placeholder |
+| 애니메이션 | **9차 + production player art 완료** | 분리된 PlayerVisual + profile/presenter + generated SpriteFrames. Polygon은 fallback 전용 |
 
 이미 **깔려 있는** 확장점:
 - `CombatComponent.strategies: Dictionary[int, AttackStrategy]` — 공격 방식 추가 지점.
@@ -362,7 +362,7 @@ pending transition, spawn assignment를 변경하지 않으며 HURT 종료 직�
 Player core scene에는 `PresentationAnchor`만 남고 visual은 presentation actor에서 lazy load하는
 `PlayerVisual`로 분리됐다. `presentation_enabled=false`인 server/headless actor는 visual scene,
 SpriteFrames, AnimatedSprite2D, presenter, Polygon placeholder를 만들지 않는다. shipped profile은
-최종 art가 없는 placeholder mode다.
+production 햄스터 SpriteFrames를 사용하며 Polygon은 diagnostic fallback 전용이다.
 
 `CharacterAnimationProfile`/`AttackAnimationBinding`이 semantic clip과 attack phase frame 범위를
 소유하고, `PlayerAnimationPresenter`가 gameplay/action/velocity를 read-only로 해석한다. remote는
@@ -370,10 +370,12 @@ Attack step/key/timing, Dodge duration, HURT duration의 reliable presentation e
 CombatAction/remaining/combo runtime은 복제하지 않는다. 이 wire 변경으로 Protocol은 v15이며
 Save는 v4 그대로다.
 
-### 10차 NEXT
+### Production player Sprite 적용 (완료)
 
-최종 production SpriteFrames import와 다음 전투/표현 범위를 선택할 수 있다. equipment/weapon
-attachment, enemy/NPC presenter, hit flash/hitstop/camera/particle은 9차에 포함하지 않았다.
+12 semantic production manifest와 generated SpriteFrames가 shipped profile에 연결됐다. 전용 asset이
+없는 `climb_idle`, `attack_2`, `attack_3`은 manifest의 독립 entry가 기존 texture를 임시 참조한다.
+다음 전투/표현 범위는 equipment/weapon attachment, enemy/NPC presenter,
+hit flash/hitstop/camera/particle 또는 전용 alias replacement asset이다.
 
 ## 5. 개편 중 깨지기 쉬운 것
 

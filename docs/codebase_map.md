@@ -414,7 +414,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 
 | 영역 | 현황 |
 |---|---|
-| 아트 | Player presentation/animation pipeline 과 semantic presenter 는 완성. production player SpriteFrames 는 아직 활성화되지 않아 player 도 Polygon placeholder 를 쓴다 (`assets/characters/player_hamster/source/` 가 비어 있음). 적·NPC·시설·아이템 art 는 여전히 placeholder. 배경만 실제 텍스처 |
+| 아트 | Player presentation/animation pipeline 과 semantic presenter 에 production 햄스터 `SpriteFrames`가 활성화됐다. 12 semantic을 제공하며 `climb_idle`, `attack_2`, `attack_3`은 명시적인 임시 texture alias다. Polygon은 fallback으로만 남는다. 적·NPC·시설·아이템 art 는 여전히 placeholder. 배경은 실제 텍스처 |
 | 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
 | 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption, 서버 권위 Dodge + i-frame, 3-step combo, authoritative single-slot input buffer, authored chain/dodge cancel window, combat presentation 연동까지 완료. 남은 것: boss 전용 전투, 공중/혼합 mode 전투, 추가 weapon profile, client prediction/reconciliation |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |

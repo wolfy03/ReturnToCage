@@ -15,7 +15,8 @@ func run(t: Node) -> void:
 func _test_profile_validation(t: Node) -> void:
 	var shipped_profile := PLAYER_ANIMATION_PROFILE as CharacterAnimationProfile
 	t.assert_true(shipped_profile != null, "the shipped player animation profile loads")
-	t.assert_true(shipped_profile.validation_errors().is_empty(), "the shipped placeholder animation profile validates")
+	t.assert_true(shipped_profile.validation_errors().is_empty(), "the shipped production animation profile validates")
+	t.assert_true(shipped_profile.sprite_frames != null and not shipped_profile.allow_placeholder, "the shipped profile activates production sprites without placeholder mode")
 
 	var placeholder := CharacterAnimationProfile.new()
 	t.assert_true(placeholder.validation_errors().is_empty(), "a null SpriteFrames placeholder profile is valid")
@@ -118,7 +119,7 @@ func _test_scene_separation(t: Node) -> void:
 	t.assert_equal(presented.presentation_anchor.get_child_count(), 1, "one visual scene is instantiated")
 	presented._setup_presentation()
 	t.assert_equal(presented.presentation_anchor.get_child_count(), 1, "presentation setup is idempotent")
-	t.assert_true(visual.presenter.placeholder.visible and not visual.presenter.sprite.visible, "shipped null SpriteFrames uses the Polygon placeholder")
+	t.assert_true(visual.presenter.sprite.visible and not visual.presenter.placeholder.visible, "the shipped profile displays the production sprite instead of the Polygon placeholder")
 	layer.queue_free()
 	await t.get_tree().process_frame
 	await t.get_tree().process_frame
