@@ -1043,9 +1043,26 @@ func execute_craft_command(recipe_id: StringName, actor_player_id: StringName) -
 func discover_escape(point_id: StringName, player_id: StringName = LOCAL_EVENT_ACTOR) -> void:
 	if not can_mutate_authoritative_state():
 		return
+	if NetworkManager.is_multiplayer_active():
+		var actor_id := get_local_player_id() if player_id == LOCAL_EVENT_ACTOR else player_id
+		discover_escape_for_peer(NetworkManager.peer_id_for_player(actor_id), point_id)
+		return
 	if adventure.active_session != null:
 		if adventure.active_session.discover_escape(point_id):
 			report_quest_event(QuestObjectiveDefinition.ObjectiveType.DISCOVER_POINT, point_id, 1, player_id)
+
+func discover_escape_for_peer(peer_id: int, point_id: StringName) -> void:
+	if not can_mutate_authoritative_state() or not has_player(peer_id):
+		return
+	var world := get_peer_world(peer_id)
+	var session := adventure_session_for_peer(peer_id)
+	var runtime := NetworkManager.server_world_runtime(world.world_id) if world != null else null
+	var definition := ContentRegistry.get_definition(world.region_id) as RegionDefinition if world != null else null
+	if session == null or definition == null or not definition.escape_point_ids.has(point_id) \
+			or runtime == null or not runtime.interaction_target(point_id) is EscapePoint2D:
+		return
+	if session.discover_escape(point_id):
+		report_quest_event(QuestObjectiveDefinition.ObjectiveType.DISCOVER_POINT, point_id, 1, get_player_id(peer_id))
 
 func can_upgrade_facility(facility_id: StringName) -> bool:
 	if not can_mutate_authoritative_state():

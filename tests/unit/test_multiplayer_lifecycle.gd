@@ -27,6 +27,10 @@ func run(t: Node) -> void:
 	var life_c := GameSession.arm_player_life(43)
 	var context := GameSession.request_adventure_from_exit(&"sewer_gate", &"sewer_region")
 	t.assert_true(context != null and GameSession.phase == GameSession.Phase.ADVENTURE, "multiplayer lifecycle test enters adventure")
+	# Explicit remote participation is required by the independent-world model;
+	# the host's legacy phase/facade does not assign remote players to its world.
+	t.assert_true(GameSession.begin_player_adventure(42, &"sewer_gate", &"sewer_region").success, "lifecycle B enters its canonical Adventure world")
+	t.assert_true(GameSession.begin_player_adventure(43, &"sewer_gate", &"sewer_region").success, "lifecycle C enters its canonical Adventure world")
 	var active_adventure := GameSession.adventure.active_session
 	active_adventure.unsecured_loot.add_item(&"berry", 2)
 	var shared_loot_before := active_adventure.unsecured_loot.count(&"berry")

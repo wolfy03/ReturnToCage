@@ -41,6 +41,7 @@ signal loot_despawn_received(world_id: StringName, entity_id: int)
 signal loot_pickup_requested(peer_id: int, world_id: StringName, entity_id: int)
 signal loot_pickup_result_received(success: bool, item_id: StringName, quantity: int, message: String)
 signal return_channel_received(active: bool, progress: float)
+signal death_drop_state_received(world_id: StringName, payload: Dictionary)
 signal gather_requested(peer_id: int, world_id: StringName, interaction_id: StringName)
 signal gather_consumed_received(world_id: StringName, interaction_id: StringName)
 
@@ -1094,6 +1095,71 @@ func request_use_return_item() -> CommandResult:
 	var world := GameSession.get_local_player_world()
 	_request_use_return_item.rpc_id(1, world.world_id, world.revision)
 	return CommandResult.make(true, "Return item intent requested")
+
+func request_recover_death_drop(drop_id: String) -> CommandResult:
+	if is_authoritative_simulation():
+		return _recover_death_drop(local_peer_id(), drop_id)
+	if not is_local_world_ready():
+		return CommandResult.make(false, "Local world is not ready")
+	var world := GameSession.get_local_player_world()
+	_request_recover_death_drop.rpc_id(1, drop_id, world.world_id, world.revision)
+	return CommandResult.make(true, "Death drop recovery requested")
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_recover_death_drop(drop_id: String, world_id: StringName, revision: int) -> void:
+	if not is_host_session_ready():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	var check := _validate_intent_world(sender, world_id, revision)
+	if check.success:
+		check = _recover_death_drop(sender, drop_id)
+	if not check.success:
+		_send_world_transition_failure(sender, check.message)
+
+func _recover_death_drop(peer_id: int, drop_id: String) -> CommandResult:
+	var check := _validate_authoritative_world_interaction(peer_id) if is_multiplayer_active() else CommandResult.make(is_authoritative_simulation())
+	if not check.success:
+		return check
+	var session := GameSession.adventure_session_for_peer(peer_id) if is_multiplayer_active() else GameSession.adventure.active_session
+	var actor := authoritative_actor(peer_id)
+	if session == null or actor == null or actor.hurt.is_active() or actor.dodge.is_active() or actor.is_death_handled():
+		return CommandResult.make(false, "Death drop world unavailable")
+	var manager := actor.get_parent().get_node_or_null("DeathDropManager") as DeathDropManager
+	var target := manager.target(drop_id) if manager != null else null
+	if target == null or not target.can_interact(actor) or not target.is_in_range(actor):
+		return CommandResult.make(false, "Death drop unavailable or outside interaction range")
+	for record in GameSession.adventure.death_drops:
+		if record.id != drop_id or record.recovered or record.region_id != session.context.region_id:
+			continue
+		if not record.owner_player_id.is_empty() and record.owner_player_id != GameSession.get_player_id(peer_id):
+			return CommandResult.make(false, "Death drop belongs to another player")
+		var result := GameSession.adventure.recover_drop(drop_id, peer_id, GameSession.get_player_id(peer_id))
+		manager.update_record(record)
+		return result
+	return CommandResult.make(false, "Death drop unavailable")
+
+func broadcast_death_drop_state(world_id: StringName, payload: Dictionary) -> void:
+	if not is_host_session_ready():
+		return
+	for peer_id in ready_remote_peer_ids(world_id):
+		if can_send_to_peer(peer_id):
+			send_death_drop_state(peer_id, world_id, payload)
+	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
+		death_drop_state_received.emit(world_id, payload)
+
+func send_death_drop_state(peer_id: int, world_id: StringName, payload: Dictionary) -> void:
+	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
+	if ready == null or GameSession.get_peer_world_id(peer_id) != world_id:
+		return
+	if peer_id == local_peer_id():
+		death_drop_state_received.emit(world_id, payload)
+	elif can_send_to_peer(peer_id):
+		_receive_death_drop_state.rpc_id(peer_id, world_id, ready.revision, payload)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_death_drop_state(world_id: StringName, revision: int, payload: Dictionary) -> void:
+	if _accept_current_world_packet(world_id, revision):
+		death_drop_state_received.emit(world_id, payload)
 
 @rpc("any_peer", "call_remote", "reliable")
 func _request_use_return_item(world_id: StringName, revision: int) -> void:

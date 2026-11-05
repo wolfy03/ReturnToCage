@@ -141,20 +141,10 @@ func _create_escape_points() -> void:
 		)
 
 func _create_death_drops() -> void:
-	for record in GameSession.adventure.death_drops:
-		if record.region_id != context.region_id or record.recovered:
-			continue
-		var target: InteractionTarget = WorldHelpers.add_interaction(self, StringName(record.id), "Recover lost items", to_local(record.position), Vector2(34, 34), Color("d5a6e6"), 6)
-		target.add_to_group(&"death_drop")
-		target.activated.connect(func(actor: Node) -> void:
-			var peer_id := (actor as PlayerActor).peer_id if actor is PlayerActor else GameSession.get_local_peer_id()
-			var result: CommandResult = GameSession.adventure.recover_drop(record.id, peer_id, GameSession.get_player_id(peer_id))
-			GameSession.last_message = result.message
-			GameSession.inventory_changed.emit()
-			if record.recovered:
-				target.enabled = false
-				target.queue_free()
-		)
+	var manager := DeathDropManager.new()
+	manager.name = "DeathDropManager"
+	manager.configure(context.region_id, server_runtime_mode or not NetworkManager.is_multiplayer_active())
+	add_child(manager)
 
 func _create_gather(id: StringName, item_id: StringName, amount: int, position: Vector2) -> void:
 	var definition := ContentRegistry.get_item(item_id)

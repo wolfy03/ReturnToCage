@@ -2,8 +2,10 @@ class_name AdventureState
 extends RefCounted
 var active_session: AdventureSession
 var death_drops: Array[DeathDropRecord] = []
+var _recovering: Dictionary[String, bool] = {}
 
 func reset() -> void:
+	_recovering.clear()
 	active_session = null
 	death_drops.clear()
 
@@ -35,18 +37,23 @@ func restore(data: Dictionary, instances: Dictionary[String, String] = {}) -> Pa
 	return errors
 
 func recover_drop(id: String, peer_id: int = 1, player_id: StringName = &"") -> CommandResult:
-	if active_session == null:
+	if not NetworkManager.is_authoritative_simulation() or _recovering.has(id):
+		return CommandResult.make(false, "Death drop recovery unavailable")
+	if NetworkManager.is_multiplayer_active() and player_id != GameSession.get_player_id(peer_id):
+		return CommandResult.make(false, "Invalid recovery identity")
+	var session := GameSession.adventure_session_for_peer(peer_id) if NetworkManager.is_multiplayer_active() else active_session
+	if session == null:
 		return CommandResult.make(false, "Death drops can only be recovered during an expedition")
 	for record in death_drops:
-		if record.id != id or record.region_id != active_session.context.region_id or record.recovered:
+		if record.id != id or record.region_id != session.context.region_id or record.recovered:
 			continue
 		if not record.owner_player_id.is_empty() and record.owner_player_id != player_id:
 			return CommandResult.make(false, "Death drop belongs to another player")
-		if record.owner_peer_id > 0 and record.owner_peer_id != peer_id:
-			return CommandResult.make(false, "Death drop belongs to another player")
-		var personal := active_session.get_player_adventure(peer_id)
+		var personal := session.get_player_adventure(peer_id)
 		if personal == null:
 			return CommandResult.make(false, "Unknown adventure player")
+		_recovering[id] = true
+		personal.unsecured_loot.begin_update()
 		var remaining: Array[ItemStack] = []
 		for stack in record.items:
 			var added: InventoryResult = personal.unsecured_loot.add_stack(stack)
@@ -58,6 +65,10 @@ func recover_drop(id: String, peer_id: int = 1, player_id: StringName = &"") -> 
 		if remaining.is_empty():
 			record.recovered = true
 			death_drops.erase(record)
+			personal.unsecured_loot.end_update()
+			_recovering.erase(id)
 			return CommandResult.make(true, "Death drop recovered")
+		personal.unsecured_loot.end_update()
+		_recovering.erase(id)
 		return CommandResult.make(false, "Unsecured loot full; remainder stays at death site", remaining)
 	return CommandResult.make(false, "Death drop unavailable")

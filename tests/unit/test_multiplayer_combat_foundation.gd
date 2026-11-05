@@ -105,7 +105,7 @@ func run(t: Node) -> void:
 	var settlement := SettlementState.new(Callable(ContentRegistry, "get_item"))
 	settlement.reset(start, ContentRegistry)
 	DeathResolutionService.resolve(player_state, settlement, adventure, ContentRegistry.get_definition(&"normal") as DifficultyDefinition,
-		Vector2.ZERO, start.respawn_policy, start.survival_config, "test", Callable(ContentRegistry, "get_item"), false, player_b, 2)
+		Vector2.ZERO, start.respawn_policy, start.survival_config, "test", Callable(ContentRegistry, "get_item"), false, player_b, 2, &"", session)
 	t.assert_equal(player_a.unsecured_loot.count(&"rusty_scrap"), 5, "one player death leaves another player's unsecured loot unchanged")
 	t.assert_true(player_b.unsecured_loot.count(&"rusty_scrap") < 6, "death loss policy applies only to the dead player's unsecured loot")
 

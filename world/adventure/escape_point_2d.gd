@@ -19,7 +19,10 @@ func _process(_delta: float) -> void:
 			if player != null and runtime != null and runtime.life_phase == PlayerRuntimeState.LifePhase.ALIVE \
 					and player.is_simulation_authority() and player.get_parent() == get_parent() \
 					and player.global_position.distance_to(global_position) < 65.0:
-				GameSession.discover_escape(interaction_id, GameSession.get_player_id(player.peer_id))
+				if NetworkManager.is_multiplayer_active():
+					GameSession.discover_escape_for_peer(player.peer_id, interaction_id)
+				else:
+					GameSession.discover_escape(interaction_id, GameSession.get_player_id(player.peer_id))
 				break
 	var discovered: bool = GameSession.progression.discovered_escape_points.has(interaction_id)
 	var world_id := GameSession.get_peer_world_id(GameSession.get_local_peer_id())

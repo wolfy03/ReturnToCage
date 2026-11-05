@@ -61,6 +61,8 @@ def main() -> int:
                 launch(f"client-{index}", "client", index)
             deadline = time.monotonic() + args.timeout
             while time.monotonic() < deadline and any(p.poll() is None for _, p, _, _ in processes):
+                if any(p.poll() not in (None, 0) for _, p, _, _ in processes):
+                    break
                 time.sleep(0.1)
             failures: list[str] = []
             for name, process, log_path, log_file in processes:
@@ -79,6 +81,10 @@ def main() -> int:
             return 0
         except Exception as error:
             print(f"world runtime probe failed: {error}")
+            for name, _, log_path, log_file in processes:
+                if not log_file.closed:
+                    log_file.flush()
+                print(f"[{name}]\n{log_path.read_text(encoding='utf-8', errors='replace')}")
             return 1
         finally:
             for _, process, _, log_file in processes:

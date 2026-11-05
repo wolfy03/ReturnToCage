@@ -7,8 +7,8 @@ var position: Vector2
 var items: Array[ItemStack] = []
 var session_id: String = ""
 var recovered: bool = false
-# Runtime routing may use owner_peer_id, but persistent ownership must use the
-# stable logical identity. Legacy records without an owner remain shared.
+# Legacy-only runtime diagnostic; never authorizes recovery and is not saved.
+# Save v4 ownership is owner_player_id. Ownerless legacy records remain shared.
 var owner_player_id: StringName
 var owner_peer_id: int = 0
 

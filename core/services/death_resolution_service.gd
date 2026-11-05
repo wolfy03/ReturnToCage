@@ -3,7 +3,11 @@ extends RefCounted
 
 static func resolve(player: PlayerState, settlement: SettlementState, adventure: AdventureState, rules: DifficultyDefinition, death_position: Vector2, policy: RespawnPolicy, survival_config: SurvivalConfig, session_id: String, resolver: Callable, finish_adventure: bool = true, player_adventure: PlayerAdventureState = null, owner_peer_id: int = 0, owner_player_id: StringName = &"", world_session: AdventureSession = null) -> RespawnResult:
 	var result := RespawnResult.new()
-	var active_session := world_session if world_session != null else adventure.active_session
+	# Multiplayer callers must pass the dead player's resolved world session.
+	# A null world session means Settlement, even while the host explores.
+	var active_session := world_session
+	if active_session == null and finish_adventure:
+		active_session = adventure.active_session
 	result.in_adventure = active_session != null
 	if result.in_adventure:
 		var carried := DeathLossPolicy.apply(player.inventory.stacks(), rules, resolver)

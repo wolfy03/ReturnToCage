@@ -8,10 +8,13 @@ var root: ServerWorldRoot
 func run(t: Node) -> void:
 	await _entry_distance(t)
 	await _escape_authorization(t)
+	await _recovery_and_discovery(t)
 	await _return_spawn(t)
 	await _channel_and_failure(t)
 	await _preflight_and_spawn_failures(t)
+	await _drop_entity_recovery(t)
 	await _respawn_ignores_retiring_actor(t)
+	await _settlement_death_does_not_use_host_adventure(t)
 	await _channel_rejections_and_cleanup(t)
 
 func _setup(t: Node, adventure: bool = false) -> void:
@@ -96,6 +99,44 @@ func _escape_authorization(t: Node) -> void:
 	result = NetworkManager._return_player_to_settlement(42, AdventureSession.Result.RETURN_ITEM_ESCAPE)
 	t.assert_true(not result.success, "return result without completed server channel must fail")
 	t.assert_equal(_snapshot(), before, "forged return-item result preserves all state")
+	await _cleanup(t)
+
+func _drop(id: String, owner_peer: int = 7) -> DeathDropRecord:
+	var record := DeathDropRecord.new()
+	record.id = id
+	record.region_id = &"sewer_region"
+	record.owner_player_id = B
+	record.owner_peer_id = owner_peer
+	record.position = Vector2(150, 510)
+	record.items.append(ItemStack.new(&"rusty_scrap", 2))
+	GameSession.adventure.death_drops.append(record)
+	return record
+
+func _recovery_and_discovery(t: Node) -> void:
+	await _setup(t, true)
+	t.assert_true(GameSession.adventure.active_session == null, "host facade stays in Settlement")
+	var session := GameSession.adventure_session_for_peer(42)
+	GameSession.discover_escape(&"sewer_entrance", B)
+	t.assert_true(session.discovered_escape_points.has(&"sewer_entrance"), "remote discovery resolves remote world despite null facade")
+	var record := _drop("persistent-owner")
+	# Isolate the legacy peer ownership bug from the separate global-session bug.
+	GameSession.adventure.active_session = session
+	var result := GameSession.adventure.recover_drop(record.id, 42, B)
+	t.assert_true(result.success, "persistent owner recovers despite changed peer attachment")
+	t.assert_equal(session.get_player_adventure(42).unsecured_loot.count(&"rusty_scrap"), 2, "recovery transfers exactly once")
+	GameSession.adventure.active_session = null
+	var remainder := _drop("partial-capacity")
+	var personal := session.get_player_adventure(42)
+	personal.unsecured_loot.initialize([])
+	personal.unsecured_loot.capacity = 0
+	var partial := GameSession.adventure.recover_drop(remainder.id, 42, B)
+	t.assert_true(not partial.success and remainder.items[0].quantity == 2, "full inventory preserves remainder")
+	personal.unsecured_loot.capacity = 24
+	t.assert_true(GameSession.adventure.recover_drop(remainder.id, 42, B).success, "world-aware recovery works without host facade")
+	t.assert_true(not GameSession.adventure.recover_drop(remainder.id, 42, B).success, "duplicate claim creates no items")
+	t.assert_equal(personal.unsecured_loot.count(&"rusty_scrap"), 2, "claim conserves item quantity")
+	GameSession.discover_escape(&"not_in_sewer", B)
+	t.assert_true(not session.discovered_escape_points.has(&"not_in_sewer"), "discovery rejects wrong-world geometry")
 	await _cleanup(t)
 
 func _return_spawn(t: Node) -> void:
@@ -185,6 +226,31 @@ func _preflight_and_spawn_failures(t: Node) -> void:
 	t.assert_equal(_snapshot(), before, "failed spawn cannot secure loot or remove participation")
 	await _cleanup(t)
 
+func _drop_entity_recovery(t: Node) -> void:
+	await _setup(t, true)
+	var runtime := root.runtime(SEWER)
+	var actor := runtime.player_manager().get_actor(42)
+	actor.position = Vector2(150, 510)
+	var manager := runtime.runtime_scene.get_node("DeathDropManager") as DeathDropManager
+	var record := _drop("runtime-drop")
+	manager._spawn_record(record)
+	t.assert_true(manager.target(record.id) != null, "death drop owns a server-world entity")
+	t.assert_true(not NetworkManager._recover_death_drop(1, record.id).success, "Settlement cannot recover Sewer drop")
+	actor.position = Vector2(800, 510)
+	t.assert_true(not NetworkManager._recover_death_drop(42, record.id).success, "far owner cannot recover")
+	actor.position = Vector2(150, 510)
+	var nested: Array[bool] = []
+	var session := GameSession.adventure_session_for_peer(42)
+	var personal := session.get_player_adventure(42)
+	var callback := func() -> void: nested.append(GameSession.adventure.recover_drop(record.id, 42, B).success)
+	personal.unsecured_loot.changed.connect(callback)
+	t.assert_true(NetworkManager._recover_death_drop(42, record.id).success, "authoritative owner recovery succeeds")
+	personal.unsecured_loot.changed.disconnect(callback)
+	t.assert_equal(nested, [false], "synchronous reentrant claim cannot duplicate loot")
+	t.assert_true(manager.target(record.id) == null, "claimed server entity removed")
+	t.assert_equal(personal.unsecured_loot.count(&"rusty_scrap"), 2, "authoritative recovery transfers once")
+	await _cleanup(t)
+
 func _respawn_ignores_retiring_actor(t: Node) -> void:
 	await _setup(t, true)
 	var manager := root.runtime(SEWER).player_manager()
@@ -195,6 +261,20 @@ func _respawn_ignores_retiring_actor(t: Node) -> void:
 	NetworkManager.world_ready_peers.erase(42)
 	t.assert_true(manager.respawn_player(42), "respawn clearance excludes its own retiring actor")
 	t.assert_true(manager.get_actor(42) != actor, "respawn replaces exactly one authoritative actor")
+	await _cleanup(t)
+
+func _settlement_death_does_not_use_host_adventure(t: Node) -> void:
+	await _setup(t, true)
+	GameSession.begin_player_adventure(1, &"sewer_gate", &"sewer_region")
+	GameSession.finish_player_adventure(42, AdventureSession.Result.NORMAL_ESCAPE)
+	var host_session := GameSession.adventure_session_for_peer(1)
+	host_session.rules = AdventureRulesSnapshot.new(ContentRegistry.get_definition(&"survival") as DifficultyDefinition)
+	t.assert_true(GameSession.current_difficulty_for_world(&"settlement").recovery_policy != DifficultyDefinition.RecoveryPolicy.DROP_AT_DEATH, "Settlement rules do not inherit host Adventure snapshot")
+	var inventory := GameSession.get_player(42).inventory.to_array()
+	var result := GameSession.handle_player_death(42, Vector2(350, 510))
+	t.assert_true(result.success and not result.in_adventure, "Settlement death never falls back to host Adventure session")
+	t.assert_equal(GameSession.get_player(42).inventory.to_array(), inventory, "Settlement player keeps inventory while host explores")
+	t.assert_true(GameSession.adventure.active_session == host_session and host_session.get_player_adventure(1) != null, "remote Settlement death preserves host participation")
 	await _cleanup(t)
 
 func _channel_rejections_and_cleanup(t: Node) -> void:
