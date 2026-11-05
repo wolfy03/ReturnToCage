@@ -3,3 +3,5 @@
 /android/
 /build/
 __pycache__/
+/ReturnToCage*.exe
+/ReturnToCage*.zip
