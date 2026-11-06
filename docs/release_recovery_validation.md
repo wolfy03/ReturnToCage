@@ -82,6 +82,10 @@ server; headless execution alone cannot pass a requested GUI check.
 
 `--rendered` without `--rendering-method` retains the default renderer check.
 Windows GUI CI requests the default renderer and records the actual backend.
+It explicitly selects Dummy audio because the runner has no output endpoint;
+audio playback is not claimed. GUI checks require rendered frames and frame
+progress during movement/animation assertions, in addition to the Windows
+display server and actor roster checks.
 It does not certify a physical graphics card or performance.
 `ReturnToCage-Windows-Demo-x86_64` contains only the embedded PCK EXE,
 `build_manifest.json`, and `SHA256SUMS.txt`.
@@ -119,5 +123,6 @@ Stages 1/2 and the integrated sequence. No existing test or assertion is removed
 The automated tests use independent local processes and isolated identities.
 They do not certify two physical PCs, a LAN/firewall/NAT setup, every graphics
 driver or performance. Every manifest records `manual_two_pc_test=false`.
+It also records `audio_driver_requested` and `audio_playback_verified=false`.
 Unsigned Windows executables may require the usual local trust decision. Active
 Adventure persistence and Host migration remain outside this work.

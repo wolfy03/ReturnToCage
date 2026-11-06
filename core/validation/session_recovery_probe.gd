@@ -432,6 +432,7 @@ func _write(status: String, error: String = "") -> void:
 		"profile": LocalPlayerProfile.PROFILE_VERSION, "display_server": DisplayServer.get_name(),
 		"world": String(SceneRouter.current_world_id()), "peer_id": NetworkManager.local_peer_id(),
 		"process_id": OS.get_process_id(), "rendering_method": RenderingServer.get_current_rendering_method(),
+		"rendered_frames": Engine.get_frames_drawn(),
 		"session_id": GameSession.session_id, "state": _state_dump(), "export_context": _context}
 	var file := FileAccess.open(result_path + ".tmp", FileAccess.WRITE)
 	file.store_string(JSON.stringify(data, "\t"))

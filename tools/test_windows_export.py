@@ -52,6 +52,8 @@ class ExportChecks:
             command.append("--headless")
         elif self.rendering_method:
             command += ["--rendering-method", self.rendering_method]
+        if os.environ.get("RTC_VALIDATION_AUDIO_DRIVER"):
+            command += ["--audio-driver", os.environ["RTC_VALIDATION_AUDIO_DRIVER"]]
         command += ["--log-file", str(log), "--", f"--export-validation={mode}", f"--export-result={report}"]
         if port:
             command.append(f"--export-port={port}")
@@ -100,6 +102,8 @@ class ExportChecks:
             raise RuntimeError(f"version contract changed: {data}")
         if self.rendered and data["display_server"] == "headless":
             raise RuntimeError("rendered startup was requested but only headless execution occurred")
+        if self.rendered and data.get("rendered_frames", 0) <= 0:
+            raise RuntimeError("GUI validation produced no rendered frames")
         self.results[name] = data
         print(name, "PASS", flush=True)
         return data

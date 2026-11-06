@@ -156,6 +156,7 @@ func _pass() -> void:
 	if _finished:
 		return
 	_finished = true
+	_report["rendered_frames"] = Engine.get_frames_drawn()
 	_report["status"] = "pass"
 	_write_report()
 	print("EXPORT VALIDATION PASS %s" % _mode)

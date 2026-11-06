@@ -106,6 +106,8 @@ jobs:
         run: python -m unittest discover -s tools/tests -p test_windows_release_validation.py
       - name: Build release EXE and execute content and ENet validation
         shell: pwsh
+        env:
+          RTC_VALIDATION_AUDIO_DRIVER: Dummy
         run: python tools/build_windows_demo.py --godot "$env:GODOT" --rendered
       - name: Disconnect menu input and session recovery E2E
         shell: pwsh

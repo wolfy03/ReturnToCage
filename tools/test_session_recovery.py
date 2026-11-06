@@ -38,6 +38,8 @@ class LifecycleChecks(RosterController):
             command.append("--headless")
         elif self.rendering_method:
             command += ["--rendering-method", self.rendering_method]
+        if os.environ.get("RTC_VALIDATION_AUDIO_DRIVER"):
+            command += ["--audio-driver", os.environ["RTC_VALIDATION_AUDIO_DRIVER"]]
         command += ["--log-file", str(folder / "engine.log"), "--", "--export-validation=lifecycle",
                     f"--export-result={folder / 'bootstrap.json'}",
                     f"--role={role}", f"--port={self.port}",
@@ -59,7 +61,8 @@ class LifecycleChecks(RosterController):
             raise RuntimeError("Lifecycle verification requires the actual release EXE")
         if self.args.rendered and data["display_server"] == "headless":
             raise RuntimeError("GUI lifecycle verification ran headless")
-        self.roles[role].update(player_id=data["profile_id"], game_pid=data["process_id"])
+        self.roles[role].update(player_id=data["profile_id"], game_pid=data["process_id"],
+                                initial_frames=data.get("rendered_frames", 0))
         if len({item["player_id"] for item in self.roles.values()}) != len(self.roles):
             raise RuntimeError("Lifecycle test roles share a persistent identity")
 
@@ -68,6 +71,8 @@ class LifecycleChecks(RosterController):
         data = super().call(role, action, **values)
         if data["process_id"] != self.roles[role]["game_pid"]:
             raise RuntimeError("Game process changed during the lifecycle sequence")
+        if self.args.rendered and action == "assert_motion" and data.get("rendered_frames", 0) <= self.roles[role]["initial_frames"]:
+            raise RuntimeError("Movement/animation checks did not advance GUI rendering frames")
         return data
 
     def check(self, label: str) -> None:
@@ -180,7 +185,7 @@ class LifecycleChecks(RosterController):
                 raise RuntimeError(f"{role} exit={code}\n{output}")
         summary = {"status": "pass", "release_exe": bool(self.executable), "rendered": self.args.rendered,
                    "steps": len(self.steps), "process_ids": {r: i["game_pid"] for r, i in self.roles.items()},
-                   "manual_two_pc_test": False}
+                   "manual_two_pc_test": False, "audio_playback_verified": False}
         (self.directory / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         print("SESSION LIFECYCLE RECOVERY PASS (3 unchanged processes)", flush=True)
 

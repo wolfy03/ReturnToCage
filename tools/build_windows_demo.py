@@ -110,7 +110,9 @@ def main() -> int:
             raise RuntimeError("EXE changed during validation; refusing publication")
         manifest.update({"schema_version": 1, "git_commit": source["git_commit"], "git_branch": source["git_branch"],
                          "source_dirty": source["source_dirty"], "built_at_utc": datetime.now(timezone.utc).isoformat(),
-                         "manual_two_pc_test": False, "validations": validations})
+                         "manual_two_pc_test": False, "validations": validations,
+                         "audio_driver_requested": os.environ.get("RTC_VALIDATION_AUDIO_DRIVER", "default"),
+                         "audio_playback_verified": False})
         pending.replace(output)
         manifest.update({"engine": actual, "protocol": 16, "save": 4, "profile": 1,
                          "release": True, "validation_artifacts": str(artifacts),
