@@ -275,3 +275,49 @@ previous implementation.
 assertion 총계는 테스트가 늘 때마다 바뀌므로 이 문서에 고정 숫자를 적지 않는다.
 판단 기준은 `tools/check_project.py` 의 `ALL PROJECT CHECKS PASS` 와 각 멀티플레이
 하네스의 종료 코드다.
+
+## Disconnect menu recovery
+
+Audited baseline: `14c3eac23a4cbfb4a2746dcb141daa1457e876e6` (master).
+`integration/test_disconnect_recovery.gd` reproduced ten failing assertions before
+the fix. In particular, a baseline New Game mouse click worked, but the same
+enabled button received no click after Disconnect: the still-visible full-screen
+HUD intercepted GUI input. Additional failures identified the retained Adventure
+facade (blocking `SaveManager.can_load()`), stale SceneRouter assignment cache,
+reentrant menu starts, retired transport callbacks and old actor HUD signals.
+Identity activation and basic transport cache clearing already worked.
+
+The focused test now checks 38 assertions. It injects mouse motion/down/up through
+`Viewport.push_input`, including normal GUI hit testing; checking `disabled` alone
+does not count as input verification. Run it alone or with the full suite:
+
+```sh
+godot --headless --path . res://tests/test_runner.tscn -- --disconnect-only
+python tools/check_project.py --godot <godot-4.7.2>
+python tools/test_multiplayer_disconnect.py --godot <godot-4.7.2>
+python tools/test_multiplayer_disconnect.py --godot <godot-4.7.2> --rendered
+```
+
+The process harness keeps A, B and a replacement Host D alive throughout their
+scenarios. Production Boot buttons receive real Godot GUI mouse events. Only the
+port is supplied to the same production Host/Join handlers. Isolated user-data
+directories and newly created test profiles keep production identities/Saves out
+of the test. It covers Host Disconnect → New/Load/Host/Host Save, explicit Client
+Disconnect → New Game, automatic server loss → New Game/rejoin, and joining the
+replacement Host at `::1` after the first Host at `127.0.0.1`. Host Save is repeated
+with the same saved session ID after an Adventure increased the old revision.
+
+Every menu checkpoint verifies offline transport, empty attachment/ready/roster
+caches, no pending transition/spawn, one unchanged local identity, empty session
+ID, no Adventure sessions/runtimes/presentation actors, hidden/unbound HUD and
+enabled menu actions. Profile and Save hashes must remain unchanged, offline
+simulation authority must recover, and retired transport/timer events must not
+close a new game. A process must exit zero with no engine errors or leak warnings;
+the harness waits for scene cleanup and background resource loads before quitting.
+
+`--rendered` defaults to `gl_compatibility` and rejects a headless display server;
+`--rendering-method forward_plus` is available for machines that can run multiple
+Forward+ contexts. The local rendered regression used Compatibility, not Forward+.
+These are local ENet tests, not a two-physical-PC/LAN certification. CI runs the
+headless process harness on Linux and Windows and uploads its logs/step results.
+No player-roster display synchronization is added by this stage.

@@ -40,6 +40,15 @@ jobs:
           python tools/test_multiplayer_authority.py --godot "$GODOT" --players 2
           python tools/test_multiplayer_authority.py --godot "$GODOT" --players 3
           python tools/test_multiplayer_protocol.py --godot "$GODOT" --players 2
+      - name: Disconnect menu input and session recovery E2E
+        run: python tools/test_multiplayer_disconnect.py --godot "$GODOT" --artifacts build/validation/disconnect-ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Linux-Disconnect-Recovery-Logs
+          path: build/validation/disconnect-ui
+          if-no-files-found: warn
+          retention-days: 14
   windows-demo:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -67,6 +76,9 @@ jobs:
       - name: Build release EXE and execute content and ENet validation
         shell: pwsh
         run: python tools/build_windows_demo.py --godot "$env:GODOT"
+      - name: Disconnect menu input and session recovery E2E
+        shell: pwsh
+        run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui
       - uses: actions/upload-artifact@v4
         with:
           name: ReturnToCage-Windows-Demo-x86_64
@@ -84,5 +96,6 @@ jobs:
             build/validation/**/*.log
             build/validation/**/result.json
             build/validation/**/summary.json
+            build/validation/**/steps.json
           if-no-files-found: warn
           retention-days: 14
