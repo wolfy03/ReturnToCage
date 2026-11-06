@@ -22,6 +22,13 @@ jobs:
           echo "GODOT=$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64" >> "$GITHUB_ENV"
       - name: Import, validate, test and restart
         run: python tools/check_project.py --godot "$GODOT"
+      - name: Release publication boundary tests
+        run: python -m unittest discover -s tools/tests -p test_windows_release_validation.py
+      - name: Normal ENet and Host disconnect E2E
+        run: |
+          python tools/test_multiplayer_local.py --godot "$GODOT" --players 2
+          python tools/test_multiplayer_local.py --godot "$GODOT" --players 3
+          python tools/test_multiplayer_local.py --godot "$GODOT" --players 2 --host-disconnect
       - name: Process-restart multiplayer E2E
         run: |
           python tools/test_multiplayer_restart.py --godot "$GODOT" --players 2 --scenario valid
@@ -46,6 +53,15 @@ jobs:
         run: |
           python tools/test_multiplayer_roster.py --godot "$GODOT" --players 2 --artifacts build/validation/roster2
           python tools/test_multiplayer_roster.py --godot "$GODOT" --players 3 --artifacts build/validation/roster3
+      - name: Same-process single/multiplayer lifecycle E2E
+        run: python tools/test_session_recovery.py --godot "$GODOT" --artifacts build/validation/lifecycle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Linux-Session-Lifecycle-Logs
+          path: build/validation/lifecycle
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -86,9 +102,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = (Get-Content .godot-version).Trim()
           "GODOT=$env:RTC_GODOT\Godot_v$version-stable_win64_console.exe" >> $env:GITHUB_ENV
+      - name: Configure per-application CI software rendering
+        shell: pwsh
+        run: |
+          python tools/install_windows_ci_renderer.py --destination "$env:RTC_GODOT" --destination build/windows --7zip "$env:ProgramFiles\7-Zip\7z.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "LP_NUM_THREADS=2" >> $env:GITHUB_ENV
+      - name: Release publication boundary tests
+        run: python -m unittest discover -s tools/tests -p test_windows_release_validation.py
       - name: Build release EXE and execute content and ENet validation
         shell: pwsh
-        run: python tools/build_windows_demo.py --godot "$env:GODOT"
+        run: python tools/build_windows_demo.py --godot "$env:GODOT" --rendered --rendering-method gl_compatibility
       - name: Disconnect menu input and session recovery E2E
         shell: pwsh
         run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui
@@ -99,6 +123,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/test_multiplayer_roster.py --godot "$env:GODOT" --players 3 --artifacts build/validation/roster3
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: ReturnToCage-Windows-Demo-x86_64
           path: |
@@ -117,5 +142,7 @@ jobs:
             build/validation/**/result.json.tmp
             build/validation/**/summary.json
             build/validation/**/steps.json
+            build/validation/**/failure.json
+            build/validation/**/bootstrap.json
           if-no-files-found: warn
           retention-days: 14

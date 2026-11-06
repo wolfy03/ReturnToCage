@@ -27,7 +27,8 @@ def free_port() -> int:
 
 
 class ExportChecks:
-    def __init__(self, godot: str, executable: Path, artifacts: Path, rendered: bool = False) -> None:
+    def __init__(self, godot: str, executable: Path, artifacts: Path, rendered: bool = False,
+                 rendering_method: str | None = None) -> None:
         self.godot = godot
         self.executable = executable.resolve()
         self.artifacts = artifacts.resolve()
@@ -35,6 +36,7 @@ class ExportChecks:
         self.processes: list[tuple[subprocess.Popen, Path, Path]] = []
         self.results: dict[str, dict] = {}
         self.rendered = rendered
+        self.rendering_method = rendering_method
 
     def launch(self, name: str, mode: str, editor: bool, port: int = 0, release: Path | None = None):
         directory = self.artifacts / name
@@ -48,6 +50,8 @@ class ExportChecks:
         command = [self.godot, "--path", str(ROOT)] if editor else [str(self.executable)]
         if not self.rendered:
             command.append("--headless")
+        elif self.rendering_method:
+            command += ["--rendering-method", self.rendering_method]
         command += ["--log-file", str(log), "--", f"--export-validation={mode}", f"--export-result={report}"]
         if port:
             command.append(f"--export-port={port}")
@@ -129,6 +133,16 @@ class ExportChecks:
             release.touch()
             self.finish(f"{label}-host", host)
             self.finish(f"{label}-client", client)
+        # Keep every original content/Editor/EXE check above. The additional
+        # lifecycle uses the same release binary outside the source directory.
+        from test_session_recovery import LifecycleChecks
+        lifecycle = LifecycleChecks(self.godot, self.executable, self.artifacts / "lifecycle",
+                                    self.rendered, self.rendering_method)
+        try:
+            lifecycle.run()
+            self.results["lifecycle"] = json.loads((lifecycle.directory / "summary.json").read_text(encoding="utf-8"))
+        finally:
+            lifecycle.close()
         (self.artifacts / "summary.json").write_text(json.dumps(self.results, indent=2), encoding="utf-8")
 
     def close(self) -> None:
@@ -144,11 +158,12 @@ def main() -> int:
     parser.add_argument("--exe", type=Path, default=ROOT / "build/windows/ReturnToCage_Demo.exe")
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--rendered", action="store_true", help="Also initialize the default Windows graphics driver, without --headless")
+    parser.add_argument("--rendering-method", choices=("gl_compatibility", "forward_plus"))
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Windows EXE execution requires Windows; no PASS can be reported here")
     artifacts = args.artifacts or Path(tempfile.mkdtemp(prefix="return_to_cage_export_")) / "checks"
-    checks = ExportChecks(args.godot, args.exe, artifacts, args.rendered)
+    checks = ExportChecks(args.godot, args.exe, artifacts, args.rendered, args.rendering_method)
     try:
         checks.run()
         print("WINDOWS RELEASE EXPORT CHECKS PASS", flush=True)

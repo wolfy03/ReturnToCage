@@ -111,7 +111,11 @@ still require testing in that environment; no such result is reported as PASS.
 GitHub Actions keeps all existing Linux regressions and adds a Windows job that
 builds a release and actually runs EXE content and all three Host/Join pairings.
 Only a successful build uploads `ReturnToCage-Windows-Demo-x86_64`; diagnostic
-logs are uploaded separately, including on failure. CI uses headless execution.
+logs are uploaded separately, including on failure. CI keeps headless verification
+and additionally runs Compatibility GUI checks with per-application
+[Mesa software OpenGL](https://github.com/pal1000/mesa-dist-win/releases/tag/25.1.6).
+The installer pins the archive SHA-256. Its DLLs are test infrastructure beside
+the runner's editor/EXE, and are excluded from the distributed artifact.
 
 Reference: [Godot ResourceLoader logical directory listing](https://docs.godotengine.org/en/stable/classes/class_resourceloader.html#class-resourceloader-method-list-directory).
 

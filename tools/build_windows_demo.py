@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -14,6 +15,25 @@ import tempfile
 from test_windows_export import ERRORS, ExportChecks
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def source_identity(allow_dirty: bool = False) -> dict:
+    def git(*arguments: str) -> bytes:
+        return subprocess.check_output(["git", *arguments], cwd=ROOT, timeout=15)
+    commit = git("rev-parse", "HEAD").decode().strip()
+    status = git("status", "--porcelain").decode().strip()
+    if status and not allow_dirty:
+        raise RuntimeError("Release source is dirty; commit changes first (local preflight may use --allow-dirty)")
+    if os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_SHA") != commit:
+        raise RuntimeError("GitHub build SHA differs from the checked-out commit")
+    fingerprint = hashlib.sha256(git("diff", "--binary", "HEAD"))
+    for name in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
+        if name:
+            path = ROOT / os.fsdecode(name)
+            fingerprint.update(name)
+            fingerprint.update(path.read_bytes())
+    return {"git_commit": commit, "git_branch": git("branch", "--show-current").decode().strip(),
+            "source_dirty": bool(status), "fingerprint": fingerprint.hexdigest()}
 
 
 def run(command: list[str], log: Path) -> None:
@@ -50,6 +70,8 @@ def main() -> int:
     parser.add_argument("--godot", default=os.environ.get("GODOT", "godot"))
     parser.add_argument("--output", type=Path, default=ROOT / "build/windows/ReturnToCage_Demo.exe")
     parser.add_argument("--rendered", action="store_true", help="Verify the default Windows renderer as well as headless execution")
+    parser.add_argument("--rendering-method", choices=("gl_compatibility", "forward_plus"))
+    parser.add_argument("--allow-dirty", action="store_true", help="Local preflight only; manifest records source_dirty=true")
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("This release validation requires actual Windows EXE execution")
@@ -64,15 +86,31 @@ def main() -> int:
     artifacts = Path(tempfile.mkdtemp(prefix="windows-release-", dir=validation_root))
     pending = output.with_name(output.stem + ".pending.exe")
     try:
+        source = source_identity(args.allow_dirty)
         run([args.godot, "--headless", "--path", str(ROOT), "--editor", "--quit"], artifacts / "import.log")
         run([args.godot, "--headless", "--path", str(ROOT), "--export-release", "Windows Desktop", str(pending)], artifacts / "export.log")
         manifest = inspect_executable(pending)
+        validations = []
         for rendered in ([False, True] if args.rendered else [False]):
-            checks = ExportChecks(args.godot, pending, artifacts / ("rendered" if rendered else "headless"), rendered)
+            checks = ExportChecks(args.godot, pending, artifacts / ("rendered" if rendered else "headless"),
+                                  rendered, args.rendering_method)
             try:
                 checks.run()
+                content = checks.results["export-content"]
+                validations.append({"rendered": rendered, "display_server": content["display_server"],
+                                    "rendering_method": content["rendering_method"],
+                                    "content_definitions": len(content["content_ids"]),
+                                    "content_parity": True, "host_join": True,
+                                    "session_recovery": checks.results["lifecycle"]})
             finally:
                 checks.close()
+        if source_identity(args.allow_dirty) != source:
+            raise RuntimeError("Source changed during release validation; refusing publication")
+        if inspect_executable(pending) != manifest:
+            raise RuntimeError("EXE changed during validation; refusing publication")
+        manifest.update({"schema_version": 1, "git_commit": source["git_commit"], "git_branch": source["git_branch"],
+                         "source_dirty": source["source_dirty"], "built_at_utc": datetime.now(timezone.utc).isoformat(),
+                         "manual_two_pc_test": False, "validations": validations})
         pending.replace(output)
         manifest.update({"engine": actual, "protocol": 16, "save": 4, "profile": 1,
                          "release": True, "validation_artifacts": str(artifacts),
