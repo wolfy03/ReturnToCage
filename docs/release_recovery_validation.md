@@ -81,10 +81,10 @@ and without a project `--path`. Rendered results require the Windows display
 server; headless execution alone cannot pass a requested GUI check.
 
 `--rendered` without `--rendering-method` retains the default renderer check.
-Compatibility GUI CI uses pinned per-application Mesa; this tests a
-software renderer, not a physical graphics card or performance. The Mesa DLLs are
-excluded from `ReturnToCage-Windows-Demo-x86_64`, which contains only the embedded
-PCK EXE, `build_manifest.json`, and `SHA256SUMS.txt`.
+Windows GUI CI requests the default renderer and records the actual backend.
+It does not certify a physical graphics card or performance.
+`ReturnToCage-Windows-Demo-x86_64` contains only the embedded PCK EXE,
+`build_manifest.json`, and `SHA256SUMS.txt`.
 
 The previous published EXE/manifest remain intact if validation fails. Source
 changes during validation or a changed EXE hash also block publication. Four

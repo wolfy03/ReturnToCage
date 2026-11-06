@@ -102,17 +102,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = (Get-Content .godot-version).Trim()
           "GODOT=$env:RTC_GODOT\Godot_v$version-stable_win64_console.exe" >> $env:GITHUB_ENV
-      - name: Configure per-application CI software rendering
-        shell: pwsh
-        run: |
-          python tools/install_windows_ci_renderer.py --destination "$env:RTC_GODOT" --destination build/windows --7zip "$env:ProgramFiles\7-Zip\7z.exe"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "LP_NUM_THREADS=2" >> $env:GITHUB_ENV
       - name: Release publication boundary tests
         run: python -m unittest discover -s tools/tests -p test_windows_release_validation.py
       - name: Build release EXE and execute content and ENet validation
         shell: pwsh
-        run: python tools/build_windows_demo.py --godot "$env:GODOT" --rendered --rendering-method gl_compatibility
+        run: python tools/build_windows_demo.py --godot "$env:GODOT" --rendered
       - name: Disconnect menu input and session recovery E2E
         shell: pwsh
         run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui
