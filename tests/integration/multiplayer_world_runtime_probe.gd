@@ -74,6 +74,9 @@ func _run_host_scenario() -> void:
 		if peer_id != 1:
 			_remote_peers.append(peer_id)
 	_remote_peers.sort()
+	if not await _wait_until(_host_presentation_matches_world):
+		_fail("initial Host presentation differs from its authoritative same-world roster")
+		return
 	var b_peer := _remote_peers[0]
 	var c_peer := _remote_peers[1] if _remote_peers.size() > 1 else 0
 	for peer_id in _remote_peers:
@@ -487,6 +490,9 @@ func _run_host_scenario() -> void:
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN", b_peer)):
 		_fail("B did not return independently")
 		return
+	if not await _wait_until(_host_presentation_matches_world):
+		_fail("returned B is missing/hidden in Host presentation despite a valid server runtime")
+		return
 	if c_peer > 0:
 		if GameSession.get_peer_world_id(c_peer) != SEWER or _server_root.runtime(SEWER) == null \
 				or _server_root.runtime(SEWER).get_instance_id() != runtime_identity:
@@ -498,6 +504,9 @@ func _run_host_scenario() -> void:
 			return
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if not _host_presentation_matches_world():
+		_fail("Host presentation did not restore every returned same-world player")
+		return
 	if _server_root.runtime(SEWER) != null:
 		_fail("empty Sewer runtime was not cleaned up")
 		return
@@ -890,6 +899,23 @@ func _presentation_roster() -> Array[int]:
 		result.assign(manager._actors.keys())
 		result.sort()
 	return result
+
+func _host_presentation_matches_world() -> bool:
+	var world_id := GameSession.get_peer_world_id(1)
+	var expected := GameSession.peer_ids_in_world(world_id)
+	expected.sort()
+	if _presentation_roster() != expected:
+		return false
+	var runtime := _server_root.runtime(world_id)
+	if runtime == null or runtime.player_manager()._actors.size() != expected.size():
+		return false
+	for peer in expected:
+		var actor := _actor(peer)
+		if actor == null or not actor.visible or actor.process_mode == Node.PROCESS_MODE_DISABLED \
+				or actor.simulation_enabled or not actor.presentation_enabled \
+				or runtime.player_manager().get_actor(peer) == actor:
+			return false
+	return true
 
 func _on_world_assignment(assignment: PlayerWorldAssignment) -> void:
 	if not SceneRouter.apply_world_assignment(assignment):

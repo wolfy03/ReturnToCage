@@ -321,3 +321,13 @@ Forward+ contexts. The local rendered regression used Compatibility, not Forward
 These are local ENet tests, not a two-physical-PC/LAN certification. CI runs the
 headless process harness on Linux and Windows and uploads its logs/step results.
 No player-roster display synchronization is added by this stage.
+
+## Player presentation roster recovery (Stage 2)
+
+See [player_roster_recovery.md](player_roster_recovery.md) for the reproduced
+failure paths, actor replacement ordering, and headless/rendered 2/3-player ENet
+commands. These tests inspect the actual Host presentation roster separately
+from the authoritative runtime roster. Full checks include
+`integration/test_player_presentation_roster.gd`; the focused runner flag is
+`--roster-only`. Existing world-runtime E2E now also verifies that every returned
+same-world player is visible and processing in the Host presentation.

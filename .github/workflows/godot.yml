@@ -42,6 +42,19 @@ jobs:
           python tools/test_multiplayer_protocol.py --godot "$GODOT" --players 2
       - name: Disconnect menu input and session recovery E2E
         run: python tools/test_multiplayer_disconnect.py --godot "$GODOT" --artifacts build/validation/disconnect-ui
+      - name: Host and Client presentation roster ENet E2E
+        run: |
+          python tools/test_multiplayer_roster.py --godot "$GODOT" --players 2 --artifacts build/validation/roster2
+          python tools/test_multiplayer_roster.py --godot "$GODOT" --players 3 --artifacts build/validation/roster3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Linux-Player-Roster-Logs
+          path: |
+            build/validation/roster2
+            build/validation/roster3
+          if-no-files-found: warn
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +92,12 @@ jobs:
       - name: Disconnect menu input and session recovery E2E
         shell: pwsh
         run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui
+      - name: Host and Client presentation roster ENet E2E
+        shell: pwsh
+        run: |
+          python tools/test_multiplayer_roster.py --godot "$env:GODOT" --players 2 --artifacts build/validation/roster2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/test_multiplayer_roster.py --godot "$env:GODOT" --players 3 --artifacts build/validation/roster3
       - uses: actions/upload-artifact@v4
         with:
           name: ReturnToCage-Windows-Demo-x86_64
