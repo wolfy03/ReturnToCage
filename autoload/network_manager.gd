@@ -1512,6 +1512,8 @@ func _on_transport_peer_disconnected(peer_id: int) -> void:
 		peer_left.emit(peer_id)
 
 func _on_connected_to_server() -> void:
+	if state != ConnectionState.CONNECTING:
+		return
 	state = ConnectionState.CONNECTED
 	_local_peer_id = multiplayer.get_unique_id()
 	print("[NET] Joined server; validating protocol")
@@ -1524,12 +1526,18 @@ func _on_connected_to_server() -> void:
 	_request_handshake.rpc_id(1, NETWORK_PROTOCOL_VERSION, local_profile_player_id(), local_profile_display_name())
 
 func _on_connection_failed() -> void:
+	if state != ConnectionState.CONNECTING \
+			or _peer != null and _peer.get_connection_status() != MultiplayerPeer.CONNECTION_DISCONNECTED:
+		return
 	last_error = "Connection failed"
 	_finish_network_session(END_REASON_CONNECTION_FAILED)
 	print("[NET] Connection failed")
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
+	if state != ConnectionState.CONNECTED \
+			or _peer != null and _peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		return
 	last_error = "Server disconnected"
 	_finish_network_session(END_REASON_SERVER_DISCONNECTED)
 	print("[NET] Server disconnected")

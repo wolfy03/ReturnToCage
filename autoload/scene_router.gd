@@ -10,6 +10,27 @@ var _current_world_id: StringName = &""
 var _assignment_session_id: String = ""
 var _assignment_revision: int = 0
 
+func _ready() -> void:
+	GameSession.phase_changed.connect(_on_phase_changed)
+
+func _on_phase_changed() -> void:
+	if GameSession.phase == GameSession.Phase.MENU:
+		_reset_assignment_cache()
+
+func _reset_assignment_cache() -> void:
+	_current_world_id = &""
+	_assignment_session_id = ""
+	_assignment_revision = 0
+
+func clear_presented_world() -> void:
+	_reset_assignment_cache()
+	if not is_instance_valid(_world_layer):
+		return
+	for child in _world_layer.get_children():
+		child.process_mode = Node.PROCESS_MODE_DISABLED
+		_world_layer.remove_child(child)
+		child.queue_free()
+
 func register_world_layer(layer: Node) -> void:
 	_world_layer = layer
 

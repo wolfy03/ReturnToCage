@@ -153,6 +153,8 @@ func _set_session_actions_enabled(enabled: bool) -> void:
 	multiplayer_panel.set_session_actions_enabled(enabled)
 
 func _identity_actions_allowed() -> bool:
+	if _menu_transition_pending:
+		return false
 	if identity_gate_state == IdentityGateState.READY and NetworkManager.is_local_identity_activated():
 		return true
 	_show_error("Resolve the local player identity before starting or loading a session")
@@ -178,10 +180,10 @@ func _load_game() -> void:
 		error_label.text = "No valid save found"
 		error_label.visible = true
 
-func _host_game() -> void:
+func _host_game(port: int = NetworkManager.DEFAULT_PORT) -> void:
 	if _host_restore_pending or not _identity_actions_allowed():
 		return
-	var result := NetworkManager.host_game()
+	var result := NetworkManager.host_game(port)
 	if result != OK:
 		_show_error(NetworkManager.last_error)
 		return
@@ -252,10 +254,10 @@ func _set_host_restore_busy(busy: bool) -> void:
 	load_game_button.disabled = busy or identity_gate_state != IdentityGateState.READY
 	multiplayer_panel.set_host_restore_busy(busy)
 
-func _join_game(address: String) -> void:
+func _join_game(address: String, port: int = NetworkManager.DEFAULT_PORT) -> void:
 	if not _identity_actions_allowed():
 		return
-	var result := NetworkManager.join_game(address)
+	var result := NetworkManager.join_game(address, port)
 	if result != OK:
 		_show_error(NetworkManager.last_error)
 	else:
@@ -301,16 +303,25 @@ func _return_to_menu() -> void:
 	if _menu_transition_pending:
 		return
 	_menu_transition_pending = true
-	for child in world_layer.get_children():
-		child.process_mode = Node.PROCESS_MODE_DISABLED
-		world_layer.remove_child(child)
-		child.queue_free()
+	get_tree().paused = false
+	_set_session_actions_enabled(false)
+	SceneRouter.clear_presented_world()
 	menu.visible = true
 	multiplayer_panel.refresh()
 	call_deferred("_finish_menu_transition")
 
 func _finish_menu_transition() -> void:
+	# queue_free() completes at the frame boundary. Until then every menu entry
+	# point rejects reentrant starts, even if a signal bypasses disabled buttons.
+	if not is_inside_tree():
+		return
+	await get_tree().process_frame
+	if not is_inside_tree():
+		return
 	_menu_transition_pending = false
+	_set_host_restore_busy(false)
+	refresh_identity_gate(false)
+	multiplayer_panel.refresh()
 
 func _show_error(message: String) -> void:
 	error_label.text = message

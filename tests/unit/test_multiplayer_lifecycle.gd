@@ -209,7 +209,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 	t.assert_equal(end_reasons.back(), NetworkManager.END_REASON_MANUAL, "host manual leave emits one session-end reason")
 	t.assert_true(app_menu.visible and host_world.get_parent() == null, "host leave removes world and returns Main Menu")
 	_assert_clean_menu_state(t, "host leave")
-	await t.get_tree().process_frame
+	await _wait_for_menu_cleanup(t, app)
 
 	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
 	NetworkManager._session_entered = true
@@ -222,7 +222,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 	NetworkManager.leave_game()
 	t.assert_true(app_menu.visible and client_world.get_parent() == null, "client manual leave removes world and returns Main Menu")
 	_assert_clean_menu_state(t, "client leave")
-	await t.get_tree().process_frame
+	await _wait_for_menu_cleanup(t, app)
 
 	NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
 	NetworkManager._session_entered = true
@@ -236,7 +236,7 @@ func _test_main_menu_session_lifecycle(t: Node) -> void:
 	t.assert_equal(end_reasons.back(), NetworkManager.END_REASON_SERVER_DISCONNECTED, "unexpected server disconnect emits session-end reason")
 	t.assert_true(app_menu.visible and disconnected_world.get_parent() == null, "server disconnect removes world and returns Main Menu")
 	_assert_clean_menu_state(t, "server disconnect")
-	await t.get_tree().process_frame
+	await _wait_for_menu_cleanup(t, app)
 
 	var ended_count := end_reasons.size()
 	NetworkManager.state = NetworkManager.ConnectionState.CONNECTING
@@ -263,3 +263,10 @@ func _test_spawn_slot_exhaustion(t: Node) -> void:
 		t.assert_true(manager._assign_slot(peer_id), "spawn slot %d is assigned once" % peer_id)
 	t.assert_true(not manager._assign_slot(NetworkManager.MAX_PLAYERS + 1), "spawn manager rejects slot exhaustion")
 	manager.free()
+
+func _wait_for_menu_cleanup(t: Node, app: Node) -> void:
+	for frame in 4:
+		if not app._menu_transition_pending:
+			return
+		await t.get_tree().process_frame
+	t.assert_true(false, "menu cleanup must complete before the next synthetic session starts")

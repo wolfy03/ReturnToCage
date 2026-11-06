@@ -1313,6 +1313,10 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 	var retired_peer_ids: Array[int] = []
 	retired_peer_ids.assign(players.keys())
 	_clear_player_state_registry()
+	# Session participation and unsecured loot are retired, while the existing
+	# local PlayerState, persistent drop records, Save and Profile stay intact.
+	adventure.active_session = null
+	last_network_snapshot_error = ""
 	if retained_state == null:
 		retained_state = _create_player_state()
 		var start := get_start_definition(false)

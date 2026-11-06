@@ -381,6 +381,30 @@ visual을 교체한다. local render timer가 아직 HURT/Dodge를 재생 중이
 stale/duplicate를 거절한다. Death는 health/lifecycle snapshot으로 판정하는 유일한 절대 visual
 override이며 이 ordering 정책도 gameplay state를 변경하지 않는다.
 
+## Disconnect recovery (Stage 1)
+
+Host leave, explicit Client leave, and server loss share the offline-menu reset.
+`NetworkManager` retires transport attachments, ready/roster caches, pending
+transitions and spawn assignments before resetting `GameSession` to one local
+profile identity. The host-local `AdventureState.active_session` facade is also
+cleared; unsecured expedition loot is abandoned. Existing local possessions,
+persistent death-drop records and disk Save v4/Profile v1 are preserved.
+
+`GameHUD` is visible only with a nonempty session ID outside `MENU`. Menu entry
+hides it and unbinds the previous actor's signals. Deferred actor binding checks
+the session and binding generation. `SceneRouter` clears its world/session/revision
+cache so a restored Save can reuse its session ID with a fresh lower revision.
+
+`AppRoot` coalesces repeated end notifications and blocks session actions until
+queued scene deletion has crossed a frame boundary, then refreshes the existing
+identity gate and MultiplayerPanel. Retired connection signals are ignored when
+they do not match the current transport state. Existing transport-generation
+guards still reject old timers. No wire payload, roster display policy, Save or
+Profile schema changes are involved (Protocol 16 / Save 4 / Profile 1).
+
+The reproduction and real mouse/ENet regression commands are in
+[testing.md](testing.md#disconnect-menu-recovery).
+
 ## Not synchronized yet
 
 Protocol 16 gameplay authority, server return channels, death-drop recovery,

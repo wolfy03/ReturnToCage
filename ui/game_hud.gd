@@ -16,15 +16,20 @@ var network_settlement_buttons: Array[Button] = []
 var direct_player_buttons: Array[Button] = []
 var bound_player: PlayerActor
 var _refresh_remaining: float = 0.0
+var _binding_generation: int = 0
+
+func _has_active_game() -> bool:
+	return GameSession.phase != GameSession.Phase.MENU and not GameSession.session_id.is_empty()
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	visible = not GameSession.session_id.is_empty()
+	visible = _has_active_game()
 	add_to_group(&"hud")
 	_build_ui()
 	SceneRouter.transition_finished.connect(_on_transition_finished)
 	GameSession.inventory_changed.connect(refresh_all)
-	GameSession.session_reset.connect(func() -> void: visible = true; refresh_all())
+	GameSession.session_reset.connect(refresh_all)
+	NetworkManager.multiplayer_session_ended.connect(_on_session_ended)
 	GameSession.storage_changed.connect(refresh_all)
 	GameSession.settlement_state_changed.connect(func(_revision: int) -> void: refresh_all())
 	GameSession.facility_changed.connect(func(_id: StringName, _level: int) -> void: refresh_all())
@@ -121,21 +126,51 @@ func _settlement_replication_service() -> SettlementReplicationService:
 	return get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
 
 func _on_transition_finished(_destination: StringName) -> void:
+	_binding_generation += 1
+	var generation := _binding_generation
+	var session_id := GameSession.session_id
 	await get_tree().process_frame
+	if generation != _binding_generation or session_id != GameSession.session_id or not _has_active_game():
+		return
 	_bind_player(get_tree().get_first_node_in_group(&"local_player") as PlayerActor)
 	refresh_all()
 
 func _bind_player(player: PlayerActor) -> void:
+	_binding_generation += 1
+	if is_instance_valid(bound_player):
+		if bound_player.interaction_prompt_changed.is_connected(_on_interaction_prompt_changed):
+			bound_player.interaction_prompt_changed.disconnect(_on_interaction_prompt_changed)
+		if bound_player.return_channel_changed.is_connected(_on_return_channel_changed):
+			bound_player.return_channel_changed.disconnect(_on_return_channel_changed)
+		if bound_player.health.health_changed.is_connected(_on_health_changed):
+			bound_player.health.health_changed.disconnect(_on_health_changed)
+		if bound_player.survival.survival_changed.is_connected(_on_survival_changed):
+			bound_player.survival.survival_changed.disconnect(_on_survival_changed)
 	bound_player = player
+	prompt_label.text = ""
+	return_bar.visible = false
+	return_bar.value = 0.0
 	if player == null:
 		return
-	player.interaction_prompt_changed.connect(func(text: String) -> void: prompt_label.text = text)
-	player.return_channel_changed.connect(func(active: bool, progress: float) -> void:
-		return_bar.visible = active; return_bar.value = progress
-	)
+	player.interaction_prompt_changed.connect(_on_interaction_prompt_changed)
+	player.return_channel_changed.connect(_on_return_channel_changed)
 	player.health.health_changed.connect(_on_health_changed)
 	player.survival.survival_changed.connect(_on_survival_changed)
 	_update_vitals_label()
+
+func _on_interaction_prompt_changed(text: String) -> void:
+	prompt_label.text = text
+
+func _on_return_channel_changed(active: bool, progress: float) -> void:
+	return_bar.visible = active
+	return_bar.value = progress
+
+func _on_session_ended(_reason: String) -> void:
+	visible = false
+	_bind_player(null)
+
+func _exit_tree() -> void:
+	_bind_player(null)
 
 ## Stamina is read from the authoritative runtime mirror, never from the bound
 ## actor's CombatComponent: on a client that component does not simulate, so its
@@ -168,7 +203,12 @@ func _on_player_combat_runtime_changed(peer_id: int, _stamina: float, _max_stami
 		_update_vitals_label()
 
 func refresh_all() -> void:
+	visible = _has_active_game()
 	if inventory_label == null:
+		return
+	if not visible:
+		_bind_player(null)
+		difficulty.get_popup().hide()
 		return
 	# The authoritative host regenerates stamina continuously without emitting a
 	# per-step signal, so the periodic refresh keeps its own bar current.
@@ -242,6 +282,8 @@ func _on_persistence_result(_success: bool, message: String) -> void:
 	refresh_all()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not _has_active_game():
+		return
 	if event.is_action_pressed(&"open_inventory"):
 		detail_panel.visible = not detail_panel.visible
 	elif event.is_action_pressed(&"pause") and not GameSession.session_id.is_empty():
