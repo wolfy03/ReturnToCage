@@ -33,6 +33,10 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent, p_movement: 
 	movement = p_movement
 	var reads_local_input := actor.is_local_player()
 	input.configure_input(reads_local_input, actor.is_simulation_authority())
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	if runtime != null:
+		_local_sequence = runtime.move_input_sequence
+		_snapshot_sequence = runtime.transform_sequence
 	NetworkManager.player_transform_snapshot_received.connect(_on_transform_snapshot_received)
 	NetworkManager.player_runtime_snapshot_received.connect(_on_runtime_snapshot_received)
 	NetworkManager.player_combat_runtime_snapshot_received.connect(_on_combat_runtime_snapshot_received)
@@ -69,6 +73,9 @@ func _process(_delta: float) -> void:
 		input.take_jump_pressed()
 		return
 	_local_sequence += 1
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	if runtime != null:
+		runtime.move_input_sequence = _local_sequence
 	var command := PlayerMoveCommand.new(_local_sequence, input.move_axis, input.vertical_axis, input.take_jump_pressed())
 	if command.is_valid_after(_local_sequence - 1):
 		NetworkManager.submit_player_move_input(
@@ -85,6 +92,9 @@ func server_snapshot_tick(delta: float) -> void:
 		return
 	_snapshot_accumulator = fmod(_snapshot_accumulator, SNAPSHOT_INTERVAL)
 	_snapshot_sequence += 1
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	if runtime != null:
+		runtime.transform_sequence = _snapshot_sequence
 	NetworkManager.broadcast_player_transform(
 		actor.peer_id, actor.global_position, actor.velocity, actor.facing, int(movement.mode), _snapshot_sequence
 	)
@@ -218,6 +228,9 @@ func _on_transform_snapshot_received(
 	if not NetworkProtocol.valid_snapshot(position, replicated_velocity, replicated_facing, movement_mode):
 		return
 	_snapshot_sequence = sequence
+	var runtime := GameSession.get_player_runtime(actor.peer_id)
+	if runtime != null:
+		runtime.transform_sequence = sequence
 	_target_position = position
 	_target_velocity = replicated_velocity
 	_target_facing = replicated_facing

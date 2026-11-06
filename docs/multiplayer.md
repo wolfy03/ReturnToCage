@@ -407,6 +407,11 @@ The reproduction and real mouse/ENet regression commands are in
 
 ## Not synchronized yet
 
+Stage 2 player presentation roster recovery is described in
+[player_roster_recovery.md](player_roster_recovery.md). Host-local roster delivery
+and Client RPC receipt share the same identity/session/world/revision checks;
+presentation signals never create or remove authoritative runtime actors.
+
 Protocol 16 gameplay authority, server return channels, death-drop recovery,
 world-specific discovery, and transition preflight are documented in
 [gameplay_authority_hardening.md](gameplay_authority_hardening.md), including the

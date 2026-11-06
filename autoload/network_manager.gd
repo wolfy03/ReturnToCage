@@ -1269,6 +1269,7 @@ func _dispatch_world_assignment(peer_id: int, old_world_id: StringName) -> Comma
 	_pending_world_transitions[peer_id] = assignment
 	world_ready_peers.erase(peer_id)
 	_replication_ready_after_msec.erase(peer_id)
+	_apply_world_roster_remove(peer_id, assignment)
 	for ready_peer_id in ready_remote_peer_ids(old_world_id):
 		if ready_peer_id != peer_id and can_send_to_peer(ready_peer_id):
 			_receive_world_roster_remove.rpc_id(ready_peer_id, peer_id, assignment.to_payload())
@@ -1289,14 +1290,55 @@ func request_local_world_roster() -> void:
 		if local_world == null:
 			return
 		for peer_id in GameSession.peer_ids_in_world(local_world.world_id):
-			var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
-			var assignment := world_assignment_for_peer(peer_id)
-			if spawn != null and spawn.position.is_finite() and assignment.error_message.is_empty():
-				if peer_id != local_peer_id():
-					world_roster_player_received.emit(peer_id, assignment, spawn.position)
+			apply_local_world_roster_player(peer_id)
 		local_world_roster_complete.emit(local_world.world_id, local_world.revision)
 	elif is_session_connected() and multiplayer.get_unique_id() != 1:
 		_request_world_roster.rpc_id(1)
+
+## The Host consumes the same validated roster as RPC recipients, without a
+## loopback ENet RPC or letting a presentation spawner invent an assignment.
+func apply_local_world_roster_player(peer_id: int) -> bool:
+	if not is_host_session_ready():
+		return false
+	var spawn := _roster_spawn_assignment(peer_id)
+	return spawn != null and _apply_world_roster_player(peer_id, world_assignment_for_peer(peer_id), spawn.position)
+
+func _roster_spawn_assignment(peer_id: int) -> PlayerSpawnAssignment:
+	var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+	if spawn == null or not spawn.error_message.is_empty() or not spawn.position.is_finite() \
+			or spawn.session_id != GameSession.session_id or not GameSession.has_player(peer_id) \
+			or spawn.player_id != GameSession.get_player_id(peer_id) or spawn.player_id != player_id_for_peer(peer_id):
+		return null
+	return spawn
+
+func _valid_roster_world(peer_id: int, assignment: PlayerWorldAssignment) -> bool:
+	return assignment != null and assignment.error_message.is_empty() and assignment.to_world_state().is_valid() \
+		and assignment.session_id == GameSession.session_id and GameSession.has_player(peer_id) \
+		and assignment.player_id == GameSession.get_player_id(peer_id) and assignment.player_id == player_id_for_peer(peer_id)
+
+func _apply_roster_world(peer_id: int, assignment: PlayerWorldAssignment) -> bool:
+	if not _valid_roster_world(peer_id, assignment):
+		return false
+	if not is_server() and peer_id != local_peer_id() and not GameSession.apply_remote_player_world_mirror(assignment):
+		return false
+	var current := GameSession.get_peer_world(peer_id)
+	return current != null and current.world_id == assignment.world_id and current.revision == assignment.revision
+
+func _apply_world_roster_player(peer_id: int, assignment: PlayerWorldAssignment, position: Vector2) -> bool:
+	var local_world := GameSession.get_local_player_world()
+	if local_world == null or not position.is_finite() or not _valid_roster_world(peer_id, assignment) \
+			or assignment.world_id != local_world.world_id or not _apply_roster_world(peer_id, assignment):
+		return false
+	world_roster_player_received.emit(peer_id, assignment, position)
+	return true
+
+func _apply_world_roster_remove(peer_id: int, assignment: PlayerWorldAssignment) -> bool:
+	var local_world := GameSession.get_local_player_world()
+	if local_world == null or peer_id == local_peer_id() or not _apply_roster_world(peer_id, assignment) \
+			or assignment.world_id == local_world.world_id:
+		return false
+	world_roster_player_removed.emit(peer_id)
+	return true
 
 func confirm_local_world_ready() -> void:
 	var local_world := GameSession.get_local_player_world()
@@ -1319,7 +1361,7 @@ func _request_world_roster() -> void:
 			or pending.revision != sender_world.revision:
 		return
 	for peer_id in GameSession.peer_ids_in_world(sender_world.world_id):
-		var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+		var spawn := _roster_spawn_assignment(peer_id)
 		var assignment := world_assignment_for_peer(peer_id)
 		if spawn != null and spawn.position.is_finite() and assignment.error_message.is_empty():
 			_receive_world_roster_player.rpc_id(sender, peer_id, assignment.to_payload(), [spawn.position.x, spawn.position.y])
@@ -1333,26 +1375,14 @@ func _receive_world_roster_player(peer_id: int, world_payload: Dictionary, coord
 		return
 	var position := Vector2(float(coordinates[0]), float(coordinates[1]))
 	var assignment := PlayerWorldAssignment.from_payload(world_payload, GameSession.session_id)
-	var local_world := GameSession.get_local_player_world()
-	if not position.is_finite() or not assignment.error_message.is_empty() or local_world == null \
-			or assignment.world_id != local_world.world_id:
-		return
-	if assignment.player_id != GameSession.get_player_id(peer_id):
-		return
-	if peer_id != local_peer_id():
-		GameSession.apply_remote_player_world_mirror(assignment)
-	world_roster_player_received.emit(peer_id, assignment, position)
+	_apply_world_roster_player(peer_id, assignment, position)
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_world_roster_remove(peer_id: int, world_payload: Dictionary) -> void:
 	if is_server():
 		return
 	var assignment := PlayerWorldAssignment.from_payload(world_payload, GameSession.session_id)
-	if not assignment.error_message.is_empty() or assignment.player_id != GameSession.get_player_id(peer_id):
-		return
-	if peer_id != local_peer_id():
-		GameSession.apply_remote_player_world_mirror(assignment)
-	world_roster_player_removed.emit(peer_id)
+	_apply_world_roster_remove(peer_id, assignment)
 
 @rpc("authority", "call_remote", "reliable")
 func _receive_world_roster_complete(world_id: StringName, revision: int) -> void:
@@ -1374,10 +1404,11 @@ func _confirm_world_ready(world_id: StringName, revision: int) -> void:
 
 func _broadcast_world_arrival(peer_id: int) -> void:
 	var world := GameSession.get_peer_world(peer_id)
-	var spawn: PlayerSpawnAssignment = _spawn_assignments.get(peer_id)
+	var spawn := _roster_spawn_assignment(peer_id)
 	var assignment := world_assignment_for_peer(peer_id)
 	if world == null or spawn == null or not spawn.position.is_finite() or not assignment.error_message.is_empty():
 		return
+	apply_local_world_roster_player(peer_id)
 	for ready_peer_id in ready_remote_peer_ids(world.world_id):
 		if ready_peer_id != peer_id and can_send_to_peer(ready_peer_id):
 			_receive_world_roster_player.rpc_id(

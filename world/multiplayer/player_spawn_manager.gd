@@ -120,13 +120,9 @@ func _on_player_registered(peer_id: int, _state: PlayerState) -> void:
 		_spawn_registered_presentation(peer_id)
 
 func _spawn_registered_presentation(peer_id: int) -> void:
-	if authoritative_runtime or get_actor(peer_id) != null or GameSession.get_peer_world_id(peer_id) != world_id:
+	if authoritative_runtime or not NetworkManager.is_server() or GameSession.get_peer_world_id(peer_id) != world_id:
 		return
-	var assignment := NetworkManager.spawn_assignment_for_peer(peer_id)
-	if assignment == null and NetworkManager.is_server():
-		assignment = NetworkManager.ensure_authoritative_spawn_assignment(peer_id)
-	if assignment != null and assignment.position.is_finite():
-		_spawn_local(peer_id, assignment.position)
+	NetworkManager.apply_local_world_roster_player(peer_id)
 
 func _on_player_world_changed(player_id: StringName, state: PlayerWorldState) -> void:
 	if not _initialized:
@@ -135,14 +131,8 @@ func _on_player_world_changed(player_id: StringName, state: PlayerWorldState) ->
 	if peer_id <= 0:
 		return
 	if state.world_id != world_id:
-		if authoritative_runtime:
-			_despawn_local(peer_id)
-			_slots.erase(peer_id)
-		else:
-			var actor := get_actor(peer_id)
-			if actor != null:
-				actor.visible = false
-				actor.process_mode = Node.PROCESS_MODE_DISABLED
+		_despawn_local(peer_id)
+		_slots.erase(peer_id)
 	elif authoritative_runtime and get_actor(peer_id) == null:
 		var assignment := NetworkManager.spawn_assignment_for_peer(peer_id)
 		if assignment != null:
@@ -402,17 +392,33 @@ func _on_world_roster_player_received(
 	assignment: PlayerWorldAssignment,
 	spawn_position: Vector2
 ) -> void:
-	if not _initialized or assignment == null or assignment.world_id != world_id:
+	if not _initialized or authoritative_runtime or assignment == null or not spawn_position.is_finite() \
+			or not assignment.error_message.is_empty() or assignment.session_id != GameSession.session_id \
+			or assignment.world_id != world_id or not assignment.to_world_state().is_valid() \
+			or assignment.player_id != GameSession.get_player_id(peer_id):
 		return
-	if get_actor(peer_id) == null:
+	var current := GameSession.get_peer_world(peer_id)
+	if current == null or current.world_id != world_id or current.revision != assignment.revision:
+		return
+	var actor := get_actor(peer_id)
+	if actor == null:
 		_spawn_local(peer_id, spawn_position)
+	else:
+		# Repeated ready/roster delivery must not teleport a moving actor back to
+		# its entry marker. Only a previously suspended presentation needs placement.
+		if not actor.visible or actor.process_mode == Node.PROCESS_MODE_DISABLED:
+			actor.position = spawn_position
+		actor.visible = true
+		actor.process_mode = Node.PROCESS_MODE_INHERIT
 
 func _on_world_roster_player_removed(peer_id: int) -> void:
+	if authoritative_runtime or GameSession.get_peer_world_id(peer_id) == world_id:
+		return
 	_despawn_local(peer_id)
 	_slots.erase(peer_id)
 
 func _on_world_roster_complete(p_world_id: StringName, _revision: int) -> void:
-	if _initialized and p_world_id == world_id:
+	if _initialized and not authoritative_runtime and p_world_id == world_id:
 		NetworkManager.confirm_local_world_ready()
 
 func _on_player_respawn_received(p_world_id: StringName, peer_id: int, spawn_position: Vector2) -> void:
