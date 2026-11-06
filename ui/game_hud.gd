@@ -17,6 +17,7 @@ var direct_player_buttons: Array[Button] = []
 var bound_player: PlayerActor
 var _refresh_remaining: float = 0.0
 var _binding_generation: int = 0
+var inventory_presenter: InventoryPresenter
 
 func _has_active_game() -> bool:
 	return GameSession.phase != GameSession.Phase.MENU and not GameSession.session_id.is_empty()
@@ -26,6 +27,8 @@ func _ready() -> void:
 	visible = _has_active_game()
 	add_to_group(&"hud")
 	_build_ui()
+	inventory_presenter = InventoryPresenter.new()
+	add_child(inventory_presenter)
 	SceneRouter.transition_finished.connect(_on_transition_finished)
 	GameSession.inventory_changed.connect(refresh_all)
 	GameSession.session_reset.connect(refresh_all)
@@ -62,7 +65,7 @@ func _build_ui() -> void:
 	var spacer := Control.new(); spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL; root.add_child(spacer)
 	detail_panel = PanelContainer.new(); detail_panel.visible = true; root.add_child(detail_panel)
 	var details := HBoxContainer.new(); detail_panel.add_child(details)
-	inventory_label = Label.new(); inventory_label.custom_minimum_size = Vector2(420, 115); inventory_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; details.add_child(inventory_label)
+	inventory_label = Label.new(); inventory_label.custom_minimum_size = Vector2(260, 115); inventory_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; details.add_child(inventory_label)
 	quest_label = Label.new(); quest_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL; quest_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; details.add_child(quest_label)
 	var buttons := GridContainer.new(); buttons.columns = 2; details.add_child(buttons)
 	save_button = Button.new(); save_button.text = "Save"; save_button.pressed.connect(func() -> void: SaveManager.save_game()); buttons.add_child(save_button)
@@ -245,12 +248,9 @@ func refresh_all() -> void:
 	var local_state := GameSession.player
 	if local_state == null:
 		return
-	var carried := _format_inventory(local_state.inventory)
 	var storage := _format_inventory(GameSession.settlement.storage)
 	var loot := _format_inventory(GameSession.adventure.active_session.unsecured_loot) if GameSession.adventure.active_session != null else "none"
-	var main_hand := local_state.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
-	var equipment_text := ContentRegistry.get_item(main_hand.item_id).display_name if main_hand != null else "none"
-	inventory_label.text = "CARRIED (I to toggle)\n%s\nEQUIPMENT: %s\nSTORAGE\n%s\nUNSECURED\n%s" % [carried, equipment_text, storage, loot]
+	inventory_label.text = "I  Inventory   ·   P  Equipment\n\nSTORAGE\n%s\nUNSECURED\n%s" % [storage, loot]
 	var pending_items: Array[String] = []
 	for stack in GameSession.settlement.pending_loot:
 		pending_items.append("%s x%d" % [stack.item_id, stack.quantity])
@@ -284,9 +284,7 @@ func _on_persistence_result(_success: bool, message: String) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not _has_active_game():
 		return
-	if event.is_action_pressed(&"open_inventory"):
-		detail_panel.visible = not detail_panel.visible
-	elif event.is_action_pressed(&"pause") and not GameSession.session_id.is_empty():
+	if event.is_action_pressed(&"pause") and not GameSession.session_id.is_empty():
 		if NetworkManager.is_multiplayer_active():
 			GameSession.last_message = "Pause is unavailable during multiplayer"
 			refresh_all()

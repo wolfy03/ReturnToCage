@@ -67,7 +67,12 @@ func _run() -> void:
 		# normal threaded load also exercises binary resource remapping.
 		for path in ["res://world/environment/presets/settlement_environment.tres",
 				"res://world/environment/presets/sewer_environment.tres",
-				"res://presentation/player/player_visual.tscn"]:
+				"res://presentation/player/player_visual.tscn",
+				"res://ui/inventory/inventory_window.tscn",
+				"res://ui/inventory/equipment_window.tscn",
+				"res://ui/inventory/item_slot_view.tscn",
+				"res://ui/inventory/item_tooltip.tscn",
+				"res://ui/inventory/item_placeholder.svg"]:
 			if ResourceLoader.load(path) == null:
 				_fail("Missing dynamically loaded resource: %s" % path)
 				return

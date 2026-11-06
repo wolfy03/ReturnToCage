@@ -115,6 +115,7 @@ class LifecycleChecks(RosterController):
         self.launch("A")
         self.launch("B")
         self.call("A", "new_game")
+        self.call("A", "item_windows")
         self.movement("A")
         self.call("A", "save_fixture")
         first_host = self.call("A", "host")  # Direct single-player -> Host, no process/menu restart.
@@ -122,6 +123,8 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
         self.check("two-player join")
+        self.call("A", "item_windows")
+        self.call("B", "item_windows")
         self.movement("A")
         self.movement("B")
         self.launch("D")
@@ -143,6 +146,7 @@ class LifecycleChecks(RosterController):
         self.movement("A")
         self.call("A", "to_menu")
         self.call("A", "load_game")
+        self.call("A", "item_windows")
         self.movement("A")
         self.call("A", "host_saved")
         self.worlds["A"] = "settlement"
@@ -153,6 +157,7 @@ class LifecycleChecks(RosterController):
         del self.worlds["B"]
         self.check("manual client leave")
         self.call("B", "new_game")
+        self.call("B", "item_windows")
         self.movement("B")
         self.call("B", "to_menu")
         self.call("B", "join", address="127.0.0.1")

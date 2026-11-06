@@ -339,3 +339,13 @@ same-process GUI sequence, the shared Editor/EXE assertions, state diagnostics,
 full regression commands and clean-commit/SHA-256 publication boundary. The
 original Editor/content/Host-Join checks remain and are extended by real release
 EXE New/Load/rehost/rejoin/map roster tests, in both headless and GUI modes.
+
+
+## Read-only inventory / equipment UI (Stage 1)
+
+See [inventory_ui.md](inventory_ui.md) for the UI/model boundary and controls.
+The full runner includes `test_inventory_windows.gd`; use `--inventory-ui-only`
+for focused checks. `tools/test_inventory_ui.py --rendered` uses isolated profiles
+and real Godot GUI input, validates read-only snapshots, and captures a viewport
+PNG. Windows release lifecycle checks also exercise these windows in the actual
+EXE; existing content/ENet/roster/recovery assertions remain in place.

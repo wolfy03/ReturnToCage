@@ -1,0 +1,52 @@
+[gd_scene load_steps=5 format=3]
+[ext_resource type="Script" path="res://ui/inventory/equipment_window.gd" id="1"]
+[ext_resource type="Script" path="res://ui/inventory/equipment_slot_view_definition.gd" id="2"]
+[sub_resource type="Resource" id="MainHand"]
+script = ExtResource("2")
+slot = 0
+label = "Main hand"
+[sub_resource type="Resource" id="Body"]
+script = ExtResource("2")
+slot = 1
+label = "Body"
+[node name="EquipmentWindow" type="PanelContainer"]
+visible = false
+custom_minimum_size = Vector2(286, 230)
+offset_left = 434.0
+offset_top = 100.0
+offset_right = 720.0
+offset_bottom = 330.0
+script = ExtResource("1")
+slot_layout = Array[ExtResource("2")]([SubResource("MainHand"), SubResource("Body")])
+[node name="Content" type="VBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 12
+[node name="TitleBar" type="HBoxContainer" parent="Content"]
+unique_name_in_owner = true
+layout_mode = 2
+custom_minimum_size = Vector2(0, 28)
+mouse_default_cursor_shape = 13
+[node name="Title" type="Label" parent="Content/TitleBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_font_sizes/font_size = 19
+text = "EQUIPMENT"
+[node name="Key" type="Label" parent="Content/TitleBar"]
+layout_mode = 2
+mouse_filter = 2
+text = "[P]"
+[node name="CloseButton" type="Button" parent="Content/TitleBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "×"
+tooltip_text = "Close equipment"
+[node name="Slots" type="VBoxContainer" parent="Content"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 12
+[node name="Hint" type="Label" parent="Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.66, 0.70, 0.60, 1)
+theme_override_font_sizes/font_size = 12
+text = "Hover gear to inspect   ·   P Close"

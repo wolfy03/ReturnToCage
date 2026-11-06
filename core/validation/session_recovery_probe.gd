@@ -21,6 +21,8 @@ var _context: Dictionary = {}
 var _profile_hash: String
 var _save_hash := ""
 var _save_session_id := ""
+var _item_presenter_id := 0
+var _expect_item_windows := false
 
 func configure(p_app: AppRoot, context: Dictionary) -> void:
 	app = p_app
@@ -97,6 +99,7 @@ func _execute(command: Dictionary) -> void:
 	var target := StringName(command.get("player", ""))
 	match action:
 		"host", "host_saved":
+			_expect_item_windows = false # Starting a new session deliberately closes item windows.
 			if _gui_mode:
 				var button := app.multiplayer_panel.host_button if action == "host" else app.multiplayer_panel.host_saved_button
 				if not await _click(button):
@@ -147,9 +150,17 @@ func _execute(command: Dictionary) -> void:
 			if not await _wait(_menu_clean):
 				_fail("menu/session cleanup did not complete")
 				return
+			_expect_item_windows = false
 		"inspect":
 			if not await _wait(func() -> bool: return _roster_issue(command).is_empty()):
 				_fail("%s: %s" % [command.get("label", "inspect"), _roster_issue(command)])
+				return
+			if _expect_item_windows and not _item_windows_visible():
+				_fail("item windows did not survive world presentation change")
+				return
+		"item_windows":
+			if not await _check_item_windows():
+				_fail("read-only inventory/equipment GUI validation failed")
 				return
 		"watch":
 			var actor := _actor(target)
@@ -246,6 +257,7 @@ func _execute(command: Dictionary) -> void:
 			if not await _wait(_menu_clean):
 				_fail("scene cleanup failed")
 				return
+			_expect_item_windows = false
 			if action == "quit":
 				var retiring := app
 				app = null
@@ -344,6 +356,7 @@ func _offline_ready() -> bool:
 
 func _menu_clean() -> bool:
 	var hud := app.get_node("UILayer/GameHUD")
+	var items: InventoryPresenter = hud.inventory_presenter
 	return NetworkManager.state == NetworkManager.ConnectionState.OFFLINE \
 		and NetworkManager.players.is_empty() and NetworkManager.world_ready_peers.is_empty() \
 		and NetworkManager.peer_to_player.is_empty() and NetworkManager.player_to_peer.is_empty() \
@@ -359,9 +372,62 @@ func _menu_clean() -> bool:
 		and app.get_node("ServerWorldRoot").runtime_count() == 0 \
 		and app.menu.visible and app.world_layer.get_child_count() == 0 and not hud.visible \
 		and hud.bound_player == null and not get_tree().paused \
+		and not items.inventory_window.visible and not items.equipment_window.visible and not items.tooltip.visible \
+		and items._state == null \
 		and not app.new_game_button.disabled and not app.load_game_button.disabled \
 		and not app.multiplayer_panel.host_button.disabled and not app.multiplayer_panel.host_saved_button.disabled \
 		and not app.multiplayer_panel.join_button.disabled and app.multiplayer_panel.disconnect_button.disabled
+
+func _item_windows_visible() -> bool:
+	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	return items.get_instance_id() == _item_presenter_id and items.inventory_window.visible \
+		and items.equipment_window.visible and items._state == GameSession.get_local_player()
+
+func _item_snapshot() -> Dictionary:
+	var player := GameSession.get_local_player()
+	return {"inventory": player.inventory.to_array(), "protected": player.protected_inventory.to_array(), "equipment": player.equipment.to_dict()}
+
+func _item_key(key: Key) -> void:
+	var event := InputEventKey.new()
+	event.physical_keycode = key
+	event.pressed = true
+	get_viewport().push_input(event, true)
+	event = event.duplicate()
+	event.pressed = false
+	get_viewport().push_input(event, true)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+func _check_item_windows() -> bool:
+	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	_item_presenter_id = items.get_instance_id()
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus != null:
+		focus.release_focus()
+	var before := _item_snapshot()
+	if not items.inventory_window.visible:
+		await _item_key(KEY_I)
+	if not items.equipment_window.visible:
+		await _item_key(KEY_P)
+	if not _item_windows_visible() or items.inventory_window.slots.size() != 24 or items.equipment_window.slot_views.size() != 2:
+		return false
+	var bag := items.inventory_window
+	if not await _click(bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE]) or not await _click(bag.slots[0]):
+		return false
+	if bag.selected_slot != 0 or bag.slots[0].stack == null or bag.slots[0].item_icon.texture == null \
+			or not items.tooltip.visible or not items.tooltip.body_label.text.contains("Quantity"):
+		return false
+	for tab in [InventoryWindow.Tab.EQUIPMENT, InventoryWindow.Tab.OTHER, InventoryWindow.Tab.QUEST, InventoryWindow.Tab.CONSUMABLE]:
+		if not await _click(bag.tab_buttons[tab]) or bag.current_tab != tab:
+			return false
+	await _item_key(KEY_I)
+	await _item_key(KEY_P)
+	if bag.visible or items.equipment_window.visible:
+		return false
+	await _item_key(KEY_I)
+	await _item_key(KEY_P)
+	_expect_item_windows = true
+	return _item_windows_visible() and _item_snapshot() == before
 
 func _click(button: Button) -> bool:
 	var received := [false]

@@ -9,7 +9,8 @@
 | primary_attack | J | 장착 무기 공격; 연타하면 무기별 콤보로 이어진다. 등반/귀환 중 불가 |
 | dodge | Left Shift | 지상 회피 롤; 시작 시 스태미나 소모, 초반 구간만 무적 |
 | use_quick_item | Q | 정착지 Berry, 원정 귀환 씨앗 채널링 |
-| open_inventory | I | HUD 상세 패널 토글 |
+| open_inventory | I | 읽기 전용 인벤토리 창 열기/닫기 |
+| open_equipment | P | 읽기 전용 장비창 열기/닫기 |
 | pause | Esc | 일시정지/재개 |
 | debug_panel | F10 | Debug 빌드 개발 패널 |
 

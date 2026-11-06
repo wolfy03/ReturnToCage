@@ -109,6 +109,11 @@ jobs:
         env:
           RTC_VALIDATION_AUDIO_DRIVER: Dummy
         run: python tools/build_windows_demo.py --godot "$env:GODOT" --rendered
+      - name: Read-only inventory and equipment GUI input
+        shell: pwsh
+        env:
+          RTC_VALIDATION_AUDIO_DRIVER: Dummy
+        run: python tools/test_inventory_ui.py --godot "$env:GODOT" --rendered
       - name: Disconnect menu input and session recovery E2E
         shell: pwsh
         run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui
@@ -140,5 +145,6 @@ jobs:
             build/validation/**/steps.json
             build/validation/**/failure.json
             build/validation/**/bootstrap.json
+            build/validation/inventory-ui/inventory-ui.png
           if-no-files-found: warn
           retention-days: 14
