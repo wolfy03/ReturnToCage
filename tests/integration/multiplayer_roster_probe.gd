@@ -32,7 +32,13 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_player_id = GameSession.get_local_player_id()
-	_write("ready")
+	# Exercise publication while a Windows reader holds the previous result.
+	# The real Python controller can hold the same short-lived sharing lock.
+	if OS.get_name() == "Windows":
+		await _write("initializing")
+		var reader := FileAccess.open(result_path, FileAccess.READ)
+		get_tree().create_timer(0.05).timeout.connect(func() -> void: reader.close(), CONNECT_ONE_SHOT)
+	await _write("ready")
 
 func _process(_delta: float) -> void:
 	if _failed:
@@ -178,9 +184,11 @@ func _execute(command: Dictionary) -> void:
 				if coordinator != null and not await _wait(func() -> bool: return coordinator.pending_path_count() == 0):
 					_fail("resource loads did not drain")
 					return
-				_write("pass")
+				await _write("pass")
 				print("PLAYER ROSTER PROBE PASS %s" % role)
-				get_tree().quit(0)
+				_failed = true
+				# Let this command coroutine release its captures before tree teardown.
+				get_tree().call_deferred("quit", 0)
 				return
 		_:
 			_fail("unknown action %s" % action)
@@ -188,7 +196,7 @@ func _execute(command: Dictionary) -> void:
 	if GameSession.get_local_player_id() != _player_id:
 		_fail("persistent local identity changed")
 		return
-	_write("pass")
+	await _write("pass")
 	_busy = false
 
 func _roster_issue(command: Dictionary) -> String:
@@ -259,10 +267,17 @@ func _write(status: String, error: String = "") -> void:
 	var file := FileAccess.open(result_path + ".tmp", FileAccess.WRITE)
 	file.store_string(JSON.stringify(data, "\t"))
 	file.close()
-	DirAccess.rename_absolute(result_path + ".tmp", result_path)
+	var deadline := Time.get_ticks_msec() + 3000
+	while DirAccess.rename_absolute(result_path + ".tmp", result_path) != OK:
+		# Retry publication only. Gameplay commands have already run exactly once.
+		if Time.get_ticks_msec() >= deadline:
+			push_error("PLAYER ROSTER RESULT publication failed: %s" % result_path)
+			get_tree().quit(1)
+			return
+		await get_tree().process_frame
 
 func _fail(message: String) -> void:
 	_failed = true
-	_write("fail", message)
+	await _write("fail", message)
 	push_error("PLAYER ROSTER PROBE FAIL %s: %s" % [role, message])
 	get_tree().quit(1)

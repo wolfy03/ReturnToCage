@@ -114,6 +114,7 @@ jobs:
           path: |
             build/validation/**/*.log
             build/validation/**/result.json
+            build/validation/**/result.json.tmp
             build/validation/**/summary.json
             build/validation/**/steps.json
           if-no-files-found: warn

@@ -81,3 +81,11 @@ reject a headless display server. This verifies local Windows rendering, not
 two-physical-PC network conditions. CI runs the 2/3-player harness on Linux and
 Windows and uploads logs/step results. Any nonzero process exit, engine error or
 leak warning fails the harness, even after scenario assertions pass.
+
+The test mailbox retries atomic command/result file replacement for up to three
+seconds when a Windows reader holds a sharing lock. It never repeats gameplay
+commands. The Windows probe exercises result publication with a temporarily held
+reader before reporting ready. Publication failures remain fatal and pending
+result files are included in CI diagnostics.
+Final tree shutdown is deferred until the command coroutine releases its captures;
+scene removal and pending background resource loads must finish first.
