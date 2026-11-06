@@ -331,3 +331,11 @@ from the authoritative runtime roster. Full checks include
 `integration/test_player_presentation_roster.gd`; the focused runner flag is
 `--roster-only`. Existing world-runtime E2E now also verifies that every returned
 same-world player is visible and processing in the Host presentation.
+
+## Integrated recovery / Windows release (Stage 3)
+
+[release_recovery_validation.md](release_recovery_validation.md) documents the
+same-process GUI sequence, the shared Editor/EXE assertions, state diagnostics,
+full regression commands and clean-commit/SHA-256 publication boundary. The
+original Editor/content/Host-Join checks remain and are extended by real release
+EXE New/Load/rehost/rejoin/map roster tests, in both headless and GUI modes.

@@ -6,6 +6,7 @@ var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
 var expected_players: int = 2
 var disconnect_host: bool = false
+var _quitting: bool = false
 var world: Node2D
 var spawner: PlayerSpawnManager
 var ladder: ClimbableArea2D
@@ -128,6 +129,8 @@ func _ready() -> void:
 		_fail("missing --role=host|client")
 
 func _process(_delta: float) -> void:
+	if _quitting:
+		return
 	if Time.get_ticks_msec() > deadline_msec:
 		_fail("probe timed out in state %s players=%d actors=%d enemy_roster=%d quest_sync=%d" % [
 			ProbeState.keys()[state], GameSession.players.size(),
@@ -259,7 +262,7 @@ func _process(_delta: float) -> void:
 				print("PROBE HOST PLAYERS %d" % expected_players)
 				if disconnect_host:
 					print("PROBE HOST EXITING")
-					get_tree().quit(0)
+					_quit_success()
 					return
 				var ids: Array[int] = []
 				ids.assign(GameSession.players.keys())
@@ -486,7 +489,7 @@ func _process(_delta: float) -> void:
 				_reconnect_done.rpc()
 				print("MULTIPLAYER PROBE PASS")
 				state = ProbeState.FINISHED
-				get_tree().create_timer(0.75).timeout.connect(func() -> void: get_tree().quit(0))
+				get_tree().create_timer(0.75).timeout.connect(_quit_success, CONNECT_ONE_SHOT)
 
 func _verify_host_save_v4() -> bool:
 	var path := "user://multiplayer_host_save_v4_probe.json"
@@ -1104,7 +1107,7 @@ func _reconnect_done() -> void:
 	if not session_end_verified:
 		_fail("fresh reconnect did not end cleanly")
 		return
-	get_tree().quit(0)
+	_quit_success()
 
 func _on_multiplayer_session_ended(reason: String) -> void:
 	if role != "client":
@@ -1127,10 +1130,36 @@ func _on_server_disconnected() -> void:
 			return
 		print("PROBE CLIENT HOST DISCONNECT OK")
 		print("MULTIPLAYER PROBE PASS")
-		get_tree().quit(0)
+		_quit_success()
 	elif role == "client":
 		_fail("server disconnected before probe completion")
 
 func _fail(message: String) -> void:
 	push_error("MULTIPLAYER PROBE FAIL: %s" % message)
 	get_tree().quit(1)
+
+func _quit_success() -> void:
+	if _quitting:
+		return
+	_quitting = true
+	Input.action_release(&"move_right")
+	Input.action_release(&"move_up")
+	var retired := world
+	world = null
+	if is_instance_valid(retired):
+		remove_child(retired)
+		retired.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	# Keep the abrupt Host-exit case abrupt. Other successful paths can retire
+	# transport while the autoload domain still exists, before engine teardown.
+	if not (role == "host" and disconnect_host):
+		NetworkManager.leave_game()
+	var coordinator := get_tree().root.get_node_or_null(NodePath(String(EnvironmentLoadCoordinator.NODE_NAME))) as EnvironmentLoadCoordinator
+	var deadline := Time.get_ticks_msec() + 5000
+	while coordinator != null and coordinator.pending_path_count() > 0:
+		if Time.get_ticks_msec() >= deadline:
+			_fail("background resources did not drain after successful scenario")
+			return
+		await get_tree().process_frame
+	get_tree().call_deferred("quit", 0)

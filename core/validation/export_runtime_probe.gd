@@ -57,6 +57,11 @@ func _run() -> void:
 	_report["player_id"] = String(GameSession.get_local_player_id())
 	_report["content_valid"] = true
 	print("EXPORT CONTENT PASS ids=%d start=FOUND difficulties=%s" % [ids.size(), difficulties])
+	if _mode == "lifecycle":
+		var probe := preload("res://core/validation/session_recovery_probe.gd").new()
+		probe.configure(_app as AppRoot, _report)
+		get_tree().root.add_child(probe)
+		return
 	if _mode == "content":
 		# Network modes deliberately leave the Settlement preset cold so their
 		# normal threaded load also exercises binary resource remapping.
