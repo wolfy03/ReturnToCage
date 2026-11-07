@@ -132,7 +132,7 @@ func run(t: Node) -> void:
 	t.assert_true(bag.visible and gear.visible and presenter._state == GameSession.player and GameSession.player != old, "New Game binds new local state and reopens via physical keys")
 	t.assert_equal(GameSession.get_local_player_id(), original_id, "UI lifecycle preserves persistent identity")
 	var path := "user://inventory_ui_fixture.json"
-	t.assert_true(SaveManager.save_game(path), "UI fixture writes unchanged Save v4")
+	t.assert_true(SaveManager.save_game(path), "UI fixture writes Save v5")
 	t.assert_true(SaveManager.load_game(path), "existing Save loader restores UI fixture")
 	await _frames(t)
 	t.assert_true(presenter._state == GameSession.player, "Load rebinds presenter to restored model")

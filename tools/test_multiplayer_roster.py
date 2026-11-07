@@ -96,7 +96,7 @@ class Probe:
                     raise
                 time.sleep(0.01)
         data = self.wait(role, item["sequence"])
-        if data["profile_id"] != item["player_id"] or (data["protocol"], data["save"], data["profile"]) != (16, 4, 1):
+        if data["profile_id"] != item["player_id"] or (data["protocol"], data["save"], data["profile"]) != (17, 5, 1):
             raise RuntimeError("persistent identity or version contract changed")
         if self.args.rendered and data["display_server"] == "headless":
             raise RuntimeError("rendered GUI verification ran headless")

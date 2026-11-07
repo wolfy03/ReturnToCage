@@ -61,15 +61,15 @@ func reset(start: GameStartDefinition, registry: Node) -> void:
 	_item_change_pending = false
 	_applying_item_snapshot = false
 
-func to_save_dict() -> Dictionary:
+func to_save_dict(indexed: bool = false) -> Dictionary:
 	return {
-		"player_stats": stats.to_dict(), "player_inventory": inventory.to_array(),
-		"equipment": equipment.to_dict(), "protected_inventory": protected_inventory.to_array(),
+		"player_stats": stats.to_dict(), "player_inventory": inventory.to_slot_dict() if indexed else inventory.to_array(),
+		"equipment": equipment.to_dict(), "protected_inventory": protected_inventory.to_slot_dict() if indexed else protected_inventory.to_array(),
 		"active_effects": effects.to_array(), "survival_state": survival.to_dict(), "player_health": health,
 		"last_safe_position": [last_safe_position.x, last_safe_position.y]
 	}
 
-func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary[String, String] = {}) -> PackedStringArray:
+func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary[String, String] = {}, legacy_repairs: bool = false) -> PackedStringArray:
 	var errors := PackedStringArray()
 	_applying_item_snapshot = true
 	stats = StatBlock.new()
@@ -79,9 +79,12 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 	if stats.value(&"max_health") <= 0.0:
 		stats.set_base(&"max_health", start.player_stats[&"max_health"])
 		errors.append("invalid max_health restored to start value")
-	errors.append_array(inventory.restore(SaveData.array(data, "player_inventory", errors), instances, "player_inventory", start.inventory_capacity))
-	errors.append_array(equipment.restore(SaveData.dictionary(data, "equipment", errors), instances))
-	errors.append_array(protected_inventory.restore(SaveData.array(data, "protected_inventory", errors), instances, "protected_inventory", start.protected_capacity))
+	errors.append_array(SaveData.restore_inventory(inventory, data.get("player_inventory", []), instances, "player_inventory", start.inventory_capacity, legacy_repairs))
+	var equipment_errors := equipment.restore(SaveData.dictionary(data, "equipment", errors), instances)
+	if data.get("player_inventory") is Dictionary and not legacy_repairs and not equipment_errors.is_empty():
+		errors.append("invalid slot inventory equipment: " + "; ".join(equipment_errors))
+	errors.append_array(equipment_errors)
+	errors.append_array(SaveData.restore_inventory(protected_inventory, data.get("protected_inventory", []), instances, "protected_inventory", start.protected_capacity, legacy_repairs))
 	survival = SurvivalState.new()
 	survival.reset(start)
 	errors.append_array(survival.restore(SaveData.dictionary(data, "survival_state", errors)))
@@ -124,12 +127,16 @@ func prepare_network_item_mirror() -> void:
 func apply_item_network_mirror(snapshot: PlayerItemStateSnapshot) -> bool:
 	if snapshot == null or not snapshot.error_message.is_empty() or snapshot.revision <= item_state_revision:
 		return false
+	var validated := PlayerItemStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry, snapshot.owner_player_id)
+	if not validated.error_message.is_empty():
+		return false
+	snapshot = validated
 	_applying_item_snapshot = true
 	inventory.begin_update()
 	protected_inventory.begin_update()
 	equipment.begin_update()
-	var inventory_result := inventory.initialize(snapshot.inventory, snapshot.inventory_capacity)
-	var protected_result := protected_inventory.initialize(snapshot.protected_inventory, snapshot.protected_capacity)
+	var inventory_result := inventory.initialize_slots(snapshot.inventory, snapshot.inventory_capacity)
+	var protected_result := protected_inventory.initialize_slots(snapshot.protected_inventory, snapshot.protected_capacity)
 	var equipment_result := equipment.initialize(snapshot.equipment)
 	equipment.end_update()
 	protected_inventory.end_update()
@@ -151,7 +158,7 @@ func apply_private_network_mirror(
 	if snapshot == null or not snapshot.error_message.is_empty() or start == null or registry == null:
 		return false
 	# Build every replacement model first. Live state is swapped only after all
-	# four private domains have passed the same restore rules used by Save v4.
+	# four private domains have passed the same restore rules used by Save v5.
 	var next_stats := StatBlock.new()
 	next_stats.base_values = start.player_stats.duplicate()
 	var errors := next_stats.restore(snapshot.stats)

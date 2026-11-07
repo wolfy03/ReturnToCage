@@ -154,3 +154,7 @@ Actor마다 생명 세대 번호를 부여한다. 사망·체력 콜백은 현�
 ## Inventory layout ownership
 
 Fixed slot indices, holes and transient expansion belong to each InventoryModel. PlayerState/SettlementState bulk reset, restore and mirror application replace contents/capacity together without replacing model objects. Capacity changes participate in existing owner revisions. Save v4 and v16 owner mirrors still use dense item records; exact layout persistence/replication is deferred to Stage 3. See [inventory_slots.md](inventory_slots.md).
+
+## Stage 3 indexed persistence
+
+PlayerState and SettlementState now serialize fixed layouts in Save v5. v17 owner/shared snapshots preserve those layouts; actor life, world state and replication revision remain transient. See [inventory_persistence.md](inventory_persistence.md).

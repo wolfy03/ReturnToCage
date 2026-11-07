@@ -341,7 +341,11 @@ func initialize_slots(slots_to_copy: Array[ItemStack], target_capacity: int = -1
 	_notify_changed()
 	return CommandResult.make(true)
 
-## Save v4 / Protocol v16 remain dense. Slot positions are deliberately not encoded.
+## Sparse Save v5 inventory representation.
+func to_slot_dict() -> Dictionary:
+	return {"capacity": capacity, "slots": SaveData.slot_records(_slots)}
+
+## Dense compatibility view for legacy fixtures, summaries and gameplay records.
 func to_array() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for stack in _slots:

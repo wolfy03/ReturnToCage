@@ -1158,6 +1158,29 @@ func execute_item_transfer_command(
 		get_player(peer_id), settlement, direction, item_id, instance_id, amount
 	)
 
+func execute_slot_command(peer_id: int, command: Dictionary) -> CommandResult:
+	if not can_mutate_authoritative_state() or NetworkManager.is_host_restoring() or session_id.is_empty():
+		return CommandResult.make(false, "Inventory slot commands are unavailable")
+	if not PlayerItemCommandService.valid_slot_command(command):
+		return CommandResult.make(false, "Malformed inventory slot command")
+	var player_id := get_player_id(peer_id)
+	if player_id.is_empty() or StringName(command.owner_player_id) != player_id or command.session_id != session_id:
+		return CommandResult.make(false, "Invalid slot command owner or session")
+	var world := get_peer_world(peer_id)
+	if world == null or world.world_id != StringName(command.world_id) or world.revision != command.world_revision:
+		return CommandResult.make(false, "Stale inventory command world")
+	if NetworkManager.is_multiplayer_active():
+		var ready := NetworkManager._validate_authoritative_world_interaction(peer_id)
+		if not ready.success:
+			return ready
+	var runtime := get_player_runtime(peer_id)
+	var actor := NetworkManager.authoritative_actor(peer_id)
+	if runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE or actor == null or actor.is_death_handled() or not actor.is_simulation_authority() or actor.world_id != world.world_id:
+		return CommandResult.make(false, "Inventory slot commands require a live authoritative actor")
+	if actor.hurt.is_active() or actor.dodge.is_active() or actor.return_channel > 0.0:
+		return CommandResult.make(false, "Player is busy")
+	return _player_item_command_service.try_slot_command(get_player(peer_id), command)
+
 func apply_settlement_network_snapshot(snapshot: SettlementStateSnapshot) -> bool:
 	if not NetworkManager.is_session_connected() or NetworkManager.is_server() or snapshot == null:
 		return false
@@ -1197,7 +1220,7 @@ func export_state() -> Dictionary:
 	result.merge(adventure.to_save_dict())
 	return result
 
-# Save v4 boundary. Network peer IDs and runtime attachment state are
+# Save v5 boundary. Network peer IDs and runtime attachment state are
 # intentionally absent; every canonical attached or detached player is keyed by
 # the persistent logical player ID.
 func export_persistent_state() -> Dictionary:
@@ -1205,7 +1228,7 @@ func export_persistent_state() -> Dictionary:
 	for player_id in persistent_player_ids():
 		var state: PlayerState = _player_states_by_id[player_id]
 		saved_players[String(player_id)] = {
-			"player_state": state.to_save_dict(),
+			"player_state": state.to_save_dict(true),
 			"personal_progression": progression.personal_to_save_dict(player_id),
 		}
 	return {
@@ -1214,7 +1237,7 @@ func export_persistent_state() -> Dictionary:
 				"session_id": session_id,
 				"play_time_seconds": play_time_seconds,
 			},
-			"settlement": settlement.to_save_dict(),
+			"settlement": settlement.to_save_dict(true),
 			"progression": progression.to_save_dict(),
 			"difficulty": difficulty.to_save_dict(),
 			# Active expeditions are never resumed, but persistent recovery drops
@@ -1365,7 +1388,7 @@ func activate_offline_local_identity() -> bool:
 
 func restore_state(data: Dictionary) -> PackedStringArray:
 	# Legacy flat v1-v3 staging facade retained for migration/restore tests only.
-	# Production file loading always migrates to Save v4 and uses the persistent
+	# Production file loading always migrates to Save v5 and uses the persistent
 	# snapshot path below.
 	if not can_mutate_authoritative_state():
 		return PackedStringArray(["Only the server can restore session state"])
@@ -1386,7 +1409,7 @@ func prepare_restore(data: Dictionary) -> SessionSnapshot:
 		return failed
 	return SessionSnapshot.build(data, start, ContentRegistry)
 
-func prepare_persistent_restore(data: Dictionary, selected_player_id: StringName = &"") -> SessionSnapshot:
+func prepare_persistent_restore(data: Dictionary, selected_player_id: StringName = &"", legacy_repairs: bool = false) -> SessionSnapshot:
 	var start: GameStartDefinition = get_start_definition()
 	if start == null:
 		var failed := SessionSnapshot.new()
@@ -1396,7 +1419,7 @@ func prepare_persistent_restore(data: Dictionary, selected_player_id: StringName
 	if local_player_id.is_empty():
 		local_player_id = NetworkManager.local_profile_player_id()
 	return SessionSnapshot.build_persistent(
-		data, start, ContentRegistry, local_player_id
+		data, start, ContentRegistry, local_player_id, legacy_repairs
 	)
 
 func apply_snapshot(snapshot: SessionSnapshot) -> void:

@@ -114,7 +114,7 @@ def main() -> int:
                          "audio_driver_requested": os.environ.get("RTC_VALIDATION_AUDIO_DRIVER", "default"),
                          "audio_playback_verified": False})
         pending.replace(output)
-        manifest.update({"engine": actual, "protocol": 16, "save": 4, "profile": 1,
+        manifest.update({"engine": actual, "protocol": 17, "save": 5, "profile": 1,
                          "release": True, "validation_artifacts": str(artifacts),
                          "rendered_checked": args.rendered})
         (output.parent / "build_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

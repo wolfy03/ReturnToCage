@@ -60,7 +60,7 @@ func present_inspection(result: Dictionary) -> void:
 				candidate_list.select(0)
 				_select_candidate(0)
 		SaveManager.IdentityInspectionStatus.SAVE_NOT_FOUND:
-			message_label.text = "No Save v4 file is available to recover the previous identity."
+			message_label.text = "No Save v4/v5 file is available to recover the previous identity."
 			candidate_list.visible = false
 		_:
 			message_label.text = "The current Save cannot be used for identity recovery."

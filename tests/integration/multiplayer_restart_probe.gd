@@ -219,8 +219,10 @@ func _seed_and_save() -> void:
 	if not GameSession.settlement.storage.initialize([ItemStack.new(&"moss_fiber", 7)]).success:
 		_fail("Could not seed shared Settlement storage")
 		return
+	GameSession.settlement.storage.expand_capacity(4)
+	GameSession.settlement.storage.move_slot(0, 51)
 	if not SaveManager.save_game():
-		_fail("Could not write the phase-one Save v4")
+		_fail("Could not write the phase-one Save v5")
 		return
 	var records: Dictionary = {}
 	for player_id in labels_by_player:
@@ -274,6 +276,9 @@ func _seed_player_state(
 	var protected_ok := state.protected_inventory.initialize([
 		ItemStack.new(&"return_seed", mini(3, 1 + index)),
 	]).success
+	inventory_ok = inventory_ok and state.inventory.expand_capacity(5 + index).success \
+		and state.inventory.move_slot(0, 7 + index).success
+	protected_ok = protected_ok and state.protected_inventory.move_slot(0, 4 + index).success
 	var vest := ItemStack.new(&"leaf_vest", 1)
 	vest.instance_id = "restart_%s_%s_vest" % [player_label.to_lower(), _fingerprint(player_id)]
 	vest.durability = 30 + index
@@ -584,7 +589,7 @@ func _client_state_wait_reason(expected_record: Dictionary) -> String:
 	)
 	if quest == null or not quest.completed or shared_quest == null or not shared_quest.completed:
 		return "personal/shared quest snapshot is not complete"
-	if GameSession.settlement.storage.count(&"moss_fiber") != 7:
+	if GameSession.settlement.storage.count(&"moss_fiber") != 7 or GameSession.settlement.storage.capacity != 52 or GameSession.settlement.storage.get_slot(51) == null:
 		return "Settlement shared storage snapshot is not complete"
 	if invalid_scenario:
 		if _client_sync_round == 1:
@@ -613,10 +618,10 @@ func _state_mismatch(expected_record: Dictionary, state: PlayerState, allow_heal
 		return "survival expected=%s actual=%s" % [expected_record.get("survival"), state.survival.to_dict()]
 	if not _variant_matches(expected_record.get("effects", []), _effect_summary(state)):
 		return "effects expected=%s actual=%s" % [expected_record.get("effects"), _effect_summary(state)]
-	if not _variant_matches(expected_record.get("inventory", []), state.inventory.to_array()):
-		return "inventory expected=%s actual=%s" % [expected_record.get("inventory"), state.inventory.to_array()]
-	if not _variant_matches(expected_record.get("protected_inventory", []), state.protected_inventory.to_array()):
-		return "protected expected=%s actual=%s" % [expected_record.get("protected_inventory"), state.protected_inventory.to_array()]
+	if not _variant_matches(expected_record.get("inventory", []), state.inventory.to_slot_dict()):
+		return "inventory expected=%s actual=%s" % [expected_record.get("inventory"), state.inventory.to_slot_dict()]
+	if not _variant_matches(expected_record.get("protected_inventory", []), state.protected_inventory.to_slot_dict()):
+		return "protected expected=%s actual=%s" % [expected_record.get("protected_inventory"), state.protected_inventory.to_slot_dict()]
 	if not _variant_matches(expected_record.get("equipment", {}), state.equipment.to_dict()):
 		return "equipment expected=%s actual=%s" % [expected_record.get("equipment"), state.equipment.to_dict()]
 	if not allow_healed_safe and state.last_safe_position != _position_from_array(expected_record.get("last_safe_position", [])):
@@ -651,8 +656,8 @@ func _state_summary(player_id: StringName) -> Dictionary:
 		"stats": state.stats.to_dict(),
 		"survival": state.survival.to_dict(),
 		"effects": _effect_summary(state),
-		"inventory": state.inventory.to_array(),
-		"protected_inventory": state.protected_inventory.to_array(),
+		"inventory": state.inventory.to_slot_dict(),
+		"protected_inventory": state.protected_inventory.to_slot_dict(),
 		"equipment": state.equipment.to_dict(),
 		"personal_quest": quest.to_dict() if quest != null else {},
 		"last_safe_position": [state.last_safe_position.x, state.last_safe_position.y],
@@ -674,6 +679,7 @@ func _shared_summary() -> Dictionary:
 	)
 	return {
 		"moss_fiber": GameSession.settlement.storage.count(&"moss_fiber"),
+		"storage_slots": GameSession.settlement.storage.to_slot_dict(),
 		"shared_quest": quest.to_dict() if quest != null else {},
 	}
 
@@ -693,6 +699,8 @@ func _profile_summary() -> Dictionary:
 		"primary_exists": FileAccess.file_exists(LocalPlayerProfile.DEFAULT_PATH),
 		"backup_exists": FileAccess.file_exists(LocalPlayerProfile.DEFAULT_PATH + ".bak"),
 		"user_path": ProjectSettings.globalize_path("user://"),
+		"display_server": DisplayServer.get_name(),
+		"rendered_frames": Engine.get_frames_drawn(),
 	}
 
 func _saved_safe_position_matches_runtime(
@@ -835,7 +843,26 @@ func _parse_arguments() -> void:
 
 func _finish_success() -> void:
 	_finishing = true
-	get_tree().quit(0)
+	# Leave the RPC/frame callback before tearing down ENet and presentation.
+	call_deferred("_finish_cleanly")
+
+func _finish_cleanly() -> void:
+	NetworkManager.leave_game()
+	if is_instance_valid(_app):
+		_app.queue_free()
+	elif is_instance_valid(_world):
+		_world.queue_free()
+	SceneRouter.register_world_layer(null)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var coordinator := get_tree().root.get_node_or_null(NodePath(String(EnvironmentLoadCoordinator.NODE_NAME))) as EnvironmentLoadCoordinator
+	var deadline := Time.get_ticks_msec() + 10000
+	while coordinator != null and coordinator.pending_path_count() > 0:
+		if Time.get_ticks_msec() >= deadline:
+			_fail_now("Background resource loads did not finish before restart probe exit")
+			return
+		await get_tree().process_frame
+	get_tree().call_deferred("quit", 0)
 
 func _fail(message: String) -> void:
 	if _finishing:

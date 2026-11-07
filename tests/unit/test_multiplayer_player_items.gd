@@ -79,7 +79,7 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	var snapshot := PlayerItemStateSnapshot.from_state(&"player_b", source)
 	var parsed := PlayerItemStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry, &"player_b")
 	t.assert_true(parsed.error_message.is_empty(), "valid player item snapshot round-trips")
-	t.assert_equal(parsed.inventory.size(), 2, "item snapshot contains private inventory")
+	t.assert_equal(parsed.inventory.filter(func(stack: ItemStack) -> bool: return stack != null).size(), 2, "item snapshot contains private inventory")
 	t.assert_equal(parsed.protected_inventory[0].instance_id, "protected_vest", "item snapshot contains protected inventory")
 	t.assert_equal(parsed.equipment[EquipmentDefinition.EquipmentSlot.MAIN_HAND].instance_id, "equipped_sword", "item snapshot contains equipment identity")
 	t.assert_true(not PlayerItemStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry, &"player_a").error_message.is_empty(), "owner-spoofed item snapshot is rejected")
@@ -124,31 +124,31 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	malformed["protected_capacity"] = -1
 	_assert_invalid(t, malformed, "negative protected capacity is rejected")
 	malformed = snapshot.to_payload()
-	malformed["protected_inventory"] = [_instance(&"leaf_vest", "inventory_vest", 45).to_dict()]
+	malformed["protected_inventory"] = [{"index": 0, "stack": _instance(&"leaf_vest", "inventory_vest", 45).to_dict()}]
 	_assert_invalid(t, malformed, "inventory and protected inventory cannot share an instance")
 	malformed = snapshot.to_payload()
-	malformed["inventory"] = [{"item_id": "missing", "quantity": 1, "instance_id": "", "durability": -1}]
+	malformed["inventory"] = [{"index": 0, "stack": {"item_id": "missing", "quantity": 1, "instance_id": "", "durability": -1}}]
 	_assert_invalid(t, malformed, "unknown inventory item is rejected")
 	malformed = snapshot.to_payload()
-	malformed["inventory"] = [{"item_id": "berry", "quantity": 11, "instance_id": "", "durability": -1}]
+	malformed["inventory"] = [{"index": 0, "stack": {"item_id": "berry", "quantity": 11, "instance_id": "", "durability": -1}}]
 	_assert_invalid(t, malformed, "inventory quantity above max stack is rejected")
 	malformed = snapshot.to_payload()
-	malformed["inventory"] = [{"item_id": "berry", "quantity": 0, "instance_id": "", "durability": -1}]
+	malformed["inventory"] = [{"index": 0, "stack": {"item_id": "berry", "quantity": 0, "instance_id": "", "durability": -1}}]
 	_assert_invalid(t, malformed, "non-positive inventory quantity is rejected")
 	malformed = snapshot.to_payload()
 	malformed["inventory_capacity"] = 1
-	malformed["inventory"] = [ItemStack.new(&"berry", 1).to_dict(), ItemStack.new(&"water_drop", 1).to_dict()]
+	malformed["inventory"] = [{"index": 0, "stack": ItemStack.new(&"berry", 1).to_dict()}, {"index": 1, "stack": ItemStack.new(&"water_drop", 1).to_dict()}]
 	_assert_invalid(t, malformed, "inventory stack count above capacity is rejected")
 	malformed = snapshot.to_payload()
-	malformed["inventory"] = [{"item_id": "leaf_vest", "quantity": 1, "instance_id": "bad_durability", "durability": 46}]
+	malformed["inventory"] = [{"index": 0, "stack": {"item_id": "leaf_vest", "quantity": 1, "instance_id": "bad_durability", "durability": 46}}]
 	_assert_invalid(t, malformed, "invalid inventory durability is rejected")
 	malformed = snapshot.to_payload()
-	malformed["inventory"] = [{"item_id": "leaf_vest", "quantity": 2, "instance_id": "bad_quantity", "durability": 45}]
+	malformed["inventory"] = [{"index": 0, "stack": {"item_id": "leaf_vest", "quantity": 2, "instance_id": "bad_quantity", "durability": 45}}]
 	_assert_invalid(t, malformed, "instance inventory quantity must be one")
 	malformed = snapshot.to_payload()
 	malformed["inventory"] = [
-		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "dup", "durability": 45},
-		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "dup", "durability": 45},
+		{"index": 0, "stack": {"item_id": "leaf_vest", "quantity": 1, "instance_id": "dup", "durability": 45}},
+		{"index": 1, "stack": {"item_id": "leaf_vest", "quantity": 1, "instance_id": "dup", "durability": 45}},
 	]
 	_assert_invalid(t, malformed, "duplicate inventory instance is rejected")
 	malformed = snapshot.to_payload()
@@ -167,7 +167,7 @@ func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	]
 	_assert_invalid(t, malformed, "duplicate equipment slot is rejected")
 	malformed = snapshot.to_payload()
-	malformed["inventory"] = [_instance(&"twig_sword", "cross", 60).to_dict()]
+	malformed["inventory"] = [{"index": 0, "stack": _instance(&"twig_sword", "cross", 60).to_dict()}]
 	malformed["equipment"] = [{"slot": EquipmentDefinition.EquipmentSlot.MAIN_HAND, "stack": _instance(&"twig_sword", "cross", 60).to_dict()}]
 	_assert_invalid(t, malformed, "inventory and equipment cannot share an instance")
 

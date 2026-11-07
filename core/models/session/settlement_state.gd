@@ -65,7 +65,7 @@ func reset(start: GameStartDefinition, registry: Node) -> void:
 	_change_pending = false
 	_applying_snapshot = false
 
-func to_save_dict() -> Dictionary:
+func to_save_dict(indexed: bool = false) -> Dictionary:
 	var facilities: Dictionary = {}
 	for key in facility_levels:
 		facilities[String(key)] = facility_levels[key]
@@ -75,12 +75,12 @@ func to_save_dict() -> Dictionary:
 	var pending: Array[Dictionary] = []
 	for stack in _pending_loot:
 		pending.append(stack.to_dict())
-	return {"pending_loot": pending, "settlement_storage": storage.to_array(), "facility_levels": facilities, "resident_states": residents}
+	return {"pending_loot": pending, "settlement_storage": storage.to_slot_dict() if indexed else storage.to_array(), "facility_levels": facilities, "resident_states": residents}
 
-func restore(data: Dictionary, start: GameStartDefinition, registry: Node, instances: Dictionary[String, String] = {}) -> PackedStringArray:
+func restore(data: Dictionary, start: GameStartDefinition, registry: Node, instances: Dictionary[String, String] = {}, legacy_repairs: bool = false) -> PackedStringArray:
 	var errors := PackedStringArray()
 	_applying_snapshot = true
-	errors.append_array(storage.restore(SaveData.array(data, "settlement_storage", errors), instances, "settlement_storage", start.storage_capacity))
+	errors.append_array(SaveData.restore_inventory(storage, data.get("settlement_storage", []), instances, "settlement_storage", start.storage_capacity, legacy_repairs))
 	facility_levels.clear()
 	var facilities: Dictionary = SaveData.dictionary(data, "facility_levels", errors)
 	for key in facilities:
@@ -162,7 +162,7 @@ func apply_network_mirror(snapshot: SettlementStateSnapshot) -> bool:
 		return false
 	_applying_snapshot = true
 	storage.begin_update()
-	var initialized := storage.initialize(snapshot.storage, snapshot.storage_capacity)
+	var initialized := storage.initialize_slots(snapshot.storage, snapshot.storage_capacity)
 	if not initialized.success:
 		storage.end_update()
 		_applying_snapshot = false

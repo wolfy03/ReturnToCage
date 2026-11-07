@@ -74,7 +74,7 @@ func _execute(command: Dictionary) -> void:
 				return
 			GameSession.player.inventory.add_item(&"rusty_scrap", 3)
 			if not SaveManager.save_game():
-				_fail("cannot write isolated Save v4 fixture")
+				_fail("cannot write isolated Save v5 fixture")
 				return
 			_save_hash = FileAccess.get_file_as_string(SaveManager.SAVE_PATH).sha256_text()
 			_save_session_id = GameSession.session_id
@@ -90,7 +90,7 @@ func _execute(command: Dictionary) -> void:
 				_fail("Host button did not start a ready Settlement: %s" % action)
 				return
 			if action == "host_saved" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3):
-				_fail("Host Save did not restore the existing Save v4")
+				_fail("Host Save did not restore the existing Save v5")
 				return
 		"join":
 			app.multiplayer_panel.address_edit.text = String(command.get("address", "127.0.0.1"))
@@ -135,7 +135,7 @@ func _execute(command: Dictionary) -> void:
 				_fail("offline simulation authority did not recover")
 				return
 			if action == "load_game" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3):
-				_fail("Load Game did not restore Save v4 data")
+				_fail("Load Game did not restore Save v5 data")
 				return
 		"to_menu":
 			app._leave_game() # Fixture cleanup after an offline New/Load action.

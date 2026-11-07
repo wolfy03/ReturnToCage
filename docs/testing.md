@@ -353,3 +353,7 @@ EXE; existing content/ENet/roster/recovery assertions remain in place.
 ## Fixed inventory slot model (Stage 2)
 
 The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-only selects it. Tests cover sparse moves/swaps/merges/splits/sort/resize, failed-command layout rollback, instance conservation, real crafting/storage/equip/death paths, Save v4/v16 dense-format limitations and seeded mixed-operation invariants. Read-only GUI regressions check holes at actual model indices. See [inventory_slots.md](inventory_slots.md).
+
+## Slot persistence and server intents (Stage 3)
+
+The full runner includes `test_inventory_persistence.gd`; `--inventory-persistence-only` runs its Save v5/v17 boundaries. The source/release lifecycle adds real positive and forged slot RPCs, reconnect/world/privacy checks. Restart probes validate expanded sparse bags/storage, and mismatch uses v16 against v17. See [inventory_persistence.md](inventory_persistence.md).

@@ -21,6 +21,10 @@ var _context: Dictionary = {}
 var _profile_hash: String
 var _save_hash := ""
 var _save_session_id := ""
+var _saved_slot_layout: Dictionary = {}
+var _remembered_slot_layout: Dictionary = {}
+var _previous_slot_intent: Dictionary = {}
+var _prepared_slot_intent: Dictionary = {}
 var _item_presenter_id := 0
 var _expect_item_windows := false
 
@@ -110,8 +114,8 @@ func _execute(command: Dictionary) -> void:
 			if not await _wait(_ready_world):
 				_fail("host world not ready")
 				return
-			if action == "host_saved" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3):
-				_fail("Host Save did not restore the original Save v4")
+			if action == "host_saved" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3 or _slot_layout(GameSession.player) != _saved_slot_layout):
+				_fail("Host Save did not restore the original Save v5")
 				return
 		"join":
 			var address := String(command.get("address", "127.0.0.1"))
@@ -134,13 +138,16 @@ func _execute(command: Dictionary) -> void:
 			if not await _click(button) or not await _wait(_offline_ready):
 				_fail("offline New/Load did not receive GUI input or restore simulation")
 				return
-			if action == "load_game" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3):
-				_fail("Load Game did not restore the original Save v4")
+			if action == "load_game" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3 or _slot_layout(GameSession.player) != _saved_slot_layout):
+				_fail("Load Game did not restore the original Save v5")
 				return
 		"save_fixture":
 			GameSession.player.inventory.add_item(&"rusty_scrap", 3)
+			GameSession.player.inventory.expand_capacity(6)
+			GameSession.player.inventory.move_slot(3, 17)
+			_saved_slot_layout = _slot_layout(GameSession.player)
 			if not await _click(app.get_node("UILayer/GameHUD").save_button) or not FileAccess.file_exists(SaveManager.SAVE_PATH):
-				_fail("Save button did not write the isolated Save v4")
+				_fail("Save button did not write the isolated Save v5")
 				return
 			_save_session_id = GameSession.session_id
 			_save_hash = FileAccess.get_file_as_string(SaveManager.SAVE_PATH).sha256_text()
@@ -158,6 +165,61 @@ func _execute(command: Dictionary) -> void:
 			if _expect_item_windows and not _item_windows_visible():
 				_fail("item windows did not survive world presentation change")
 				return
+		"slot_seed":
+			var player := GameSession.get_player_state_by_player_id(target)
+			if not NetworkManager.is_server() or player == null:
+				_fail("slot fixture requires authoritative owner")
+				return
+			var cells: Array[ItemStack] = []
+			cells.resize(18)
+			cells[0] = ItemStack.new(&"berry", 6)
+			cells[2] = ItemStack.new(&"water_drop", 2)
+			var vest := ItemStack.new(&"leaf_vest", 1)
+			vest.instance_id = "slot-vest-" + String(target)
+			vest.durability = 31
+			cells[5] = vest
+			if not player.inventory.initialize_slots(cells, 18).success:
+				_fail("cannot seed sparse inventory")
+				return
+		"slot_ready":
+			if not await _wait(func() -> bool:
+				return GameSession.player.inventory.capacity == 18 and GameSession.player.inventory.get_slot(5) != null
+			):
+				_fail("owner did not receive sparse slot fixture")
+				return
+		"slot_rpc":
+			if not await _slot_rpc(command):
+				_fail("slot RPC result/layout mismatch: %s" % command)
+				return
+		"slot_prepare":
+			var service := _item_service()
+			_prepared_slot_intent = service.make_slot_intent(PlayerItemCommandService.SlotAction.MOVE, PlayerItemCommandService.SlotInventory.MAIN, 0, 17)
+			if _prepared_slot_intent.is_empty():
+				_fail("could not capture pre-transition slot intent")
+				return
+		"slot_remember":
+			_remembered_slot_layout = _slot_layout(GameSession.player)
+		"slot_check":
+			if _remembered_slot_layout.is_empty() or _slot_layout(GameSession.player) != _remembered_slot_layout:
+				_fail("slot layout changed across world transition or reconnect")
+				return
+		"slot_canonical":
+			var player := GameSession.get_player_state_by_player_id(target)
+			var stack := player.inventory.get_slot(15) if player != null else null
+			if not NetworkManager.is_server() or stack == null or stack.instance_id != "slot-vest-" + String(target) or stack.durability != 31:
+				_fail("canonical inventory did not commit the moved equipment instance")
+				return
+		"slot_privacy":
+			if NetworkManager.is_server():
+				_fail("privacy check needs an observing client")
+				return
+			for peer_id in GameSession.players:
+				if peer_id == NetworkManager.local_peer_id():
+					continue
+				var remote := GameSession.get_player(peer_id)
+				if not remote.inventory.stacks().is_empty() or not remote.protected_inventory.stacks().is_empty() or not remote.equipment.all_equipped().is_empty():
+					_fail("other owner's private slot state reached this client")
+					return
 		"item_windows":
 			if not await _check_item_windows():
 				_fail("read-only inventory/equipment GUI validation failed")
@@ -377,6 +439,67 @@ func _menu_clean() -> bool:
 		and not app.new_game_button.disabled and not app.load_game_button.disabled \
 		and not app.multiplayer_panel.host_button.disabled and not app.multiplayer_panel.host_saved_button.disabled \
 		and not app.multiplayer_panel.join_button.disabled and app.multiplayer_panel.disconnect_button.disabled
+
+func _item_service() -> PlayerItemReplicationService:
+	return get_tree().get_first_node_in_group(&"player_item_replication_service") as PlayerItemReplicationService
+
+func _slot_layout(player: PlayerState) -> Dictionary:
+	return {"inventory": player.inventory.to_slot_dict(), "protected": player.protected_inventory.to_slot_dict(), "equipment": player.equipment.to_dict()}
+
+func _slot_rpc(command: Dictionary) -> bool:
+	var service := _item_service()
+	if service == null or NetworkManager.is_server():
+		return false
+	var player := GameSession.get_local_player()
+	var before := _slot_layout(player)
+	var revision := player.item_state_revision
+	var action := int(command.get("slot_action", PlayerItemCommandService.SlotAction.MOVE))
+	var from := int(command.get("from", 0))
+	var to := int(command.get("to", 17))
+	var amount := int(command.get("amount", 0))
+	var failure := String(command.get("reject", ""))
+	var intent := service.make_slot_intent(action, PlayerItemCommandService.SlotInventory.MAIN, from, to, amount)
+	if intent.is_empty():
+		return false
+	match failure:
+		"owner": intent.owner_player_id = String(command.player)
+		"session": intent.session_id = "retired-session"
+		"revision": intent.revision -= 1
+		"instance": intent.source.instance_id = "forged-instance"
+		"replay": intent = _previous_slot_intent.duplicate(true)
+		"world": intent = _prepared_slot_intent.duplicate(true)
+	var sequence: int = intent.sequence
+	var replies: Array[Dictionary] = []
+	var receive := func(received_sequence: int, success: bool, message: String) -> void:
+		if received_sequence == sequence:
+			replies.append({"success": success, "message": message})
+	service.slot_result.connect(receive)
+	# Deliberately exercise the real ENet authority boundary, including forged intents.
+	service._request_slot_command.rpc_id(1, intent)
+	var replied := await _wait(func() -> bool: return not replies.is_empty())
+	service.slot_result.disconnect(receive)
+	if not replied:
+		return false
+	if not failure.is_empty():
+		return not replies[0].success and player.item_state_revision == revision and _slot_layout(player) == before \
+			and (failure != "replay" or String(replies[0].message).contains("sequence")) \
+			and (failure != "world" or String(replies[0].message).contains("world"))
+	_previous_slot_intent = intent.duplicate(true)
+	if not replies[0].success or player.item_state_revision != revision + 1 or _slot_layout(player) == before:
+		return false
+	var expected := InventoryModel.new(before.inventory.capacity, Callable(ContentRegistry, "get_item"))
+	var instances: Dictionary[String, String] = {}
+	var layout := SaveData.inventory_layout(before.inventory, expected.definition_resolver, instances, "slot test")
+	if not layout.success or not expected.initialize_slots(layout.slots).success:
+		return false
+	var result: CommandResult
+	match action:
+		PlayerItemCommandService.SlotAction.MOVE: result = expected.move_slot(from, to)
+		PlayerItemCommandService.SlotAction.SWAP: result = expected.swap_slots(from, to)
+		PlayerItemCommandService.SlotAction.MERGE: result = expected.merge_slots(from, to)
+		PlayerItemCommandService.SlotAction.SPLIT: result = expected.split_stack(from, to, amount)
+		PlayerItemCommandService.SlotAction.SORT: result = expected.sort_slots()
+	return result != null and result.success and player.inventory.to_slot_dict() == expected.to_slot_dict()
 
 func _item_windows_visible() -> bool:
 	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter

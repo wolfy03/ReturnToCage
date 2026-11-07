@@ -5,6 +5,10 @@ var passed: int = 0
 
 func _ready() -> void:
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if arguments.has("--inventory-persistence-only"):
+		preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
+		_finish_tests()
+		return
 	if arguments.has("--inventory-slots-only"):
 		preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
 		_finish_tests()
@@ -36,6 +40,7 @@ func _ready() -> void:
 	run_all()
 
 func run_all() -> void:
+	preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
 	await preload("res://tests/integration/test_inventory_windows.gd").new().run(self)
 	await preload("res://tests/integration/test_player_presentation_roster.gd").new().run(self)
@@ -217,7 +222,7 @@ func test_quest_and_facility() -> void:
 func test_save_migration_and_round_trip() -> void:
 	var old := {"format_version": 1, "game_state": {}}
 	var migrated := SaveManager.migrate(old)
-	assert_equal(migrated.get("format_version"), 4, "save v1 migrates through v2/v3 to v4")
+	assert_equal(migrated.get("format_version"), 5, "save v1 migrates through v2/v3/v4 to v5")
 	GameSession.start_new_game()
 	GameSession.settlement.storage.add_item(&"rusty_scrap", 7)
 	GameSession.settlement.set_facility_level(&"workbench", 1)
@@ -480,10 +485,10 @@ func test_legacy_save_compatibility() -> void:
 	var original: Dictionary = old.duplicate(true)
 	var migrated: Dictionary = SaveManager.migrate(old)
 	assert_equal(old, original, "migration never mutates caller envelope")
-	assert_equal(migrated["format_version"], 4, "sequential v1 migration reaches v4")
+	assert_equal(migrated["format_version"], 5, "sequential v1 migration reaches v5")
 	var local_id := String(NetworkManager.local_profile_player_id())
 	assert_equal(migrated["shared"]["difficulty"]["difficulty_overrides"], {}, "v1 migration adds overrides")
-	assert_equal(migrated["players"][local_id]["player_state"]["protected_inventory"], [], "v1 migration adds protected inventory")
+	assert_equal(migrated["players"][local_id]["player_state"]["protected_inventory"]["slots"], [], "v1 migration adds protected inventory")
 	var path: String = "user://return_to_cage_v1_fixture_test.json"
 	_write_envelope(path, old)
 	assert_true(SaveManager.load_game(path), "v1 save file loads through SaveManager")

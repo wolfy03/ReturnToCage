@@ -10,7 +10,7 @@ The host runs both the authoritative server and its local client. Remote clients
 
 Attack requests contain only a monotonic sequence, and pickup requests contain only a server-issued loot entity ID. They never contain target, damage, item, or quantity results. Enemy AI, hit detection, health/death, loot RNG, and personal unsecured-loot mutation run only on the server. The server derives identity from `multiplayer.get_remote_sender_id()` and rejects unknown/spoofed senders, stale sequences, malformed values, invalid life phases, and out-of-range pickups.
 
-`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`, with a redundant copy at `user://local_player_profile.json.bak`; the client submits that identity during handshake and the host attaches it only after format and active-duplicate validation. Profile version `1` remains the load contract. A valid primary is canonical and repairs a missing, invalid, or stale backup. A valid backup recovers a missing or corrupt primary without changing the identity. If profile files existed but neither copy is valid, the profile reports `IDENTITY_RECOVERY_REQUIRED` instead of silently generating a replacement ID; the startup gate can inspect exact Save v4 identities and requires an explicit recovery choice. The validated mapping is replicated in the session snapshot. Personal progression and canonical in-session `PlayerState` ownership are keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by active `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
+`peer_id` remains the transient ENet/RPC routing identity. Each installation keeps a persistent logical `player_id` in `user://local_player_profile.json`, with a redundant copy at `user://local_player_profile.json.bak`; the client submits that identity during handshake and the host attaches it only after format and active-duplicate validation. Profile version `1` remains the load contract. A valid primary is canonical and repairs a missing, invalid, or stale backup. A valid backup recovers a missing or corrupt primary without changing the identity. If profile files existed but neither copy is valid, the profile reports `IDENTITY_RECOVERY_REQUIRED` instead of silently generating a replacement ID; the startup gate can inspect Save v4/v5 identities and requires an explicit recovery choice. The validated mapping is replicated in the session snapshot. Personal progression and canonical in-session `PlayerState` ownership are keyed by `player_id`; actor ownership, movement routing, and sender validation remain keyed by active `peer_id`. This identity is not authenticated account ownership and can later be replaced by an external identity provider.
 
 `GameSession` owns one canonical in-memory `PlayerState` per persistent `player_id`. `GameSession.players[peer_id]` is only the active attachment view and references that exact object; `GameSession.player` remains the local compatibility facade. A disconnect removes the peer runtime, actor, command caches, and active identity mapping, but the host retains the canonical state and personal progression until the multiplayer session ends. Reconnecting with the same inactive `player_id` attaches the existing state to the new peer and sends its current owner-only item and personal quest snapshots. Shared settlement, adventure, and difficulty models remain server-owned.
 
@@ -46,7 +46,7 @@ python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win6
 python tools/test_multiplayer_local.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --host-disconnect
 ```
 
-The process-restart probe uses separate native `user://` roots for A, B, and C and reuses only the same player's directory after terminating every phase-one Godot process. It seeds a production Save v4, launches a new Host Saved Game process, reconnects newly launched client processes by persistent `player_id`, and compares canonical/private/shared state plus authoritative actor placement. It also performs a same-session reconnect after the process restart, duplicate-active-identity rejection, and final host-loss cleanup. Failure artifacts retain bounded logs and JSON phase/status diagnostics.
+The process-restart probe uses separate native `user://` roots for A, B, and C and reuses only the same player's directory after terminating every phase-one Godot process. It seeds a production Save v5, launches a new Host Saved Game process, reconnects newly launched client processes by persistent `player_id`, and compares canonical/private/shared state plus authoritative actor placement. It also performs a same-session reconnect after the process restart, duplicate-active-identity rejection, and final host-loss cleanup. Failure artifacts retain bounded logs and JSON phase/status diagnostics.
 
 ```powershell
 python tools/test_multiplayer_restart.py --godot C:\Godot\Godot_v4.7.2-stable_win64_console.exe --players 2 --scenario valid
@@ -96,7 +96,7 @@ For a visual same-machine test, each process needs its own installation-profile 
 - Stable equipment-instance command identity, monotonic anti-replay validation, and private inventory isolation
 - Cross-inventory/equipment instance validation and atomic two-container transfer previews
 - Offline single-player compatibility
-- Save v4 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
+- Save v5 with shared state plus canonical attached/detached players keyed only by persistent `player_id`
 - Host-authoritative multiplayer save; clients cannot write saves and host load requires no active remote peers
 - Host Saved Game orchestration with pre-transport Save staging and a restoring-state handshake gate
 - Protocol v15 synchronization: v14 gameplay contracts plus semantic Attack/Dodge/HURT presentation-only events
@@ -119,17 +119,17 @@ Enemy kill credit requires a player-attributed server damage source. A single ki
 
 Disconnecting during an expedition explicitly forfeits that peer's current `PlayerAdventureState` and unsecured loot. Other peers' expedition loot and settlement storage are left unchanged. Joining again creates a new empty player-adventure state; same-session PlayerState reattachment does not restore the forfeited expedition participation.
 
-Personal quest progression is not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer presenting that inactive identity receives the retained personal quest state. Save v4 persists attached and detached canonical PlayerStates and personal progression under that same identity. On clients, a disconnected remote peer's private placeholder state is discarded rather than retained as reconnect authority.
+Personal quest progression is not erased by a transient peer disconnect inside the host session, because it is owned by logical `player_id`, not by the connection. A reconnecting peer presenting that inactive identity receives the retained personal quest state. Save v5 persists attached and detached canonical PlayerStates and personal progression under that same identity. On clients, a disconnected remote peer's private placeholder state is discarded rather than retained as reconnect authority.
 
 `finish_adventure()` remains the offline compatibility operation. Multiplayer exits use `finish_player_adventure(peer_id)`: only that participant's unsecured loot is secured and only that `PlayerWorldState` returns to Settlement. Other players sharing the Adventure world keep their participation and loot.
 
-Save v4 stores PARTY/WORLD quests in shared progression and PERSONAL quests under their owning `player_id`. It never stores peer IDs or runtime replication state. Offline and host saves use the same schema; clients remain read-only.
+Save v5 stores PARTY/WORLD quests in shared progression and PERSONAL quests under their owning `player_id`. It never stores peer IDs or runtime replication state. Offline and host saves use the same schema; clients remain read-only.
 
-Persistent death drops store an optional stable `owner_player_id`; the runtime `owner_peer_id` is never serialized. This preserves per-player recovery ownership across a Save v4 host restart. Migrated legacy drops without an owner retain their historical shared-recovery behavior.
+Persistent death drops store an optional stable `owner_player_id`; the runtime `owner_peer_id` is never serialized. This preserves per-player recovery ownership across a Save v5 host restart. Migrated legacy drops without an owner retain their historical shared-recovery behavior.
 
 ## 4-C.5 stable baseline
 
-The verified baseline has no known P0 or P1 defects. Save production uses only `export_persistent_state() -> Save v4` and `migrate() -> prepare_persistent_restore() -> apply_persistent_snapshot()`. Legacy flat builders remain test/migration fixtures only. Automated Godot checks, process-restart save/load, two- and three-player ENet probes, repeated same-identity reconnect, and forced host-disconnect cleanup pass on Godot 4.7.2.
+The verified baseline has no known P0 or P1 defects. Save production uses only `export_persistent_state() -> Save v5` and `migrate() -> prepare_persistent_restore() -> apply_persistent_snapshot()`. Legacy flat builders remain test/migration fixtures only. Automated Godot checks, process-restart save/load, two- and three-player ENet probes, repeated same-identity reconnect, and forced host-disconnect cleanup pass on Godot 4.7.2.
 
 The startup `AppRoot` identity gate treats valid, newly created, and backup-recovered profiles as ready. An unrecoverable profile opens a modal identity dialog backed by deterministic candidates from the primary Save v4. A single candidate is preselected but never auto-committed; multiple candidates require an explicit selection and confirmation. Cancel keeps New Game, Load, Host, and Join disabled and exposes a menu action that reopens recovery. The explicit Create New Player path has a separate warning confirmation because it does not attach existing Save player records.
 
@@ -425,6 +425,6 @@ additional real ENet negative/lifecycle regression commands.
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration
 
-## Stage 2 inventory slots: unchanged v16 wire
+## Indexed inventory synchronization (Protocol v17)
 
-The existing v16 item snapshot still transmits dense records and capacity. It does not transmit holes or exact indices, so owner mirrors may compact authoritative layouts. No slot command RPCs are exposed; existing item/instance-ID commands remain the boundary. New model slot/resize methods enforce mutation guards, and both-inventory transfers commit staged copies before observers run. Slot replication/version policy is explicitly deferred to Stage 3; see [inventory_slots.md](inventory_slots.md).
+The owner-private item and shared storage snapshots now retain capacity and exact slot indices. Existing item-ID/instance-ID commands remain, and the new slot intents are server-approved with owner, session, world, revision, sequence and cell-fingerprint validation. v16 handshakes are rejected. See [inventory_persistence.md](inventory_persistence.md) for the precise wire and test contracts.

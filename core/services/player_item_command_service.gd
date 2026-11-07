@@ -2,6 +2,8 @@ class_name PlayerItemCommandService
 extends RefCounted
 
 enum TransferDirection { DEPOSIT, WITHDRAW }
+enum SlotAction { MOVE, SWAP, MERGE, SPLIT, SORT }
+enum SlotInventory { MAIN, PROTECTED }
 
 var registry: Node
 
@@ -145,3 +147,58 @@ func _instance_conflicts(player: PlayerState, settlement: SettlementState, movin
 			if stack.instance_id == moving.instance_id:
 				return true
 	return false
+
+static func slot_inventory(player: PlayerState, kind: int) -> InventoryModel:
+	if player == null:
+		return null
+	match kind:
+		SlotInventory.MAIN: return player.inventory
+		SlotInventory.PROTECTED: return player.protected_inventory
+	return null
+
+static func slot_fingerprint(stack: ItemStack) -> Dictionary:
+	return stack.to_dict() if stack != null else {}
+
+static func valid_slot_command(command: Dictionary) -> bool:
+	if command.size() != 13:
+		return false
+	for key in ["owner_player_id", "session_id", "world_id"]:
+		if not SaveData.is_text(command.get(key)) or String(command[key]).is_empty():
+			return false
+	for key in ["world_revision", "revision", "sequence", "action", "inventory", "from", "to", "amount"]:
+		if not command.get(key) is int:
+			return false
+	if command.revision < 0 or command.world_revision < 1 or command.sequence < 1 or command.sequence > 0x7fffffff or command.action not in SlotAction.values() or command.inventory not in SlotInventory.values():
+		return false
+	for key in ["source", "target"]:
+		var fingerprint: Variant = command.get(key)
+		if not fingerprint is Dictionary:
+			return false
+		if not fingerprint.is_empty() and (fingerprint.size() != 4 or not fingerprint.get("quantity") is int or not fingerprint.get("durability") is int or not fingerprint.has("instance_id") or not SaveData.valid_stack(fingerprint, PackedStringArray())):
+			return false
+	return true
+
+func try_slot_command(player: PlayerState, command: Dictionary) -> CommandResult:
+	if player == null or not valid_slot_command(command):
+		return CommandResult.make(false, "Malformed inventory slot command")
+	if command.revision != player.item_state_revision:
+		return CommandResult.make(false, "Stale inventory revision")
+	var inventory := slot_inventory(player, command.inventory)
+	if command.action == SlotAction.SORT:
+		if command.from != -1 or command.to != -1 or command.amount != 0 or not command.source.is_empty() or not command.target.is_empty():
+			return CommandResult.make(false, "Invalid inventory sort")
+		return inventory.sort_slots()
+	var from: int = command.from
+	var to: int = command.to
+	if from < 0 or to < 0 or from >= inventory.capacity or to >= inventory.capacity:
+		return CommandResult.make(false, "Inventory slot index out of range")
+	if command.source != slot_fingerprint(inventory.get_slot(from)) or command.target != slot_fingerprint(inventory.get_slot(to)):
+		return CommandResult.make(false, "Inventory slot contents changed")
+	if (command.action == SlotAction.SPLIT and command.amount <= 0) or (command.action != SlotAction.SPLIT and command.amount != 0):
+		return CommandResult.make(false, "Invalid inventory slot amount")
+	match command.action:
+		SlotAction.MOVE: return inventory.move_slot(from, to)
+		SlotAction.SWAP: return inventory.swap_slots(from, to)
+		SlotAction.MERGE: return inventory.merge_slots(from, to)
+		SlotAction.SPLIT: return inventory.split_stack(from, to, command.amount)
+	return CommandResult.make(false, "Unknown inventory slot action")

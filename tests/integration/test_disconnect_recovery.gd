@@ -102,7 +102,7 @@ func _test_adventure_cleanup(t: Node) -> void:
 	t.assert_true(GameSession.players.size() == 1 and GameSession.session_id.is_empty() \
 		and GameSession.get_local_player_id() == local_id, "offline Menu retains exactly the persistent local player")
 	t.assert_equal(GameSession.player.inventory.to_array(), inventory, "Disconnect preserves carried local possessions")
-	# A Save v4 host restore may reuse its saved session ID with a lower revision.
+	# A Save v5 host restore may reuse its saved session ID with a lower revision.
 	NetworkManager.host_game(26000 + randi_range(0, 5000), 2)
 	GameSession.start_new_game()
 	GameSession.session_id = saved_session_id

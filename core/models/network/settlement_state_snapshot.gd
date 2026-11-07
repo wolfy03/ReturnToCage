@@ -10,9 +10,7 @@ var resident_states: Dictionary[StringName, ResidentState] = {}
 var error_message: String = ""
 
 func to_payload() -> Dictionary:
-	var storage_payload: Array[Dictionary] = []
-	for stack in storage:
-		storage_payload.append(stack.to_dict())
+	var storage_payload := SaveData.slot_records(storage)
 	var pending_payload: Array[Dictionary] = []
 	for stack in pending_loot:
 		pending_payload.append(stack.to_dict())
@@ -36,7 +34,7 @@ static func from_state(state: SettlementState) -> SettlementStateSnapshot:
 	var result := SettlementStateSnapshot.new()
 	result.revision = state.revision
 	result.storage_capacity = state.storage.capacity
-	result.storage = state.storage.stacks()
+	result.storage = state.storage.slots()
 	for stack in state.pending_loot:
 		result.pending_loot.append(stack.duplicate_stack())
 	result.facility_levels = state.facility_levels.duplicate()
@@ -51,7 +49,7 @@ static func from_state(state: SettlementState) -> SettlementStateSnapshot:
 static func from_payload(payload: Dictionary, registry: Node) -> SettlementStateSnapshot:
 	var result := SettlementStateSnapshot.new()
 	if not payload.get("revision", null) is int or payload["revision"] < 0 \
-			or not payload.get("storage_capacity", null) is int or payload["storage_capacity"] < 1 \
+			or not payload.get("storage_capacity", null) is int or payload["storage_capacity"] < 0 \
 			or not payload.get("storage", null) is Array \
 			or not payload.get("pending_loot", null) is Array \
 			or not payload.get("facility_levels", null) is Array \
@@ -60,21 +58,12 @@ static func from_payload(payload: Dictionary, registry: Node) -> SettlementState
 		return result
 	result.revision = payload["revision"]
 	result.storage_capacity = payload["storage_capacity"]
-	var raw_storage: Array = payload["storage"]
-	if raw_storage.size() > result.storage_capacity:
-		result.error_message = "Settlement storage exceeds capacity"
-		return result
 	var instances: Dictionary[String, String] = {}
-	for index in raw_storage.size():
-		var errors := PackedStringArray()
-		var stack := StackValidation.from_record(raw_storage[index], Callable(registry, "get_item"), errors, "settlement.storage[%d]" % index)
-		var definition: ItemDefinition = registry.get_item(stack.item_id) if stack != null else null
-		if stack == null or not errors.is_empty() or not StackValidation.runtime_error(stack, definition).is_empty() \
-				or stack.quantity > definition.max_stack \
-				or not StackValidation.accept_instance(stack, instances, errors, "settlement.storage[%d]" % index):
-			result.error_message = "Invalid settlement storage record"
-			return result
-		result.storage.append(stack)
+	var layout := SaveData.inventory_layout({"capacity": result.storage_capacity, "slots": payload.storage}, Callable(registry, "get_item"), instances, "settlement.storage", true)
+	if not layout.success:
+		result.error_message = layout.error
+		return result
+	result.storage = layout.slots
 	var raw_pending: Array = payload["pending_loot"]
 	for index in raw_pending.size():
 		var errors := PackedStringArray()

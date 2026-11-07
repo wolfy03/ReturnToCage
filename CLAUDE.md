@@ -291,7 +291,7 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 
 ### payload 를 바꿀 때 함께 볼 것
 
-`NetworkProtocol.VERSION`(현재 **15**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
+`NetworkProtocol.VERSION`(현재 **17**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
 validator → 관련 unit test(인라인 payload 를 쓰는 테스트 포함) → handshake mismatch 테스트.
 같은 버전 안에서 구/신 payload 를 섞어 허용하지 않는다.
 
@@ -376,9 +376,9 @@ func run(t: Node) -> void:            # 비동기가 필요하면 -> void 유지
 - 사망/부활은 `DeathResolutionService` → `RespawnResult` 경로만 사용한다. 액터에는
   생명 세대(`life_id`)가 있어서 `GameSession.is_current_life()` 로 늦은 시그널을 막는다.
 - 원정 중에는 저장/불러오기/난이도 변경이 잠긴다. 진행 중 원정은 저장·재개하지 않는다.
-- Save 포맷은 **v4**. 필드를 추가하면 해당 State 의 `to_save_dict()`/`restore()` 와
+- Save 포맷은 **v5**. 필드를 추가하면 해당 State 의 `to_save_dict()`/`restore()` 와
   `SessionSnapshot` 검증, 그리고 `docs/save_format.md` 를 같이 고친다. 마이그레이션
-  회귀 테스트(v1→v4)를 깨뜨리지 않는다.
+  회귀 테스트(v1→v5)를 깨뜨리지 않는다.
 
 ## 8. 문서 갱신 의무
 

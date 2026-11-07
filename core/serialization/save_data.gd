@@ -96,3 +96,72 @@ static func position(data: Dictionary, key: String, fallback: Vector2, errors: P
 			return candidate
 	errors.append("invalid position in save: %s" % key)
 	return fallback
+
+## Strict indexed inventory boundary shared by Save v5 and native v17 packets.
+## Reserve instance IDs only after the entire container passes validation.
+static func inventory_layout(raw: Variant, resolver: Callable, instances: Dictionary[String, String], context: String, wire: bool = false) -> Dictionary:
+	var empty: Array[ItemStack] = []
+	var result := {"success": false, "capacity": 0, "slots": empty, "error": "Invalid inventory layout: " + context, "structural_valid": false}
+	if not raw is Dictionary or not raw.get("slots") is Array:
+		return result
+	var size: Variant = raw.get("capacity")
+	if not is_integer(size) or (wire and not size is int) or int(size) < 0 or int(size) > InventoryModel.MAX_CAPACITY:
+		return result
+	var capacity := int(size)
+	if raw.slots.size() > capacity:
+		return result
+	var indices: Dictionary[int, bool] = {}
+	for cell in raw.slots:
+		if not cell is Dictionary or not cell.has("stack") or not is_integer(cell.get("index")) or (wire and not cell.index is int):
+			return result
+		var index := int(cell.index)
+		if index < 0 or index >= capacity or indices.has(index):
+			return result
+		indices[index] = true
+	result.structural_valid = true
+	result.capacity = capacity
+	var slots: Array[ItemStack] = []
+	slots.resize(capacity)
+	var seen: Dictionary[String, String] = instances.duplicate()
+	for cell in raw.slots:
+		var errors := PackedStringArray()
+		var index := int(cell.index)
+		var location := "%s[%d]" % [context, index]
+		if wire and (not cell.stack is Dictionary or not cell.stack.get("quantity") is int or not cell.stack.get("durability", -1) is int):
+			return result
+		var stack := StackValidation.from_record(cell.stack, resolver, errors, location)
+		var definition: ItemDefinition = resolver.call(stack.item_id) as ItemDefinition if stack != null and resolver.is_valid() else null
+		if stack == null or not errors.is_empty() or not StackValidation.runtime_error(stack, definition).is_empty() or stack.quantity > definition.max_stack or (definition is EquipmentDefinition and stack.quantity != 1) or not StackValidation.accept_instance(stack, seen, errors, location):
+			result.error = "Invalid inventory stack or duplicate instance: " + location
+			return result
+		slots[index] = stack
+	instances.assign(seen)
+	result.success = true
+	result.slots = slots
+	result.error = ""
+	return result
+
+static func restore_inventory(model: InventoryModel, raw: Variant, instances: Dictionary[String, String], context: String, fallback_capacity: int, legacy_repairs: bool = false) -> PackedStringArray:
+	if raw is Array:
+		return model.restore(raw, instances, context, fallback_capacity)
+	var reserved: Dictionary[String, String] = instances.duplicate()
+	var decoded := inventory_layout(raw, model.definition_resolver, reserved, context)
+	if decoded.success:
+		var applied := model.initialize_slots(decoded.slots, decoded.capacity)
+		if applied.success:
+			instances.assign(reserved)
+			return PackedStringArray()
+		return PackedStringArray(["invalid slot inventory: " + applied.message])
+	if legacy_repairs and decoded.structural_valid:
+		var dense: Array = []
+		for cell in raw.slots:
+			dense.append(cell.stack)
+		return model.restore(dense, instances, context, decoded.capacity)
+	return PackedStringArray(["invalid slot inventory: " + decoded.error])
+
+static func slot_records(slots: Array[ItemStack]) -> Array[Dictionary]:
+	var records: Array[Dictionary] = []
+	for index in slots.size():
+		if slots[index] != null:
+			records.append({"index": index, "stack": slots[index].to_dict()})
+	return records

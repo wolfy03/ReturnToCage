@@ -254,7 +254,7 @@ func _test_legacy_boundaries(t: Node) -> void:
 	var restored := _model(model.capacity)
 	t.assert_true(restored.restore(wire).is_empty(), "legacy records restore without schema migration")
 	t.assert_equal(_totals(restored), _totals(model), "legacy round trip preserves quantities and identity")
-	t.assert_true(_layout(restored) != _layout(model), "stage 2 explicitly does not persist holes or positions")
+	t.assert_true(_layout(restored) != _layout(model), "legacy dense view intentionally does not preserve holes")
 
 func _totals(model: InventoryModel) -> Dictionary:
 	var result: Dictionary = {}
@@ -319,11 +319,11 @@ func _test_save_and_wire_limits(t: Node) -> void:
 		inventory.add_stack(_instance("expanded-%d" % index))
 	var saved := GameSession.export_persistent_state()
 	var state: Dictionary = saved["players"][String(owner)]["player_state"]
-	t.assert_true(not state.has("slots") and not state.has("inventory_capacity"), "Save v4 receives no slot or capacity schema fields")
+	t.assert_true(state.player_inventory is Dictionary and state.player_inventory.capacity == inventory.capacity, "Save v5 stores indexed capacity")
 	var restored := GameSession.prepare_persistent_restore(saved)
-	t.assert_true(restored.fatal_error.is_empty(), "expanded memory inventory remains readable as existing Save v4")
-	t.assert_equal(restored.player.inventory.capacity, GameSession.get_start_definition().inventory_capacity, "Save v4 restores configured capacity, not transient expansion")
-	t.assert_equal(restored.player.inventory.stacks().size() + restored.settlement.pending_loot.size(), inventory.stacks().size(), "expansion overflow follows existing pending-loot semantics without loss")
+	t.assert_true(restored.fatal_error.is_empty(), "expanded memory inventory remains readable as Save v5")
+	t.assert_equal(restored.player.inventory.capacity, inventory.capacity, "Save v5 restores expanded capacity")
+	t.assert_equal(restored.player.inventory.to_slot_dict(), inventory.to_slot_dict(), "expanded slot layout retains all items without overflow")
 	GameSession.start_new_game()
 	GameSession.player.inventory.move_slot(0, 7)
 	var writable := [true]
@@ -337,14 +337,14 @@ func _test_save_and_wire_limits(t: Node) -> void:
 	var expected_keys := ["equipment", "inventory", "inventory_capacity", "owner_player_id", "protected_capacity", "protected_inventory", "revision"]
 	var keys := payload.keys()
 	keys.sort()
-	t.assert_equal(keys, expected_keys, "Protocol v16 owner item payload keys remain exactly unchanged")
+	t.assert_equal(keys, expected_keys, "Protocol v17 retains the owner snapshot envelope")
 	var parsed := PlayerItemStateSnapshot.from_payload(payload, ContentRegistry, owner)
 	t.assert_true(parsed.error_message.is_empty() and mirror.apply_item_network_mirror(parsed), "existing owner snapshot atomically replaces a larger sparse mirror")
 	t.assert_equal(mirror.inventory.capacity, GameSession.player.inventory.capacity, "mirror capacity replaces occupied old tail safely")
-	t.assert_true(mirror.inventory.get_slot(0) != null and GameSession.player.inventory.get_slot(0) == null, "v16 intentionally does not replicate source slot coordinates")
+	t.assert_true(mirror.inventory.to_slot_dict() == GameSession.player.inventory.to_slot_dict(), "v17 replicates exact source coordinates")
 	t.assert_equal(_totals(mirror.inventory), _totals(GameSession.player.inventory), "wire limitation does not lose or duplicate quantities")
-	t.assert_equal(SaveManager.CURRENT_VERSION, 4, "Save remains v4")
-	t.assert_equal(NetworkProtocol.VERSION, 16, "Protocol remains v16")
+	t.assert_equal(SaveManager.CURRENT_VERSION, 5, "Save uses v5")
+	t.assert_equal(NetworkProtocol.VERSION, 17, "Protocol uses v17")
 	t.assert_equal(LocalPlayerProfile.PROFILE_VERSION, 1, "Profile remains v1")
 	GameSession.start_new_game()
 

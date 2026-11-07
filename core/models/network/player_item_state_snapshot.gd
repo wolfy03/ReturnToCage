@@ -13,17 +13,14 @@ var equipment: Dictionary[int, ItemStack] = {}
 var error_message: String = ""
 
 func to_payload() -> Dictionary:
-	var inventory_payload: Array[Dictionary] = []
-	for stack in inventory:
-		inventory_payload.append(stack.to_dict())
+	var inventory_payload := SaveData.slot_records(inventory)
 	var equipment_payload: Array[Dictionary] = []
-	var protected_payload: Array[Dictionary] = []
-	for stack in protected_inventory:
-		protected_payload.append(stack.to_dict())
+	var protected_payload := SaveData.slot_records(protected_inventory)
 	var slots: Array = equipment.keys()
 	slots.sort()
 	for slot in slots:
-		equipment_payload.append({"slot": slot, "stack": equipment[slot].to_dict()})
+		var stack := equipment[slot]
+		equipment_payload.append({"slot": slot, "stack": stack.to_dict() if stack != null else null})
 	return {
 		"owner_player_id": String(owner_player_id),
 		"revision": revision,
@@ -42,9 +39,9 @@ static func from_state(owner: StringName, state: PlayerState) -> PlayerItemState
 	result.owner_player_id = owner
 	result.revision = state.item_state_revision
 	result.inventory_capacity = state.inventory.capacity
-	result.inventory = state.inventory.stacks()
+	result.inventory = state.inventory.slots()
 	result.protected_capacity = state.protected_inventory.capacity
-	result.protected_inventory = state.protected_inventory.stacks()
+	result.protected_inventory = state.protected_inventory.slots()
 	for slot in EquipmentDefinition.EquipmentSlot.values():
 		var stack := state.equipment.equipped(slot)
 		if stack != null:
@@ -67,42 +64,22 @@ static func from_payload(payload: Dictionary, registry: Node, expected_owner: St
 	result.inventory_capacity = payload["inventory_capacity"]
 	result.protected_capacity = payload["protected_capacity"]
 	if result.owner_player_id.is_empty() or result.owner_player_id != expected_owner \
-			or result.revision < 0 or result.inventory_capacity < 1 \
+			or result.revision < 0 or result.inventory_capacity < 0 \
 			or result.inventory_capacity > MAX_INVENTORY_CAPACITY \
 			or result.protected_capacity < 0 or result.protected_capacity > MAX_INVENTORY_CAPACITY:
 		result.error_message = "Invalid player item snapshot owner, revision, or capacity"
 		return result
-	var raw_inventory: Array = payload["inventory"]
-	if raw_inventory.size() > result.inventory_capacity:
-		result.error_message = "Player inventory exceeds capacity"
-		return result
 	var instances: Dictionary[String, String] = {}
-	for index in raw_inventory.size():
-		var errors := PackedStringArray()
-		var context := "player.inventory[%d]" % index
-		var stack := StackValidation.from_record(raw_inventory[index], Callable(registry, "get_item"), errors, context)
-		var definition: ItemDefinition = registry.get_item(stack.item_id) if stack != null else null
-		if stack == null or not errors.is_empty() or not StackValidation.runtime_error(stack, definition).is_empty() \
-				or stack.quantity > definition.max_stack \
-				or not StackValidation.accept_instance(stack, instances, errors, context):
-			result.error_message = "Invalid player inventory record"
-			return result
-		result.inventory.append(stack)
-	var raw_protected: Array = payload["protected_inventory"]
-	if raw_protected.size() > result.protected_capacity:
-		result.error_message = "Protected inventory exceeds capacity"
+	var inventory_layout := SaveData.inventory_layout({"capacity": result.inventory_capacity, "slots": payload.inventory}, Callable(registry, "get_item"), instances, "player.inventory", true)
+	if not inventory_layout.success:
+		result.error_message = inventory_layout.error
 		return result
-	for index in raw_protected.size():
-		var errors := PackedStringArray()
-		var context := "player.protected_inventory[%d]" % index
-		var stack := StackValidation.from_record(raw_protected[index], Callable(registry, "get_item"), errors, context)
-		var definition: ItemDefinition = registry.get_item(stack.item_id) if stack != null else null
-		if stack == null or not errors.is_empty() or not StackValidation.runtime_error(stack, definition).is_empty() \
-				or stack.quantity > definition.max_stack \
-				or not StackValidation.accept_instance(stack, instances, errors, context):
-			result.error_message = "Invalid protected inventory record"
-			return result
-		result.protected_inventory.append(stack)
+	var protected_layout := SaveData.inventory_layout({"capacity": result.protected_capacity, "slots": payload.protected_inventory}, Callable(registry, "get_item"), instances, "player.protected", true)
+	if not protected_layout.success:
+		result.error_message = protected_layout.error
+		return result
+	result.inventory = inventory_layout.slots
+	result.protected_inventory = protected_layout.slots
 	var seen_slots: Dictionary[int, bool] = {}
 	for index in payload["equipment"].size():
 		var raw: Variant = payload["equipment"][index]

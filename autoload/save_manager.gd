@@ -3,7 +3,7 @@ extends Node
 signal save_finished(success: bool, message: String)
 signal load_finished(success: bool, message: String)
 
-const CURRENT_VERSION := 4
+const CURRENT_VERSION := 5
 const SAVE_PATH := "user://return_to_cage_save.json"
 
 enum IdentityInspectionStatus {
@@ -44,6 +44,10 @@ func save_game(path: String = SAVE_PATH) -> bool:
 	var envelope: Dictionary = GameSession.export_persistent_state()
 	envelope["format_version"] = CURRENT_VERSION
 	envelope["saved_at"] = Time.get_datetime_string_from_system(true)
+	var staged := GameSession.prepare_persistent_restore(envelope)
+	if not staged.fatal_error.is_empty():
+		save_finished.emit(false, staged.fatal_error)
+		return false
 	var json := JSON.stringify(envelope, "  ")
 	var temporary := path + ".tmp"
 	var file := FileAccess.open(temporary, FileAccess.WRITE)
@@ -98,7 +102,7 @@ func load_game(path: String = SAVE_PATH) -> bool:
 		return false
 	var snapshot: SessionSnapshot = prepared.snapshot
 	if not GameSession.apply_persistent_snapshot(snapshot):
-		load_finished.emit(false, "Cannot apply the staged Save v4 session")
+		load_finished.emit(false, "Cannot apply the staged Save v5 session")
 		return false
 	var errors: PackedStringArray = prepared.warnings
 	var message := "Game loaded" if errors.is_empty() else "Game loaded with warnings: %s" % "; ".join(errors)
@@ -131,7 +135,7 @@ func prepare_load(
 	if GameSession.get_start_definition() == null:
 		result.error = "Cannot load game: invalid start configuration"
 		return result
-	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrated, selected_player_id)
+	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrated, selected_player_id, int(envelope.format_version) < CURRENT_VERSION)
 	if not snapshot.fatal_error.is_empty():
 		result.error = snapshot.fatal_error
 		return result
@@ -140,7 +144,7 @@ func prepare_load(
 	result.warnings = snapshot.warnings
 	return result
 
-# Reads only the primary Save v4 file and validates the identity-bearing
+# Reads only the primary Save v4/v5 file and validates the identity-bearing
 # envelope contract. It never migrates, stages domain objects, applies live
 # state, writes the save, or changes the local profile.
 func inspect_identity_candidates(path: String = SAVE_PATH) -> Dictionary:
@@ -153,27 +157,27 @@ func inspect_identity_candidates(path: String = SAVE_PATH) -> Dictionary:
 		)
 	var envelope: Dictionary = read_result.data
 	var raw_version: Variant = envelope.get("format_version", null)
-	if not SaveData.is_integer(raw_version) or int(raw_version) != CURRENT_VERSION:
-		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Identity recovery requires a primary Save v4 file")
+	if not SaveData.is_integer(raw_version) or int(raw_version) not in [4, CURRENT_VERSION]:
+		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Identity recovery requires a primary Save v4/v5 file")
 	if not envelope.get("shared", null) is Dictionary or not envelope.get("players", null) is Dictionary:
-		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid Save v4 shared or players object")
+		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid save shared or players object")
 	var shared: Dictionary = envelope["shared"]
 	for key in ["session", "settlement", "progression", "difficulty", "adventure"]:
 		if not shared.get(key, null) is Dictionary:
-			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid Save v4 shared object: %s" % key)
+			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid save shared object: %s" % key)
 	var raw_players: Dictionary = envelope["players"]
 	if raw_players.is_empty():
-		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Save v4 contains no player records")
+		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Save contains no player records")
 	var candidate_names: Array[String] = []
 	for raw_player_id in raw_players:
 		if (not raw_player_id is String and not raw_player_id is StringName) \
 				or not LocalPlayerProfile.is_valid_player_id(raw_player_id):
-			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Save v4 contains an invalid player ID")
+			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Save contains an invalid player ID")
 		var record: Variant = raw_players[raw_player_id]
 		if not record is Dictionary \
 				or not record.get("player_state", null) is Dictionary \
 				or not record.get("personal_progression", null) is Dictionary:
-			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid Save v4 player record: %s" % raw_player_id)
+			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid save player record: %s" % raw_player_id)
 		candidate_names.append(String(raw_player_id))
 	candidate_names.sort()
 	var candidates: Array[StringName] = []
@@ -184,10 +188,10 @@ func inspect_identity_candidates(path: String = SAVE_PATH) -> Dictionary:
 	var result := _identity_inspection_result(status)
 	result.candidates = candidates
 	result.saved_at = String(envelope.get("saved_at", "")) if SaveData.is_text(envelope.get("saved_at", "")) else ""
-	result.format_version = CURRENT_VERSION
+	result.format_version = int(raw_version)
 	return result
 
-# Re-reads the primary save and performs the complete existing Save v4 staging
+# Re-reads the primary save and performs the complete Save v5 staging
 # validation for the explicitly selected identity. No live state is applied.
 func validate_identity_candidate(player_id: StringName, path: String = SAVE_PATH) -> Dictionary:
 	var result := {
@@ -204,7 +208,7 @@ func validate_identity_candidate(player_id: StringName, path: String = SAVE_PATH
 		result.error = inspection.error
 		return result
 	if not inspection.candidates.has(player_id):
-		result.error = "Save v4 does not contain the selected player identity"
+		result.error = "Save does not contain the selected player identity"
 		return result
 	# Inspection results are deliberately not authoritative. Re-read before
 	# staging to avoid committing a candidate from stale UI state.
@@ -214,16 +218,16 @@ func validate_identity_candidate(player_id: StringName, path: String = SAVE_PATH
 		return result
 	var envelope: Dictionary = read_result.data
 	var raw_version: Variant = envelope.get("format_version", null)
-	if not SaveData.is_integer(raw_version) or int(raw_version) != CURRENT_VERSION:
-		result.error = "Identity recovery requires a primary Save v4 file"
+	if not SaveData.is_integer(raw_version) or int(raw_version) not in [4, CURRENT_VERSION]:
+		result.error = "Identity recovery requires a primary Save v4/v5 file"
 		return result
-	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(envelope, player_id)
+	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrate(envelope), player_id, int(raw_version) < CURRENT_VERSION)
 	if snapshot == null or not snapshot.fatal_error.is_empty():
-		result.error = snapshot.fatal_error if snapshot != null else "Cannot stage Save v4 identity recovery"
+		result.error = snapshot.fatal_error if snapshot != null else "Cannot stage save identity recovery"
 		return result
 	if snapshot.local_player_id != player_id or snapshot.player == null \
 			or snapshot.players_by_id.get(player_id) != snapshot.player:
-		result.error = "Save v4 staged a different local player identity"
+		result.error = "Save staged a different local player identity"
 		return result
 	result.success = true
 	result.snapshot = snapshot
@@ -294,8 +298,12 @@ func migrate(envelope: Dictionary) -> Dictionary:
 				result = _migrate_v2_to_v3(result)
 			3:
 				result = _migrate_v3_to_v4(result)
+			4:
+				result = _migrate_v4_to_v5(result)
 			_:
 				return {}
+		if result.is_empty():
+			return {}
 		var next_version: int = int(result.get("format_version", version))
 		if next_version <= version:
 			return {}
@@ -364,3 +372,33 @@ func _select_keys(source: Dictionary, keys: Array) -> Dictionary:
 		if source.has(key):
 			result[key] = source[key]
 	return result
+
+func _migrate_v4_to_v5(envelope: Dictionary) -> Dictionary:
+	if not envelope.get("shared") is Dictionary or not envelope.get("players") is Dictionary:
+		return {}
+	var start := GameSession.get_start_definition()
+	if start == null or not envelope.shared.get("settlement") is Dictionary:
+		return {}
+	for record in envelope.players.values():
+		if not record is Dictionary or not record.get("player_state") is Dictionary:
+			return {}
+		for key in ["player_inventory", "protected_inventory"]:
+			var capacity := start.inventory_capacity if key == "player_inventory" else start.protected_capacity
+			var layout := _index_legacy_inventory(record.player_state.get(key, []), capacity)
+			if layout.is_empty():
+				return {}
+			record.player_state[key] = layout
+	var storage := _index_legacy_inventory(envelope.shared.settlement.get("settlement_storage", []), start.storage_capacity)
+	if storage.is_empty():
+		return {}
+	envelope.shared.settlement.settlement_storage = storage
+	envelope.format_version = 5
+	return envelope
+
+func _index_legacy_inventory(raw: Variant, configured_capacity: int) -> Dictionary:
+	if not raw is Array or raw.size() > InventoryModel.MAX_CAPACITY:
+		return {}
+	var slots: Array[Dictionary] = []
+	for index in raw.size():
+		slots.append({"index": index, "stack": raw[index]})
+	return {"capacity": maxi(configured_capacity, raw.size()), "slots": slots}

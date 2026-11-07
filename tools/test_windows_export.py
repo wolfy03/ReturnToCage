@@ -98,7 +98,7 @@ class ExportChecks:
         output = log.read_text(encoding="utf-8", errors="replace")
         if code or ERRORS.search(output) or "EXPORT VALIDATION PASS" not in output:
             raise RuntimeError(f"{name} exit={code}\n{output}")
-        if (data["protocol"], data["save"], data["profile"]) != (16, 4, 1):
+        if (data["protocol"], data["save"], data["profile"]) != (17, 5, 1):
             raise RuntimeError(f"version contract changed: {data}")
         if self.rendered and data["display_server"] == "headless":
             raise RuntimeError("rendered startup was requested but only headless execution occurred")

@@ -19,7 +19,7 @@ Windows remain under the HUD while SceneRouter replaces WorldLayer scenes.
 
 InventoryWindow renders 6×4 presentation cells. [Stage 2](inventory_slots.md) now
 reads fixed memory slots, retaining empty cells and hiding other categories in
-place. These positions are not yet persisted or replicated. Starting capacity
+place. [Stage 3](inventory_persistence.md) persists and replicates these positions. Starting capacity
 remains 12, and the protected bag follows the main bag in the read-only view.
 The footer reports both real capacities and pages through the full slot span.
 EquipmentDefinition items go to Equip, food/drink/return items to Use, QUEST
@@ -31,7 +31,7 @@ resources. Its current entries reference MAIN_HAND and BODY; future UI entries
 can reuse this layout without changing the model in this stage. ItemSlotView and
 ItemTooltip are separate scenes reusable by future storage/shop views.
 
-Save v4, Profile v1, NetworkProtocol v16, equipment slots, ItemStack
+Save v5 and Protocol v17 preserve slots. Profile v1, equipment slots, ItemStack
 serialization and server mutation authority are unchanged. The existing HUD
 keeps storage/unsecured loot, crafting, quests, Save/Load and quick consumption;
 its duplicate carried/equipment text is replaced with the I/P shortcut hint.

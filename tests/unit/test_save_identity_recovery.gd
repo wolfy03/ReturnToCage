@@ -29,7 +29,7 @@ func _test_inspection_statuses(t: Node, token: String) -> void:
 	var invalid_json := SaveManager.inspect_identity_candidates(path)
 	t.assert_equal(invalid_json.status, SaveManager.IdentityInspectionStatus.INVALID_SAVE, "invalid JSON is not an identity source")
 
-	for invalid_version in [null, "4", 1, 2, 3, 4.5, 5]:
+	for invalid_version in [null, "4", 1, 2, 3, 4.5, 6]:
 		var envelope := _valid_envelope([PLAYER_A])
 		if invalid_version == null:
 			envelope.erase("format_version")

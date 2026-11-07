@@ -144,3 +144,7 @@ Backdrop -1100, 배경 -1000..-100, gameplay 0, 전경(미구현) 100..900.
 ## Fixed inventory slots (Stage 2)
 
 InventoryModel stores capacity-sized nullable cells; dense stacks()/to_array() remain compatibility views. Strict slot commands and exchanges validate/stage before commit, paired storage transfers commit both models before signals, and death losses preserve retained indices. Read-only UI uses slots(). See [inventory_slots.md](inventory_slots.md) for API contracts and the deliberately unchanged Save/wire limits.
+
+## Stage 3 slot serialization and authority
+
+SaveData validates the indexed container shared by Save v5 and v17 snapshots. The existing owner-private service validates server-approved slot intents; UI remains read-only. See [inventory_persistence.md](inventory_persistence.md).

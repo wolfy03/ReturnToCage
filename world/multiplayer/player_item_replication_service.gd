@@ -5,6 +5,7 @@ signal equip_result(success: bool, message: String)
 signal unequip_result(success: bool, message: String)
 signal use_item_result(success: bool, message: String)
 signal transfer_result(success: bool, message: String)
+signal slot_result(sequence: int, success: bool, message: String)
 
 enum CommandType { EQUIP, UNEQUIP, USE_ITEM, TRANSFER }
 
@@ -38,6 +39,60 @@ func request_use_item(item_id: StringName) -> void:
 
 func request_transfer(direction: int, item_id: StringName, amount: int, instance_id: String = "") -> void:
 	_submit(CommandType.TRANSFER, "", direction, item_id, instance_id, amount)
+
+## Script-facing intent API. No gameplay UI binds these commands in Stage 3.
+func request_slot_command(action: int, inventory_kind: int, from: int = -1, to: int = -1, amount: int = 0) -> int:
+	var command := make_slot_intent(action, inventory_kind, from, to, amount)
+	if command.is_empty():
+		return -1
+	if NetworkManager.is_authoritative_simulation():
+		_execute_slot(NetworkManager.local_peer_id(), command, true)
+	elif NetworkManager.is_session_connected():
+		_request_slot_command.rpc_id(1, command)
+	else:
+		return -1
+	return command.sequence
+
+func make_slot_intent(action: int, inventory_kind: int, from: int, to: int, amount: int = 0) -> Dictionary:
+	var player := GameSession.get_local_player()
+	var world := GameSession.get_peer_world(NetworkManager.local_peer_id())
+	var inventory := PlayerItemCommandService.slot_inventory(player, inventory_kind)
+	if world == null or inventory == null or GameSession.session_id.is_empty():
+		return {}
+	return {
+		"owner_player_id": String(GameSession.get_local_player_id()), "session_id": GameSession.session_id,
+		"world_id": String(world.world_id), "world_revision": world.revision,
+		"revision": player.item_state_revision, "sequence": _next_sequence(),
+		"action": action, "inventory": inventory_kind, "from": from, "to": to, "amount": amount,
+		"source": PlayerItemCommandService.slot_fingerprint(inventory.get_slot(from)),
+		"target": PlayerItemCommandService.slot_fingerprint(inventory.get_slot(to)),
+	}
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_slot_command(command: Dictionary) -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 1 or not NetworkManager.has_peer(sender) or not GameSession.has_player(sender) or NetworkManager.player_id_for_peer(sender) != GameSession.get_player_id(sender):
+		return
+	_execute_slot(sender, command, false)
+
+func _execute_slot(peer_id: int, command: Dictionary, local: bool) -> void:
+	var sequence: Variant = command.get("sequence")
+	if not sequence is int:
+		return
+	var result := GameSession.execute_slot_command(peer_id, command) if _accept_sequence(peer_id, sequence) else CommandResult.make(false, "Stale slot command sequence")
+	if result.success:
+		_send_owner_snapshot(peer_id)
+	if local:
+		slot_result.emit(sequence, result.success, result.message)
+	elif NetworkManager.can_send_to_peer(peer_id):
+		_receive_slot_result.rpc_id(peer_id, sequence, result.success, result.message)
+
+@rpc("authority", "call_remote", "reliable")
+func _receive_slot_result(sequence: int, success: bool, message: String) -> void:
+	if not NetworkManager.is_server():
+		slot_result.emit(sequence, success, message)
 
 func _submit(
 	command_type: CommandType,

@@ -24,7 +24,7 @@ func run(t: Node) -> void:
 	var path := "user://save_v4_round_trip_test.json"
 	t.assert_true(SaveManager.save_game(path), "Save v4 writes an authoritative offline session")
 	var saved := _read_json(path)
-	t.assert_equal(saved.get("format_version"), 4.0, "Save v4 writer emits format version 4")
+	t.assert_equal(saved.get("format_version"), 5.0, "Save writer emits format version 5")
 	t.assert_true(saved.has("shared") and saved.has("players") and not saved.has("game_state"), "Save v4 root separates shared and player records")
 	t.assert_true(saved["players"].has(String(local_id)) and saved["players"].has(String(REMOTE_PLAYER_ID)), "attached and detached canonical players are saved by player_id")
 	t.assert_true(not _contains_key(saved, "peer_id"), "Save v4 persists no transient peer identity")
@@ -72,7 +72,7 @@ func run(t: Node) -> void:
 
 	var legacy := {"format_version": 3, "game_state": GameSession.export_state()}
 	var migrated := SaveManager.migrate(legacy)
-	t.assert_equal(migrated.get("format_version"), 4, "Save v3 migrates to Save v4")
+	t.assert_equal(migrated.get("format_version"), 5, "Save v3 migrates through v4 to v5")
 	t.assert_true(migrated["players"].has(String(local_id)), "v3 migration assigns the local profile identity")
 	t.assert_equal(migrated["players"][String(local_id)]["personal_progression"]["quests"], [], "v3 migration invents no personal quest progress")
 
@@ -129,10 +129,10 @@ func run(t: Node) -> void:
 		"player_state": {"player_inventory": "corrupt"},
 		"personal_progression": {"quests": []},
 	}
-	late_corrupt["format_version"] = 4
+	late_corrupt["format_version"] = 5
 	late_corrupt["saved_at"] = "test"
 	_write_json(path, late_corrupt)
-	t.assert_true(not SaveManager.load_game(path), "invalid staged Save v4 does not apply")
+	t.assert_true(not SaveManager.load_game(path), "invalid staged Save v5 does not apply")
 	t.assert_equal(GameSession.export_persistent_state(), before, "late player staging failure leaves the live session unchanged")
 
 	var save_messages: Array[String] = []

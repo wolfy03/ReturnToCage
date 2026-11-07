@@ -15,7 +15,7 @@ func run(t: Node) -> void:
 		var envelope: Dictionary = {"format_version": version, "game_state": state}
 		var before: Dictionary = envelope.duplicate(true)
 		var migrated: Dictionary = SaveManager.migrate(envelope)
-		t.assert_equal(migrated["format_version"], 4, "save version reaches current format")
+		t.assert_equal(migrated["format_version"], 5, "save version reaches current format")
 		t.assert_equal(envelope, before, "migration never mutates input envelope")
 		var local_id := String(NetworkManager.local_profile_player_id())
 		t.assert_true(migrated["players"].has(local_id), "legacy local player migrates under persistent profile identity")

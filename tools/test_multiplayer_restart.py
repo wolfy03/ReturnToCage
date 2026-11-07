@@ -152,7 +152,7 @@ class RestartProbe:
         log_file = log_path.open("wb")
         command = [
             self.args.godot,
-            "--headless",
+            *(["--rendering-method", "gl_compatibility"] if self.args.rendered else ["--headless"]),
             "--path",
             str(ROOT),
             SCENE,
@@ -242,9 +242,13 @@ class RestartProbe:
         self.require(all(identities), "phase-one persistent identities are present")
         self.require(len(set(user_paths)) == self.args.players, "phase-one roles use independent native user directories")
         self.require(len(set(process_ids)) == self.args.players, "phase-one roles run in independent Godot processes")
-        self.require(host["canonical_count"] == self.args.players, "Save v4 contains every canonical player")
+        if self.args.rendered:
+            for report in [host, *clients.values()]:
+                profile = report["profile"]
+                self.require(profile["display_server"] != "headless" and profile["rendered_frames"] > 0, "rendered seed role drew real frames")
+        self.require(host["canonical_count"] == self.args.players, "Save v5 contains every canonical player")
         self.require(host["active_count"] == self.args.players, "all seed players are attached before Save")
-        self.require(host["save_exists"] and bool(host["save_sha256"]), "primary Save v4 was written")
+        self.require(host["save_exists"] and bool(host["save_sha256"]), "primary Save v5 was written")
         self.require(not host["registry_errors"], "seed runtime mappings are symmetric")
         self.require(host["profile"]["primary_exists"] and host["profile"]["backup_exists"], "host profile primary/backup exist")
         for label in self.labels:
@@ -254,11 +258,11 @@ class RestartProbe:
             self.require(record.get("label") == label, f"host Save binds client {label} by persistent player_id")
         save_path = Path(host["profile"]["user_path"]) / "return_to_cage_save.json"
         save_data = json.loads(save_path.read_text(encoding="utf-8"))
-        self.require(save_data.get("format_version") == 4, "process seed uses Save v4")
-        self.require(len(save_data.get("players", {})) == self.args.players, "Save v4 player count matches process topology")
+        self.require(save_data.get("format_version") == 5, "process seed uses Save v5")
+        self.require(len(save_data.get("players", {})) == self.args.players, "Save v5 player count matches process topology")
         forbidden = ("peer_id", "peer_to_player", "player_to_peer", "world_ready_peers")
         serialized = json.dumps(save_data)
-        self.require(not any(name in serialized for name in forbidden), "Save v4 excludes runtime peer/cache fields")
+        self.require(not any(name in serialized for name in forbidden), "Save v5 excludes runtime peer/cache fields")
 
     def validate_resume(
         self,
@@ -325,7 +329,7 @@ class RestartProbe:
                 self.require(host["players"][player_id]["last_safe_position"] == restart_assignment["position"], "healed fallback reaches host canonical state")
                 self.require(assignment["spawn_kind"] == "RETURNING_SAFE_POSITION", "same-session reconnect reuses the healed safe position")
                 self.require(assignment["position"] == restart_assignment["position"], "healed fallback is stable on repeated reconnect")
-                self.require(host["healed_save_verified"], "healed fallback is persisted by the subsequent Save v4 write")
+                self.require(host["healed_save_verified"], "healed fallback is persisted by the subsequent Save v5 write")
             else:
                 self.require(assignment["spawn_kind"] == "RETURNING_SAFE_POSITION", f"client {label} uses returning safe-position spawn")
                 self.require(self.values_equal(assignment["position"], expected["last_safe_position"]), f"client {label} returns to its saved position")
@@ -438,6 +442,7 @@ def main() -> int:
     parser.add_argument("--process-timeout", type=float, default=40.0)
     parser.add_argument("--duplicate-identity", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--keep-artifacts", action="store_true")
+    parser.add_argument("--rendered", action="store_true", help="Run the same assertions with the Compatibility renderer")
     parser.add_argument("--artifact-label", default="")
     args = parser.parse_args()
 

@@ -256,8 +256,8 @@ func _process(_delta: float) -> void:
 			if GameSession.players.size() == expected_players and actors.size() == expected_players \
 				and enemy_roster_confirmations.size() == expected_players - 1 \
 				and quest_sync_confirmations.size() == expected_players - 1:
-				if not _verify_host_save_v4():
-					_fail("host-authoritative Save v4 probe failed")
+				if not _verify_host_save_v5():
+					_fail("host-authoritative Save v5 probe failed")
 					return
 				print("PROBE HOST PLAYERS %d" % expected_players)
 				if disconnect_host:
@@ -491,7 +491,7 @@ func _process(_delta: float) -> void:
 				state = ProbeState.FINISHED
 				get_tree().create_timer(0.75).timeout.connect(_quit_success, CONNECT_ONE_SHOT)
 
-func _verify_host_save_v4() -> bool:
+func _verify_host_save_v5() -> bool:
 	var path := "user://multiplayer_host_save_v4_probe.json"
 	# The combat probe builds its adventure subtree before changing the session
 	# phase. Temporarily remove that fixture so this check exercises the real
@@ -506,7 +506,7 @@ func _verify_host_save_v4() -> bool:
 	var file := FileAccess.open(path, FileAccess.READ)
 	var parser := JSON.new()
 	var valid: bool = file != null and parser.parse(file.get_as_text()) == OK and parser.data is Dictionary \
-		and parser.data.get("format_version") == 4.0 \
+		and parser.data.get("format_version") == 5.0 \
 		and parser.data.get("players", {}).size() == expected_players
 	if not valid:
 		print("PROBE HOST SAVE INVALID: parsed=%s version=%s players=%s expected=%s" % [

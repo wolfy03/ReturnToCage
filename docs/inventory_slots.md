@@ -1,4 +1,4 @@
-# Fixed inventory slots — Stage 2
+# Fixed inventory slots — Stage 2 model
 
 InventoryModel now owns an array of exactly `capacity` cells. A cell contains an
 ItemStack or `null`; deleting an item leaves its index empty. Ordinary addition,
@@ -63,7 +63,10 @@ main bag's capacity and keeps its own model indices; trailing grid padding is no
 extra capacity. Pages cover the actual slot span. Equipment and inventory UI still
 issue no gameplay commands.
 
-## Deliberate Save / network limits (Stage 3 is not implemented)
+## Historical Stage 2 format limits
+
+The following describes Stage 2 only. Stage 3 replaces these limitations with
+[Save v5 and Protocol v17](inventory_persistence.md).
 
 - Save remains **v4**, Profile **v1**, NetworkProtocol **v16**. ItemStack's four
   serialized fields are unchanged. No null cells, indices, layout revisions or new

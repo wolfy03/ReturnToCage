@@ -74,7 +74,7 @@ func _test_settlement_snapshot(t: Node, settlement: SettlementState) -> void:
 	snapshot.pending_loot = [ItemStack.new(&"berry", 2)]
 	var parsed := SettlementStateSnapshot.from_payload(snapshot.to_payload(), ContentRegistry)
 	t.assert_true(parsed.error_message.is_empty(), "valid settlement snapshot round-trips")
-	t.assert_equal(parsed.storage.size(), 1, "settlement snapshot contains the canonical storage stack")
+	t.assert_equal(parsed.storage.filter(func(stack: ItemStack) -> bool: return stack != null).size(), 1, "settlement snapshot contains the canonical storage stack")
 	t.assert_equal(parsed.storage[0].item_id, &"mushroom_stew", "settlement snapshot preserves stable item IDs")
 	t.assert_equal(parsed.pending_loot[0].quantity, 2, "settlement snapshot preserves pending loot")
 	var mirror := SettlementState.new(Callable(ContentRegistry, "get_item"), Callable(self, "_deny_mutation"))
@@ -87,7 +87,7 @@ func _test_settlement_snapshot(t: Node, settlement: SettlementState) -> void:
 	t.assert_true(not mirror.apply_network_mirror(parsed), "equal settlement revision is rejected as stale")
 
 	var malformed := snapshot.to_payload()
-	malformed["storage"] = [{"item_id": "missing_item", "quantity": 1, "instance_id": "", "durability": 0}]
+	malformed["storage"] = [{"index": 0, "stack": {"item_id": "missing_item", "quantity": 1, "instance_id": "", "durability": 0}}]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "unknown storage item is rejected")
 	malformed = snapshot.to_payload()
 	malformed["facility_levels"] = [
@@ -99,12 +99,12 @@ func _test_settlement_snapshot(t: Node, settlement: SettlementState) -> void:
 	malformed["facility_levels"] = [{"facility_id": "workbench", "level": 999}]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "facility level above definition maximum is rejected")
 	malformed = snapshot.to_payload()
-	malformed["storage"] = [{"item_id": "berry", "quantity": -1, "instance_id": "", "durability": -1}]
+	malformed["storage"] = [{"index": 0, "stack": {"item_id": "berry", "quantity": -1, "instance_id": "", "durability": -1}}]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "negative storage quantity is rejected")
 	malformed = snapshot.to_payload()
 	malformed["storage"] = [
-		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate", "durability": 100},
-		{"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate", "durability": 100},
+		{"index": 0, "stack": {"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate", "durability": 100}},
+		{"index": 1, "stack": {"item_id": "leaf_vest", "quantity": 1, "instance_id": "duplicate", "durability": 100}},
 	]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "duplicate storage instance ID is rejected")
 	malformed = snapshot.to_payload()
@@ -132,7 +132,7 @@ func _test_settlement_snapshot(t: Node, settlement: SettlementState) -> void:
 	]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "duplicate instance within pending loot is rejected")
 	malformed = snapshot.to_payload()
-	malformed["storage"] = [{"item_id": "leaf_vest", "quantity": 1, "instance_id": "cross_container", "durability": 45}]
+	malformed["storage"] = [{"index": 0, "stack": {"item_id": "leaf_vest", "quantity": 1, "instance_id": "cross_container", "durability": 45}}]
 	malformed["pending_loot"] = [{"item_id": "leaf_vest", "quantity": 1, "instance_id": "cross_container", "durability": 45}]
 	t.assert_true(not SettlementStateSnapshot.from_payload(malformed, ContentRegistry).error_message.is_empty(), "storage and pending loot cannot share an instance ID")
 
