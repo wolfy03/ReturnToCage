@@ -290,7 +290,7 @@ func attach_player(peer_id: int, player_id: StringName) -> PlayerState:
 		state = _create_player_state()
 		var start := get_start_definition(false)
 		if start != null:
-			state.reset(start, ContentRegistry)
+			state.reset(start, ContentRegistry, NetworkManager.is_authoritative_simulation())
 		if NetworkManager.is_session_connected() and not NetworkManager.is_server():
 			state.prepare_network_item_mirror()
 		_player_states_by_id[player_id] = state
@@ -486,8 +486,8 @@ func get_start_definition(report_error: bool = true) -> GameStartDefinition:
 
 func _reset_states(start: GameStartDefinition) -> void:
 	for state in players.values():
-		state.reset(start, ContentRegistry)
-	settlement.reset(start, ContentRegistry)
+		state.reset(start, ContentRegistry, true)
+	settlement.reset(start, ContentRegistry, true)
 	progression.reset(start)
 	for peer_id in players:
 		progression.ensure_personal_progression(get_player_id(peer_id))
@@ -707,7 +707,7 @@ func collect_adventure_loot(item_id: StringName, amount: int, peer_id: int = -1)
 	var personal := adventure.active_session.get_player_adventure(owner_peer_id)
 	if personal == null:
 		return InventoryResult.make(amount, 0, "unknown adventure player")
-	var result := personal.unsecured_loot.add_item(item_id, amount)
+	var result := personal.unsecured_loot.add_granted_item(item_id, amount)
 	if result.changed > 0:
 		inventory_changed.emit()
 		report_gameplay_event(GameplayEvent.collect_item(get_player_id(owner_peer_id), item_id, result.changed))
@@ -720,7 +720,7 @@ func collect_adventure_loot_for_peer(item_id: StringName, amount: int, peer_id: 
 	var personal := session.get_player_adventure(peer_id) if session != null else null
 	if personal == null:
 		return InventoryResult.make(amount, 0, "Unknown adventure player")
-	var result := personal.unsecured_loot.add_item(item_id, amount)
+	var result := personal.unsecured_loot.add_granted_item(item_id, amount)
 	if result.changed > 0:
 		inventory_changed.emit()
 		report_gameplay_event(GameplayEvent.collect_item(get_player_id(peer_id), item_id, result.changed))
@@ -758,12 +758,16 @@ func finish_adventure(result: AdventureSession.Result) -> String:
 		return handle_player_death(get_local_peer_id(), player.last_safe_position).summary()
 	if result != AdventureSession.Result.NORMAL_ESCAPE and result != AdventureSession.Result.RETURN_ITEM_ESCAPE:
 		return "An expedition must end through an escape or death"
-	adventure.active_session.result = result
 	# Temporary party-wide finish policy. Future individual extraction should be a
 	# separate finish_player_adventure(peer_id) operation, not an implicit branch.
 	var loot: Array[ItemStack] = []
 	for personal in adventure.active_session.player_adventures.values():
 		loot.append_array((personal as PlayerAdventureState).unsecured_loot.stacks())
+	var loot_error := settlement._secure_items_error(loot)
+	if not loot_error.is_empty():
+		last_message = loot_error
+		return last_message
+	adventure.active_session.result = result
 	var secured: CommandResult = settlement.secure_loot(loot)
 	var discoveries_changed := false
 	for point in adventure.active_session.discovered_escape_points:
@@ -1347,7 +1351,7 @@ func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
 		retained_state = _create_player_state()
 		var start := get_start_definition(false)
 		if start != null:
-			retained_state.reset(start, ContentRegistry)
+			retained_state.reset(start, ContentRegistry, NetworkManager.is_authoritative_simulation())
 	_add_player_state(LOCAL_SINGLEPLAYER_PEER_ID, NetworkManager.local_profile_player_id(), retained_state)
 	progression.personal_progression.clear()
 	progression.ensure_personal_progression(get_local_player_id())

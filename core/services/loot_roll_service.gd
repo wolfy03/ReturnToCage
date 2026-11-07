@@ -15,4 +15,4 @@ static func roll(table: LootTableDefinition, resolver: Callable, multiplier: flo
 		var definition := resolver.call(stack.item_id) as ItemDefinition if resolver.is_valid() else null
 		if not StackValidation.runtime_error(stack, definition).is_empty():
 			return []
-	return results
+	return ItemStack.issue_grant_instances(results, resolver)

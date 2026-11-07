@@ -96,11 +96,12 @@ func _validate_items(entries: Array[StartingItemDefinition], capacity: int, regi
 			errors.append("%s %s: %s (%s, quantity %d, instance %s)" % [id, context, error, entry.item_id, entry.quantity, entry.instance_id])
 			continue
 		StackValidation.accept_instance(stack, instances, errors, context)
-		stacks_needed += 1 if not entry.instance_id.is_empty() else ceili(float(entry.quantity) / item.max_stack)
+		var stack_limit := 1 if item is EquipmentDefinition else item.max_stack
+		stacks_needed += 1 if not entry.instance_id.is_empty() else ceili(float(entry.quantity) / stack_limit)
 	if stacks_needed > capacity:
 		errors.append("%s: starting items exceed capacity" % id)
 
-func create_stacks(entries: Array[StartingItemDefinition], registry: Node) -> Array[ItemStack]:
+func create_stacks(entries: Array[StartingItemDefinition], registry: Node, fresh_grant: bool = false) -> Array[ItemStack]:
 	var stacks: Array[ItemStack] = []
 	for entry in entries:
 		var item: ItemDefinition = registry.get_item(entry.item_id) as ItemDefinition if entry != null else null
@@ -114,7 +115,7 @@ func create_stacks(entries: Array[StartingItemDefinition], registry: Node) -> Ar
 		var remaining: int = entry.quantity
 		while remaining > 0:
 			var stack: ItemStack = entry.create_stack()
-			stack.quantity = mini(remaining, item.max_stack)
+			stack.quantity = mini(remaining, 1 if item is EquipmentDefinition else item.max_stack)
 			stacks.append(stack)
 			remaining -= stack.quantity
-	return stacks
+	return ItemStack.issue_grant_instances(stacks, Callable(registry, "get_item"), true) if fresh_grant else stacks

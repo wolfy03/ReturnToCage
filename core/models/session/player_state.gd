@@ -6,7 +6,7 @@ signal item_state_changed(revision: int)
 signal private_state_changed
 
 var effects: EffectRuntimeModel
-var _gear_sources: Array[StringName] = []
+var _gear_sources: Dictionary[StringName, Array] = {}
 
 var stats: StatBlock = StatBlock.new()
 var inventory: InventoryModel
@@ -42,7 +42,7 @@ func _init(resolver: Callable, mutation_guard: Callable = Callable()) -> void:
 func set_item_mutation_guard(guard: Callable) -> void:
 	_item_mutation_guard = guard
 
-func reset(start: GameStartDefinition, registry: Node) -> void:
+func reset(start: GameStartDefinition, registry: Node, fresh_grant: bool = false) -> void:
 	_applying_item_snapshot = true
 	stats = StatBlock.new()
 	stats.base_values = start.player_stats.duplicate()
@@ -51,11 +51,11 @@ func reset(start: GameStartDefinition, registry: Node) -> void:
 	survival.reset(start)
 	health = start.player_health
 	_last_safe_position = start.last_safe_position
-	inventory.initialize(start.create_stacks(start.inventory_items, registry), start.inventory_capacity)
-	protected_inventory.initialize(start.create_stacks(start.protected_items, registry), start.protected_capacity)
+	inventory.initialize(start.create_stacks(start.inventory_items, registry, fresh_grant), start.inventory_capacity)
+	protected_inventory.initialize(start.create_stacks(start.protected_items, registry, fresh_grant), start.protected_capacity)
 	equipment.restore({})
-	for entry in start.equipment_items:
-		equipment.equip(entry.create_stack())
+	for stack in start.create_stacks(start.equipment_items, registry, fresh_grant):
+		equipment.equip(stack)
 	_item_state_revision = 0
 	_item_update_depth = 0
 	_item_change_pending = false
@@ -80,6 +80,7 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 		stats.set_base(&"max_health", start.player_stats[&"max_health"])
 		errors.append("invalid max_health restored to start value")
 	errors.append_array(SaveData.restore_inventory(inventory, data.get("player_inventory", []), instances, "player_inventory", start.inventory_capacity, legacy_repairs))
+	equipment.begin_update()
 	var equipment_errors := equipment.restore(SaveData.dictionary(data, "equipment", errors), instances)
 	if data.get("player_inventory") is Dictionary and not legacy_repairs and not equipment_errors.is_empty():
 		errors.append("invalid slot inventory equipment: " + "; ".join(equipment_errors))
@@ -90,7 +91,7 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 	errors.append_array(survival.restore(SaveData.dictionary(data, "survival_state", errors)))
 	_last_safe_position = SaveData.position(data, "last_safe_position", start.last_safe_position, errors)
 	errors.append_array(effects.restore(SaveData.array(data, "active_effects", errors), Callable(ContentRegistry, "get_definition")))
-	sync_equipment()
+	equipment.end_update()
 	set_health(SaveData.clamped_number(data, "player_health", stats.value(&"max_health"), 0.0, maxf(1.0, stats.value(&"max_health")), errors))
 	_item_state_revision = 0
 	_item_update_depth = 0
@@ -292,11 +293,8 @@ func _equipment_definition(stack: ItemStack) -> EquipmentDefinition:
 	return equipment.definition_resolver.call(stack.item_id) as EquipmentDefinition \
 		if stack != null and equipment.definition_resolver.is_valid() else null
 
-func _rebuild_equipment_stats(block: StatBlock, runtime: EffectRuntimeModel, loadout: Array[ItemStack]) -> Array[StringName]:
-	for source in _gear_sources:
-		block.remove_source(source)
-		runtime.remove_source(source)
-	var sources: Array[StringName] = []
+func _rebuild_equipment_stats(block: StatBlock, runtime: EffectRuntimeModel, loadout: Array[ItemStack]) -> Dictionary[StringName, Array]:
+	var sources: Dictionary[StringName, Array] = {}
 	for stack in loadout:
 		if stack.durability == 0:
 			continue
@@ -304,7 +302,15 @@ func _rebuild_equipment_stats(block: StatBlock, runtime: EffectRuntimeModel, loa
 		if definition == null:
 			continue
 		var source := StringName("equipment:%d" % definition.equipment_slot)
-		sources.append(source)
+		sources[source] = [definition, stack.instance_id]
+	for source in _gear_sources:
+		if not sources.has(source) or sources[source] != _gear_sources[source]:
+			block.remove_source(source)
+			runtime.remove_source(source, true)
+	for source in sources:
+		if _gear_sources.has(source) and _gear_sources[source] == sources[source]:
+			continue
+		var definition: EquipmentDefinition = sources[source][0]
 		for stat_id in definition.stat_modifiers:
 			block.add_modifier(StatModifier.new(source, stat_id, definition.stat_modifiers[stat_id], 1.0))
 		for effect in definition.equip_effects:

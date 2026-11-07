@@ -28,6 +28,10 @@ var _previous_slot_intent: Dictionary = {}
 var _prepared_slot_intent: Dictionary = {}
 var _item_presenter_id := 0
 var _expect_item_windows := false
+const FIELD_GEAR_SAVE := "user://field_gear_boundary.json"
+var _field_gear_sequence := -1
+var _field_gear_won := false
+var _field_gear_session := ""
 
 func configure(p_app: AppRoot, context: Dictionary) -> void:
 	app = p_app
@@ -218,9 +222,25 @@ func _execute(command: Dictionary) -> void:
 			if not NetworkManager.is_server() or not storage.add_item(&"moss_fiber", 2).success or not storage.add_item(&"rusty_scrap", 1).success:
 				_fail("cannot seed field gear recipe materials")
 				return
-		"field_gear_craft":
-			if not await _craft_field_gear():
-				_fail("field gear recipe did not deliver all three owner-private items")
+		"field_gear_ready":
+			if not await _wait(func() -> bool:
+				return GameSession.settlement.storage.count(&"moss_fiber") >= 2 and GameSession.settlement.storage.count(&"rusty_scrap") >= 1
+			):
+				_fail("field gear inputs did not synchronize")
+				return
+		"field_gear_craft", "field_gear_race", "field_gear_replay":
+			if not await _craft_field_gear(action, int(command.get("sequence_offset", 0))):
+				_fail("field gear RPC did not conserve inputs and owner-private outputs: " + action)
+				return
+		"field_gear_save":
+			if not NetworkManager.is_server() or not SaveManager.save_game(FIELD_GEAR_SAVE):
+				_fail("host could not save immediately after field gear craft")
+				return
+			_field_gear_session = GameSession.session_id
+		"field_gear_rehost":
+			app._host_saved_game(FIELD_GEAR_SAVE, port, 4)
+			if not await _wait(_ready_world) or GameSession.session_id != _field_gear_session:
+				_fail("Host Save did not restore the crafted field gear session")
 				return
 		"item_foreign":
 			if not await _reject_foreign_equip(String(command.instance)):
@@ -624,22 +644,46 @@ func _reject_foreign_equip(instance_id: String) -> bool:
 	service.equip_result.disconnect(receive)
 	return rejected and _slot_layout(player) == before
 
-func _craft_field_gear() -> bool:
+func _craft_field_gear(action: String, sequence_offset: int) -> bool:
 	var service := get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
 	var player := GameSession.get_local_player()
-	var revision := player.item_state_revision
 	var storage := GameSession.settlement.storage
-	if service == null or not await _wait(func() -> bool:
+	if service == null or NetworkManager.is_server():
+		return false
+	var race := action == "field_gear_race"
+	var replay := action == "field_gear_replay"
+	if not race and not await _wait(func() -> bool:
 		return storage.count(&"moss_fiber") >= 2 and storage.count(&"rusty_scrap") >= 1
 	):
 		return false
+	var revision := player.item_state_revision
+	var before := _slot_layout(player)
+	var inputs := storage.to_slot_dict()
 	var moss := storage.count(&"moss_fiber")
 	var scrap := storage.count(&"rusty_scrap")
-	service.request_craft(&"field_gear_recipe")
+	var replies: Array[CommandResult] = []
+	var receive := func(success: bool, message: String) -> void: replies.append(CommandResult.make(success, message))
+	service.craft_result.connect(receive)
+	if replay:
+		service._request_craft.rpc_id(1, &"field_gear_recipe", _field_gear_sequence + sequence_offset)
+	else:
+		service.request_craft(&"field_gear_recipe")
+		_field_gear_sequence = SettlementReplicationService._next_local_sequence
+	var received := await _wait(func() -> bool: return replies.size() == 1)
+	service.craft_result.disconnect(receive)
+	if not received:
+		return false
+	_field_gear_won = replies[0].success
+	if replay or race and not _field_gear_won:
+		return not _field_gear_won and player.item_state_revision == revision and _slot_layout(player) == before \
+			and (not replay or (replies[0].message.contains("stale sequence") and storage.to_slot_dict() == inputs))
+	if not _field_gear_won:
+		return false
 	return await _wait(func() -> bool:
 		return player.item_state_revision == revision + 1 and player.inventory.count(&"leaf_hat") == 1 \
 			and player.inventory.count(&"acorn_necklace") == 1 and player.inventory.count(&"seed_ring") == 1 \
-			and storage.count(&"moss_fiber") == moss - 2 and storage.count(&"rusty_scrap") == scrap - 1
+			and storage.count(&"moss_fiber") == (0 if race else moss - 2) \
+			and storage.count(&"rusty_scrap") == (0 if race else scrap - 1)
 	)
 
 func _item_ui(command: Dictionary) -> bool:
@@ -847,7 +891,7 @@ func _write(status: String, error: String = "") -> void:
 		"world": String(SceneRouter.current_world_id()), "peer_id": NetworkManager.local_peer_id(),
 		"process_id": OS.get_process_id(), "rendering_method": RenderingServer.get_current_rendering_method(),
 		"rendered_frames": Engine.get_frames_drawn(),
-		"session_id": GameSession.session_id, "state": _state_dump(), "export_context": _context}
+		"session_id": GameSession.session_id, "field_gear_won": _field_gear_won, "state": _state_dump(), "export_context": _context}
 	var file := FileAccess.open(result_path + ".tmp", FileAccess.WRITE)
 	file.store_string(JSON.stringify(data, "\t"))
 	file.close()

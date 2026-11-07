@@ -22,9 +22,14 @@ static func resolve(player: PlayerState, settlement: SettlementState, adventure:
 				if original.item_id == kept.item_id and kept.durability < original.durability:
 					result.equipment_damaged.append(kept)
 		player.inventory.initialize_slots(_kept_slots(player.inventory, rules, resolver))
+		player.equipment.begin_update()
 		player.equipment.restore({})
 		for kept in gear.equipment_kept:
 			player.equipment.equip(kept)
+		player.equipment.end_update()
+		# GameSession batches equipment signals until the death commit is
+		# complete. Respawn health already needs the resulting maximum.
+		player.sync_equipment()
 		if finish_adventure:
 			settlement.secure_loot(loot.kept)
 		elif loot_source != null:

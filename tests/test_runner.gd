@@ -5,6 +5,10 @@ var passed: int = 0
 
 func _ready() -> void:
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if arguments.has("--item-boundaries-only"):
+		preload("res://tests/unit/test_item_transaction_boundaries.gd").new().run(self)
+		_finish_tests()
+		return
 	if arguments.has("--inventory-persistence-only"):
 		preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
 		_finish_tests()
@@ -40,6 +44,7 @@ func _ready() -> void:
 	run_all()
 
 func run_all() -> void:
+	preload("res://tests/unit/test_item_transaction_boundaries.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
 	preload("res://tests/unit/test_equipment_expansion.gd").new().run(self)
@@ -335,7 +340,10 @@ func test_session_start_and_ownership() -> void:
 	assert_true(GameSession.start_new_game(), "validated start succeeds")
 	var expected: Dictionary = _fixture("legacy_v2_new_game.json")["game_state"]
 	expected["session_id"] = GameSession.session_id
-	_assert_saved_fields(GameSession.export_state(), expected, "unchanged new game")
+	var sword := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
+	assert_true(sword.instance_id.begins_with("twig_sword_") and sword.instance_id.length() == 43, "new starter sword carries an authority-issued identity")
+	expected.equipment["0"].instance_id = sword.instance_id
+	_assert_saved_fields(GameSession.export_state(), expected, "new game retains legacy values apart from the issued identity")
 	assert_true(GameSession.get_player(GameSession.get_local_peer_id()) == GameSession.player, "active peer and local facade share one PlayerState")
 	assert_true(GameSession.get_player_state_by_player_id(GameSession.get_local_player_id()) == GameSession.player, "persistent registry and active view share one PlayerState")
 	GameSession.settlement.set_facility_level(&"workbench", 1)

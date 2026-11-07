@@ -73,7 +73,8 @@ func claim_reward(quest_id: StringName, actor_player_id: StringName) -> CommandR
 		state.finish_reward_claim(false)
 		return CommandResult.make(false, "Quest reward owner is unavailable")
 	destination.begin_update()
-	var reward := destination.exchange([], ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts))
+	var outputs := ProgressionService.item_amounts(definition.reward_item_ids, definition.reward_amounts)
+	var reward := destination.exchange([], ItemStack.issue_grant_instances(outputs, destination.definition_resolver))
 	state.finish_reward_claim(reward.success)
 	destination.end_update()
 	if not reward.success:

@@ -115,7 +115,7 @@ func try_transfer(
 		else:
 			source_item = ItemStack.new(item_id, amount)
 			destination_item = source_item.duplicate_stack()
-	if _instance_conflicts(player, settlement, destination_item, direction):
+	if _instance_conflicts(player, settlement, destination_item.instance_id):
 		return CommandResult.make(false, "Duplicate item instance across player and settlement")
 	var inputs: Array[ItemStack] = [source_item]
 	var outputs: Array[ItemStack] = [destination_item]
@@ -143,21 +143,14 @@ func _find_legacy_equipment(stacks: Array[ItemStack], item_id: StringName) -> It
 			return stack
 	return null
 
-func _instance_conflicts(player: PlayerState, settlement: SettlementState, moving: ItemStack, direction: int) -> bool:
-	if moving == null or moving.instance_id.is_empty():
+func _instance_conflicts(player: PlayerState, settlement: SettlementState, instance_id: String) -> bool:
+	if instance_id.is_empty():
 		return false
-	if direction == TransferDirection.DEPOSIT:
-		for equipped in player.equipment.all_equipped():
-			if equipped.instance_id == moving.instance_id:
-				return true
-		for pending in settlement.pending_loot:
-			if pending.instance_id == moving.instance_id:
-				return true
-	else:
-		for stack in player.inventory.stacks() + player.equipment.all_equipped():
-			if stack.instance_id == moving.instance_id:
-				return true
-	return false
+	# The staged destination checks its own bag. Also check containers that
+	# are not participating in the transfer on either side.
+	return _bag_contains_instance(player.protected_inventory, instance_id) \
+		or _find_instance(player.equipment.all_equipped(), instance_id) != null \
+		or _find_instance(settlement.pending_loot, instance_id) != null
 
 static func slot_inventory(player: PlayerState, kind: int) -> InventoryModel:
 	if player == null:

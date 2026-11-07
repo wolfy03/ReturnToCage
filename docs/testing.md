@@ -374,3 +374,13 @@ The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-o
 ## Slot persistence and server intents (Stage 3)
 
 The full runner includes `test_inventory_persistence.gd`; `--inventory-persistence-only` runs its Save v5/v17 boundaries. The source/release lifecycle adds real positive and forged slot RPCs, reconnect/world/privacy checks. Restart probes validate expanded sparse bags/storage, and mismatch uses v16 against v17. See [inventory_persistence.md](inventory_persistence.md).
+
+## Item data stability (Stage 6-A)
+
+Run the focused suite with `--item-boundaries-only`. It covers legacy and
+identified equipment in one sparse storage layout, duplicate transfer
+rollback, authority-issued IDs, timed and stacked effects, death-drop
+identity, broken or lost gear at respawn, invalid Save v5 and sparse crafting.
+The shared lifecycle probe sends two ENet crafting requests against the same
+materials, checks duplicate and stale sequences while materials are available,
+then saves and rehosts with the exact crafted owner layout and identities.

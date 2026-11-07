@@ -24,4 +24,5 @@ static func craft(recipe: RecipeDefinition, settlement: SettlementState, progres
 			if gear != null and gear.max_durability > 0:
 				stack.durability = gear.max_durability
 		return settlement.storage.transfer_to(owner_inventory, inputs, outputs)
-	return settlement.storage.exchange(inputs, outputs)
+	# Storage recipes are grants too, including recipes that produce equipment.
+	return settlement.storage.exchange(inputs, ItemStack.issue_grant_instances(outputs, settlement.storage.definition_resolver))

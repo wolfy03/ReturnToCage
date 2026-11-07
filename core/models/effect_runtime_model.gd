@@ -29,7 +29,11 @@ func apply_item(item: ItemDefinition) -> void:
 func apply_effect(definition: EffectDefinition, slot: ItemDefinition.FoodSlot = ItemDefinition.FoodSlot.NONE, source: StringName = &"", persistent: bool = false, applied_by: StringName = &"effect") -> void:
 	if definition == null:
 		return
-	var key: StringName = definition.id if source.is_empty() else StringName("%s/%s" % [source, definition.id])
+	var key := definition.id if source.is_empty() else StringName("%s/%s" % [source, definition.id])
+	if persistent:
+		# A temporary effect with the same source label and definition still
+		# has an independent lifetime and stack count.
+		key = StringName("equipped:%d:%s%s" % [String(source).length(), source, definition.id])
 	var active: ActiveEffect = active_effects.get(key)
 	if active == null:
 		active = ActiveEffect.new(definition, slot)
@@ -80,9 +84,10 @@ func remove_effect(key: StringName) -> void:
 	active_effects.erase(key)
 	changed.emit()
 
-func remove_source(source: StringName) -> void:
+func remove_source(source: StringName, persistent_only: bool = false) -> void:
 	for key in active_effects.keys():
-		if active_effects[key].source_id == source:
+		var active := active_effects[key]
+		if active.source_id == source and (not persistent_only or active.persistent):
 			remove_effect(key)
 
 func _rebuild(active: ActiveEffect) -> void:

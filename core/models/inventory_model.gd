@@ -76,6 +76,22 @@ func expand_capacity(amount: int) -> CommandResult:
 func add_item(item_id: StringName, amount: int) -> InventoryResult:
 	return add_stack(ItemStack.new(item_id, amount))
 
+func add_granted_item(item_id: StringName, amount: int) -> InventoryResult:
+	var stack := ItemStack.new(item_id, amount)
+	if amount <= 0 or not _mutation_allowed() or not _definition(stack) is EquipmentDefinition:
+		return add_stack(stack)
+	var error := _layout_error()
+	if not error.is_empty():
+		return _rejected(amount, error)
+	# Only mint pieces with an available slot, even for a large authored grant.
+	stack.quantity = mini(amount, _slots.count(null))
+	var changed := 0
+	for piece in ItemStack.issue_grant_instances([stack], definition_resolver):
+		changed += _add_stack(piece).changed
+	if changed > 0:
+		_notify_changed()
+	return InventoryResult.make(amount, changed, "inventory full" if changed < amount else "")
+
 ## Legacy partial acceptance is intentional (loot/drop remainder ownership).
 func add_stack(incoming: ItemStack) -> InventoryResult:
 	var amount := incoming.quantity if incoming != null else 0
@@ -165,9 +181,21 @@ func _apply_exchange(inputs: Array[ItemStack], outputs: Array[ItemStack]) -> Com
 		if not StackValidation.runtime_error(stack, _definition(stack)).is_empty():
 			return CommandResult.make(false, "Invalid input stack")
 		if stack.instance_id.is_empty():
-			if count(stack.item_id) < stack.quantity:
+			var removed := 0
+			if _definition(stack) is EquipmentDefinition:
+				# The transfer service selects the first matching legacy piece.
+				# Never substitute another durability or an identified instance.
+				for index in _slots.size():
+					var existing := _slots[index]
+					if existing != null and stacks_match_for_merge(existing, stack):
+						_slots[index] = null
+						removed += 1
+						if removed == stack.quantity:
+							break
+			else:
+				removed = _remove_item(stack.item_id, stack.quantity, true).changed
+			if removed != stack.quantity:
 				return CommandResult.make(false, "Not enough resources", inputs)
-			_remove_item(stack.item_id, stack.quantity)
 		else:
 			var found := -1
 			for index in _slots.size():
@@ -195,11 +223,11 @@ func remove_item(item_id: StringName, amount: int) -> InventoryResult:
 		_notify_changed()
 	return result
 
-func _remove_item(item_id: StringName, amount: int) -> InventoryResult:
+func _remove_item(item_id: StringName, amount: int, anonymous_only: bool = false) -> InventoryResult:
 	var remaining := amount
 	for index in range(_slots.size() - 1, -1, -1):
 		var stack := _slots[index]
-		if stack == null or stack.item_id != item_id:
+		if stack == null or stack.item_id != item_id or (anonymous_only and not stack.instance_id.is_empty()):
 			continue
 		var moved := mini(remaining, stack.quantity)
 		stack.quantity -= moved

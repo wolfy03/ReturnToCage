@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from test_multiplayer_roster import Probe as RosterController
+from test_multiplayer_roster import Probe as RosterController, publish_command
 from test_windows_export import ERRORS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +111,32 @@ class LifecycleChecks(RosterController):
             print("SESSION LIFECYCLE FAILURE STATES", json.dumps(failure), flush=True)
             raise
 
+    def race_field_gear(self) -> str:
+        for role in ("B", "D"):
+            self.call(role, "field_gear_ready")
+        self.active_step = {"action": "field_gear_race", "roles": ["B", "D"]}
+        # Publish both commands before waiting for either reply.
+        for role in ("B", "D"):
+            item = self.roles[role]
+            item["sequence"] += 1
+            publish_command(item["folder"], {"sequence": item["sequence"], "action": "field_gear_race"})
+        winners = []
+        for role in ("B", "D"):
+            item = self.roles[role]
+            result = self.wait(role, item["sequence"])
+            if result["process_id"] != item["game_pid"] or result["profile_id"] != item["player_id"] or (
+                result["protocol"], result["save"], result["profile"]
+            ) != (17, 5, 1):
+                raise RuntimeError("Craft race changed process, profile or version contract")
+            if result["field_gear_won"]:
+                winners.append(role)
+            self.steps.append({"role": role, "action": "field_gear_race", "result": result})
+            print(role, "field_gear_race PASS", flush=True)
+        (self.directory / "steps.json").write_text(json.dumps(self.steps, indent=2), encoding="utf-8")
+        if len(winners) != 1:
+            raise RuntimeError(f"Exactly one request may spend the shared field gear inputs: {winners}")
+        return winners[0]
+
     def _run_sequence(self) -> None:
         self.launch("A")
         self.launch("B")
@@ -150,7 +176,26 @@ class LifecycleChecks(RosterController):
         self.worlds["D"] = "settlement"
         self.check("three-player late join")
         self.call("A", "field_gear_materials")
-        self.call("B", "field_gear_craft")
+        if self.race_field_gear() != "B":
+            self.call("A", "field_gear_materials")
+            self.call("B", "field_gear_craft")
+        self.call("A", "field_gear_save")
+        self.call("B", "slot_remember")
+        self.call("A", "field_gear_materials")
+        self.call("B", "field_gear_replay")
+        self.call("B", "field_gear_replay", sequence_offset=-1)
+        self.call("B", "disconnect")
+        del self.worlds["B"]
+        self.call("A", "disconnect")
+        self.worlds.clear()
+        self.call("D", "check_menu")
+        self.call("A", "field_gear_rehost")
+        self.worlds["A"] = "settlement"
+        for role in ("B", "D"):
+            self.call(role, "join", address="127.0.0.1")
+            self.worlds[role] = "settlement"
+        self.check("craft save and rehost")
+        self.call("B", "slot_check")
         for item, stat, value, durability in (("leaf_hat", "defense", 3.0, 30),
                                               ("acorn_necklace", "max_health", 110.0, 40),
                                               ("seed_ring", "stamina_regen", 20.0, 35)):

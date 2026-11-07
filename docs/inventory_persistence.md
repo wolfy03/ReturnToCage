@@ -96,3 +96,25 @@ layout and revision unchanged.
   `tools/test_multiplayer_restart.py --rendered` can run the same assertions on
   Windows Compatibility; CI keeps its default headless probes.
 - Protocol mismatch E2E submits v16 to the v17 server and requires rejection.
+
+## Data stability boundaries (Stage 6-A)
+
+New canonical starting equipment receives a fresh identity for each grant,
+including worn gear and gear in protected or shared storage. A nonempty ID in
+starting content is a template, while a nonempty ID in a save, transfer, or
+death drop is the identity of an existing piece. New crafted and awarded gear
+receives IDs on authority. Loading older saves preserves their legacy identity
+rules, and clients only apply server snapshots.
+
+A transfer spends a concrete ID, the selected anonymous legacy gear with its
+matching durability, or an anonymous stackable quantity. Type-based exchanges
+cannot spend an identified stack. The staged transfer checks both layouts;
+equipped items, protected inventory, and pending Settlement loot are checked
+for conflicts with the moving identity. Invalid loot also blocks the offline
+escape before the expedition is retired.
+
+Equipment stat sources follow the actual occupied slots. An unchanged piece
+retains its persistent effect timer. Temporary and worn effects have separate
+runtime keys, even when their effect ID and source label match. Previewing
+operates on detached copies. Respawn health uses the maximum after equipment
+loss or breakage, even when item observers are deferred until after death.

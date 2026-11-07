@@ -49,10 +49,10 @@ func _init(resolver: Callable, mutation_guard: Callable = Callable()) -> void:
 func set_mutation_guard(guard: Callable) -> void:
 	_mutation_guard = guard
 
-func reset(start: GameStartDefinition, registry: Node) -> void:
+func reset(start: GameStartDefinition, registry: Node, fresh_grant: bool = false) -> void:
 	_applying_snapshot = true
 	_pending_loot.clear()
-	storage.initialize(start.create_stacks(start.storage_items, registry), start.storage_capacity)
+	storage.initialize(start.create_stacks(start.storage_items, registry, fresh_grant), start.storage_capacity)
 	facility_levels = start.facility_levels.duplicate()
 	resident_states.clear()
 	for entry in start.residents:
