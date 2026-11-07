@@ -132,7 +132,9 @@ class LifecycleChecks(RosterController):
         self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=False)
         self.call("B", "slot_ui")
         self.call("B", "slot_ui", **{"from": 4, "to": 0})
-        self.movement("A")
+        # Settlement puts the joining client directly to the Host's right.
+        # Walk away from each other so both peers can observe a sustained run.
+        self.movement("A", left=True)
         self.movement("B")
         self.launch("D")
         self.call("D", "join", address="127.0.0.1")
