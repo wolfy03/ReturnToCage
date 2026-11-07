@@ -12,6 +12,7 @@ var definition: ItemDefinition
 var selected := false
 var shift_drag := false
 var show_quantity := true
+var empty_icon: Texture2D
 @onready var item_icon: TextureRect = %Icon
 @onready var quantity_label: Label = %Quantity
 @onready var empty_mark: Label = %EmptyMark
@@ -51,9 +52,10 @@ func set_selected(value: bool) -> void:
 
 func _refresh() -> void:
 	var occupied := stack != null
-	item_icon.texture = (definition.icon if definition != null and definition.icon != null else PLACEHOLDER) if occupied else null
-	item_icon.visible = occupied
-	empty_mark.visible = not occupied
+	item_icon.texture = (definition.icon if definition != null and definition.icon != null else PLACEHOLDER) if occupied else empty_icon
+	item_icon.visible = item_icon.texture != null
+	item_icon.modulate.a = 1.0 if occupied else 0.28
+	empty_mark.visible = not item_icon.visible
 	quantity_label.text = str(stack.quantity) if occupied and show_quantity else ""
 	var edge := ItemUIStyle.ACCENT if selected else Color("58654c") if occupied else Color("3e4c3f")
 	var fill := Color("354b37") if selected else Color("24382c") if occupied else Color("1b2a22")

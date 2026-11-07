@@ -17,7 +17,8 @@ func equip(stack: ItemStack) -> ItemStack:
 	if not _mutation_allowed():
 		return stack
 	var definition: EquipmentDefinition = definition_resolver.call(stack.item_id) as EquipmentDefinition if stack != null and definition_resolver.is_valid() else null
-	if not StackValidation.runtime_error(stack, definition).is_empty() or stack.quantity != 1:
+	if not StackValidation.runtime_error(stack, definition).is_empty() or stack.quantity != 1 \
+			or definition.equipment_slot not in EquipmentDefinition.EquipmentSlot.values():
 		return stack
 	if not stack.instance_id.is_empty():
 		for equipped_stack in _slots.values():

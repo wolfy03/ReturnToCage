@@ -42,3 +42,11 @@ FacilityDefinition은 선행 시설/퀘스트, 각 레벨 비용과 해금 플�
 RecipeDefinition은 입력/출력 Item ID와 수량, 시설 ID/레벨, unlock_flags를 선언한다. 정착지 HUD 또는 GameSession.craft()로 실행한다. 출력 공간까지 검사한 뒤 입력 제거와 출력을 한 번에 적용한다. 현재 최소 제작은 즉시 거래이며 craft_seconds를 사용하는 제작 대기열은 후속 확장 대상이다.
 
 비용/보상/전리품 배열 길이와 음수 수량, 선행 조건·목표의 Resource 타입을 검증한다. 주민은 아직 ResidentDefinition Registry가 없으므로 TALK_TO_NPC 대상은 시작 설정의 주민 ID로 검증한다. 발견 목표는 지역의 탈출 지점 ID로 검증한다.
+
+### Crafting to the owner's bag
+
+Recipes normally deliver their results to Settlement storage. Set
+`output_to_player_inventory = true` to deliver all outputs directly to the
+requesting player's main bag, as in `field_gear_recipe`. Materials still come
+from storage. A full destination rejects the whole exchange. Equipment with
+authored positive maximum durability starts at that durability.

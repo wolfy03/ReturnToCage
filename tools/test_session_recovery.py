@@ -149,6 +149,13 @@ class LifecycleChecks(RosterController):
         self.call("D", "join", address="127.0.0.1")
         self.worlds["D"] = "settlement"
         self.check("three-player late join")
+        self.call("A", "field_gear_materials")
+        self.call("B", "field_gear_craft")
+        for item, stat, value, durability in (("leaf_hat", "defense", 3.0, 30),
+                                              ("acorn_necklace", "max_health", 110.0, 40),
+                                              ("seed_ring", "stamina_regen", 20.0, 35)):
+            self.call("B", "item_ui", operation="equip", item=item, stat=stat, value=value, durability=durability)
+        self.call("D", "slot_privacy")
         self.call("D", "slot_remember")
         self.call("A", "slot_seed", player=self.roles["B"]["player_id"])
         self.call("B", "slot_ready")

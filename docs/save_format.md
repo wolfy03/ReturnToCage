@@ -31,6 +31,10 @@ Writer는 `.tmp` write/flush/close, 기존 파일 `.bak` 이동, 최종 rename �
 
 ## Item instance 검증
 
+장비는 기존 숫자 키 사전을 사용한다. `0`은 무기, `1`은 몸통이며 5단계에서
+`2` 머리, `3` 첫 장신구, `4` 두 번째 장신구를 추가했다. 슬롯이 없는 기존
+Save v5 및 마이그레이션된 저장은 해당 칸을 빈 상태로 복원한다.
+
 하나의 global instance registry가 settlement storage/pending loot, 모든 player inventory/protected inventory/equipment, death drops를 함께 검사한다. 비어 있지 않은 `instance_id`가 두 container나 두 player에 중복되면 Save v5 전체를 거부한다. Stack 수량, max stack, durability, equipment slot 검증은 기존 `StackValidation`을 재사용한다. Player item runtime revision과 settlement/quest replication revision은 load 후 다시 시작한다.
 
 ## Migration

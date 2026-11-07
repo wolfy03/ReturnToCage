@@ -17,14 +17,14 @@ func _init(
 	registry = p_registry
 	quest_event_reporter = p_quest_event_reporter
 
-func try_craft(recipe_id: StringName, actor_player_id: StringName) -> CommandResult:
+func try_craft(recipe_id: StringName, actor_player_id: StringName, owner_inventory: InventoryModel = null) -> CommandResult:
 	if actor_player_id.is_empty() or recipe_id.is_empty():
 		return CommandResult.make(false, "Craft command requires a known player and recipe")
 	var recipe := registry.get_definition(recipe_id) as RecipeDefinition
 	if recipe == null:
 		return CommandResult.make(false, "Unknown recipe")
 	settlement.begin_update()
-	var result := CraftingService.craft(recipe, settlement, progression)
+	var result := CraftingService.craft(recipe, settlement, progression, owner_inventory)
 	settlement.end_update()
 	return result
 

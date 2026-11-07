@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="EquipmentDefinition" load_steps=2 format=3]
+[ext_resource type="Script" path="res://data/definitions/equipment_definition.gd" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"leaf_hat"
+display_name = "Leaf Hat"
+description = "A layered leaf cap that softens small blows."
+category = 5
+max_stack = 1
+weight = 0.2
+base_value = 8
+equipment_slot = 2
+stat_modifiers = {&"defense": 1.0}
+max_durability = 30

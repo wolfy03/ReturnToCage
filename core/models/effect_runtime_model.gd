@@ -11,6 +11,12 @@ var active_effects: Dictionary[StringName, ActiveEffect] = {}
 func _init(p_stats: StatBlock = null) -> void:
 	stats = p_stats
 
+func detached_copy(copy_stats: StatBlock) -> EffectRuntimeModel:
+	var copy := EffectRuntimeModel.new(copy_stats)
+	for key in active_effects:
+		copy.active_effects[key] = active_effects[key].detached_copy()
+	return copy
+
 func apply_item(item: ItemDefinition) -> void:
 	if item.food_slot != ItemDefinition.FoodSlot.NONE and item.food_slot != ItemDefinition.FoodSlot.INSTANT:
 		for key in active_effects.keys():

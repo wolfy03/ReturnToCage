@@ -361,6 +361,12 @@ derived stats and effects, and Save v5 load. The Editor/EXE lifecycle also uses
 real Host and Client GUI commands, checks transition rejection, attempts to equip
 the Host's instance from a Client, and verifies equipped state across rejoin.
 
+Stage 5 covers the new slots, crafted output rollback, Save v5 reload, owner-only
+mirrors and wrong-slot rejection. Projection tests compare live results under
+temporary and gear multipliers, including broken equipment, and check that
+previewing never changes health, signals or effect timers. The GUI and ENet
+probes check slot layout, live stats, comparison and private remote crafting.
+
 ## Fixed inventory slot model (Stage 2)
 
 The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-only selects it. Tests cover sparse moves/swaps/merges/splits/sort/resize, failed-command layout rollback, instance conservation, real crafting/storage/equip/death paths, Save v4/v16 dense-format limitations and seeded mixed-operation invariants. Read-only GUI regressions check holes at actual model indices. See [inventory_slots.md](inventory_slots.md).

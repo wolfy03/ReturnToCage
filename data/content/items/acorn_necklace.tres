@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="EquipmentDefinition" load_steps=2 format=3]
+[ext_resource type="Script" path="res://data/definitions/equipment_definition.gd" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"acorn_necklace"
+display_name = "Acorn Necklace"
+description = "A polished acorn strung on a moss cord."
+category = 5
+max_stack = 1
+weight = 0.1
+base_value = 8
+equipment_slot = 3
+stat_modifiers = {&"max_health": 10.0}
+max_durability = 40

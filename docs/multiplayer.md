@@ -435,3 +435,7 @@ request per command type and apply the existing owner-private item snapshot.
 ## Indexed inventory synchronization (Protocol v17)
 
 The owner-private item and shared storage snapshots now retain capacity and exact slot indices. Existing item-ID/instance-ID commands remain, and the new slot intents are server-approved with owner, session, world, revision, sequence and cell-fingerprint validation. v16 handshakes are rejected. See [inventory_persistence.md](inventory_persistence.md) for the precise wire and test contracts.
+
+Stage 5 adds equipment slot IDs 2–4 to the existing v17 item snapshot. The
+owner is still the only recipient of private equipment. New gear requires
+the Stage 5 content and slot definitions on each participating peer.

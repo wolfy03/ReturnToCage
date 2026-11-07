@@ -10,6 +10,7 @@ var inventory_window: InventoryWindow
 var equipment_window: EquipmentWindow
 var tooltip: ItemTooltip
 var _state: PlayerState
+var _stats: StatBlock
 var _hovered: ItemSlotView
 var _refresh_queued := false
 var _service: PlayerItemReplicationService
@@ -35,6 +36,7 @@ func _ready() -> void:
 		window.item_unhovered.connect(_hide_tooltip_for)
 		window.closed.connect(_hide_tooltip)
 	inventory_window.tab_changed.connect(_hide_tooltip)
+	inventory_window.selection_changed.connect(_refresh_tooltip)
 	inventory_window.bag_changed.connect(refresh)
 	inventory_window.slot_command_requested.connect(_request_slot_command)
 	inventory_window.item_activated.connect(_on_inventory_activation)
@@ -85,15 +87,30 @@ func _active() -> bool:
 func _bind_state(value: PlayerState) -> void:
 	if _state == value:
 		return
+	_bind_stats(null)
 	if _state != null:
+		_state.private_state_changed.disconnect(queue_refresh)
 		for model in [_state.inventory, _state.protected_inventory, _state.equipment]:
 			if model.changed.is_connected(queue_refresh):
 				model.changed.disconnect(queue_refresh)
 	_reset_item_interaction()
 	_state = value
 	if _state != null:
+		_state.private_state_changed.connect(queue_refresh)
 		for model in [_state.inventory, _state.protected_inventory, _state.equipment]:
 			model.changed.connect(queue_refresh)
+
+func _bind_stats(value: StatBlock) -> void:
+	if _stats == value:
+		return
+	if _stats != null:
+		_stats.stat_changed.disconnect(_on_stat_changed)
+	_stats = value
+	if _stats != null:
+		_stats.stat_changed.connect(_on_stat_changed)
+
+func _on_stat_changed(_stat_id: StringName, _value: float) -> void:
+	queue_refresh()
 
 func _on_phase_changed() -> void:
 	if not _active():
@@ -141,11 +158,12 @@ func refresh() -> void:
 		for entry in equipment_window.slot_layout:
 			if entry != null:
 				equipped[entry.slot] = _state.equipment.equipped(entry.slot)
+	_bind_stats(_state.stats if _state != null and _active() else null)
 	_displayed_revision = revision
 	inventory_window.display_slots(items, capacity_text, revision)
 	equipment_window.display_equipment(equipped)
-	if is_instance_valid(_hovered) and _hovered.is_visible_in_tree():
-		tooltip.show_item(_hovered.stack, _hovered.definition)
+	equipment_window.display_stats(_stats)
+	_refresh_tooltip()
 
 func close_all() -> void:
 	if inventory_window != null:
@@ -184,11 +202,27 @@ func _toggle(window: ItemWindowFrame) -> void:
 
 func _show_tooltip(view: ItemSlotView) -> void:
 	_hovered = view
-	tooltip.show_item(view.stack, view.definition)
+	_refresh_tooltip()
 
 func _hide_tooltip_for(view: ItemSlotView) -> void:
 	if _hovered == view:
-		_hide_tooltip()
+		_hovered = null
+		_refresh_tooltip()
+
+func _refresh_tooltip() -> void:
+	var view := _hovered if is_instance_valid(_hovered) and _hovered.is_visible_in_tree() else null
+	var anchor: Control
+	if view == null and inventory_window.is_visible_in_tree() and inventory_window.selected_slot >= 0:
+		var selected := inventory_window.slots[inventory_window.selected_slot]
+		if selected.definition is EquipmentDefinition:
+			view = selected
+			anchor = selected
+	if view == null or view.stack == null:
+		tooltip.clear()
+		return
+	var owner := _state if inventory_window.is_ancestor_of(view) and view.definition is EquipmentDefinition else null
+	tooltip.show_item(view.stack, view.definition, owner, anchor)
+	tooltip.get_parent().move_child(tooltip, -1)
 
 func _hide_tooltip() -> void:
 	_hovered = null

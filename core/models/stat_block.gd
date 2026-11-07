@@ -3,13 +3,21 @@ extends RefCounted
 
 signal stat_changed(stat_id: StringName, value: float)
 
-var base_values: Dictionary[StringName, float] = {
+const DEFAULT_BASE_VALUES: Dictionary[StringName, float] = {
 	&"max_health": 100.0, &"move_speed": 190.0, &"attack_power": 5.0,
 	&"defense": 0.0, &"max_stamina": 100.0, &"stamina_regen": 18.0
 }
+var base_values: Dictionary[StringName, float] = DEFAULT_BASE_VALUES.duplicate()
 var _modifiers: Array[StatModifier] = []
 var _update_depth: int = 0
 var _pending_stats: Array[StringName] = []
+
+func detached_copy() -> StatBlock:
+	var copy := StatBlock.new()
+	copy.base_values = base_values.duplicate()
+	for modifier in _modifiers:
+		copy._modifiers.append(StatModifier.new(modifier.source_id, modifier.stat_id, modifier.additive, modifier.multiplier))
+	return copy
 
 func value(stat_id: StringName) -> float:
 	var additive := 0.0

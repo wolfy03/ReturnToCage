@@ -264,20 +264,49 @@ func apply_replicated_health(value: float, authoritative_max_health: float) -> b
 
 func sync_equipment() -> void:
 	stats.begin_update()
+	_gear_sources = _rebuild_equipment_stats(stats, effects, equipment.all_equipped())
+	stats.end_update()
+
+## Evaluate the same replacement the item transaction would perform, against
+## detached copies of the live stats and effects. Previewing never clamps HP,
+## refreshes an effect timer, publishes a revision, or changes either item bag.
+func preview_equipment_stats(candidate: ItemStack) -> StatBlock:
+	var definition := _equipment_definition(candidate)
+	if definition == null or candidate.quantity != 1 or not StackValidation.runtime_error(candidate, definition).is_empty():
+		return null
+	var loadout := equipment.all_equipped()
+	var replaced := false
+	for index in loadout.size():
+		var current := _equipment_definition(loadout[index])
+		if current != null and current.equipment_slot == definition.equipment_slot:
+			loadout[index] = candidate
+			replaced = true
+			break
+	if not replaced:
+		loadout.append(candidate)
+	var preview_stats := stats.detached_copy()
+	_rebuild_equipment_stats(preview_stats, effects.detached_copy(preview_stats), loadout)
+	return preview_stats
+
+func _equipment_definition(stack: ItemStack) -> EquipmentDefinition:
+	return equipment.definition_resolver.call(stack.item_id) as EquipmentDefinition \
+		if stack != null and equipment.definition_resolver.is_valid() else null
+
+func _rebuild_equipment_stats(block: StatBlock, runtime: EffectRuntimeModel, loadout: Array[ItemStack]) -> Array[StringName]:
 	for source in _gear_sources:
-		stats.remove_source(source)
-		effects.remove_source(source)
-	_gear_sources.clear()
-	for stack in equipment.all_equipped():
+		block.remove_source(source)
+		runtime.remove_source(source)
+	var sources: Array[StringName] = []
+	for stack in loadout:
 		if stack.durability == 0:
 			continue
-		var definition: EquipmentDefinition = equipment.definition_resolver.call(stack.item_id) as EquipmentDefinition
+		var definition := _equipment_definition(stack)
 		if definition == null:
 			continue
 		var source := StringName("equipment:%d" % definition.equipment_slot)
-		_gear_sources.append(source)
+		sources.append(source)
 		for stat_id in definition.stat_modifiers:
-			stats.add_modifier(StatModifier.new(source, stat_id, definition.stat_modifiers[stat_id], 1.0))
+			block.add_modifier(StatModifier.new(source, stat_id, definition.stat_modifiers[stat_id], 1.0))
 		for effect in definition.equip_effects:
-			effects.apply_effect(effect, ItemDefinition.FoodSlot.NONE, source, true)
-	stats.end_update()
+			runtime.apply_effect(effect, ItemDefinition.FoodSlot.NONE, source, true)
+	return sources

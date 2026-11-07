@@ -1,6 +1,15 @@
 class_name ItemUIStyle
 extends RefCounted
 
+const STAT_LABELS := {
+	&"max_health": "Max health",
+	&"attack_power": "Attack power",
+	&"defense": "Defense",
+	&"move_speed": "Move speed",
+	&"max_stamina": "Max stamina",
+	&"stamina_regen": "Stamina regen",
+}
+
 const TEXT := Color("eadcc0")
 const MUTED := Color("a9b39a")
 const ACCENT := Color("d7bb7a")

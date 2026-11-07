@@ -4,6 +4,7 @@ extends ItemWindowFrame
 signal item_hovered(view: ItemSlotView)
 signal item_unhovered(view: ItemSlotView)
 signal item_activated(view: ItemSlotView)
+signal selection_changed
 signal unequip_dropped(slot: int)
 signal tab_changed
 signal bag_changed
@@ -55,7 +56,7 @@ func _ready() -> void:
 	for index in PAGE_SIZE:
 		var slot := SLOT_SCENE.instantiate() as ItemSlotView
 		%Grid.add_child(slot)
-		slot.pressed.connect(_select_slot.bind(index))
+		slot.pressed.connect(_on_slot_clicked.bind(index))
 		slot.set_drag_forwarding(_drag_data.bind(slot, index), _can_drop.bind(index), _drop.bind(index))
 		slot.item_hovered.connect(item_hovered.emit)
 		slot.item_unhovered.connect(item_unhovered.emit)
@@ -140,6 +141,10 @@ func _refresh() -> void:
 		var stack := _visible_stack(index)
 		slots[index].display_item(stack, ContentRegistry.get_item(stack.item_id) if stack != null else null)
 		slots[index].set_selected(index == selected_slot)
+
+func _on_slot_clicked(index: int) -> void:
+	_select_slot(index)
+	selection_changed.emit()
 
 func _select_slot(index: int) -> void:
 	selected_slot = index if _visible_stack(index) != null else -1

@@ -1,7 +1,7 @@
 class_name EquipmentDefinition
 extends ItemDefinition
 
-enum EquipmentSlot { MAIN_HAND, BODY }
+enum EquipmentSlot { MAIN_HAND = 0, BODY = 1, HEAD = 2, ACCESSORY_1 = 3, ACCESSORY_2 = 4 }
 
 @export var equipment_slot: EquipmentSlot = EquipmentSlot.BODY
 @export var stat_modifiers: Dictionary[StringName, float] = {}
@@ -13,7 +13,7 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	if equipment_slot not in EquipmentSlot.values() or max_durability < 0:
 		errors.append("%s: invalid equipment slot or durability" % id)
 	for stat in stat_modifiers:
-		if stat == &"" or not is_finite(stat_modifiers[stat]):
+		if not StatBlock.DEFAULT_BASE_VALUES.has(stat) or not is_finite(stat_modifiers[stat]):
 			errors.append("%s: invalid equipment stat modifier" % id)
 	for effect in equip_effects:
 		if effect == null:

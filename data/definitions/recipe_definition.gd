@@ -5,6 +5,7 @@ extends ContentDefinition
 @export var input_amounts: Array[int] = []
 @export var output_item_ids: Array[StringName] = []
 @export var output_amounts: Array[int] = []
+@export var output_to_player_inventory: bool = false
 @export var required_facility_id: StringName
 @export_range(0, 99, 1) var required_facility_level: int = 0
 @export_range(0.0, 3600.0, 0.1) var craft_seconds: float = 0.0

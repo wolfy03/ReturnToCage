@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="RecipeDefinition" load_steps=2 format=3]
+[ext_resource type="Script" path="res://data/definitions/recipe_definition.gd" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"field_gear_recipe"
+input_item_ids = Array[StringName]([&"moss_fiber", &"rusty_scrap"])
+input_amounts = Array[int]([2, 1])
+output_item_ids = Array[StringName]([&"leaf_hat", &"acorn_necklace", &"seed_ring"])
+output_amounts = Array[int]([1, 1, 1])
+output_to_player_inventory = true
+required_facility_id = &"workbench"
+required_facility_level = 0

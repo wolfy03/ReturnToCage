@@ -13,17 +13,24 @@ const SLOT_SCENE := preload("res://ui/inventory/item_slot_view.tscn")
 var slot_views: Dictionary[int, ItemSlotView] = {}
 var _names: Dictionary[int, Label] = {}
 var _durability: Dictionary[int, Label] = {}
+var _stat_values: Dictionary[StringName, Label] = {}
 
 func _ready() -> void:
 	super._ready()
+	var rows: Array[EquipmentSlotViewDefinition] = []
 	for entry in slot_layout:
-		if entry == null or slot_views.has(entry.slot):
+		if entry != null:
+			rows.append(entry)
+	rows.sort_custom(func(a: EquipmentSlotViewDefinition, b: EquipmentSlotViewDefinition) -> bool: return a.row < b.row)
+	for entry in rows:
+		if slot_views.has(entry.slot):
 			continue
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 12)
 		%Slots.add_child(row)
 		var slot := SLOT_SCENE.instantiate() as ItemSlotView
 		slot.show_quantity = false
+		slot.empty_icon = entry.empty_icon if entry.empty_icon != null else ItemSlotView.PLACEHOLDER
 		row.add_child(slot)
 		slot_views[entry.slot] = slot
 		slot.item_hovered.connect(item_hovered.emit)
@@ -48,7 +55,21 @@ func _ready() -> void:
 		durability.add_theme_color_override("font_color", ItemUIStyle.MUTED)
 		text.add_child(durability)
 		_durability[entry.slot] = durability
+	for stat_id: StringName in ItemUIStyle.STAT_LABELS:
+		var stat_name := Label.new()
+		stat_name.text = ItemUIStyle.STAT_LABELS[stat_id]
+		stat_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		%Stats.add_child(stat_name)
+		var value := Label.new()
+		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		%Stats.add_child(value)
+		_stat_values[stat_id] = value
 	display_equipment({})
+	display_stats(null)
+
+func display_stats(block: StatBlock) -> void:
+	for stat_id in _stat_values:
+		_stat_values[stat_id].text = "%.1f" % block.value(stat_id) if block != null else "—"
 
 func _on_item_activated(_view: ItemSlotView, slot: int) -> void:
 	unequip_requested.emit(slot)

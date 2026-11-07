@@ -27,9 +27,9 @@ category to Quest, and the rest to Etc. `quest_protected` alone does not move a
 return seed out of Use. Equipped items appear in the equipment window only.
 
 EquipmentWindow's scene owns an array of UI-only EquipmentSlotViewDefinition
-resources. Its current entries reference MAIN_HAND and BODY; future UI entries
-can reuse this layout without changing the model in this stage. ItemSlotView and
-ItemTooltip are separate scenes reusable by future storage/shop views.
+resources. Entries provide the slot, name, row and optional empty icon. The
+shared ItemSlotView renders Main hand, Body, Head and two accessory slots;
+empty slots use a muted placeholder unless the entry supplies its own icon.
 
 Save v5 and Protocol v17 preserve slots. Profile v1, equipment slots, ItemStack
 serialization and server mutation authority are unchanged. The existing HUD
@@ -80,6 +80,27 @@ assigns one as the item enters a playable main bag. Legacy equipped gear keeps
 its data until it is returned to the bag, when it receives an ID if needed.
 Existing IDs, durability and the fixed slot positions are preserved. Client
 mirrors and staged transaction previews retain their input identities.
+
+## Equipment and stat comparison (Stage 5)
+
+Craft `field_gear_recipe` at the starting workbench using two moss fiber and
+one rusty scrap from Settlement storage. The server puts a Leaf Hat, Acorn
+Necklace and Seed Ring at full durability in the crafter's main bag. The
+transaction needs room for all three pieces. The gear adds defense +1, maximum
+health +10 and stamina regeneration +2, respectively.
+
+The equipment window reads six final values from the local player's StatBlock
+and observes changes to stats and private-state mirrors. Hover or select gear
+in the inventory to compare it to the current item in its slot. The tooltip
+shows the old and projected final values, including live buffs. The preview
+copies the current stats and effects and calls the same gear rebuild as
+equipping. It leaves health, timers, inventory and revisions intact. Gear
+with zero durability contributes neither modifiers nor equipment effects.
+
+Slots 0 and 1 retain their existing meanings; the new slots are 2 through 4.
+Save v5, Protocol v17 and Profile v1 use the same formats. Older saves with
+only the first two slots still load. Players in a session using the new gear
+need the Stage 5 build so each peer recognizes the expanded content and slots.
 
 ## Validation
 

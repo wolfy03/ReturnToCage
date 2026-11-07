@@ -1039,7 +1039,8 @@ func execute_craft_command(recipe_id: StringName, actor_player_id: StringName) -
 		return CommandResult.make(false, "Only the server can craft")
 	if phase != Phase.SETTLEMENT:
 		return CommandResult.make(false, "Crafting requires settlement state")
-	var result := _settlement_command_service.try_craft(recipe_id, actor_player_id)
+	var owner := get_player_state_by_player_id(actor_player_id)
+	var result := _settlement_command_service.try_craft(recipe_id, actor_player_id, owner.inventory if owner != null else null)
 	last_message = "Crafted %s" % recipe_id if result.success else result.message
 	return result
 

@@ -42,6 +42,7 @@ func _ready() -> void:
 func run_all() -> void:
 	preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
+	preload("res://tests/unit/test_equipment_expansion.gd").new().run(self)
 	await preload("res://tests/integration/test_inventory_windows.gd").new().run(self)
 	await preload("res://tests/integration/test_player_presentation_roster.gd").new().run(self)
 	await preload("res://tests/integration/test_disconnect_recovery.gd").new().run(self)

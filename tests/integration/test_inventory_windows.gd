@@ -29,7 +29,7 @@ func run(t: Node) -> void:
 	app.multiplayer_panel.address_edit.release_focus()
 	t.assert_equal(bag.slots.size(), 24, "inventory always renders 6 by 4 presentation cells")
 	t.assert_equal(bag.get_node("%Grid").columns, 6, "inventory has six columns")
-	t.assert_equal(gear.slot_views.size(), 2, "equipment layout connects exactly existing MAIN_HAND and BODY")
+	t.assert_equal(gear.slot_views.keys(), [0, 1, 2, 3, 4], "equipment layout renders five slots in authored row order")
 	t.assert_true(gear.slot_views[EquipmentDefinition.EquipmentSlot.MAIN_HAND].stack != null, "equipped weapon is displayed")
 	t.assert_true(gear._durability[0].text.contains("60"), "equipment shows current durability")
 	t.assert_true(bag.slots[0].item_icon.texture != null and bag.slots[0].quantity_label.text == "2", "missing icon uses placeholder and stack quantity is visible")
@@ -141,6 +141,7 @@ func run(t: Node) -> void:
 	await key(t, KEY_P)
 	t.assert_true(bag.visible and gear.visible, "Load Game permits I/P windows")
 	await _check_item_actions(t, bag, gear, path)
+	await _check_expanded_gear(t, bag, gear)
 	await _check_slot_controls(t, bag)
 	await click(t, bag.close_button)
 	t.assert_true(not bag.visible, "close button receives real GUI input")
@@ -202,6 +203,38 @@ func _check_item_actions(t: Node, bag: InventoryWindow, gear: EquipmentWindow, p
 	t.assert_true(GameSession.player.equipment.equipped(body).instance_id == newer.instance_id and GameSession.player.stats.value(&"defense") == 2.0, "load preserves equipped instance and restores its stat once")
 	await key(t, KEY_I)
 	await key(t, KEY_P)
+
+func _check_expanded_gear(t: Node, bag: InventoryWindow, gear: EquipmentWindow) -> void:
+	var player := GameSession.player
+	var neck := EquipmentDefinition.EquipmentSlot.ACCESSORY_1
+	var stack := ItemStack.new(&"acorn_necklace", 1)
+	stack.durability = 40
+	player.inventory.add_stack(stack)
+	player.stats.add_modifier(StatModifier.new(&"gui_buff", &"max_health", 0.0, 1.5))
+	await _frames(t)
+	t.assert_equal(gear._stat_values.size(), 6, "equipment window displays all six player stats")
+	t.assert_equal(gear._stat_values[&"max_health"].text, "150.0", "equipment window observes a live stat change")
+	await click(t, bag.tab_buttons[InventoryWindow.Tab.EQUIPMENT])
+	var view: ItemSlotView
+	for slot in bag.slots:
+		if slot.stack != null and slot.stack.item_id == stack.item_id:
+			view = slot
+			break
+	t.assert_true(view != null, "new accessory appears in the equipment tab")
+	if view == null:
+		return
+	await click(t, view)
+	await _hover(t, Vector2(5, 5))
+	t.assert_true(presenter.tooltip.visible and presenter.tooltip.body_label.text.contains("Equipped: Empty slot") \
+		and presenter.tooltip.body_label.text.contains("+15.0") and _inside(presenter.tooltip), "selected accessory retains its buff-aware comparison inside the viewport")
+	var before := player.equipment.to_dict()
+	await _drag(t, view, gear.slot_views[EquipmentDefinition.EquipmentSlot.ACCESSORY_2].get_global_rect().get_center())
+	t.assert_true(player.equipment.to_dict() == before and bag._status.text.contains("different equipment slot"), "drag rejects the wrong accessory slot")
+	await _drag(t, view, gear.slot_views[neck].get_global_rect().get_center())
+	t.assert_true(gear.slot_views[neck].stack != null and gear._stat_values[&"max_health"].text == "165.0", "equipping the accessory matches its comparison and refreshes the stat panel")
+	await double_click(t, gear.slot_views[neck])
+	t.assert_true(gear.slot_views[neck].stack == null and gear._stat_values[&"max_health"].text == "150.0", "unequip restores the buffed value without the equipment bonus")
+	player.stats.remove_source(&"gui_buff")
 
 func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	var main := GameSession.player.inventory

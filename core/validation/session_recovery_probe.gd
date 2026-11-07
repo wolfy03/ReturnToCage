@@ -213,6 +213,15 @@ func _execute(command: Dictionary) -> void:
 			if not NetworkManager.is_server() or player == null or not player.inventory.add_stack(gear).success:
 				_fail("cannot seed equipment action fixture")
 				return
+		"field_gear_materials":
+			var storage := GameSession.settlement.storage
+			if not NetworkManager.is_server() or not storage.add_item(&"moss_fiber", 2).success or not storage.add_item(&"rusty_scrap", 1).success:
+				_fail("cannot seed field gear recipe materials")
+				return
+		"field_gear_craft":
+			if not await _craft_field_gear():
+				_fail("field gear recipe did not deliver all three owner-private items")
+				return
 		"item_foreign":
 			if not await _reject_foreign_equip(String(command.instance)):
 				_fail("client could equip another owner's instance")
@@ -615,13 +624,34 @@ func _reject_foreign_equip(instance_id: String) -> bool:
 	service.equip_result.disconnect(receive)
 	return rejected and _slot_layout(player) == before
 
+func _craft_field_gear() -> bool:
+	var service := get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
+	var player := GameSession.get_local_player()
+	var revision := player.item_state_revision
+	var storage := GameSession.settlement.storage
+	if service == null or not await _wait(func() -> bool:
+		return storage.count(&"moss_fiber") >= 2 and storage.count(&"rusty_scrap") >= 1
+	):
+		return false
+	var moss := storage.count(&"moss_fiber")
+	var scrap := storage.count(&"rusty_scrap")
+	service.request_craft(&"field_gear_recipe")
+	return await _wait(func() -> bool:
+		return player.item_state_revision == revision + 1 and player.inventory.count(&"leaf_hat") == 1 \
+			and player.inventory.count(&"acorn_necklace") == 1 and player.inventory.count(&"seed_ring") == 1 \
+			and storage.count(&"moss_fiber") == moss - 2 and storage.count(&"rusty_scrap") == scrap - 1
+	)
+
 func _item_ui(command: Dictionary) -> bool:
 	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
 	var bag := items.inventory_window
 	var gear := items.equipment_window
 	var player := GameSession.get_local_player()
 	var action := String(command.operation)
-	var body := EquipmentDefinition.EquipmentSlot.BODY
+	var item_id := StringName(command.get("item", "leaf_vest" if action != "use" else "berry"))
+	var definition := ContentRegistry.get_item(item_id) as EquipmentDefinition
+	var gear_slot := definition.equipment_slot if definition != null else EquipmentDefinition.EquipmentSlot.BODY
+	var stat_id := StringName(command.get("stat", "defense"))
 	var before := _slot_layout(player)
 	var revision := player.item_state_revision
 	var berry_count := player.inventory.count(&"berry")
@@ -630,14 +660,13 @@ func _item_ui(command: Dictionary) -> bool:
 	if action == "unequip":
 		if not gear.visible:
 			await _item_key(KEY_P)
-		target = gear.slot_views[body]
+		target = gear.slot_views[gear_slot]
 	else:
 		if not bag.visible:
 			await _item_key(KEY_I)
 		var tab := InventoryWindow.Tab.EQUIPMENT if action == "equip" else InventoryWindow.Tab.CONSUMABLE
 		if not bag.visible or not await _click(bag.tab_buttons[tab]):
 			return false
-		var item_id := &"leaf_vest" if action == "equip" else &"berry"
 		for view in bag.slots:
 			if view.stack != null and view.stack.item_id == item_id:
 				target = view
@@ -649,6 +678,11 @@ func _item_ui(command: Dictionary) -> bool:
 		return false
 	if not await _click(target):
 		return false
+	var projected: StatBlock
+	if action == "equip":
+		projected = player.preview_equipment_stats(target.stack)
+		if projected == null or not items.tooltip.body_label.text.contains("Change if equipped"):
+			return false
 	var event := InputEventMouseButton.new()
 	event.position = target.get_global_rect().get_center()
 	event.global_position = event.position
@@ -679,11 +713,14 @@ func _item_ui(command: Dictionary) -> bool:
 		return false
 	match action:
 		"equip":
-			var equipped := player.equipment.equipped(body)
-			return equipped != null and equipped.instance_id == instance_id and equipped.durability == 37 \
-				and gear.slot_views[body].stack.instance_id == instance_id and player.stats.value(&"defense") == 2.0
+			var equipped := player.equipment.equipped(gear_slot)
+			return equipped != null and equipped.instance_id == instance_id and equipped.durability == int(command.get("durability", 37)) \
+				and gear.slot_views[gear_slot].stack.instance_id == instance_id \
+				and player.stats.value(stat_id) == float(command.get("value", 2.0)) \
+				and player.stats.value(stat_id) == projected.value(stat_id) \
+				and gear._stat_values[stat_id].text == "%.1f" % player.stats.value(stat_id)
 		"unequip":
-			return player.equipment.equipped(body) == null and gear.slot_views[body].stack == null \
+			return player.equipment.equipped(gear_slot) == null and gear.slot_views[gear_slot].stack == null \
 				and player.inventory.stacks().any(func(stack: ItemStack) -> bool: return stack.instance_id == instance_id) \
 				and player.stats.value(&"defense") == 0.0
 		"use": return player.inventory.count(&"berry") == berry_count - 1
@@ -720,7 +757,7 @@ func _check_item_windows() -> bool:
 		await _item_key(KEY_I)
 	if not items.equipment_window.visible:
 		await _item_key(KEY_P)
-	if not _item_windows_visible() or items.inventory_window.slots.size() != 24 or items.equipment_window.slot_views.size() != 2:
+	if not _item_windows_visible() or items.inventory_window.slots.size() != 24 or items.equipment_window.slot_views.keys() != [0, 1, 2, 3, 4]:
 		return false
 	var bag := items.inventory_window
 	if not await _click(bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE]) or not await _click(bag.slots[0]):
