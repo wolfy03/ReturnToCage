@@ -10,6 +10,9 @@ func _init(p_item_id: StringName = &"", p_quantity: int = 0) -> void:
 	item_id = p_item_id
 	quantity = maxi(0, p_quantity)
 
+static func new_instance_id(id: StringName) -> String:
+	return "%s_%s" % [id, Crypto.new().generate_random_bytes(16).hex_encode()]
+
 func duplicate_stack() -> ItemStack:
 	var copy := ItemStack.new(item_id, quantity)
 	copy.instance_id = instance_id

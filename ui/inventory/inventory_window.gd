@@ -3,6 +3,8 @@ extends ItemWindowFrame
 
 signal item_hovered(view: ItemSlotView)
 signal item_unhovered(view: ItemSlotView)
+signal item_activated(view: ItemSlotView)
+signal unequip_dropped(slot: int)
 signal tab_changed
 signal bag_changed
 signal slot_command_requested(action: int, kind: int, from: int, to: int, amount: int, revision: int)
@@ -57,6 +59,7 @@ func _ready() -> void:
 		slot.set_drag_forwarding(_drag_data.bind(slot, index), _can_drop.bind(index), _drop.bind(index))
 		slot.item_hovered.connect(item_hovered.emit)
 		slot.item_unhovered.connect(item_unhovered.emit)
+		slot.item_activated.connect(_on_item_activated)
 		slots.append(slot)
 	%Previous.pressed.connect(_change_page.bind(-1))
 	%Next.pressed.connect(_change_page.bind(1))
@@ -197,17 +200,35 @@ func _drag_data(_position: Vector2, view: ItemSlotView, cell: int) -> Variant:
 	_select_slot(cell)
 	show_status("")
 	item_unhovered.emit(view)
-	var preview := TextureRect.new()
-	preview.texture = view.item_icon.texture
-	preview.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	preview.size = Vector2(40, 40)
-	view.set_drag_preview(preview)
+	view.preview_item_drag()
 	return drag
 
+func _on_item_activated(view: ItemSlotView) -> void:
+	if not _pending and _fixed_slots and _revision >= 0:
+		item_activated.emit(view)
+
+func dragged_equipment(data: Variant) -> ItemStack:
+	if not data is SlotDrag or data.split or _pending or not is_visible_in_tree():
+		return null
+	var drag := data as SlotDrag
+	if not _fixed_slots or drag.kind != Bag.MAIN or inventory_kind != Bag.MAIN \
+			or drag.view_epoch != _view_epoch or drag.category != Tab.EQUIPMENT or current_tab != Tab.EQUIPMENT \
+			or drag.index < 0 or drag.index >= _items.size():
+		return null
+	var source := _items[drag.index]
+	if source != null and ContentRegistry.get_item(source.item_id) is EquipmentDefinition:
+		return source.duplicate_stack()
+	return null
+
 func _can_drop(_position: Vector2, data: Variant, cell: int) -> bool:
+	if data is EquipmentWindow.EquippedDrag:
+		if _pending or _revision < 0 or data.view_epoch != _view_epoch or _slot_index(cell) >= _items.size():
+			return false
+		if inventory_kind != Bag.MAIN:
+			show_status("Unequip items to the main bag.")
+			return false
+		show_status("Unequip to the first free slot in the main bag.")
+		return true
 	if not data is SlotDrag or data.index == _slot_index(cell) and data.kind == inventory_kind:
 		return false
 	var message := _drop_error(data, _slot_index(cell))
@@ -219,6 +240,9 @@ func _can_drop(_position: Vector2, data: Variant, cell: int) -> bool:
 
 func _drop(_position: Vector2, data: Variant, cell: int) -> void:
 	if not _can_drop(_position, data, cell):
+		return
+	if data is EquipmentWindow.EquippedDrag:
+		unequip_dropped.emit(data.slot)
 		return
 	var drag := data as SlotDrag
 	var target_index := _slot_index(cell)

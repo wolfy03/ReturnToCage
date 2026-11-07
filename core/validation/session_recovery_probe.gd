@@ -205,6 +205,22 @@ func _execute(command: Dictionary) -> void:
 				NetworkManager._pending_world_transitions[peer] = NetworkManager.world_assignment_for_peer(peer)
 			else:
 				NetworkManager._pending_world_transitions.erase(peer)
+		"item_seed":
+			var player := GameSession.get_player_state_by_player_id(target)
+			var gear := ItemStack.new(&"leaf_vest", 1)
+			gear.instance_id = String(command.get("instance", ""))
+			gear.durability = 37
+			if not NetworkManager.is_server() or player == null or not player.inventory.add_stack(gear).success:
+				_fail("cannot seed equipment action fixture")
+				return
+		"item_foreign":
+			if not await _reject_foreign_equip(String(command.instance)):
+				_fail("client could equip another owner's instance")
+				return
+		"item_ui":
+			if not await _item_ui(command):
+				_fail("equipment/consumption GUI did not reconcile: %s" % command)
+				return
 		"slot_prepare":
 			var service := _item_service()
 			_prepared_slot_intent = service.make_slot_intent(PlayerItemCommandService.SlotAction.MOVE, PlayerItemCommandService.SlotInventory.MAIN, 0, 17)
@@ -451,7 +467,7 @@ func _menu_clean() -> bool:
 		and app.menu.visible and app.world_layer.get_child_count() == 0 and not hud.visible \
 		and hud.bound_player == null and not get_tree().paused \
 		and not items.inventory_window.visible and not items.equipment_window.visible and not items.tooltip.visible \
-		and items._state == null \
+		and items._state == null and items._pending_item_type == -1 \
 		and not app.new_game_button.disabled and not app.load_game_button.disabled \
 		and not app.multiplayer_panel.host_button.disabled and not app.multiplayer_panel.host_saved_button.disabled \
 		and not app.multiplayer_panel.join_button.disabled and app.multiplayer_panel.disconnect_button.disabled
@@ -584,6 +600,94 @@ func _slot_ui(command: Dictionary) -> bool:
 		and player.inventory.get_slot(from) == null and moved != null and moved.to_dict() == source.to_dict() \
 		and bag.slots[from].stack == null and bag.slots[to].stack != null \
 		and bag.slots[to].stack.to_dict() == source.to_dict()
+
+func _reject_foreign_equip(instance_id: String) -> bool:
+	if NetworkManager.is_server():
+		return false
+	var service := _item_service()
+	var player := GameSession.get_local_player()
+	var before := _slot_layout(player)
+	var replies: Array[bool] = []
+	var receive := func(success: bool, _message: String) -> void: replies.append(success)
+	service.equip_result.connect(receive)
+	var sent := service.request_equip(instance_id)
+	var rejected := sent and await _wait(func() -> bool: return not replies.is_empty()) and not replies[0]
+	service.equip_result.disconnect(receive)
+	return rejected and _slot_layout(player) == before
+
+func _item_ui(command: Dictionary) -> bool:
+	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	var bag := items.inventory_window
+	var gear := items.equipment_window
+	var player := GameSession.get_local_player()
+	var action := String(command.operation)
+	var body := EquipmentDefinition.EquipmentSlot.BODY
+	var before := _slot_layout(player)
+	var revision := player.item_state_revision
+	var berry_count := player.inventory.count(&"berry")
+	var target: ItemSlotView
+	var instance_id := ""
+	if action == "unequip":
+		if not gear.visible:
+			await _item_key(KEY_P)
+		target = gear.slot_views[body]
+	else:
+		if not bag.visible:
+			await _item_key(KEY_I)
+		var tab := InventoryWindow.Tab.EQUIPMENT if action == "equip" else InventoryWindow.Tab.CONSUMABLE
+		if not bag.visible or not await _click(bag.tab_buttons[tab]):
+			return false
+		var item_id := &"leaf_vest" if action == "equip" else &"berry"
+		for view in bag.slots:
+			if view.stack != null and view.stack.item_id == item_id:
+				target = view
+				break
+	if target == null or target.stack == null:
+		return false
+	instance_id = target.stack.instance_id
+	if action != "use" and instance_id.is_empty():
+		return false
+	if not await _click(target):
+		return false
+	var event := InputEventMouseButton.new()
+	event.position = target.get_global_rect().get_center()
+	event.global_position = event.position
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.double_click = true
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT
+	event.pressed = true
+	get_viewport().push_input(event, true)
+	var up := event.duplicate() as InputEventMouseButton
+	up.button_mask = 0
+	up.pressed = false
+	up.double_click = false
+	get_viewport().push_input(up, true)
+	if not NetworkManager.is_server():
+		var sequence := PlayerItemReplicationService._next_local_sequence
+		if items._pending_item_type < 0 or not bag._pending or _slot_layout(player) != before:
+			return false
+		get_viewport().push_input(event, true)
+		get_viewport().push_input(up, true)
+		if PlayerItemReplicationService._next_local_sequence != sequence:
+			return false
+	if not await _wait(func() -> bool: return items._pending_item_type == -1):
+		return false
+	if command.get("reject", false):
+		return not bag._pending and player.item_state_revision == revision and _slot_layout(player) == before \
+			and bag._status.text.contains("world to finish loading")
+	if bag._pending or player.item_state_revision != revision + 1:
+		return false
+	match action:
+		"equip":
+			var equipped := player.equipment.equipped(body)
+			return equipped != null and equipped.instance_id == instance_id and equipped.durability == 37 \
+				and gear.slot_views[body].stack.instance_id == instance_id and player.stats.value(&"defense") == 2.0
+		"unequip":
+			return player.equipment.equipped(body) == null and gear.slot_views[body].stack == null \
+				and player.inventory.stacks().any(func(stack: ItemStack) -> bool: return stack.instance_id == instance_id) \
+				and player.stats.value(&"defense") == 0.0
+		"use": return player.inventory.count(&"berry") == berry_count - 1
+	return false
 
 func _item_windows_visible() -> bool:
 	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter

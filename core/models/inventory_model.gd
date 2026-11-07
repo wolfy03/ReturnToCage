@@ -13,6 +13,7 @@ var capacity: int:
 		resize_capacity(value)
 var restore_overflow: Array[ItemStack] = []
 var _slots: Array[ItemStack] = []
+var _assign_equipment_ids := false
 var _update_depth: int = 0
 var _change_pending: bool = false
 var _layout_revision: int = 0
@@ -479,7 +480,26 @@ func end_update() -> void:
 		_change_pending = false
 		changed.emit()
 
+## Only enabled on the authoritative owner's main bag. Mirrors and staged
+## exchange previews keep the identities they received.
+func enable_equipment_id_assignment() -> void:
+	if _assign_equipment_ids or not _mutation_allowed():
+		return
+	_assign_equipment_ids = true
+	if _assign_missing_equipment_ids():
+		_notify_changed()
+
+func _assign_missing_equipment_ids() -> bool:
+	var assigned := false
+	for stack in _slots:
+		if stack != null and stack.instance_id.is_empty() and _definition(stack) is EquipmentDefinition:
+			stack.instance_id = ItemStack.new_instance_id(stack.item_id)
+			assigned = true
+	return assigned
+
 func _notify_changed() -> void:
+	if _assign_equipment_ids:
+		_assign_missing_equipment_ids()
 	_layout_revision += 1
 	if _update_depth > 0:
 		_change_pending = true

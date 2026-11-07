@@ -4,6 +4,7 @@ func run(t: Node) -> void:
 	var start := ContentRegistry.get_definition(GameSession.DEFAULT_START_ID) as GameStartDefinition
 	_test_pending_encapsulation(t, start)
 	_test_item_transactions(t, start)
+	_test_equipment_identity_boundary(t, start)
 	_test_snapshot_boundary(t, start)
 	_test_transfer_transactions(t, start)
 
@@ -66,6 +67,31 @@ func _test_item_transactions(t: Node, start: GameStartDefinition) -> void:
 	revision = player.item_state_revision
 	t.assert_true(not service.try_use_item(player, null, null, &"missing_item").success, "forged unknown item use is rejected")
 	t.assert_equal(player.item_state_revision, revision, "failed item use creates no revision")
+
+func _test_equipment_identity_boundary(t: Node, start: GameStartDefinition) -> void:
+	var player := PlayerState.new(Callable(ContentRegistry, "get_item"))
+	player.reset(start, ContentRegistry)
+	var carried := _instance(&"leaf_vest", "", 20)
+	var existing := _instance(&"leaf_vest", "existing-vest", 21)
+	var layout: Array[ItemStack] = [carried, null, existing]
+	t.assert_true(player.inventory.initialize_slots(layout).success, "legacy equipment fixture retains its hole")
+	var revision := player.item_state_revision
+	player.inventory.enable_equipment_id_assignment()
+	var assigned := player.inventory.get_slot(0)
+	t.assert_true(not assigned.instance_id.is_empty() and assigned.durability == 20 \
+		and player.inventory.get_slot(1) == null and player.inventory.get_slot(2).instance_id == existing.instance_id, "identity upgrade preserves holes, durability and existing IDs")
+	t.assert_equal(player.item_state_revision, revision + 1, "authoritative bag publishes one revision for legacy identity assignment")
+	player.inventory.enable_equipment_id_assignment()
+	t.assert_equal(player.inventory.get_slot(0).instance_id, assigned.instance_id, "repeated binding preserves issued identity")
+	var service := PlayerItemCommandService.new(ContentRegistry)
+	player.protected_inventory.add_stack(assigned)
+	var before := player.inventory.to_slot_dict()
+	revision = player.item_state_revision
+	t.assert_true(not service.try_equip(player, assigned.instance_id).success, "equip rejects an identity also present in the protected bag")
+	t.assert_true(player.inventory.to_slot_dict() == before and player.item_state_revision == revision, "duplicate rejection leaves the layout and revision untouched")
+	var consumables: Array[ItemStack] = [_instance(&"berry", "unique-berry", -1), ItemStack.new(&"berry", 2)]
+	player.inventory.initialize(consumables)
+	t.assert_true(not service.try_use_item(player, null, null, &"berry").success and player.inventory.count(&"berry") == 3, "use by type cannot consume an individual instance")
 
 func _test_snapshot_boundary(t: Node, start: GameStartDefinition) -> void:
 	var source := PlayerState.new(Callable(ContentRegistry, "get_item"))

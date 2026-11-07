@@ -350,6 +350,8 @@ func remove_player_state(player_id: StringName) -> void:
 func _add_player_state(peer_id: int, player_id: StringName, state: PlayerState) -> void:
 	if peer_id <= 0 or player_id.is_empty() or state == null:
 		return
+	if NetworkManager.is_authoritative_simulation():
+		state.inventory.enable_equipment_id_assignment()
 	players[peer_id] = state
 	_attached_player_ids[peer_id] = player_id
 	_player_states_by_id[player_id] = state
@@ -1459,6 +1461,9 @@ func apply_persistent_snapshot(snapshot: SessionSnapshot) -> bool:
 	adventure = snapshot.adventure
 	for player_id in snapshot.players_by_id:
 		var state: PlayerState = snapshot.players_by_id[player_id]
+		# Prepared saves have already passed global instance validation. Assign
+		# any legacy carried identities before installing the authority guard.
+		state.inventory.enable_equipment_id_assignment()
 		state.set_item_mutation_guard(Callable(self, "can_mutate_authoritative_state"))
 		state.effects.paused = true
 		_player_states_by_id[player_id] = state

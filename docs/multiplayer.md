@@ -425,6 +425,13 @@ additional real ENet negative/lifecycle regression commands.
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration
 
+## Equipment and consumption GUI (Stage 4-B)
+
+The inventory and equipment windows use the existing command and result
+packets. The attached player and current world readiness are checked on the
+server for equipment and consumption actions. Clients keep one in-flight
+request per command type and apply the existing owner-private item snapshot.
+
 ## Indexed inventory synchronization (Protocol v17)
 
 The owner-private item and shared storage snapshots now retain capacity and exact slot indices. Existing item-ID/instance-ID commands remain, and the new slot intents are server-approved with owner, session, world, revision, sequence and cell-fingerprint validation. v16 handshakes are rejected. See [inventory_persistence.md](inventory_persistence.md) for the precise wire and test contracts.

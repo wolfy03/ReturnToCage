@@ -355,6 +355,12 @@ guards, second-page indices, whole-bag sort and Shift/dodge routing. The shared
 Editor/EXE lifecycle checks real client drag approval, pending immutability,
 duplicate input, old results, server rejection, world travel and reconnect.
 
+Stage 4-B exercises double-click equip, replacement, unequip and consumption,
+both drag directions, wrong equipment slot, legacy IDs, full-bag rollback,
+derived stats and effects, and Save v5 load. The Editor/EXE lifecycle also uses
+real Host and Client GUI commands, checks transition rejection, attempts to equip
+the Host's instance from a Client, and verifies equipped state across rejoin.
+
 ## Fixed inventory slot model (Stage 2)
 
 The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-only selects it. Tests cover sparse moves/swaps/merges/splits/sort/resize, failed-command layout rollback, instance conservation, real crafting/storage/equip/death paths, Save v4/v16 dense-format limitations and seeded mixed-operation invariants. Read-only GUI regressions check holes at actual model indices. See [inventory_slots.md](inventory_slots.md).

@@ -4,6 +4,7 @@ extends Button
 
 signal item_hovered(view: ItemSlotView)
 signal item_unhovered(view: ItemSlotView)
+signal item_activated(view: ItemSlotView)
 
 const PLACEHOLDER: Texture2D = preload("res://ui/inventory/item_placeholder.svg")
 var stack: ItemStack
@@ -24,6 +25,18 @@ func _ready() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		shift_drag = event.shift_pressed
+		if event.double_click and stack != null:
+			item_activated.emit(self)
+
+func preview_item_drag() -> void:
+	var preview := TextureRect.new()
+	preview.texture = item_icon.texture
+	preview.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.size = Vector2(40, 40)
+	set_drag_preview(preview)
 
 func display_item(value: ItemStack, item: ItemDefinition) -> void:
 	stack = value.duplicate_stack() if value != null else null

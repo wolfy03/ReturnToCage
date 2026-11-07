@@ -134,11 +134,13 @@ func run(t: Node) -> void:
 	var path := "user://inventory_ui_fixture.json"
 	t.assert_true(SaveManager.save_game(path), "UI fixture writes Save v5")
 	t.assert_true(SaveManager.load_game(path), "existing Save loader restores UI fixture")
+	SceneRouter.go_to_settlement()
 	await _frames(t)
 	t.assert_true(presenter._state == GameSession.player, "Load rebinds presenter to restored model")
 	await key(t, KEY_I)
 	await key(t, KEY_P)
 	t.assert_true(bag.visible and gear.visible, "Load Game permits I/P windows")
+	await _check_item_actions(t, bag, gear, path)
 	await _check_slot_controls(t, bag)
 	await click(t, bag.close_button)
 	t.assert_true(not bag.visible, "close button receives real GUI input")
@@ -148,6 +150,58 @@ func run(t: Node) -> void:
 	app.queue_free()
 	SceneRouter.register_world_layer(null)
 	await _frames(t)
+
+func _check_item_actions(t: Node, bag: InventoryWindow, gear: EquipmentWindow, path: String) -> void:
+	var player := GameSession.player
+	var main := player.inventory
+	var body := EquipmentDefinition.EquipmentSlot.BODY
+	var hand := EquipmentDefinition.EquipmentSlot.MAIN_HAND
+	var legacy := ItemStack.new(&"leaf_vest", 1)
+	legacy.durability = 31
+	var newer := ItemStack.new(&"leaf_vest", 1)
+	newer.instance_id = "gui-replacement-vest"
+	newer.durability = 43
+	main.initialize([legacy, newer, ItemStack.new(&"berry", 2)])
+	player.survival.hunger = 30.0
+	await _frames(t)
+	await click(t, bag.tab_buttons[InventoryWindow.Tab.EQUIPMENT])
+	var legacy_id := main.get_slot(0).instance_id
+	t.assert_true(not legacy_id.is_empty() and main.get_slot(0).durability == 31 and legacy.instance_id.is_empty(), "authority assigns a carried legacy identity without mutating the input")
+	var before := _items()
+	await _drag(t, bag.slots[0], gear.slot_views[hand].get_global_rect().get_center())
+	t.assert_true(_items() == before and bag._status.text.contains("different equipment slot"), "equipment drag refuses an unrelated slot")
+	await _drag(t, bag.slots[0], gear.slot_views[body].get_global_rect().get_center())
+	t.assert_true(gear.slot_views[body].stack != null and gear.slot_views[body].stack.instance_id == legacy_id and main.get_slot(0) == null, "GUI drag equips a legacy instance through the service")
+	t.assert_equal(player.stats.value(&"defense"), 2.0, "equipment adds its defense modifier")
+	await double_click(t, bag.slots[1])
+	t.assert_true(player.equipment.equipped(body).instance_id == newer.instance_id and main.get_slot(0).instance_id == legacy_id and main.get_slot(0).durability == 31, "double-click replacement returns the previous identity and durability")
+	t.assert_equal(player.stats.value(&"defense"), 2.0, "replacement applies the equipment modifier once")
+	var full: Array[ItemStack] = [ItemStack.new(&"berry", 2)]
+	main.initialize(full, 1)
+	await _frames(t)
+	before = _items()
+	await double_click(t, gear.slot_views[body])
+	t.assert_true(_items() == before and bag._status.text.contains("full") and presenter._pending_item_type == -1, "full main bag rejects unequip and unlocks the UI")
+	main.expand_capacity(2)
+	await _frames(t)
+	await double_click(t, gear.slot_views[body])
+	t.assert_true(gear.slot_views[body].stack == null and main.get_slot(1).instance_id == newer.instance_id, "double-click unequip uses the first free main bag slot")
+	t.assert_equal(player.stats.value(&"defense"), 0.0, "unequip removes the equipment modifier")
+	await double_click(t, bag.slots[1])
+	await _drag(t, gear.slot_views[body], bag.slots[2].get_global_rect().get_center())
+	t.assert_true(gear.slot_views[body].stack == null and main.get_slot(1).instance_id == newer.instance_id \
+		and main.get_slot(2) == null, "unequip drag chooses the first free slot instead of the hovered cell")
+	await double_click(t, bag.slots[1])
+	await click(t, bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE])
+	await double_click(t, bag.slots[0])
+	t.assert_equal(main.count(&"berry"), 1, "double-click consumes one ordinary item")
+	t.assert_true(player.survival.hunger > 45.0 and player.stats.value(&"move_speed") > 190.0, "consumption reuses hunger and buff processing")
+	t.assert_true(SaveManager.save_game(path) and SaveManager.load_game(path), "equipped replacement round-trips through Save v5")
+	SceneRouter.go_to_settlement()
+	await _frames(t)
+	t.assert_true(GameSession.player.equipment.equipped(body).instance_id == newer.instance_id and GameSession.player.stats.value(&"defense") == 2.0, "load preserves equipped instance and restores its stat once")
+	await key(t, KEY_I)
+	await key(t, KEY_P)
 
 func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	var main := GameSession.player.inventory
@@ -287,11 +341,12 @@ static func _hover(t: Node, position: Vector2, viewport: Viewport = null) -> voi
 	(viewport if viewport != null else t.get_viewport()).push_input(motion, true)
 	await _frames(t)
 
-static func _mouse(t: Node, position: Vector2, pressed: bool, shift: bool = false, viewport: Viewport = null) -> void:
+static func _mouse(t: Node, position: Vector2, pressed: bool, shift: bool = false, viewport: Viewport = null, twice: bool = false) -> void:
 	var event := InputEventMouseButton.new()
 	event.position = position
 	event.global_position = position
 	event.shift_pressed = shift
+	event.double_click = twice
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
 	event.pressed = pressed
@@ -307,6 +362,13 @@ static func click(t: Node, control: Control) -> void:
 	_mouse(t, center, true, false, viewport)
 	await t.get_tree().process_frame
 	_mouse(t, center, false, false, viewport)
+	await _frames(t)
+
+static func double_click(t: Node, control: Control) -> void:
+	await click(t, control)
+	var center := control.get_global_rect().get_center()
+	_mouse(t, center, true, false, control.get_viewport(), true)
+	_mouse(t, center, false, false, control.get_viewport())
 	await _frames(t)
 
 func _capture(t: Node) -> void:

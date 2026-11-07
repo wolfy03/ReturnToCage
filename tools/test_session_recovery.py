@@ -132,6 +132,15 @@ class LifecycleChecks(RosterController):
         self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=False)
         self.call("B", "slot_ui")
         self.call("B", "slot_ui", **{"from": 4, "to": 0})
+        self.call("A", "item_seed", player=self.roles["A"]["player_id"], instance="ui-host-vest")
+        self.call("A", "item_seed", player=self.roles["B"]["player_id"])
+        self.call("B", "item_foreign", instance="ui-host-vest")
+        self.call("A", "item_ui", operation="equip")
+        self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=True)
+        self.call("B", "item_ui", operation="equip", reject=True)
+        self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=False)
+        self.call("B", "item_ui", operation="equip")
+        self.call("B", "item_ui", operation="use")
         # Settlement puts the joining client directly to the Host's right.
         # Walk away from each other so both peers can observe a sustained run.
         self.movement("A", left=True)
@@ -191,6 +200,8 @@ class LifecycleChecks(RosterController):
         self.call("A", "slot_seed", player=self.roles["B"]["player_id"])
         self.call("B", "slot_ready")
         self.call("B", "slot_rpc", **{"from": 5, "to": 15})
+        self.call("A", "item_seed", player=self.roles["B"]["player_id"])
+        self.call("B", "item_ui", operation="equip")
         self.call("B", "slot_remember")
         self.call("B", "disconnect")
         del self.worlds["B"]
@@ -204,6 +215,7 @@ class LifecycleChecks(RosterController):
         self.check("same-process client rejoin")
         self.call("B", "slot_check")
         self.call("B", "slot_ui")
+        self.call("B", "item_ui", operation="unequip")
         self.call("A", "disconnect")
         self.worlds.clear()
         self.call("B", "check_menu")

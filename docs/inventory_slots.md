@@ -59,8 +59,8 @@ they keep their existing model objects and signal bindings.
 
 InventoryPresenter reads `slots()`, not the compact `stacks()` compatibility view.
 Tabs hide other categories in place. Each selectable bag has its own page span
-and model indices. Padding has no slot backing. Equipment remains a display of
-the currently equipped items.
+and model indices. Padding has no slot backing. Stage 4-B sends existing
+equipment and consumption intents from the main bag and equipment window.
 
 ## Historical Stage 2 format limits
 

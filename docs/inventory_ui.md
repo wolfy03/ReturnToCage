@@ -9,7 +9,7 @@ The dark brown/green panels use beige text and a shared supply-pouch placeholder
 when an item has no authored icon. Clicking selects a cell for inspection only.
 Hover displays the definition, quantity, weight, value, equipment modifiers,
 weapon damage/stamina cost and instance durability. Clicking an empty cell
-clears selection. Equipment slots are for inspection.
+clears selection. The equipment window shows Main hand and Body.
 
 `ui/inventory/inventory_presenter.gd` belongs to GameHUD and reads only the local
 owner's InventoryModel, protected inventory and EquipmentModel. Model getters
@@ -57,6 +57,29 @@ show the current layout with an explanation, and delayed results for other
 sequences do not affect the current interaction. World or owner changes
 invalidate unfinished gestures. Disconnect resets pending UI and closes the
 split dialog.
+
+## Equip, unequip and use (Stage 4-B)
+
+Double-click a piece of equipment in the main bag or drag it to its matching
+equipment slot. Double-click worn gear or drag it onto the main bag to
+unequip. Unequip uses the first free cell according to the server inventory
+policy. The hovered cell is only a drop surface. Double-click an ordinary
+consumable in the main bag to use one unit by item ID. A return seed still uses
+the Adventure shortcut `Q`.
+
+The presenter uses the existing `request_equip(instance_id)`,
+`request_unequip(slot)` and `request_use_item(item_id)` calls and result signals.
+The shared pending state blocks overlapping slot and item gestures. The
+transport allows one pending result per command type, including quick-item use.
+Only owner snapshots update a client's items. A full bag can still allow an
+equipment swap when removal of the new item makes space for the old one. A
+failed return to the bag leaves both containers and their revisions intact.
+
+When an old save or a new item supplies equipment without an ID, the authority
+assigns one as the item enters a playable main bag. Legacy equipped gear keeps
+its data until it is returned to the bag, when it receives an ID if needed.
+Existing IDs, durability and the fixed slot positions are preserved. Client
+mirrors and staged transaction previews retain their input identities.
 
 ## Validation
 

@@ -3,7 +3,12 @@ extends ItemWindowFrame
 
 signal item_hovered(view: ItemSlotView)
 signal item_unhovered(view: ItemSlotView)
+signal unequip_requested(slot: int)
 @export var slot_layout: Array[EquipmentSlotViewDefinition] = []
+class EquippedDrag extends RefCounted:
+	var slot: int
+	var view_epoch: int
+
 const SLOT_SCENE := preload("res://ui/inventory/item_slot_view.tscn")
 var slot_views: Dictionary[int, ItemSlotView] = {}
 var _names: Dictionary[int, Label] = {}
@@ -23,6 +28,7 @@ func _ready() -> void:
 		slot_views[entry.slot] = slot
 		slot.item_hovered.connect(item_hovered.emit)
 		slot.item_unhovered.connect(item_unhovered.emit)
+		slot.item_activated.connect(_on_item_activated.bind(entry.slot))
 		var text := VBoxContainer.new()
 		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(text)
@@ -43,6 +49,13 @@ func _ready() -> void:
 		text.add_child(durability)
 		_durability[entry.slot] = durability
 	display_equipment({})
+
+func _on_item_activated(_view: ItemSlotView, slot: int) -> void:
+	unequip_requested.emit(slot)
+
+func show_status(message: String) -> void:
+	%Status.text = message
+	%Status.tooltip_text = message
 
 func display_equipment(items: Dictionary[int, ItemStack]) -> void:
 	for id in slot_views:

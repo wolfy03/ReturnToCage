@@ -12,6 +12,7 @@ enum CommandType { EQUIP, UNEQUIP, USE_ITEM, TRANSFER }
 static var _next_local_sequence: int = 0
 static var _last_command_sequences: Dictionary[int, int] = {}
 
+var _pending_item_types: Dictionary[int, bool] = {}
 var _last_sent_revisions: Dictionary[int, int] = {}
 
 func _ready() -> void:
@@ -19,6 +20,7 @@ func _ready() -> void:
 	GameSession.player_item_state_changed.connect(_on_player_item_state_changed)
 	NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
 	NetworkManager.peer_left.connect(_on_peer_left)
+	NetworkManager.multiplayer_session_ended.connect(_on_session_ended)
 
 func _exit_tree() -> void:
 	if GameSession.player_item_state_changed.is_connected(_on_player_item_state_changed):
@@ -28,14 +30,20 @@ func _exit_tree() -> void:
 	if NetworkManager.peer_left.is_connected(_on_peer_left):
 		NetworkManager.peer_left.disconnect(_on_peer_left)
 
-func request_equip(instance_id: String) -> void:
-	_submit(CommandType.EQUIP, instance_id, -1, &"", "", 1)
+	if NetworkManager.multiplayer_session_ended.is_connected(_on_session_ended):
+		NetworkManager.multiplayer_session_ended.disconnect(_on_session_ended)
 
-func request_unequip(slot: int) -> void:
-	_submit(CommandType.UNEQUIP, "", slot, &"", "", 1)
+func _on_session_ended(_reason: String) -> void:
+	_pending_item_types.clear()
 
-func request_use_item(item_id: StringName) -> void:
-	_submit(CommandType.USE_ITEM, "", -1, item_id, "", 1)
+func request_equip(instance_id: String) -> bool:
+	return _submit(CommandType.EQUIP, instance_id, -1, &"", "", 1)
+
+func request_unequip(slot: int) -> bool:
+	return _submit(CommandType.UNEQUIP, "", slot, &"", "", 1)
+
+func request_use_item(item_id: StringName) -> bool:
+	return _submit(CommandType.USE_ITEM, "", -1, item_id, "", 1)
 
 func request_transfer(direction: int, item_id: StringName, amount: int, instance_id: String = "") -> void:
 	_submit(CommandType.TRANSFER, "", direction, item_id, instance_id, amount)
@@ -101,12 +109,20 @@ func _submit(
 	item_id: StringName,
 	instance_id: String,
 	amount: int
-) -> void:
-	var sequence := _next_sequence()
+) -> bool:
 	if NetworkManager.is_authoritative_simulation():
-		_server_execute(NetworkManager.local_peer_id(), command_type, identity, option, item_id, instance_id, amount, sequence, true)
-	elif NetworkManager.is_session_connected():
-		_request_item_command.rpc_id(1, int(command_type), identity, option, item_id, instance_id, amount, sequence)
+		_server_execute(NetworkManager.local_peer_id(), command_type, identity, option, item_id, instance_id, amount, _next_sequence(), true)
+		return true
+	if not NetworkManager.is_session_connected() or _pending_item_types.has(command_type):
+		return false
+	var sent := rpc_id(1, &"_request_item_command", int(command_type), identity, option, item_id, instance_id, amount, _next_sequence())
+	if sent != OK:
+		return false
+	# Existing result packets identify the action type. Single flight per type
+	# also keeps a quick-item shortcut from completing a different UI request.
+	if command_type != CommandType.TRANSFER:
+		_pending_item_types[command_type] = true
+	return true
 
 @rpc("any_peer", "call_remote", "reliable")
 func _request_item_command(
@@ -122,7 +138,7 @@ func _request_item_command(
 		return
 	var sender := multiplayer.get_remote_sender_id()
 	if sender <= 1 or not NetworkManager.has_peer(sender) or not GameSession.has_player(sender) \
-			or NetworkManager.player_id_for_peer(sender).is_empty():
+			or NetworkManager.player_id_for_peer(sender) != GameSession.get_player_id(sender):
 		return
 	if command_type < CommandType.EQUIP or command_type > CommandType.TRANSFER:
 		return
@@ -149,6 +165,9 @@ func _server_execute(
 		return
 	var runtime := GameSession.get_player_runtime(peer_id)
 	var actor := _player_actor(peer_id)
+	var world_check := CommandResult.make(true)
+	if command_type != CommandType.TRANSFER and NetworkManager.is_multiplayer_active():
+		world_check = NetworkManager._validate_authoritative_world_interaction(peer_id)
 	var result: CommandResult
 	if not GameSession.has_player(peer_id) or GameSession.get_player_id(peer_id).is_empty():
 		result = CommandResult.make(false, "Unknown item command player")
@@ -160,6 +179,8 @@ func _server_execute(
 		result = CommandResult.make(false, "Quick items are unavailable while hurt")
 	elif command_type == CommandType.USE_ITEM and actor.dodge.is_active():
 		result = CommandResult.make(false, "Quick items are unavailable while dodging")
+	elif not world_check.success:
+		result = world_check
 	elif command_type == CommandType.TRANSFER and not GameSession.is_peer_in_settlement(peer_id):
 		result = CommandResult.make(false, "Storage transfer requires settlement state")
 	elif GameSession.phase not in [GameSession.Phase.SETTLEMENT, GameSession.Phase.ADVENTURE]:
@@ -255,5 +276,7 @@ func _receive_item_snapshot(payload: Dictionary) -> void:
 @rpc("authority", "call_remote", "reliable")
 func _receive_command_result(command_type: int, success: bool, message: String) -> void:
 	if command_type < CommandType.EQUIP or command_type > CommandType.TRANSFER:
+		return
+	if command_type != CommandType.TRANSFER and not _pending_item_types.erase(command_type):
 		return
 	_emit_result(command_type as CommandType, success, message)

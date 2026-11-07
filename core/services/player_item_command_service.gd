@@ -21,8 +21,13 @@ func try_equip(player: PlayerState, instance_id: String) -> CommandResult:
 		if equipped.instance_id == instance_id:
 			return CommandResult.make(false, "Equipment instance is already equipped")
 	var previous := player.equipment.equipped(definition.equipment_slot)
+	if _bag_contains_instance(player.protected_inventory, target.instance_id) \
+			or (previous != null and _bag_contains_instance(player.protected_inventory, previous.instance_id)):
+		return CommandResult.make(false, "Duplicate equipment instance in the protected bag")
 	var outputs: Array[ItemStack] = []
 	if previous != null:
+		if previous.instance_id.is_empty():
+			previous.instance_id = ItemStack.new_instance_id(previous.item_id)
 		outputs.append(previous)
 	var inputs: Array[ItemStack] = [target]
 	var preview := player.inventory.preview_exchange(inputs, outputs)
@@ -41,8 +46,10 @@ func try_unequip(player: PlayerState, slot: int) -> CommandResult:
 	var equipped := player.equipment.equipped(slot)
 	if equipped == null:
 		return CommandResult.make(false, "Equipment slot is empty")
+	if _bag_contains_instance(player.protected_inventory, equipped.instance_id):
+		return CommandResult.make(false, "Duplicate equipment instance in the protected bag")
 	if equipped.instance_id.is_empty():
-		equipped.instance_id = _new_instance_id(equipped.item_id)
+		equipped.instance_id = ItemStack.new_instance_id(equipped.item_id)
 	var output: Array[ItemStack] = [equipped]
 	var preview := player.inventory.preview_exchange([], output)
 	if not preview.success:
@@ -63,8 +70,12 @@ func try_use_item(
 	if player == null or item_id.is_empty():
 		return CommandResult.make(false, "Item use requires a known item owner")
 	var definition := registry.get_item(item_id) as ItemDefinition
-	if definition == null or not definition.is_consumable() or player.inventory.count(item_id) <= 0:
+	if definition == null or definition is EquipmentDefinition or definition.category == ItemDefinition.ItemCategory.RETURN_ITEM \
+			or not definition.is_consumable() or player.inventory.count(item_id) <= 0:
 		return CommandResult.make(false, "Item cannot be used")
+	for stack in player.inventory.stacks():
+		if stack.item_id == item_id and not stack.instance_id.is_empty():
+			return CommandResult.make(false, "Items with individual identities cannot be used by item type")
 	player.begin_item_update()
 	var used := ItemUseService.use_item(player.inventory, survival, effects, item_id, Callable(registry, "get_item"))
 	player.end_item_update()
@@ -100,7 +111,7 @@ func try_transfer(
 			if source_item == null:
 				return CommandResult.make(false, "Equipment transfer requires an instance identity")
 			destination_item = source_item.duplicate_stack()
-			destination_item.instance_id = _new_instance_id(item_id)
+			destination_item.instance_id = ItemStack.new_instance_id(item_id)
 		else:
 			source_item = ItemStack.new(item_id, amount)
 			destination_item = source_item.duplicate_stack()
@@ -117,6 +128,9 @@ func try_transfer(
 		return transferred
 	return CommandResult.make(true, "Deposited item" if direction == TransferDirection.DEPOSIT else "Withdrew item")
 
+func _bag_contains_instance(inventory: InventoryModel, instance_id: String) -> bool:
+	return not instance_id.is_empty() and _find_instance(inventory.stacks(), instance_id) != null
+
 func _find_instance(stacks: Array[ItemStack], instance_id: String) -> ItemStack:
 	for stack in stacks:
 		if stack.instance_id == instance_id:
@@ -128,9 +142,6 @@ func _find_legacy_equipment(stacks: Array[ItemStack], item_id: StringName) -> It
 		if stack.item_id == item_id and stack.instance_id.is_empty():
 			return stack
 	return null
-
-func _new_instance_id(item_id: StringName) -> String:
-	return "%s_%s" % [item_id, Crypto.new().generate_random_bytes(16).hex_encode()]
 
 func _instance_conflicts(player: PlayerState, settlement: SettlementState, moving: ItemStack, direction: int) -> bool:
 	if moving == null or moving.instance_id.is_empty():

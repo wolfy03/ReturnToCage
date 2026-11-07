@@ -49,4 +49,11 @@ theme_override_constants/separation = 12
 layout_mode = 2
 theme_override_colors/font_color = Color(0.66, 0.70, 0.60, 1)
 theme_override_font_sizes/font_size = 12
-text = "Hover gear to inspect   ·   P Close"
+text = "Double-click gear or drag to the main bag"
+[node name="Status" type="Label" parent="Content"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 16)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.84, 0.73, 0.48, 1)
+theme_override_font_sizes/font_size = 12
+text_overrun_behavior = 3
