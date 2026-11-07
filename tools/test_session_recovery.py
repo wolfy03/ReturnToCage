@@ -249,6 +249,8 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
         self.check("restored host and returning client")
+        # D remains disconnected while A and B exercise the saved session.
+        self.call("D", "check_menu")
         self.call("A", "slot_seed", player=self.roles["B"]["player_id"])
         self.call("B", "slot_ready")
         self.call("B", "slot_rpc", **{"from": 5, "to": 15})
@@ -258,6 +260,7 @@ class LifecycleChecks(RosterController):
         self.call("B", "disconnect")
         del self.worlds["B"]
         self.check("manual client leave")
+        self.call("D", "check_menu")
         self.call("B", "new_game")
         self.call("B", "item_windows")
         self.movement("B")
