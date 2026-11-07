@@ -23,6 +23,8 @@ var _profile_hash: String
 var _save_hash := ""
 var _save_session_id := ""
 var _saved_slot_layout: Dictionary = {}
+var _saved_stats: Dictionary = {}
+var _saved_storage: Dictionary = {}
 var _remembered_slot_layout: Dictionary = {}
 var _previous_slot_intent: Dictionary = {}
 var _prepared_slot_intent: Dictionary = {}
@@ -146,21 +148,45 @@ func _execute(command: Dictionary) -> void:
 			if action == "load_game" and (GameSession.session_id != _save_session_id or GameSession.player.inventory.count(&"rusty_scrap") != 3 or _slot_layout(GameSession.player) != _saved_slot_layout):
 				_fail("Load Game did not restore the original Save v5")
 				return
+			if action == "load_game" and (_gear_stats(GameSession.player) != _saved_stats \
+					or GameSession.settlement.storage.to_slot_dict() != _saved_storage or not _unique_item_instances(GameSession.player)):
+				_fail("Load Game did not restore equipment stats or storage")
+				return
 		"save_fixture":
-			GameSession.player.inventory.add_item(&"rusty_scrap", 3)
-			GameSession.player.inventory.expand_capacity(6)
-			GameSession.player.inventory.move_slot(3, 17)
+			var inventory := GameSession.player.inventory
+			if not inventory.add_item(&"rusty_scrap", 3).success or not inventory.expand_capacity(6).success:
+				_fail("could not add Save fixture resources")
+				return
+			var scrap_slot := -1
+			for index in inventory.capacity:
+				var stack := inventory.get_slot(index)
+				if stack != null and stack.item_id == &"rusty_scrap":
+					scrap_slot = index
+					break
+			if not inventory.move_slot(scrap_slot, 17).success:
+				_fail("could not create a sparse Save fixture")
+				return
 			_saved_slot_layout = _slot_layout(GameSession.player)
+			_saved_stats = _gear_stats(GameSession.player)
+			_saved_storage = GameSession.settlement.storage.to_slot_dict()
+			if not _unique_item_instances(GameSession.player):
+				_fail("Save fixture contains duplicate item instances")
+				return
 			if not await _click(app.get_node("UILayer/GameHUD").save_button) or not FileAccess.file_exists(SaveManager.SAVE_PATH):
 				_fail("Save button did not write the isolated Save v5")
 				return
 			_save_session_id = GameSession.session_id
 			_save_hash = FileAccess.get_file_as_string(SaveManager.SAVE_PATH).sha256_text()
 		"to_menu", "check_menu":
+			var previous := GameSession.get_local_player() if action == "to_menu" else null
 			if action == "to_menu":
 				app._leave_game() # Offline fixture uses the production menu cleanup path.
 			if not await _wait(_menu_clean):
 				_fail("menu/session cleanup did not complete")
+				return
+			var presenter: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+			if previous != null and previous.item_state_changed.is_connected(presenter._on_item_state_changed):
+				_fail("retired PlayerState still has the inventory presenter signal")
 				return
 			_expect_item_windows = false
 		"inspect":
@@ -214,12 +240,12 @@ func _execute(command: Dictionary) -> void:
 			var gear := ItemStack.new(&"leaf_vest", 1)
 			gear.instance_id = String(command.get("instance", ""))
 			gear.durability = 37
-			if not NetworkManager.is_server() or player == null or not player.inventory.add_stack(gear).success:
+			if not NetworkManager.is_authoritative_simulation() or player == null or not player.inventory.add_stack(gear).success:
 				_fail("cannot seed equipment action fixture")
 				return
 		"field_gear_materials":
 			var storage := GameSession.settlement.storage
-			if not NetworkManager.is_server() or not storage.add_item(&"moss_fiber", 2).success or not storage.add_item(&"rusty_scrap", 1).success:
+			if not NetworkManager.is_authoritative_simulation() or not storage.add_item(&"moss_fiber", 2).success or not storage.add_item(&"rusty_scrap", 1).success:
 				_fail("cannot seed field gear recipe materials")
 				return
 		"field_gear_ready":
@@ -520,6 +546,23 @@ func _item_service() -> PlayerItemReplicationService:
 func _slot_layout(player: PlayerState) -> Dictionary:
 	return {"inventory": player.inventory.to_slot_dict(), "protected": player.protected_inventory.to_slot_dict(), "equipment": player.equipment.to_dict()}
 
+func _gear_stats(player: PlayerState) -> Dictionary:
+	var gear: EquipmentWindow = app.get_node("UILayer/GameHUD").inventory_presenter.equipment_window
+	var values := {}
+	for stat_id in gear._stat_values:
+		values[stat_id] = player.stats.value(stat_id)
+	return values
+
+func _unique_item_instances(player: PlayerState) -> bool:
+	var seen := {}
+	for stack in player.inventory.stacks() + player.protected_inventory.stacks() + player.equipment.all_equipped():
+		if stack.instance_id.is_empty():
+			continue
+		if seen.has(stack.instance_id):
+			return false
+		seen[stack.instance_id] = true
+	return true
+
 func _slot_rpc(command: Dictionary) -> bool:
 	var service := _item_service()
 	if service == null or NetworkManager.is_server():
@@ -576,6 +619,7 @@ func _slot_rpc(command: Dictionary) -> bool:
 	return result != null and result.success and player.inventory.to_slot_dict() == expected.to_slot_dict()
 
 func _slot_ui(command: Dictionary) -> bool:
+	var offline := not NetworkManager.is_multiplayer_active()
 	if NetworkManager.is_server():
 		return false
 	var presenter: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
@@ -622,8 +666,9 @@ func _slot_ui(command: Dictionary) -> bool:
 	button.pressed = false
 	get_viewport().push_input(button, true)
 	var sequence := presenter._pending_sequence
-	if sequence <= 0 or not bag._pending or not bag._sort.disabled or _slot_layout(player) != before \
-			or bag.slots[from].stack == null or bag.slots[to].stack != null:
+	if sequence <= 0 or not bag._pending or not bag._sort.disabled:
+		return false
+	if not offline and (_slot_layout(player) != before or bag.slots[from].stack == null or bag.slots[to].stack != null):
 		return false
 	# A second gesture and an older result must not replace the pending action.
 	bag._request_sort()
@@ -679,7 +724,7 @@ func _craft_field_gear(action: String, sequence_offset: int) -> bool:
 	service.craft_result.connect(receive)
 	if replay:
 		service._request_craft.rpc_id(1, &"field_gear_recipe", _field_gear_sequence + sequence_offset)
-	elif role == "B":
+	elif role == "B" or not NetworkManager.is_multiplayer_active():
 		var hud := app.get_node("UILayer/GameHUD")
 		hud.inventory_presenter.close_all()
 		_expect_item_windows = false
@@ -704,6 +749,7 @@ func _craft_field_gear(action: String, sequence_offset: int) -> bool:
 		return not _field_gear_won and player.item_state_revision == revision and _slot_layout(player) == before \
 			and (not replay or (replies[0].message.contains("stale sequence") and storage.to_slot_dict() == inputs))
 	if not _field_gear_won:
+		print("Field gear crafting rejected: ", replies[0].message)
 		return false
 	return await _wait(func() -> bool:
 		return player.item_state_revision == revision + 1 and player.inventory.count(&"leaf_hat") == 1 \
@@ -774,7 +820,7 @@ func _item_ui(command: Dictionary) -> bool:
 	up.pressed = false
 	up.double_click = false
 	get_viewport().push_input(up, true)
-	if not NetworkManager.is_server():
+	if not NetworkManager.is_authoritative_simulation():
 		var sequence := PlayerItemReplicationService._next_local_sequence
 		var locked := items._pending_item_type >= 0 and bag._pending and _slot_layout(player) == before
 		get_viewport().push_input(event, true)
@@ -828,7 +874,7 @@ func _check_equipped_display() -> bool:
 	if not gear.visible:
 		await _item_key(KEY_P)
 	var player := GameSession.get_local_player()
-	if not gear.visible or items._state != player:
+	if not gear.visible or items._state != player or items.inventory_window._pending or not _unique_item_instances(player):
 		return false
 	for item_id in [&"leaf_hat", &"acorn_necklace", &"seed_ring"]:
 		var definition := ContentRegistry.get_item(item_id) as EquipmentDefinition
@@ -877,9 +923,17 @@ func _check_item_windows() -> bool:
 	if not _item_windows_visible() or items.inventory_window.slots.size() != 24 or items.equipment_window.slot_views.keys() != [0, 1, 2, 3, 4]:
 		return false
 	var bag := items.inventory_window
-	if not await _click(bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE]) or not await _click(bag.slots[0]):
+	if not await _click(bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE]):
 		return false
-	if bag.selected_slot != 0 or bag.slots[0].stack == null or bag.slots[0].item_icon.texture == null \
+	var berry := -1
+	for cell in bag.slots.size():
+		var stack := bag.slots[cell].stack
+		if stack != null and stack.item_id == &"berry":
+			berry = cell
+			break
+	if berry < 0 or not await _click(bag.slots[berry]):
+		return false
+	if bag.selected_slot != berry or bag.slots[berry].item_icon.texture == null \
 			or not items.tooltip.visible or not items.tooltip.body_label.text.contains("Quantity"):
 		return false
 	for tab in [InventoryWindow.Tab.EQUIPMENT, InventoryWindow.Tab.OTHER, InventoryWindow.Tab.QUEST, InventoryWindow.Tab.CONSUMABLE]:

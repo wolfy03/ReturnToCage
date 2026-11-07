@@ -83,7 +83,8 @@ func _server_execute(
 		result = CommandResult.make(false, "Unknown settlement command player")
 	elif not _has_player_actor(peer_id):
 		result = CommandResult.make(false, "Settlement command player actor is unavailable")
-	elif not GameSession.is_peer_in_settlement(peer_id) or not NetworkManager.is_peer_world_ready(peer_id):
+	elif not GameSession.is_peer_in_settlement(peer_id) \
+			or (NetworkManager.is_multiplayer_active() and not NetworkManager.is_peer_world_ready(peer_id)):
 		result = CommandResult.make(false, "Settlement command player is not ready in the settlement")
 	elif runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
 		result = CommandResult.make(false, "Only a living player can use settlement commands")

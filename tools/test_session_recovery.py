@@ -139,12 +139,24 @@ class LifecycleChecks(RosterController):
 
     def _run_sequence(self) -> None:
         self.launch("A")
-        self.launch("B")
         self.call("A", "new_game")
         self.call("A", "item_windows")
+        self.call("A", "slot_ui")
+        self.call("A", "item_seed", player=self.roles["A"]["player_id"], instance="offline-demo-vest")
+        self.call("A", "item_ui", operation="equip")
+        self.call("A", "field_gear_materials")
+        self.call("A", "field_gear_craft")
+        for item, stat, value, durability in (("leaf_hat", "defense", 3.0, 30),
+                                              ("acorn_necklace", "max_health", 110.0, 40),
+                                              ("seed_ring", "stamina_regen", 20.0, 35)):
+            self.call("A", "item_ui", operation="equip", item=item, stat=stat, value=value, durability=durability)
         self.movement("A")
         self.call("A", "save_fixture")
-        first_host = self.call("A", "host")  # Direct single-player -> Host, no process/menu restart.
+        self.call("A", "to_menu")
+        self.call("A", "load_game")
+        self.call("A", "item_display")
+        self.launch("B")
+        first_host = self.call("A", "host")  # Loaded single-player -> Host in the same process.
         self.worlds["A"] = "settlement"
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
@@ -317,6 +329,7 @@ class LifecycleChecks(RosterController):
         # from B so collision cannot truncate the replicated run to a few ticks.
         self.movement("D", left=True)
         self.movement("B")
+        self.call("A", "check_menu")
         self.call("B", "remember", player=self.roles["B"]["player_id"])
         self.call("B", "item_ui", operation="use", hold_response=True)
         self.call("D", "kill", player=self.roles["B"]["player_id"])
@@ -326,6 +339,17 @@ class LifecycleChecks(RosterController):
         del self.worlds["B"]
         self.check("replacement Host keeps its own roster")
         self.call("D", "disconnect")
+        self.worlds.clear()
+        self.call("A", "new_game")
+        self.call("A", "item_windows")
+        rehost = self.call("A", "host")
+        if rehost["session_id"] == first_host["session_id"]:
+            raise RuntimeError("New Game followed by rehost retained the previous session")
+        self.worlds["A"] = "settlement"
+        self.call("B", "join", address="127.0.0.1")
+        self.worlds["B"] = "settlement"
+        self.check("original host rehosts after offline New Game")
+        self.call("A", "disconnect")
         self.worlds.clear()
         for role in self.roles:
             self.call(role, "quit")
