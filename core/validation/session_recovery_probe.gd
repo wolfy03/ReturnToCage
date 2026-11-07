@@ -13,6 +13,7 @@ var _deadline: int
 var _player_id: StringName
 var _watched_id: StringName
 var _watch_origin: Vector2
+var _watch_direction := 1.0
 var _saw_motion := false
 var _saw_run := false
 var _remembered: Dictionary[StringName, int] = {}
@@ -76,9 +77,9 @@ func _process(_delta: float) -> void:
 		return
 	var watched := _actor(_watched_id)
 	if watched != null:
-		_saw_motion = _saw_motion or watched.position.distance_to(_watch_origin) > 12.0
+		_saw_motion = _saw_motion or (watched.position.x - _watch_origin.x) * _watch_direction > 12.0
 		var visual := watched.player_visual().get_node("PlayerAnimationPresenter") as PlayerAnimationPresenter
-		_saw_run = _saw_run or visual != null and visual._current_animation == &"run" and watched.facing == 1.0
+		_saw_run = _saw_run or visual != null and visual.current_animation() == &"run" and watched.facing == _watch_direction
 	if Time.get_ticks_msec() > _deadline:
 		_fail("command timeout")
 		return
@@ -244,20 +245,22 @@ func _execute(command: Dictionary) -> void:
 				return
 			_watched_id = target
 			_watch_origin = actor.position
+			_watch_direction = -1.0 if command.get("left", false) else 1.0
 			_saw_motion = false
 			_saw_run = false
 		"move":
-			Input.action_press(&"move_right")
+			var input_action: StringName = &"move_left" if command.get("left", false) else &"move_right"
+			Input.action_press(input_action)
 			await get_tree().create_timer(0.6).timeout
-			Input.action_release(&"move_right")
+			Input.action_release(input_action)
 			await get_tree().create_timer(0.15).timeout
 		"assert_motion":
 			if not await _wait(func() -> bool: return _saw_motion and _saw_run):
 				var actor := _actor(_watched_id)
 				var authority := NetworkManager.authoritative_actor(NetworkManager.peer_id_for_player(_watched_id)) if NetworkManager.is_server() else null
-				_fail("transform/run animation missing for %s motion=%s run=%s pos=%s received=%s authority=%s" % [
+				_fail("transform/run animation missing for %s motion=%s run=%s pos=%s direction=%s transform_sequence=%s authority=%s" % [
 					_watched_id, _saw_motion, _saw_run, actor.position if actor != null else Vector2.INF,
-					actor.network._last_received_sequence if actor != null else -1,
+					_watch_direction, actor.network._snapshot_sequence if actor != null else -1,
 					{"position": authority.position, "velocity": authority.velocity, "input": authority.input.move_axis,
 					"received": authority.network._last_received_sequence, "snapshot": authority.network._snapshot_sequence,
 					"locked": authority.movement.controls_locked} if authority != null else {},

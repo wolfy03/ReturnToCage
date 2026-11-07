@@ -80,11 +80,11 @@ class LifecycleChecks(RosterController):
             expected = [self.roles[r]["player_id"] for r, w in self.worlds.items() if w == world]
             self.call(role, "inspect", expected=expected, world=world, label=label)
 
-    def movement(self, role: str) -> None:
+    def movement(self, role: str, *, left: bool = False) -> None:
         observers = [r for r, w in self.worlds.items() if w == self.worlds.get(role)] if role in self.worlds else [role]
         for observer in observers:
-            self.call(observer, "watch", player=self.roles[role]["player_id"])
-        self.call(role, "move")
+            self.call(observer, "watch", player=self.roles[role]["player_id"], left=left)
+        self.call(role, "move", left=left)
         for observer in observers:
             self.call(observer, "assert_motion")
 
@@ -212,7 +212,9 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address="::1")
         self.worlds["B"] = "settlement"
         self.check("join another Host address")
-        self.movement("D")
+        # Adjacent Settlement spawns put B directly to D's right. Walk away
+        # from B so collision cannot truncate the replicated run to a few ticks.
+        self.movement("D", left=True)
         self.movement("B")
         self.call("B", "disconnect")
         del self.worlds["B"]
