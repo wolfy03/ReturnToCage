@@ -269,6 +269,9 @@ class LifecycleChecks(RosterController):
         self.call("A", "to_menu")
         self.call("A", "load_game")
         self.call("A", "item_windows")
+        # Confirm both waiting clients stay in their menus while A loads and plays offline.
+        for role in ("B", "D"):
+            self.call(role, "check_menu")
         self.movement("A")
         self.call("A", "host_saved")
         self.worlds["A"] = "settlement"
@@ -293,6 +296,7 @@ class LifecycleChecks(RosterController):
         self.call("B", "item_windows")
         self.movement("B")
         self.call("B", "to_menu")
+        self.call("D", "check_menu")
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
         self.check("same-process client rejoin")
