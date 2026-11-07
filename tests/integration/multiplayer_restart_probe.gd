@@ -290,7 +290,8 @@ func _seed_player_state(
 		ContentRegistry.get_definition(&"quick_paws") as EffectDefinition,
 		ItemDefinition.FoodSlot.SNACK
 	)
-	var safe_position := Vector2(350.0 + index * 80.0, 500.0)
+	# Keep the valid fixture outside Milo's 340–620 px patrol corridor.
+	var safe_position := Vector2(930.0 + index * 80.0, 500.0)
 	if scenario == "invalid" and player_label == "B":
 		safe_position = Vector2(2000.0, 500.0)
 	return inventory_ok and protected_ok and equipment_ok \
@@ -367,7 +368,7 @@ func _poll_resume_host() -> void:
 	_host_finishing.rpc()
 	print("RESTART PROBE HOST FINAL PASS")
 	await get_tree().create_timer(0.35).timeout
-	get_tree().quit(0)
+	call_deferred("_finish_cleanly")
 
 func _poll_resume_client() -> void:
 	if not _client_sync_pending or _world == null:
@@ -533,7 +534,10 @@ func _on_server_disconnected() -> void:
 	_write_result(_final_client_result)
 	_finishing = true
 	print("RESTART PROBE CLIENT %s HOST DISCONNECT %s" % [label, "PASS" if clean else "FAIL"])
-	get_tree().quit(0 if clean else 1)
+	if clean:
+		call_deferred("_finish_cleanly")
+	else:
+		get_tree().quit(1)
 
 @rpc("any_peer", "call_remote", "reliable")
 func _register_restart_label(client_label: String) -> void:
@@ -816,9 +820,14 @@ func _write_result(value: Dictionary) -> void:
 	file.store_string(JSON.stringify(payload, "  "))
 	file.flush()
 	file.close()
-	if FileAccess.file_exists(result_path):
-		DirAccess.remove_absolute(result_path)
-	DirAccess.rename_absolute(temporary, result_path)
+	var deadline := Time.get_ticks_msec() + 2000
+	var error := DirAccess.rename_absolute(temporary, result_path)
+	while error != OK and Time.get_ticks_msec() < deadline:
+		OS.delay_msec(10)
+		error = DirAccess.rename_absolute(temporary, result_path)
+	if error != OK:
+		push_error("Cannot publish restart probe result: %s (%s)" % [result_path, error_string(error)])
+		get_tree().quit(1)
 
 func _parse_arguments() -> void:
 	for argument in OS.get_cmdline_user_args():

@@ -1,7 +1,7 @@
 # Windows demo export and verification
 
-Godot **4.7.2**, Windows Desktop **x86_64 release**. NetworkProtocol **16**,
-Save **4**, and Local Profile **1** are unchanged. Build from the latest `master`;
+Godot **4.7.2**, Windows Desktop **x86_64 release**. The current build uses
+NetworkProtocol **17**, Save **5**, and Local Profile **1**. Build from the latest `master`;
 existing uncommitted art and other user files are not part of a reproducible
 repository build and must be preserved separately.
 
@@ -136,3 +136,21 @@ Reference: [Godot ResourceLoader logical directory listing](https://docs.godoten
 
 The release binary is approximately 114 MiB with an embedded PCK. Build and
 validation results are generated artifacts rather than committed binaries.
+
+## Inventory and equipment release gate (6-C)
+
+The same-process probe starts offline and uses the normal GUI to move an
+inventory stack, equip gear, craft at the workbench, and save. It checks slot
+indices, quantities, equipment IDs, final stats, and storage after Load, then
+continues through two- and three-player ENet, world travel, reconnect, and
+offline New Game followed by rehosting. The old item presenter connection and
+the pending state are checked during teardown. The Windows artifact is published
+after the Linux regression job and all Windows checks have passed.
+
+The valid process-restart fixture uses Settlement locations outside Milo's
+patrol corridor so transient collision occupancy cannot invalidate its
+expected exact restore. The invalid-position case still checks fallback and
+healing. The controller preserves per-process output on failure. A result
+publication error, timeout, or nonzero exit remains a failed run, including
+native Windows `0xC0000005` after a Godot PASS marker. Rendered and headless
+results are reported separately.
