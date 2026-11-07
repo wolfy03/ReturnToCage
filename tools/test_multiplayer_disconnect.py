@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 
+from test_multiplayer_roster import publish_command
+
 ROOT = Path(__file__).resolve().parents[1]
 SCENE = "res://tests/integration/multiplayer_disconnect_probe.tscn"
 ERRORS = re.compile(r"SCRIPT ERROR:|(?:^|\n)(?:ERROR|WARNING):|ObjectDB instances leaked|resources still in use", re.I)
@@ -82,9 +84,7 @@ class Probe:
         item = self.roles[role]
         item["sequence"] += 1
         command = {"sequence": item["sequence"], "action": action, **values}
-        temporary = item["folder"] / "command.tmp"
-        temporary.write_text(json.dumps(command), encoding="utf-8")
-        temporary.replace(item["folder"] / "command.json")
+        publish_command(item["folder"], command)
         data = self.wait(role, item["sequence"])
         if data["profile_id"] != item["player_id"] or (data["protocol"], data["save"], data["profile"]) != (17, 5, 1):
             raise RuntimeError("persistent identity or version contract changed")

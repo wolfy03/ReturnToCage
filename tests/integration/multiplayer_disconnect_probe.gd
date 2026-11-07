@@ -43,7 +43,13 @@ func _ready() -> void:
 	if not _menu_clean():
 		_fail("initial menu is not ready")
 		return
-	_write("ready")
+	if OS.get_name() == "Windows":
+		if not await _write("initializing"):
+			return
+		var reader := FileAccess.open(result_path, FileAccess.READ)
+		if reader != null:
+			get_tree().create_timer(0.05).timeout.connect(func() -> void: reader.close(), CONNECT_ONE_SHOT)
+	await _write("ready")
 
 func _process(_delta: float) -> void:
 	if _failed:
@@ -163,7 +169,8 @@ func _execute(command: Dictionary) -> void:
 			if coordinator != null and not await _wait(func() -> bool: return coordinator.pending_path_count() == 0):
 				_fail("background resource loads did not finish before process teardown")
 				return
-			_write("pass")
+			if not await _write("pass"):
+				return
 			print("DISCONNECT RECOVERY PROBE PASS %s" % role)
 			get_tree().quit(0)
 			return
@@ -177,7 +184,8 @@ func _execute(command: Dictionary) -> void:
 	if not _save_hash.is_empty() and FileAccess.get_file_as_string(SaveManager.SAVE_PATH).sha256_text() != _save_hash:
 		_fail("menu recovery changed the existing Save file")
 		return
-	_write("pass")
+	if not await _write("pass"):
+		return
 	_busy = false
 
 func _click(button: Button) -> bool:
@@ -223,7 +231,7 @@ func _wait(predicate: Callable) -> bool:
 		await get_tree().process_frame
 	return false
 
-func _write(status: String, error: String = "") -> void:
+func _write(status: String, error: String = "") -> bool:
 	var result := {"sequence": _last_sequence, "status": status, "role": role, "error": error,
 		"player_id": String(GameSession.get_local_player_id()), "session_id": GameSession.session_id,
 		"profile_id": String(_player_id), "generation": NetworkManager._transport_generation,
@@ -231,12 +239,25 @@ func _write(status: String, error: String = "") -> void:
 		"protocol": NetworkProtocol.VERSION, "save": SaveManager.CURRENT_VERSION,
 		"profile": LocalPlayerProfile.PROFILE_VERSION, "display_server": DisplayServer.get_name()}
 	var file := FileAccess.open(result_path + ".tmp", FileAccess.WRITE)
+	if file == null:
+		push_error("Disconnect result temporary file unavailable")
+		_failed = true
+		get_tree().quit(1)
+		return false
 	file.store_string(JSON.stringify(result, "\t"))
 	file.close()
-	DirAccess.rename_absolute(result_path + ".tmp", result_path)
+	var deadline := Time.get_ticks_msec() + 3000
+	while DirAccess.rename_absolute(result_path + ".tmp", result_path) != OK:
+		if Time.get_ticks_msec() >= deadline:
+			push_error("Disconnect result publication failed: %s" % result_path)
+			_failed = true
+			get_tree().quit(1)
+			return false
+		await get_tree().process_frame
+	return true
 
 func _fail(message: String) -> void:
 	_failed = true
-	_write("fail", message)
+	await _write("fail", message)
 	push_error("DISCONNECT RECOVERY PROBE FAIL %s: %s" % [role, message])
 	get_tree().quit(1)

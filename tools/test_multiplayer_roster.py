@@ -23,6 +23,22 @@ def free_port() -> int:
         return int(probe.getsockname()[1])
 
 
+def publish_command(folder: Path, command: dict) -> None:
+    temporary = folder / "command.tmp"
+    temporary.write_text(json.dumps(command), encoding="utf-8")
+    # Windows can hold the previous file open during a short Godot read.
+    # Retry only the atomic rename; never resend an acknowledged command.
+    rename_deadline = time.monotonic() + 3
+    while True:
+        try:
+            temporary.replace(folder / "command.json")
+            break
+        except PermissionError:
+            if time.monotonic() >= rename_deadline:
+                raise
+            time.sleep(0.01)
+
+
 class Probe:
     def __init__(self, args) -> None:
         self.args = args
@@ -82,19 +98,7 @@ class Probe:
         item = self.roles[role]
         item["sequence"] += 1
         command = {"sequence": item["sequence"], "action": action, **values}
-        temporary = item["folder"] / "command.tmp"
-        temporary.write_text(json.dumps(command), encoding="utf-8")
-        # Windows can hold the previous file open during a short Godot read.
-        # Retry only the atomic rename; never resend an acknowledged command.
-        rename_deadline = time.monotonic() + 3
-        while True:
-            try:
-                temporary.replace(item["folder"] / "command.json")
-                break
-            except PermissionError:
-                if time.monotonic() >= rename_deadline:
-                    raise
-                time.sleep(0.01)
+        publish_command(item["folder"], command)
         data = self.wait(role, item["sequence"])
         if data["profile_id"] != item["player_id"] or (data["protocol"], data["save"], data["profile"]) != (17, 5, 1):
             raise RuntimeError("persistent identity or version contract changed")
