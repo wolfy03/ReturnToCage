@@ -1,7 +1,8 @@
 # Inventory / equipment UI
 
-`I` opens the inventory; `P` opens equipment. `E` remains interaction. Drag either
-title bar to move its window; the window and tooltip stay inside the viewport,
+`I` opens the inventory and `P` opens equipment. `E` remains interaction. Escape
+cancels a slot drag or closes the front item window before reaching the game's
+pause action. Drag either title bar to move its window. The window and tooltip stay inside the viewport,
 including after a viewport resize. Both windows close on Disconnect/session reset
 and refuse to open in the menu. Typing into a text field does not toggle windows.
 
@@ -9,7 +10,7 @@ The dark brown/green panels use beige text and a shared supply-pouch placeholder
 when an item has no authored icon. Clicking selects a cell for inspection only.
 Hover displays the definition, quantity, weight, value, equipment modifiers,
 weapon damage/stamina cost and instance durability. Clicking an empty cell
-clears selection. The equipment window shows Main hand and Body.
+clears selection.
 
 `ui/inventory/inventory_presenter.gd` belongs to GameHUD and reads only the local
 owner's InventoryModel, protected inventory and EquipmentModel. Model getters
@@ -71,8 +72,11 @@ The presenter uses the existing `request_equip(instance_id)`,
 `request_unequip(slot)` and `request_use_item(item_id)` calls and result signals.
 The shared pending state blocks overlapping slot and item gestures. The
 transport allows one pending result per command type, including quick-item use.
-Only owner snapshots update a client's items. A full bag can still allow an
-equipment swap when removal of the new item makes space for the old one. A
+Only owner snapshots update a client's items. A successful equip, unequip or use
+keeps the controls pending until the bound owner's item revision advances. Page
+and tab changes leave the request in flight. Disconnect drops pending state.
+Successful unequip confirms that the server used the first free main-bag slot.
+A full bag can still allow an equipment swap when removal of the new item makes space for the old one. A
 failed return to the bag leaves both containers and their revisions intact.
 
 When an old save or a new item supplies equipment without an ID, the authority

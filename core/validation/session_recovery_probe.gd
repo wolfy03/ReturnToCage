@@ -250,6 +250,14 @@ func _execute(command: Dictionary) -> void:
 			if not await _item_ui(command):
 				_fail("equipment/consumption GUI did not reconcile: %s" % command)
 				return
+		"item_resume":
+			if get_tree().multiplayer_poll or not await _resume_pending_item():
+				_fail("pending item command did not settle after resuming ENet")
+				return
+		"item_display":
+			if not await _check_equipped_display():
+				_fail("equipment window did not reflect the current owner's restored gear")
+				return
 		"slot_prepare":
 			var service := _item_service()
 			_prepared_slot_intent = service.make_slot_intent(PlayerItemCommandService.SlotAction.MOVE, PlayerItemCommandService.SlotInventory.MAIN, 0, 17)
@@ -324,6 +332,9 @@ func _execute(command: Dictionary) -> void:
 			var result := NetworkManager.request_enter_region(&"sewer_gate", &"sewer_region") if action == "enter" \
 				else NetworkManager.request_escape_at_point(&"sewer_entrance")
 			var destination: StringName = &"adventure:sewer_region" if action == "enter" else &"settlement"
+			if not get_tree().multiplayer_poll and not await _resume_pending_item():
+				_fail("item request did not settle during world transition")
+				return
 			if not result.success or not await _wait(func() -> bool: return _ready_world() and SceneRouter.current_world_id() == destination):
 				_fail("world transition failed: %s" % result.message)
 				return
@@ -377,6 +388,7 @@ func _execute(command: Dictionary) -> void:
 					return
 			else:
 				app._leave_game()
+			get_tree().multiplayer_poll = true
 			if not await _wait(_menu_clean):
 				_fail("scene cleanup failed")
 				return
@@ -496,7 +508,8 @@ func _menu_clean() -> bool:
 		and app.menu.visible and app.world_layer.get_child_count() == 0 and not hud.visible \
 		and hud.bound_player == null and not get_tree().paused \
 		and not items.inventory_window.visible and not items.equipment_window.visible and not items.tooltip.visible \
-		and items._state == null and items._pending_item_type == -1 \
+		and items._state == null and items._pending_item_type == -1 and items._pending_sequence == -1 \
+		and not items.inventory_window._pending and _item_service()._pending_item_types.is_empty() \
 		and not app.new_game_button.disabled and not app.load_game_button.disabled \
 		and not app.multiplayer_panel.host_button.disabled and not app.multiplayer_panel.host_saved_button.disabled \
 		and not app.multiplayer_panel.join_button.disabled and app.multiplayer_panel.disconnect_button.disabled
@@ -666,6 +679,19 @@ func _craft_field_gear(action: String, sequence_offset: int) -> bool:
 	service.craft_result.connect(receive)
 	if replay:
 		service._request_craft.rpc_id(1, &"field_gear_recipe", _field_gear_sequence + sequence_offset)
+	elif role == "B":
+		var hud := app.get_node("UILayer/GameHUD")
+		hud.inventory_presenter.close_all()
+		_expect_item_windows = false
+		var craft_button: Button
+		for button in hud.network_settlement_buttons:
+			if button.text == "Craft: field_gear_recipe":
+				craft_button = button
+				break
+		if craft_button == null or not await _click(craft_button):
+			service.craft_result.disconnect(receive)
+			return false
+		_field_gear_sequence = SettlementReplicationService._next_local_sequence
 	else:
 		service.request_craft(&"field_gear_recipe")
 		_field_gear_sequence = SettlementReplicationService._next_local_sequence
@@ -696,9 +722,6 @@ func _item_ui(command: Dictionary) -> bool:
 	var definition := ContentRegistry.get_item(item_id) as EquipmentDefinition
 	var gear_slot := definition.equipment_slot if definition != null else EquipmentDefinition.EquipmentSlot.BODY
 	var stat_id := StringName(command.get("stat", "defense"))
-	var before := _slot_layout(player)
-	var revision := player.item_state_revision
-	var berry_count := player.inventory.count(&"berry")
 	var target: ItemSlotView
 	var instance_id := ""
 	if action == "unequip":
@@ -711,12 +734,19 @@ func _item_ui(command: Dictionary) -> bool:
 		var tab := InventoryWindow.Tab.EQUIPMENT if action == "equip" else InventoryWindow.Tab.CONSUMABLE
 		if not bag.visible or not await _click(bag.tab_buttons[tab]):
 			return false
+		if not await _wait(func() -> bool:
+			return bag.slots.any(func(view: ItemSlotView) -> bool: return view.stack != null and view.stack.item_id == item_id)
+		):
+			return false
 		for view in bag.slots:
 			if view.stack != null and view.stack.item_id == item_id:
 				target = view
 				break
 	if target == null or target.stack == null:
 		return false
+	var before := _slot_layout(player)
+	var revision := player.item_state_revision
+	var berry_count := player.inventory.count(&"berry")
 	instance_id = target.stack.instance_id
 	if action != "use" and instance_id.is_empty():
 		return false
@@ -727,6 +757,10 @@ func _item_ui(command: Dictionary) -> bool:
 		projected = player.preview_equipment_stats(target.stack)
 		if projected == null or not items.tooltip.body_label.text.contains("Change if equipped"):
 			return false
+	var hold_response := bool(command.get("hold_response", false))
+	var delay_response := hold_response or bool(command.get("delay_response", false))
+	if delay_response:
+		get_tree().multiplayer_poll = false
 	var event := InputEventMouseButton.new()
 	event.position = target.get_global_rect().get_center()
 	event.global_position = event.position
@@ -742,12 +776,22 @@ func _item_ui(command: Dictionary) -> bool:
 	get_viewport().push_input(up, true)
 	if not NetworkManager.is_server():
 		var sequence := PlayerItemReplicationService._next_local_sequence
-		if items._pending_item_type < 0 or not bag._pending or _slot_layout(player) != before:
-			return false
+		var locked := items._pending_item_type >= 0 and bag._pending and _slot_layout(player) == before
 		get_viewport().push_input(event, true)
 		get_viewport().push_input(up, true)
-		if PlayerItemReplicationService._next_local_sequence != sequence:
+		locked = locked and PlayerItemReplicationService._next_local_sequence == sequence
+		if delay_response:
+			var changed_tab := await _click(bag.tab_buttons[InventoryWindow.Tab.QUEST])
+			await get_tree().create_timer(0.2).timeout
+			locked = locked and changed_tab and bag._pending and player.item_state_revision == revision and _slot_layout(player) == before
+			if not hold_response or not locked:
+				get_tree().multiplayer_poll = true
+		if not locked:
+			print("Item GUI did not lock or submitted twice: pending=%s seq=%s->%s revision=%s->%s status=%s" % [
+				bag._pending, sequence, PlayerItemReplicationService._next_local_sequence, revision, player.item_state_revision, bag._status.text])
 			return false
+	if hold_response:
+		return true
 	if not await _wait(func() -> bool: return items._pending_item_type == -1):
 		return false
 	if command.get("reject", false):
@@ -769,6 +813,35 @@ func _item_ui(command: Dictionary) -> bool:
 				and player.stats.value(&"defense") == 0.0
 		"use": return player.inventory.count(&"berry") == berry_count - 1
 	return false
+
+func _resume_pending_item() -> bool:
+	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	var was_pending := items.inventory_window._pending
+	get_tree().multiplayer_poll = true
+	return was_pending and await _wait(func() -> bool:
+		return _ready_world() and items._state == GameSession.get_local_player() and not items.inventory_window._pending
+	)
+
+func _check_equipped_display() -> bool:
+	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	var gear := items.equipment_window
+	if not gear.visible:
+		await _item_key(KEY_P)
+	var player := GameSession.get_local_player()
+	if not gear.visible or items._state != player:
+		return false
+	for item_id in [&"leaf_hat", &"acorn_necklace", &"seed_ring"]:
+		var definition := ContentRegistry.get_item(item_id) as EquipmentDefinition
+		var equipped := player.equipment.equipped(definition.equipment_slot)
+		var view := gear.slot_views[definition.equipment_slot]
+		if equipped == null or equipped.item_id != item_id or view.stack == null \
+				or view.stack.instance_id != equipped.instance_id or view.stack.durability != equipped.durability \
+				or not gear._durability[definition.equipment_slot].text.contains(str(equipped.durability)):
+			return false
+	for stat_id in gear._stat_values:
+		if gear._stat_values[stat_id].text != "%.1f" % player.stats.value(stat_id):
+			return false
+	return true
 
 func _item_windows_visible() -> bool:
 	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter

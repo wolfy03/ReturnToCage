@@ -1,5 +1,12 @@
 extends RefCounted
 
+class DelayedUseService extends PlayerItemReplicationService:
+	var submissions := 0
+
+	func request_use_item(_item_id: StringName) -> bool:
+		submissions += 1
+		return true
+
 var app: AppRoot
 var presenter: InventoryPresenter
 
@@ -27,6 +34,11 @@ func run(t: Node) -> void:
 	await key(t, KEY_P)
 	t.assert_true(bag.visible and gear.visible, "typing I/P into an address field does not toggle game windows")
 	app.multiplayer_panel.address_edit.release_focus()
+	await key(t, KEY_ESCAPE)
+	t.assert_true(bag.visible and not gear.visible and not t.get_tree().paused, "Escape closes only the front item window without pausing gameplay")
+	# Recover the test session even when running the regression against the old code.
+	t.get_tree().paused = false
+	gear.show_window()
 	t.assert_equal(bag.slots.size(), 24, "inventory always renders 6 by 4 presentation cells")
 	t.assert_equal(bag.get_node("%Grid").columns, 6, "inventory has six columns")
 	t.assert_equal(gear.slot_views.keys(), [0, 1, 2, 3, 4], "equipment layout renders five slots in authored row order")
@@ -124,7 +136,8 @@ func run(t: Node) -> void:
 	await _frames(t)
 	t.assert_true(not bag.visible and not gear.visible and not presenter.tooltip.visible, "Disconnect closes both windows and tooltip")
 	t.assert_true(presenter._state == null and bag.slots[0].stack == null, "menu releases old owner models and item snapshots")
-	t.assert_true(not old.inventory.changed.is_connected(presenter.queue_refresh), "retired models release presenter signals")
+	t.assert_true(not old.inventory.changed.is_connected(presenter.queue_refresh) \
+		and not old.item_state_changed.is_connected(presenter._on_item_state_changed), "retired models release presenter signals")
 	await click(t, app.new_game_button)
 	await _frames(t)
 	await key(t, KEY_I)
@@ -145,6 +158,8 @@ func run(t: Node) -> void:
 	await _check_slot_controls(t, bag)
 	await click(t, bag.close_button)
 	t.assert_true(not bag.visible, "close button receives real GUI input")
+	await key(t, KEY_I)
+	await _check_delayed_owner_update(t, bag)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	NetworkManager.leave_game()
 	app.get_parent().remove_child(app)
@@ -191,7 +206,7 @@ func _check_item_actions(t: Node, bag: InventoryWindow, gear: EquipmentWindow, p
 	await double_click(t, bag.slots[1])
 	await _drag(t, gear.slot_views[body], bag.slots[2].get_global_rect().get_center())
 	t.assert_true(gear.slot_views[body].stack == null and main.get_slot(1).instance_id == newer.instance_id \
-		and main.get_slot(2) == null, "unequip drag chooses the first free slot instead of the hovered cell")
+		and main.get_slot(2) == null and bag._status.text.contains("first free slot"), "unequip drag chooses the first free slot instead of the hovered cell")
 	await double_click(t, bag.slots[1])
 	await click(t, bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE])
 	await double_click(t, bag.slots[0])
@@ -210,7 +225,13 @@ func _check_expanded_gear(t: Node, bag: InventoryWindow, gear: EquipmentWindow) 
 	var stack := ItemStack.new(&"acorn_necklace", 1)
 	stack.durability = 40
 	player.inventory.add_stack(stack)
-	player.stats.add_modifier(StatModifier.new(&"gui_buff", &"max_health", 0.0, 1.5))
+	var buff := EffectDefinition.new()
+	buff.id = &"gui_buff"
+	buff.target_stat = &"max_health"
+	buff.operation = EffectDefinition.Operation.MULTIPLY
+	buff.magnitude = 1.5
+	buff.duration_seconds = 30.0
+	player.effects.apply_effect(buff)
 	await _frames(t)
 	t.assert_equal(gear._stat_values.size(), 6, "equipment window displays all six player stats")
 	t.assert_equal(gear._stat_values[&"max_health"].text, "150.0", "equipment window observes a live stat change")
@@ -234,7 +255,19 @@ func _check_expanded_gear(t: Node, bag: InventoryWindow, gear: EquipmentWindow) 
 	t.assert_true(gear.slot_views[neck].stack != null and gear._stat_values[&"max_health"].text == "165.0", "equipping the accessory matches its comparison and refreshes the stat panel")
 	await double_click(t, gear.slot_views[neck])
 	t.assert_true(gear.slot_views[neck].stack == null and gear._stat_values[&"max_health"].text == "150.0", "unequip restores the buffed value without the equipment bonus")
-	player.stats.remove_source(&"gui_buff")
+	player.effects.tick(buff.duration_seconds)
+	await _frames(t)
+	t.assert_equal(gear._stat_values[&"max_health"].text, "100.0", "stat panel follows actual buff expiration")
+	var broken := ItemStack.new(&"acorn_necklace", 1)
+	broken.durability = 0
+	t.assert_true(player.inventory.add_stack(broken).success, "broken gear has a distinct inventory instance")
+	await _frames(t)
+	for cell in bag.slots:
+		if cell.stack != null and cell.stack.item_id == broken.item_id and cell.stack.durability == 0:
+			await double_click(t, cell)
+			break
+	t.assert_true(gear._durability[neck].text.contains("0 / 40") and gear._stat_values[&"max_health"].text == "100.0",
+		"broken gear displays zero durability and contributes no stats")
 
 func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	var main := GameSession.player.inventory
@@ -268,6 +301,9 @@ func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	t.assert_true(shift.is_action_pressed(&"dodge"), "physical Left Shift is also mapped to dodge")
 	t.get_viewport().push_input(shift, true)
 	t.assert_equal(dodge_requests[0], 0, "Shift over inventory is reserved for split instead of dodge")
+	var shift_up := shift.duplicate() as InputEventKey
+	shift_up.pressed = false
+	t.get_viewport().push_input(shift_up, true)
 	var before := main.to_slot_dict()
 	var sequence := PlayerItemReplicationService._next_local_sequence
 	t.assert_true(bag.slots[1].stack == null, "other category is hidden in place")
@@ -276,6 +312,31 @@ func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence, "hidden target never submits a command")
 	await _drag(t, bag.slots[0], Vector2(5, 5))
 	t.assert_equal(main.to_slot_dict(), before, "releasing outside the grid cancels the drag")
+	var escape := func() -> void:
+		var event := InputEventKey.new()
+		event.keycode = KEY_ESCAPE
+		event.physical_keycode = KEY_ESCAPE
+		event.pressed = true
+		t.get_viewport().push_input(event, true)
+		var up := event.duplicate() as InputEventKey
+		up.pressed = false
+		t.get_viewport().push_input(up, true)
+	await _drag(t, bag.slots[0], bag.slots[3].get_global_rect().get_center(), false, escape)
+	t.assert_true(bag.visible and not t.get_tree().paused and main.to_slot_dict() == before, "Escape cancels a live drag before closing a window or pausing")
+	t.get_tree().paused = false
+	if not bag.visible:
+		bag.show_window()
+	await _drag(t, bag.slots[0], bag.slots[3].get_global_rect().get_center(), false, func() -> void:
+		bag.tab_buttons[InventoryWindow.Tab.OTHER].grab_focus()
+		var activate := InputEventAction.new()
+		activate.action = &"ui_accept"
+		activate.pressed = true
+		t.get_viewport().push_input(activate, true)
+		activate.pressed = false
+		t.get_viewport().push_input(activate, true)
+	)
+	t.assert_true(bag.current_tab == InventoryWindow.Tab.OTHER and main.to_slot_dict() == before, "switching tabs with GUI input invalidates the active drag")
+	await click(t, bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE])
 	await _drag(t, bag.slots[0], bag.slots[3].get_global_rect().get_center())
 	t.assert_true(main.get_slot(0) == null and main.get_slot(3) != null and bag.slots[3].stack != null, "GUI drag moves into a real empty slot")
 	await _drag(t, bag.slots[3], bag.slots[2].get_global_rect().get_center())
@@ -316,14 +377,69 @@ func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	t.assert_true(protected.get_slot(0) == null and protected.get_slot(1) != null and protected.get_slot(1).quantity == 2 and main.to_slot_dict() == main_before, "protected slot indices are independent from main")
 	await click(t, bag._sort)
 	t.assert_true(protected.get_slot(0) != null and protected.get_slot(1) == null and main.to_slot_dict() == main_before, "Sort whole bag sorts the selected bag only")
-	bag._bag_picker.select(0)
-	bag._bag_picker.item_selected.emit(0)
+	await click(t, bag._bag_picker)
+	var popup := bag._bag_picker.get_popup()
+	t.assert_true(popup.visible, "click opens the bag dropdown")
+	if popup.visible:
+		var first_option := Vector2(popup.position) + Vector2(popup.size.x * 0.5, 12.0)
+		await _hover(t, first_option)
+		_mouse(t, first_option, true)
+		_mouse(t, first_option, false)
+		await _frames(t)
+	t.assert_equal(bag.inventory_kind, InventoryWindow.Bag.MAIN, "real dropdown click switches from protected to main bag")
 	await click(t, bag._sort)
 	t.assert_true(main.get_slot(25) == null and main.count(&"berry") == 16 and main.count(&"rusty_scrap") == 2, "whole main bag sort includes categories hidden by the tab")
 	await _hover(t, Vector2(5, 5))
 	t.get_viewport().push_input(shift, true)
 	t.assert_equal(dodge_requests[0], 1, "Left Shift outside inventory still sends the gameplay input")
+	t.get_viewport().push_input(shift_up, true)
 	actor.input.dodge_requested.disconnect(count_dodge)
+
+func _check_delayed_owner_update(t: Node, bag: InventoryWindow) -> void:
+	var original := presenter._service
+	var delayed := DelayedUseService.new()
+	presenter._service = delayed
+	delayed.use_item_result.connect(presenter._on_item_result.bind(PlayerItemReplicationService.CommandType.USE_ITEM))
+	var state := GameSession.get_local_player()
+	var before := state.inventory.to_slot_dict()
+	var revision := state.item_state_revision
+	var target: ItemSlotView
+	for view in bag.slots:
+		if view.stack != null and view.stack.item_id == &"berry":
+			target = view
+			break
+	t.assert_true(target != null, "delayed owner update has a visible berry fixture")
+	if target != null:
+		var index := bag._slot_index(bag.slots.find(target))
+		await double_click(t, target)
+		t.assert_true(bag._pending and delayed.submissions == 1, "real double-click waits for a use result")
+		presenter._on_item_result(false, "Unrelated equipment result", PlayerItemReplicationService.CommandType.EQUIP)
+		t.assert_true(bag._pending, "a different result type cannot release the current command")
+		delayed.use_item_result.emit(true, "Used berry")
+		t.assert_true(bag._pending and state.inventory.to_slot_dict() == before, "success alone keeps the request pending while the owner update is held")
+		if bag._pending:
+			await double_click(t, target)
+			t.assert_equal(delayed.submissions, 1, "late owner update blocks another click against the previous layout")
+		await click(t, bag.get_node("%Next"))
+		t.assert_true(bag.page == 1 and bag._pending, "page navigation preserves the outstanding request")
+		var snapshot := PlayerItemStateSnapshot.from_state(GameSession.get_local_player_id(), state)
+		snapshot.revision = revision + 1
+		snapshot.inventory[index].quantity -= 1
+		t.assert_true(state.apply_item_network_mirror(snapshot), "held owner update can be applied to the bound model")
+		await _frames(t)
+		t.assert_true(not bag._pending and state.item_state_revision == revision + 1 and bag._status.text == "Used berry" and bag.page == 1, "owner update releases the acknowledged command and refreshes feedback")
+		await click(t, bag.get_node("%Previous"))
+		await double_click(t, target)
+		t.assert_true(bag._pending and delayed.submissions == 2, "updated layout permits a new action")
+		presenter._service = original
+		app._leave_game()
+		await _frames(t)
+		delayed.use_item_result.emit(true, "Retired session result")
+		t.assert_true(not bag.visible and not bag._pending and presenter._state == null and bag._status.text.is_empty(),
+			"a late item result after Disconnect cannot alter menu state")
+	else:
+		presenter._service = original
+	delayed.free()
 
 static func _drag(t: Node, source: ItemSlotView, destination: Vector2, split: bool = false, during: Callable = Callable()) -> void:
 	var origin := source.get_global_rect().get_center()

@@ -16,6 +16,8 @@ var _refresh_queued := false
 var _service: PlayerItemReplicationService
 var _pending_sequence := -1
 var _pending_item_type := -1
+var _pending_item_revision := -1
+var _accepted_item_result: CommandResult
 var _displayed_revision := -1
 
 func _ready() -> void:
@@ -90,6 +92,7 @@ func _bind_state(value: PlayerState) -> void:
 	_bind_stats(null)
 	if _state != null:
 		_state.private_state_changed.disconnect(queue_refresh)
+		_state.item_state_changed.disconnect(_on_item_state_changed)
 		for model in [_state.inventory, _state.protected_inventory, _state.equipment]:
 			if model.changed.is_connected(queue_refresh):
 				model.changed.disconnect(queue_refresh)
@@ -97,6 +100,7 @@ func _bind_state(value: PlayerState) -> void:
 	_state = value
 	if _state != null:
 		_state.private_state_changed.connect(queue_refresh)
+		_state.item_state_changed.connect(_on_item_state_changed)
 		for model in [_state.inventory, _state.protected_inventory, _state.equipment]:
 			model.changed.connect(queue_refresh)
 
@@ -108,6 +112,9 @@ func _bind_stats(value: StatBlock) -> void:
 	_stats = value
 	if _stats != null:
 		_stats.stat_changed.connect(_on_stat_changed)
+
+func _on_item_state_changed(_revision: int) -> void:
+	queue_refresh()
 
 func _on_stat_changed(_stat_id: StringName, _value: float) -> void:
 	queue_refresh()
@@ -127,7 +134,7 @@ func _on_session_reset() -> void:
 
 func _reset_item_interaction() -> void:
 	_pending_sequence = -1
-	_pending_item_type = -1
+	_clear_pending_item()
 	inventory_window.reset_interaction()
 	equipment_window.show_status("")
 
@@ -164,6 +171,10 @@ func refresh() -> void:
 	equipment_window.display_equipment(equipped)
 	equipment_window.display_stats(_stats)
 	_refresh_tooltip()
+	if _accepted_item_result != null and revision > _pending_item_revision:
+		var message := _accepted_item_result.message
+		_clear_pending_item()
+		_show_item_status(message)
 
 func close_all() -> void:
 	if inventory_window != null:
@@ -174,6 +185,9 @@ func close_all() -> void:
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not _active() or event.is_echo():
+		return
+	if event.is_action_pressed(&"pause") and _close_front_item_window():
+		get_viewport().set_input_as_handled()
 		return
 	var focus := get_viewport().gui_get_focus_owner()
 	if focus is LineEdit or focus is TextEdit:
@@ -192,6 +206,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.is_action_pressed(&"open_equipment"):
 		_toggle(equipment_window)
 		get_viewport().set_input_as_handled()
+
+func _close_front_item_window() -> bool:
+	var front: ItemWindowFrame
+	for window in [inventory_window, equipment_window]:
+		if window.is_visible_in_tree() and (front == null or window.get_index() > front.get_index()):
+			front = window
+	if front == null:
+		return false
+	front.hide_window()
+	return true
 
 func _toggle(window: ItemWindowFrame) -> void:
 	if window.visible:
@@ -330,6 +354,7 @@ func _request_item(command: int, stack: ItemStack, slot: int = -1) -> void:
 		_show_item_status("Items with individual identities cannot be used by item type.")
 		return
 	_pending_item_type = command
+	_pending_item_revision = _displayed_revision
 	inventory_window.set_pending(true)
 	_show_item_status("Waiting for the inventory update…")
 	var sent := false
@@ -341,16 +366,28 @@ func _request_item(command: int, stack: ItemStack, slot: int = -1) -> void:
 		_on_item_result(false, "Item action unavailable or already in progress. Try again.", command)
 
 func _on_item_result(success: bool, message: String, command: int) -> void:
-	if command != _pending_item_type:
+	if command != _pending_item_type or _accepted_item_result != null:
 		return
-	_pending_item_type = -1
-	inventory_window.set_pending(false)
+	if success:
+		# Keep the old layout locked until the authoritative item change is visible.
+		if command == Command.UNEQUIP:
+			message = "Equipment moved to the first free slot in the main bag."
+		_accepted_item_result = CommandResult.make(true, message)
+		refresh()
+		return
+	_clear_pending_item()
 	refresh()
-	if not success and (message.contains("pending transition") or message.contains("world is not ready")):
+	if message.contains("pending transition") or message.contains("world is not ready"):
 		message = "Wait for the world to finish loading, then try again."
-	elif not success and (message.contains("inventory full") or message.contains("Inventory is full")):
+	elif message.contains("inventory full") or message.contains("Inventory is full"):
 		message = "The main bag is full."
 	_show_item_status(message)
+
+func _clear_pending_item() -> void:
+	_pending_item_type = -1
+	_pending_item_revision = -1
+	_accepted_item_result = null
+	inventory_window.set_pending(false)
 
 func _show_item_status(message: String) -> void:
 	inventory_window.show_status(message)

@@ -165,7 +165,7 @@ class LifecycleChecks(RosterController):
         self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=True)
         self.call("B", "item_ui", operation="equip", reject=True)
         self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=False)
-        self.call("B", "item_ui", operation="equip")
+        self.call("B", "item_ui", operation="equip", delay_response=True)
         self.call("B", "item_ui", operation="use")
         # Settlement puts the joining client directly to the Host's right.
         # Walk away from each other so both peers can observe a sustained run.
@@ -200,6 +200,32 @@ class LifecycleChecks(RosterController):
                                               ("acorn_necklace", "max_health", 110.0, 40),
                                               ("seed_ring", "stamina_regen", 20.0, 35)):
             self.call("B", "item_ui", operation="equip", item=item, stat=stat, value=value, durability=durability)
+        self.call("D", "slot_privacy")
+        self.call("B", "item_ui", operation="use", hold_response=True)
+        self.travel("B", "enter")
+        self.call("B", "item_display")
+        self.call("B", "slot_remember")
+        self.travel("B", "return")
+        self.call("B", "disconnect")
+        del self.worlds["B"]
+        self.call("B", "join", address="127.0.0.1")
+        self.worlds["B"] = "settlement"
+        self.check("equipped client reconnects")
+        self.call("B", "slot_check")
+        self.call("B", "item_display")
+        self.call("A", "field_gear_save")
+        self.call("A", "disconnect")
+        self.worlds.clear()
+        for role in ("B", "D"):
+            self.call(role, "check_menu")
+        self.call("A", "field_gear_rehost")
+        self.worlds["A"] = "settlement"
+        for role in ("B", "D"):
+            self.call(role, "join", address="127.0.0.1")
+            self.worlds[role] = "settlement"
+        self.check("equipped client restored from Host Save")
+        self.call("B", "slot_check")
+        self.call("B", "item_display")
         self.call("D", "slot_privacy")
         self.call("D", "slot_remember")
         self.call("A", "slot_seed", player=self.roles["B"]["player_id"])
@@ -257,6 +283,8 @@ class LifecycleChecks(RosterController):
         self.call("A", "item_seed", player=self.roles["B"]["player_id"])
         self.call("B", "item_ui", operation="equip")
         self.call("B", "slot_remember")
+        self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=True)
+        self.call("B", "item_ui", operation="use", hold_response=True)
         self.call("B", "disconnect")
         del self.worlds["B"]
         self.check("manual client leave")
@@ -285,6 +313,11 @@ class LifecycleChecks(RosterController):
         # from B so collision cannot truncate the replicated run to a few ticks.
         self.movement("D", left=True)
         self.movement("B")
+        self.call("B", "remember", player=self.roles["B"]["player_id"])
+        self.call("B", "item_ui", operation="use", hold_response=True)
+        self.call("D", "kill", player=self.roles["B"]["player_id"])
+        self.call("B", "item_resume")
+        self.call("B", "assert_replaced", player=self.roles["B"]["player_id"])
         self.call("B", "disconnect")
         del self.worlds["B"]
         self.check("replacement Host keeps its own roster")
