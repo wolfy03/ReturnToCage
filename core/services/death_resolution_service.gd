@@ -21,14 +21,14 @@ static func resolve(player: PlayerState, settlement: SettlementState, adventure:
 			for original in player.equipment.all_equipped():
 				if original.item_id == kept.item_id and kept.durability < original.durability:
 					result.equipment_damaged.append(kept)
-		player.inventory.initialize(carried.kept)
+		player.inventory.initialize_slots(_kept_slots(player.inventory, rules, resolver))
 		player.equipment.restore({})
 		for kept in gear.equipment_kept:
 			player.equipment.equip(kept)
 		if finish_adventure:
 			settlement.secure_loot(loot.kept)
 		elif loot_source != null:
-			loot_source.unsecured_loot.initialize(loot.kept)
+			loot_source.unsecured_loot.initialize_slots(_kept_slots(loot_source.unsecured_loot, rules, resolver))
 		var dropped: Array[ItemStack] = carried.world_drops + loot.world_drops
 		if rules.recovery_policy == DifficultyDefinition.RecoveryPolicy.DROP_AT_DEATH:
 			dropped.append_array(gear.equipment_lost)
@@ -55,3 +55,12 @@ static func resolve(player: PlayerState, settlement: SettlementState, adventure:
 	player.survival.hunger = result.hunger
 	player.survival.thirst = result.thirst
 	return result
+
+## Apply the existing per-stack policy without renumbering surviving cells.
+static func _kept_slots(inventory: InventoryModel, rules: DifficultyDefinition, resolver: Callable) -> Array[ItemStack]:
+	var slots := inventory.slots()
+	for index in slots.size():
+		if slots[index] != null:
+			var loss := DeathLossPolicy.apply([slots[index]], rules, resolver)
+			slots[index] = loss.kept[0] if not loss.kept.is_empty() else null
+	return slots

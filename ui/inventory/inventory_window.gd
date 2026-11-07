@@ -15,6 +15,7 @@ var page := 0
 var selected_slot := -1
 var _items: Array[ItemStack] = []
 var _filtered: Array[ItemStack] = []
+var _fixed_slots := false
 
 func _ready() -> void:
 	super._ready()
@@ -47,6 +48,14 @@ static func tab_for(definition: ItemDefinition) -> Tab:
 	return Tab.OTHER
 
 func display_items(items: Array[ItemStack], capacity_text: String) -> void:
+	_fixed_slots = false
+	_items = items
+	%Capacity.text = capacity_text
+	_refresh()
+
+## Category tabs hide other kinds in place; they never renumber model slots.
+func display_slots(items: Array[ItemStack], capacity_text: String) -> void:
+	_fixed_slots = true
 	_items = items
 	%Capacity.text = capacity_text
 	_refresh()
@@ -64,10 +73,16 @@ func _refresh() -> void:
 	var counts := [0, 0, 0, 0]
 	_filtered.clear()
 	for stack in _items:
+		if stack == null:
+			if _fixed_slots:
+				_filtered.append(null)
+			continue
 		var tab := tab_for(ContentRegistry.get_item(stack.item_id))
 		counts[tab] += 1
 		if tab == current_tab:
 			_filtered.append(stack)
+		elif _fixed_slots:
+			_filtered.append(null)
 	for index in tab_buttons.size():
 		tab_buttons[index].text = "%s %d" % [TAB_NAMES[index], counts[index]]
 		tab_buttons[index].set_pressed_no_signal(index == current_tab)

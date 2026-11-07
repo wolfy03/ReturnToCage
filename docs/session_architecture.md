@@ -150,3 +150,7 @@ Actor마다 생명 세대 번호를 부여한다. 사망·체력 콜백은 현�
 신규 세션 생성은 기존 플레이 전이와 구분하여 상태를 재설정한다.
 
 자세한 복원 순서와 한계는 [안정화 보고](stability_baseline.md)를 참고한다.
+
+## Inventory layout ownership
+
+Fixed slot indices, holes and transient expansion belong to each InventoryModel. PlayerState/SettlementState bulk reset, restore and mirror application replace contents/capacity together without replacing model objects. Capacity changes participate in existing owner revisions. Save v4 and v16 owner mirrors still use dense item records; exact layout persistence/replication is deferred to Stage 3. See [inventory_slots.md](inventory_slots.md).

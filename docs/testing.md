@@ -349,3 +349,7 @@ for focused checks. `tools/test_inventory_ui.py --rendered` uses isolated profil
 and real Godot GUI input, validates read-only snapshots, and captures a viewport
 PNG. Windows release lifecycle checks also exercise these windows in the actual
 EXE; existing content/ENet/roster/recovery assertions remain in place.
+
+## Fixed inventory slot model (Stage 2)
+
+The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-only selects it. Tests cover sparse moves/swaps/merges/splits/sort/resize, failed-command layout rollback, instance conservation, real crafting/storage/equip/death paths, Save v4/v16 dense-format limitations and seeded mixed-operation invariants. Read-only GUI regressions check holes at actual model indices. See [inventory_slots.md](inventory_slots.md).

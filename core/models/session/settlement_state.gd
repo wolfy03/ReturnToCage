@@ -52,8 +52,7 @@ func set_mutation_guard(guard: Callable) -> void:
 func reset(start: GameStartDefinition, registry: Node) -> void:
 	_applying_snapshot = true
 	_pending_loot.clear()
-	storage.capacity = start.storage_capacity
-	storage.initialize(start.create_stacks(start.storage_items, registry))
+	storage.initialize(start.create_stacks(start.storage_items, registry), start.storage_capacity)
 	facility_levels = start.facility_levels.duplicate()
 	resident_states.clear()
 	for entry in start.residents:
@@ -81,8 +80,7 @@ func to_save_dict() -> Dictionary:
 func restore(data: Dictionary, start: GameStartDefinition, registry: Node, instances: Dictionary[String, String] = {}) -> PackedStringArray:
 	var errors := PackedStringArray()
 	_applying_snapshot = true
-	storage.capacity = start.storage_capacity
-	errors.append_array(storage.restore(SaveData.array(data, "settlement_storage", errors), instances, "settlement_storage"))
+	errors.append_array(storage.restore(SaveData.array(data, "settlement_storage", errors), instances, "settlement_storage", start.storage_capacity))
 	facility_levels.clear()
 	var facilities: Dictionary = SaveData.dictionary(data, "facility_levels", errors)
 	for key in facilities:
@@ -164,8 +162,7 @@ func apply_network_mirror(snapshot: SettlementStateSnapshot) -> bool:
 		return false
 	_applying_snapshot = true
 	storage.begin_update()
-	storage.capacity = snapshot.storage_capacity
-	var initialized := storage.initialize(snapshot.storage)
+	var initialized := storage.initialize(snapshot.storage, snapshot.storage_capacity)
 	if not initialized.success:
 		storage.end_update()
 		_applying_snapshot = false

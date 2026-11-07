@@ -424,3 +424,7 @@ additional real ENet negative/lifecycle regression commands.
 - Host migration
 - Dedicated server builds
 - Internet matchmaking, relay, NAT traversal, and Steam integration
+
+## Stage 2 inventory slots: unchanged v16 wire
+
+The existing v16 item snapshot still transmits dense records and capacity. It does not transmit holes or exact indices, so owner mirrors may compact authoritative layouts. No slot command RPCs are exposed; existing item/instance-ID commands remain the boundary. New model slot/resize methods enforce mutation guards, and both-inventory transfers commit staged copies before observers run. Slot replication/version policy is explicitly deferred to Stage 3; see [inventory_slots.md](inventory_slots.md).

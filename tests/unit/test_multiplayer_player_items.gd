@@ -52,6 +52,8 @@ func _test_item_transactions(t: Node, start: GameStartDefinition) -> void:
 	t.assert_equal(player.equipment.to_dict(), before_equipment, "failed unequip leaves equipment unchanged")
 	t.assert_equal(player.item_state_revision, revision, "failed unequip creates no revision")
 	player.inventory.capacity = 2
+	t.assert_equal(player.item_state_revision, revision + 1, "capacity expansion bumps one item revision")
+	revision = player.item_state_revision
 	t.assert_true(service.try_unequip(player, EquipmentDefinition.EquipmentSlot.BODY).success, "unequip succeeds when inventory has capacity")
 	t.assert_equal(player.item_state_revision, revision + 1, "successful unequip bumps one revision")
 

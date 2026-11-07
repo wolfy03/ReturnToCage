@@ -140,3 +140,7 @@ root 아래에 지연 생성되는 client-only `EnvironmentLoadCoordinator`가 �
 `size_changed`마다 fit scale과 sprite 배치를 다시 계산한다. `set_time_normalized()`는 향후
 authoritative 낮/밤 값의 입력 지점이며 presenter는 자체 시계를 돌리지 않는다. z-index 범위:
 Backdrop -1100, 배경 -1000..-100, gameplay 0, 전경(미구현) 100..900.
+
+## Fixed inventory slots (Stage 2)
+
+InventoryModel stores capacity-sized nullable cells; dense stacks()/to_array() remain compatibility views. Strict slot commands and exchanges validate/stage before commit, paired storage transfers commit both models before signals, and death losses preserve retained indices. Read-only UI uses slots(). See [inventory_slots.md](inventory_slots.md) for API contracts and the deliberately unchanged Save/wire limits.

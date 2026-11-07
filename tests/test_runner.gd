@@ -5,6 +5,10 @@ var passed: int = 0
 
 func _ready() -> void:
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if arguments.has("--inventory-slots-only"):
+		preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
+		_finish_tests()
+		return
 	if arguments.has("--inventory-ui-only"):
 		await preload("res://tests/integration/test_inventory_windows.gd").new().run(self)
 		_finish_tests()
@@ -32,6 +36,7 @@ func _ready() -> void:
 	run_all()
 
 func run_all() -> void:
+	preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
 	await preload("res://tests/integration/test_inventory_windows.gd").new().run(self)
 	await preload("res://tests/integration/test_player_presentation_roster.gd").new().run(self)
 	await preload("res://tests/integration/test_disconnect_recovery.gd").new().run(self)

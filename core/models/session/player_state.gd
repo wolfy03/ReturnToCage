@@ -51,10 +51,8 @@ func reset(start: GameStartDefinition, registry: Node) -> void:
 	survival.reset(start)
 	health = start.player_health
 	_last_safe_position = start.last_safe_position
-	inventory.capacity = start.inventory_capacity
-	protected_inventory.capacity = start.protected_capacity
-	inventory.initialize(start.create_stacks(start.inventory_items, registry))
-	protected_inventory.initialize(start.create_stacks(start.protected_items, registry))
+	inventory.initialize(start.create_stacks(start.inventory_items, registry), start.inventory_capacity)
+	protected_inventory.initialize(start.create_stacks(start.protected_items, registry), start.protected_capacity)
 	equipment.restore({})
 	for entry in start.equipment_items:
 		equipment.equip(entry.create_stack())
@@ -81,11 +79,9 @@ func restore(data: Dictionary, start: GameStartDefinition, instances: Dictionary
 	if stats.value(&"max_health") <= 0.0:
 		stats.set_base(&"max_health", start.player_stats[&"max_health"])
 		errors.append("invalid max_health restored to start value")
-	inventory.capacity = start.inventory_capacity
-	protected_inventory.capacity = start.protected_capacity
-	errors.append_array(inventory.restore(SaveData.array(data, "player_inventory", errors), instances, "player_inventory"))
+	errors.append_array(inventory.restore(SaveData.array(data, "player_inventory", errors), instances, "player_inventory", start.inventory_capacity))
 	errors.append_array(equipment.restore(SaveData.dictionary(data, "equipment", errors), instances))
-	errors.append_array(protected_inventory.restore(SaveData.array(data, "protected_inventory", errors), instances, "protected_inventory"))
+	errors.append_array(protected_inventory.restore(SaveData.array(data, "protected_inventory", errors), instances, "protected_inventory", start.protected_capacity))
 	survival = SurvivalState.new()
 	survival.reset(start)
 	errors.append_array(survival.restore(SaveData.dictionary(data, "survival_state", errors)))
@@ -132,10 +128,8 @@ func apply_item_network_mirror(snapshot: PlayerItemStateSnapshot) -> bool:
 	inventory.begin_update()
 	protected_inventory.begin_update()
 	equipment.begin_update()
-	inventory.capacity = snapshot.inventory_capacity
-	protected_inventory.capacity = snapshot.protected_capacity
-	var inventory_result := inventory.initialize(snapshot.inventory)
-	var protected_result := protected_inventory.initialize(snapshot.protected_inventory)
+	var inventory_result := inventory.initialize(snapshot.inventory, snapshot.inventory_capacity)
+	var protected_result := protected_inventory.initialize(snapshot.protected_inventory, snapshot.protected_capacity)
 	var equipment_result := equipment.initialize(snapshot.equipment)
 	equipment.end_update()
 	protected_inventory.end_update()

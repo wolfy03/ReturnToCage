@@ -86,14 +86,14 @@ func refresh() -> void:
 	var equipped: Dictionary[int, ItemStack] = {}
 	var capacity_text := ""
 	if _state != null and _active():
-		items = _state.inventory.stacks()
-		items.append_array(_state.protected_inventory.stacks())
+		items = _state.inventory.slots()
+		items.append_array(_state.protected_inventory.slots())
 		capacity_text = "Bag %d/%d · Protected %d/%d" % [_state.inventory.stacks().size(), _state.inventory.capacity,
 			_state.protected_inventory.stacks().size(), _state.protected_inventory.capacity]
 		for entry in equipment_window.slot_layout:
 			if entry != null:
 				equipped[entry.slot] = _state.equipment.equipped(entry.slot)
-	inventory_window.display_items(items, capacity_text)
+	inventory_window.display_slots(items, capacity_text)
 	equipment_window.display_equipment(equipped)
 	if is_instance_valid(_hovered) and _hovered.is_visible_in_tree():
 		tooltip.show_item(_hovered.stack, _hovered.definition)

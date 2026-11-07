@@ -106,20 +106,13 @@ func try_transfer(
 		return CommandResult.make(false, "Duplicate item instance across player and settlement")
 	var inputs: Array[ItemStack] = [source_item]
 	var outputs: Array[ItemStack] = [destination_item]
-	var source_preview := source.preview_exchange(inputs, [])
-	if not source_preview.success:
-		return source_preview
-	var destination_preview := destination.preview_exchange([], outputs)
-	if not destination_preview.success:
-		return destination_preview
 	player.begin_item_update()
 	settlement.begin_update()
-	var removed := source.exchange(inputs, [])
-	var added := destination.exchange([], outputs) if removed.success else CommandResult.make(false, removed.message)
+	var transferred := source.transfer_to(destination, inputs, outputs)
 	settlement.end_update()
 	player.end_item_update()
-	if not removed.success or not added.success:
-		return CommandResult.make(false, added.message if not added.success else removed.message)
+	if not transferred.success:
+		return transferred
 	return CommandResult.make(true, "Deposited item" if direction == TransferDirection.DEPOSIT else "Withdrew item")
 
 func _find_instance(stacks: Array[ItemStack], instance_id: String) -> ItemStack:

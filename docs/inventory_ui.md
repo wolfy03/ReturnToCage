@@ -17,10 +17,11 @@ return stack copies; ItemSlotView also copies its input. It disconnects retired
 model signals on New/Load/Disconnect and refreshes from the newly bound owner.
 Windows remain under the HUD while SceneRouter replaces WorldLayer scenes.
 
-InventoryWindow renders 6×4 presentation cells, in existing model order. These
-are not persistent slot positions: the starting inventory capacity remains 12,
-and the protected bag remains separate. The footer reports both real capacities.
-If a filtered category exceeds 24 stacks, the footer pages through the remainder.
+InventoryWindow renders 6×4 presentation cells. [Stage 2](inventory_slots.md) now
+reads fixed memory slots, retaining empty cells and hiding other categories in
+place. These positions are not yet persisted or replicated. Starting capacity
+remains 12, and the protected bag follows the main bag in the read-only view.
+The footer reports both real capacities and pages through the full slot span.
 EquipmentDefinition items go to Equip, food/drink/return items to Use, QUEST
 category to Quest, and the rest to Etc. `quest_protected` alone does not move a
 return seed out of Use. Equipped items appear in the equipment window only.
@@ -30,7 +31,7 @@ resources. Its current entries reference MAIN_HAND and BODY; future UI entries
 can reuse this layout without changing the model in this stage. ItemSlotView and
 ItemTooltip are separate scenes reusable by future storage/shop views.
 
-Save v4, Profile v1, NetworkProtocol v16, inventory/equipment schemas, ItemStack
+Save v4, Profile v1, NetworkProtocol v16, equipment slots, ItemStack
 serialization and server mutation authority are unchanged. The existing HUD
 keeps storage/unsecured loot, crafting, quests, Save/Load and quick consumption;
 its duplicate carried/equipment text is replaced with the I/P shortcut hint.
@@ -59,7 +60,7 @@ headless and rendered. Export content checks explicitly load all four UI scenes
 and the SVG placeholder, so missing dynamically loaded UI resources fail release
 verification. CI uploads the EXE only after successful existing release checks.
 
-## Local verification
+## Stage 1 verification (before fixed slots)
 
 Godot 4.7.2: 50 focused GUI assertions and 5,064 full-suite assertions passed,
 including restart read/write and the main-scene smoke check. The existing normal

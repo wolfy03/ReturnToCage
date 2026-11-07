@@ -62,3 +62,7 @@ Candidate recovery 또는 새 ID commit이 성공하면 Save snapshot을 apply�
 `last_safe_position`은 서버 또는 offline authority가 승인한 마지막 Settlement-domain 위치다. 매 프레임 transform이나 Adventure 좌표를 기록하지 않는다. Reconnect 때 이 값은 후보일 뿐이며 live Settlement spawn policy가 bounds, collision clearance, walkable support를 다시 검증한다. World-invalid 값은 configured fallback으로 대체되어 self-heal된다. Fresh spawn slot 배정은 runtime-only라 Save v4 schema에 추가되지 않는다.
 
 Process-restart E2E는 primary profile과 `.bak`, primary Save v4를 역할별 독립 `user://`에서 실제 재사용한다. 새 Host process는 저장된 `session_id`, `play_time_seconds`, host state와 detached remote records를 복원하고, 새 client process는 같은 persistent `player_id`로 기존 canonical record에 attach된다. 후속 Save에서 fallback으로 치유된 safe position이 기록되는 것도 검증한다. 이 흐름에서도 Save에는 active peer mapping, world-ready, spawn slot/assignment, replication cache가 추가되지 않는다.
+
+## Stage 2 inventory slots: no schema change
+
+InventoryModel now retains empty cells in memory. Save v4 still writes dense four-field ItemStack records; it writes neither slot indices/null entries nor expansion capacity. Load may compact/merge ordinary stacks and restores configured start capacities; excess valid items follow the existing Settlement pending-loot overflow path. Indexed layout and expansion persistence require an explicit Stage 3 migration; none is implemented here. See [inventory_slots.md](inventory_slots.md).
