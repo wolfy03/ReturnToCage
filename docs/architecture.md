@@ -147,4 +147,4 @@ InventoryModel stores capacity-sized nullable cells; dense stacks()/to_array() r
 
 ## Stage 3 slot serialization and authority
 
-SaveData validates the indexed container shared by Save v5 and v17 snapshots. The existing owner-private service validates server-approved slot intents; UI remains read-only. See [inventory_persistence.md](inventory_persistence.md).
+SaveData validates the indexed container shared by Save v5 and v17 snapshots. The inventory presenter submits slot intents through the existing owner-private service, which validates them on the server. See [inventory_persistence.md](inventory_persistence.md).

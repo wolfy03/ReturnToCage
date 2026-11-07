@@ -139,6 +139,7 @@ func run(t: Node) -> void:
 	await key(t, KEY_I)
 	await key(t, KEY_P)
 	t.assert_true(bag.visible and gear.visible, "Load Game permits I/P windows")
+	await _check_slot_controls(t, bag)
 	await click(t, bag.close_button)
 	t.assert_true(not bag.visible, "close button receives real GUI input")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
@@ -146,6 +147,116 @@ func run(t: Node) -> void:
 	app.get_parent().remove_child(app)
 	app.queue_free()
 	SceneRouter.register_world_layer(null)
+	await _frames(t)
+
+func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
+	var main := GameSession.player.inventory
+	var protected := GameSession.player.protected_inventory
+	var cells: Array[ItemStack] = []
+	cells.resize(29)
+	cells[0] = ItemStack.new(&"berry", 8)
+	cells[1] = ItemStack.new(&"rusty_scrap", 2)
+	cells[2] = ItemStack.new(&"return_seed", 1)
+	cells[4] = ItemStack.new(&"berry", 3)
+	cells[24] = ItemStack.new(&"berry", 5)
+	t.assert_true(main.initialize_slots(cells, 29).success, "GUI fixture seeds sparse main bag")
+	var protected_cells: Array[ItemStack] = []
+	protected_cells.resize(protected.capacity)
+	protected_cells[0] = ItemStack.new(&"berry", 2)
+	t.assert_true(protected.initialize_slots(protected_cells).success, "GUI fixture seeds independent protected bag")
+	await _frames(t)
+	await click(t, bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE])
+	await click(t, bag.slots[0])
+	await click(t, bag.slots[3])
+	t.assert_equal(bag.selected_slot, -1, "real click on an empty cell clears selection")
+	var actor := NetworkManager.authoritative_actor(1)
+	var dodge_requests := [0]
+	var count_dodge := func(_axis: float) -> void: dodge_requests[0] += 1
+	actor.input.dodge_requested.connect(count_dodge)
+	await _hover(t, bag.slots[0].get_global_rect().get_center())
+	var shift := InputEventKey.new()
+	shift.physical_keycode = KEY_SHIFT
+	shift.location = KEY_LOCATION_LEFT
+	shift.pressed = true
+	t.assert_true(shift.is_action_pressed(&"dodge"), "physical Left Shift is also mapped to dodge")
+	t.get_viewport().push_input(shift, true)
+	t.assert_equal(dodge_requests[0], 0, "Shift over inventory is reserved for split instead of dodge")
+	var before := main.to_slot_dict()
+	var sequence := PlayerItemReplicationService._next_local_sequence
+	t.assert_true(bag.slots[1].stack == null, "other category is hidden in place")
+	await _drag(t, bag.slots[0], bag.slots[1].get_global_rect().get_center())
+	t.assert_true(bag._status.text.contains("another tab") and main.to_slot_dict() == before, "hidden target refuses drop with an explanation")
+	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence, "hidden target never submits a command")
+	await _drag(t, bag.slots[0], Vector2(5, 5))
+	t.assert_equal(main.to_slot_dict(), before, "releasing outside the grid cancels the drag")
+	await _drag(t, bag.slots[0], bag.slots[3].get_global_rect().get_center())
+	t.assert_true(main.get_slot(0) == null and main.get_slot(3) != null and bag.slots[3].stack != null, "GUI drag moves into a real empty slot")
+	await _drag(t, bag.slots[3], bag.slots[2].get_global_rect().get_center())
+	t.assert_true(main.get_slot(2) != null and main.get_slot(2).item_id == &"berry" and main.get_slot(3).item_id == &"return_seed", "GUI drag swaps different visible items")
+	await _drag(t, bag.slots[4], bag.slots[2].get_global_rect().get_center())
+	t.assert_true(main.get_slot(4) != null and main.get_slot(4).quantity == 1 and main.get_slot(2).quantity == 10, "GUI drag merges compatible stacks")
+	before = main.to_slot_dict()
+	await _drag(t, bag.slots[2], bag.slots[5].get_global_rect().get_center(), true)
+	t.assert_true(bag._split_dialog.visible and main.to_slot_dict() == before, "Shift drag opens a quantity dialog without mutating the bag")
+	if bag._split_dialog.visible:
+		await click(t, bag._split_dialog.get_cancel_button())
+	t.assert_true(not bag._split_dialog.visible and main.to_slot_dict() == before, "canceling split keeps the exact layout")
+	await _drag(t, bag.slots[2], bag.slots[3].get_global_rect().get_center(), true)
+	t.assert_true(not bag._split_dialog.visible and main.to_slot_dict() == before and bag._status.text.contains("empty slot"), "Shift drag rejects an occupied destination")
+	await _drag(t, bag.slots[2], bag.slots[5].get_global_rect().get_center(), true)
+	if bag._split_dialog.visible:
+		bag._split_amount.text = "10"
+		await click(t, bag._split_dialog.get_ok_button())
+	t.assert_true(main.to_slot_dict() == before and bag._status.text.contains("1 to 9"), "split of the whole stack is rejected without clamping")
+	await _drag(t, bag.slots[2], bag.slots[5].get_global_rect().get_center(), true)
+	if bag._split_dialog.visible:
+		bag._split_amount.text = "4"
+		await click(t, bag._split_dialog.get_ok_button())
+	t.assert_true(main.get_slot(5) != null and main.get_slot(5).quantity == 4 and main.get_slot(2).quantity == 6, "confirmed Shift drag splits the requested amount")
+	await click(t, bag.get_node("%Next"))
+	await _drag(t, bag.slots[0], bag.slots[1].get_global_rect().get_center())
+	t.assert_true(bag.page == 1 and main.get_slot(24) == null and main.get_slot(25) != null and main.get_slot(25).quantity == 5, "second-page GUI cells map to real indices 24 and 25")
+	await _drag(t, bag.slots[1], bag.slots[6].get_global_rect().get_center())
+	t.assert_true(bag._status.text.contains("outside the bag") and main.get_slot(25) != null, "page padding is not inventory capacity")
+	var main_before := main.to_slot_dict()
+	var protected_before := protected.to_slot_dict()
+	await _drag(t, bag.slots[1], bag.slots[1].get_global_rect().get_center(), false, func() -> void:
+		bag._bag_picker.select(1)
+		bag._bag_picker.item_selected.emit(1)
+	)
+	t.assert_true(bag._status.text.contains("same bag") and main.to_slot_dict() == main_before and protected.to_slot_dict() == protected_before, "a drag cannot cross bag boundaries")
+	await _drag(t, bag.slots[0], bag.slots[1].get_global_rect().get_center())
+	t.assert_true(protected.get_slot(0) == null and protected.get_slot(1) != null and protected.get_slot(1).quantity == 2 and main.to_slot_dict() == main_before, "protected slot indices are independent from main")
+	await click(t, bag._sort)
+	t.assert_true(protected.get_slot(0) != null and protected.get_slot(1) == null and main.to_slot_dict() == main_before, "Sort whole bag sorts the selected bag only")
+	bag._bag_picker.select(0)
+	bag._bag_picker.item_selected.emit(0)
+	await click(t, bag._sort)
+	t.assert_true(main.get_slot(25) == null and main.count(&"berry") == 16 and main.count(&"rusty_scrap") == 2, "whole main bag sort includes categories hidden by the tab")
+	await _hover(t, Vector2(5, 5))
+	t.get_viewport().push_input(shift, true)
+	t.assert_equal(dodge_requests[0], 1, "Left Shift outside inventory still sends the gameplay input")
+	actor.input.dodge_requested.disconnect(count_dodge)
+
+static func _drag(t: Node, source: ItemSlotView, destination: Vector2, split: bool = false, during: Callable = Callable()) -> void:
+	var origin := source.get_global_rect().get_center()
+	await _hover(t, origin)
+	_mouse(t, origin, true, split)
+	var previous := origin
+	for position: Vector2 in [origin + Vector2(15, 0), destination]:
+		var motion := InputEventMouseMotion.new()
+		motion.position = position
+		motion.global_position = position
+		motion.relative = position - previous
+		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+		motion.shift_pressed = split
+		t.get_viewport().push_input(motion, true)
+		await t.get_tree().process_frame
+		if previous == origin and during.is_valid():
+			during.call()
+			await _frames(t)
+		previous = position
+	_mouse(t, destination, false, split)
 	await _frames(t)
 
 static func _items() -> Dictionary:
@@ -169,28 +280,33 @@ static func key(t: Node, physical: Key) -> void:
 	t.get_viewport().push_input(event, true)
 	await _frames(t)
 
-static func _hover(t: Node, position: Vector2) -> void:
+static func _hover(t: Node, position: Vector2, viewport: Viewport = null) -> void:
 	var motion := InputEventMouseMotion.new()
 	motion.position = position
 	motion.global_position = position
-	t.get_viewport().push_input(motion, true)
+	(viewport if viewport != null else t.get_viewport()).push_input(motion, true)
 	await _frames(t)
 
-static func _mouse(t: Node, position: Vector2, pressed: bool) -> void:
+static func _mouse(t: Node, position: Vector2, pressed: bool, shift: bool = false, viewport: Viewport = null) -> void:
 	var event := InputEventMouseButton.new()
 	event.position = position
 	event.global_position = position
+	event.shift_pressed = shift
 	event.button_index = MOUSE_BUTTON_LEFT
 	event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
 	event.pressed = pressed
-	t.get_viewport().push_input(event, true)
+	(viewport if viewport != null else t.get_viewport()).push_input(event, true)
 
 static func click(t: Node, control: Control) -> void:
 	var center := control.get_global_rect().get_center()
-	await _hover(t, center)
-	_mouse(t, center, true)
+	var viewport := control.get_viewport()
+	if viewport is Window and viewport != t.get_viewport() and viewport.is_embedded():
+		center += Vector2(viewport.position)
+		viewport = t.get_viewport()
+	await _hover(t, center, viewport)
+	_mouse(t, center, true, false, viewport)
 	await t.get_tree().process_frame
-	_mouse(t, center, false)
+	_mouse(t, center, false, false, viewport)
 	await _frames(t)
 
 func _capture(t: Node) -> void:

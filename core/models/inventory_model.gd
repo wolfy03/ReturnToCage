@@ -101,7 +101,7 @@ func _add_stack(incoming: ItemStack) -> InventoryResult:
 	var limit := _stack_limit(definition)
 	if incoming.instance_id.is_empty() and not definition is EquipmentDefinition:
 		for stack in _slots:
-			if stack != null and _merge_compatible(stack, incoming) and stack.quantity < limit:
+			if stack != null and stacks_match_for_merge(stack, incoming) and stack.quantity < limit:
 				var moved := mini(remaining, limit - stack.quantity)
 				stack.quantity += moved
 				remaining -= moved
@@ -217,7 +217,7 @@ func move_slot(from: int, to: int) -> CommandResult:
 		return CommandResult.make(false, "Source slot is empty")
 	if from == to:
 		return CommandResult.make(true)
-	if _slots[to] != null and _merge_compatible(_slots[from], _slots[to]) and not _definition(_slots[from]) is EquipmentDefinition:
+	if _slots[to] != null and stacks_match_for_merge(_slots[from], _slots[to]) and not _definition(_slots[from]) is EquipmentDefinition:
 		return merge_slots(from, to)
 	return swap_slots(from, to)
 
@@ -238,7 +238,7 @@ func merge_slots(from: int, to: int) -> CommandResult:
 		return CommandResult.make(false, error)
 	var source := _slots[from]
 	var target := _slots[to]
-	if from == to or source == null or target == null or not _merge_compatible(source, target) or _definition(source) is EquipmentDefinition:
+	if from == to or source == null or target == null or not stacks_match_for_merge(source, target) or _definition(source) is EquipmentDefinition:
 		return CommandResult.make(false, "Slots cannot be merged")
 	var moved := mini(source.quantity, _stack_limit(_definition(target)) - target.quantity)
 	if moved <= 0:
@@ -446,7 +446,7 @@ func _definition(stack: ItemStack) -> ItemDefinition:
 func _stack_limit(definition: ItemDefinition) -> int:
 	return 1 if definition is EquipmentDefinition else definition.max_stack
 
-func _merge_compatible(a: ItemStack, b: ItemStack) -> bool:
+static func stacks_match_for_merge(a: ItemStack, b: ItemStack) -> bool:
 	return a.item_id == b.item_id and a.instance_id.is_empty() and b.instance_id.is_empty() and a.durability == b.durability
 
 func _sort_before(a: ItemStack, b: ItemStack) -> bool:

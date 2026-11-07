@@ -109,7 +109,7 @@ jobs:
         env:
           RTC_VALIDATION_AUDIO_DRIVER: Dummy
         run: python tools/build_windows_demo.py --godot "$env:GODOT" --rendered
-      - name: Read-only inventory and equipment GUI input
+      - name: Inventory slot and equipment GUI input
         shell: pwsh
         env:
           RTC_VALIDATION_AUDIO_DRIVER: Dummy

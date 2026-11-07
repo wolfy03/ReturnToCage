@@ -40,7 +40,7 @@ func request_use_item(item_id: StringName) -> void:
 func request_transfer(direction: int, item_id: StringName, amount: int, instance_id: String = "") -> void:
 	_submit(CommandType.TRANSFER, "", direction, item_id, instance_id, amount)
 
-## Script-facing intent API. No gameplay UI binds these commands in Stage 3.
+## Submits a local owner's intent and returns its sequence, or -1 if unavailable.
 func request_slot_command(action: int, inventory_kind: int, from: int = -1, to: int = -1, amount: int = 0) -> int:
 	var command := make_slot_intent(action, inventory_kind, from, to, amount)
 	if command.is_empty():

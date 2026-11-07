@@ -9,10 +9,14 @@
 | primary_attack | J | 장착 무기 공격; 연타하면 무기별 콤보로 이어진다. 등반/귀환 중 불가 |
 | dodge | Left Shift | 지상 회피 롤; 시작 시 스태미나 소모, 초반 구간만 무적 |
 | use_quick_item | Q | 정착지 Berry, 원정 귀환 씨앗 채널링 |
-| open_inventory | I | 읽기 전용 인벤토리 창 열기/닫기 |
+| open_inventory | I | 인벤토리 창 열기/닫기 |
 | open_equipment | P | 읽기 전용 장비창 열기/닫기 |
 | pause | Esc | 일시정지/재개 |
 | debug_panel | F10 | Debug 빌드 개발 패널 |
+
+인벤토리에서 아이템을 좌클릭하면 선택하고, 빈 칸을 클릭하면 선택을 해제한다. 같은 가방 안에서
+드래그하면 이동·교환·병합한다. Shift를 누르고 빈 슬롯으로 드래그하면 분할 수량을 선택한다.
+인벤토리 위에서는 Shift가 분할 입력으로 쓰인다. **Sort whole bag**은 현재 가방의 모든 탭을 정렬한다.
 
 등반 영역 밖에서 W/S는 공중 이동을 만들지 않는다. 등반 중 입력을 놓으면 높이를 유지한다. HUD는 상호작용 대상이 없을 때 `[W/S] Climb`과 `[Space] Jump off`를 표시한다. 상호작용 필요 Resource는 E로 잡은 뒤 W/S로 이동한다.
 

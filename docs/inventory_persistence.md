@@ -2,7 +2,7 @@
 
 Save **v5** and NetworkProtocol **v17** preserve capacity, gaps, quantity,
 instance identity and durability. Profile **v1** and the persistent `player_id`
-remain unchanged. The inventory/equipment windows still only read model state.
+remain unchanged. Stage 4-A binds inventory controls to the existing intent API.
 
 ## Save format and migration
 
@@ -62,9 +62,9 @@ owner mirror. Storage remains shared Settlement data; neither private inventory
 nor equipment is broadcast to other clients. v16 peers fail the normal protocol
 handshake; legacy v16 snapshot bodies are not a v17 fallback.
 
-The root PlayerItemReplicationService provides a script-facing
-`request_slot_command(action, inventory_kind, from, to, amount)`. It binds no UI
-input. The supported commands are MOVE, SWAP, MERGE, SPLIT and SORT in the owner's
+The inventory presenter uses the root PlayerItemReplicationService's
+`request_slot_command(action, inventory_kind, from, to, amount)`. The supported
+commands are MOVE, SWAP, MERGE, SPLIT and SORT in the owner's
 main or protected bag. Shared storage retains its existing transfer intents;
 capacity expansion is an authoritative model operation, not a client grant.
 

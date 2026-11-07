@@ -1,4 +1,4 @@
-"""Exercise read-only item windows through real Godot GUI input and capture them."""
+"""Exercise inventory and equipment windows through real Godot GUI input and capture them."""
 import argparse
 import os
 from pathlib import Path

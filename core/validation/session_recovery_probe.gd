@@ -191,6 +191,19 @@ func _execute(command: Dictionary) -> void:
 			if not await _slot_rpc(command):
 				_fail("slot RPC result/layout mismatch: %s" % command)
 				return
+		"slot_ui":
+			if not await _slot_ui(command):
+				_fail("slot GUI did not reconcile the owner snapshot and result: %s" % command)
+				return
+		"slot_transition_fixture":
+			var peer := NetworkManager.peer_id_for_player(target)
+			if not NetworkManager.is_server() or not NetworkManager.is_peer_world_ready(peer):
+				_fail("pending-transition fixture requires an attached ready player")
+				return
+			if command.block:
+				NetworkManager._pending_world_transitions[peer] = NetworkManager.world_assignment_for_peer(peer)
+			else:
+				NetworkManager._pending_world_transitions.erase(peer)
 		"slot_prepare":
 			var service := _item_service()
 			_prepared_slot_intent = service.make_slot_intent(PlayerItemCommandService.SlotAction.MOVE, PlayerItemCommandService.SlotInventory.MAIN, 0, 17)
@@ -222,7 +235,7 @@ func _execute(command: Dictionary) -> void:
 					return
 		"item_windows":
 			if not await _check_item_windows():
-				_fail("read-only inventory/equipment GUI validation failed")
+				_fail("inventory/equipment GUI validation failed")
 				return
 		"watch":
 			var actor := _actor(target)
@@ -500,6 +513,74 @@ func _slot_rpc(command: Dictionary) -> bool:
 		PlayerItemCommandService.SlotAction.SPLIT: result = expected.split_stack(from, to, amount)
 		PlayerItemCommandService.SlotAction.SORT: result = expected.sort_slots()
 	return result != null and result.success and player.inventory.to_slot_dict() == expected.to_slot_dict()
+
+func _slot_ui(command: Dictionary) -> bool:
+	if NetworkManager.is_server():
+		return false
+	var presenter: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	var bag := presenter.inventory_window
+	if not bag.visible:
+		await _item_key(KEY_I)
+	if not bag.visible or not await _click(bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE]):
+		return false
+	var player := GameSession.get_local_player()
+	var from := int(command.get("from", 0))
+	var to := int(command.get("to", 4))
+	var source := player.inventory.get_slot(from)
+	if source == null or player.inventory.get_slot(to) != null or bag.slots[from].stack == null:
+		return false
+	var before := _slot_layout(player)
+	var revision := player.item_state_revision
+	var origin := bag.slots[from].get_global_rect().get_center()
+	var destination := bag.slots[to].get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = origin
+	motion.global_position = origin
+	get_viewport().push_input(motion, true)
+	var button := InputEventMouseButton.new()
+	button.position = origin
+	button.global_position = origin
+	button.button_index = MOUSE_BUTTON_LEFT
+	button.button_mask = MOUSE_BUTTON_MASK_LEFT
+	button.pressed = true
+	get_viewport().push_input(button, true)
+	var previous := origin
+	for position: Vector2 in [origin + Vector2(15, 0), destination]:
+		motion = InputEventMouseMotion.new()
+		motion.position = position
+		motion.global_position = position
+		motion.relative = position - previous
+		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+		get_viewport().push_input(motion, true)
+		await get_tree().process_frame
+		previous = position
+	button = button.duplicate() as InputEventMouseButton
+	button.position = destination
+	button.global_position = destination
+	button.button_mask = 0
+	button.pressed = false
+	get_viewport().push_input(button, true)
+	var sequence := presenter._pending_sequence
+	if sequence <= 0 or not bag._pending or not bag._sort.disabled or _slot_layout(player) != before \
+			or bag.slots[from].stack == null or bag.slots[to].stack != null:
+		return false
+	# A second gesture and an older result must not replace the pending action.
+	bag._request_sort()
+	presenter._on_slot_result(sequence - 1, false, "old response")
+	if presenter._pending_sequence != sequence or not bag._status.text.begins_with("Waiting") \
+			or PlayerItemReplicationService._next_local_sequence != sequence or bag.selected_slot != from:
+		return false
+	if not await _wait(func() -> bool: return presenter._pending_sequence == -1):
+		return false
+	if command.get("reject", false):
+		return not bag._pending and player.item_state_revision == revision and _slot_layout(player) == before \
+			and bag.slots[from].stack != null and bag.slots[to].stack == null and bag.selected_slot == from \
+			and bag._status.text.contains("world to finish loading")
+	var moved := player.inventory.get_slot(to)
+	return not bag._pending and bag._status.text.is_empty() and player.item_state_revision == revision + 1 \
+		and player.inventory.get_slot(from) == null and moved != null and moved.to_dict() == source.to_dict() \
+		and bag.slots[from].stack == null and bag.slots[to].stack != null \
+		and bag.slots[to].stack.to_dict() == source.to_dict()
 
 func _item_windows_visible() -> bool:
 	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter

@@ -4,8 +4,8 @@ InventoryModel now owns an array of exactly `capacity` cells. A cell contains an
 ItemStack or `null`; deleting an item leaves its index empty. Ordinary addition,
 removal, crafting, storage transfer, equipment replacement and death loss do not
 slide unrelated items. Only explicit sorting or bulk initialization/restoration
-may rebuild the layout. The UI remains read-only; no drag/drop commands or slot
-RPCs have been added.
+may rebuild the layout. The model was introduced in Stage 2. The Stage 4-A
+[inventory controls](inventory_ui.md) issue existing Stage 3 slot intents.
 
 ## API and ownership
 
@@ -58,10 +58,9 @@ capacity together. They cannot be blocked by an old occupied expanded tail, and
 they keep their existing model objects and signal bindings.
 
 InventoryPresenter reads `slots()`, not the compact `stacks()` compatibility view.
-Tabs hide other categories in place. The protected bag is displayed after the
-main bag's capacity and keeps its own model indices; trailing grid padding is not
-extra capacity. Pages cover the actual slot span. Equipment and inventory UI still
-issue no gameplay commands.
+Tabs hide other categories in place. Each selectable bag has its own page span
+and model indices. Padding has no slot backing. Equipment remains a display of
+the currently equipped items.
 
 ## Historical Stage 2 format limits
 

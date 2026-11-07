@@ -2,11 +2,11 @@
 [ext_resource type="Script" path="res://ui/inventory/inventory_window.gd" id="1"]
 [node name="InventoryWindow" type="PanelContainer"]
 visible = false
-custom_minimum_size = Vector2(390, 352)
+custom_minimum_size = Vector2(390, 414)
 offset_left = 24.0
 offset_top = 100.0
 offset_right = 414.0
-offset_bottom = 452.0
+offset_bottom = 514.0
 script = ExtResource("1")
 [node name="Content" type="VBoxContainer" parent="."]
 layout_mode = 2
@@ -32,6 +32,18 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "×"
 tooltip_text = "Close inventory"
+[node name="BagActions" type="HBoxContainer" parent="Content"]
+layout_mode = 2
+theme_override_constants/separation = 8
+[node name="BagPicker" type="OptionButton" parent="Content/BagActions"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+[node name="Sort" type="Button" parent="Content/BagActions"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Sort whole bag"
+tooltip_text = "Sort every category in the selected bag"
 [node name="Tabs" type="HBoxContainer" parent="Content"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -66,4 +78,27 @@ text = "›"
 layout_mode = 2
 theme_override_colors/font_color = Color(0.66, 0.70, 0.60, 1)
 theme_override_font_sizes/font_size = 12
-text = "Select to inspect   ·   Drag title to move"
+text = "Drag to move   ·   Shift + drag to split"
+[node name="Status" type="Label" parent="Content"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 16)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.84, 0.73, 0.48, 1)
+theme_override_font_sizes/font_size = 12
+text_overrun_behavior = 3
+[node name="SplitDialog" type="ConfirmationDialog" parent="."]
+unique_name_in_owner = true
+title = "Split stack"
+exclusive = true
+unresizable = true
+ok_button_text = "Split"
+[node name="SplitContent" type="VBoxContainer" parent="SplitDialog"]
+offset_right = 230.0
+offset_bottom = 60.0
+[node name="SplitRange" type="Label" parent="SplitDialog/SplitContent"]
+unique_name_in_owner = true
+layout_mode = 2
+[node name="SplitAmount" type="LineEdit" parent="SplitDialog/SplitContent"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "1"

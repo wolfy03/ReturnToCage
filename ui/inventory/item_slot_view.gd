@@ -9,6 +9,7 @@ const PLACEHOLDER: Texture2D = preload("res://ui/inventory/item_placeholder.svg"
 var stack: ItemStack
 var definition: ItemDefinition
 var selected := false
+var shift_drag := false
 var show_quantity := true
 @onready var item_icon: TextureRect = %Icon
 @onready var quantity_label: Label = %Quantity
@@ -19,6 +20,10 @@ func _ready() -> void:
 	mouse_entered.connect(func() -> void: item_hovered.emit(self))
 	mouse_exited.connect(func() -> void: item_unhovered.emit(self))
 	_refresh()
+
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		shift_drag = event.shift_pressed
 
 func display_item(value: ItemStack, item: ItemDefinition) -> void:
 	stack = value.duplicate_stack() if value != null else null

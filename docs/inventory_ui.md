@@ -1,4 +1,4 @@
-# Inventory / equipment UI — Stage 1
+# Inventory / equipment UI
 
 `I` opens the inventory; `P` opens equipment. `E` remains interaction. Drag either
 title bar to move its window; the window and tooltip stay inside the viewport,
@@ -8,8 +8,8 @@ and refuse to open in the menu. Typing into a text field does not toggle windows
 The dark brown/green panels use beige text and a shared supply-pouch placeholder
 when an item has no authored icon. Clicking selects a cell for inspection only.
 Hover displays the definition, quantity, weight, value, equipment modifiers,
-weapon damage/stamina cost and instance durability. There are no use/equip/move/
-drop actions, drag-and-drop transfers, or item command RPCs in these components.
+weapon damage/stamina cost and instance durability. Clicking an empty cell
+clears selection. Equipment slots are for inspection.
 
 `ui/inventory/inventory_presenter.gd` belongs to GameHUD and reads only the local
 owner's InventoryModel, protected inventory and EquipmentModel. Model getters
@@ -19,9 +19,9 @@ Windows remain under the HUD while SceneRouter replaces WorldLayer scenes.
 
 InventoryWindow renders 6×4 presentation cells. [Stage 2](inventory_slots.md) now
 reads fixed memory slots, retaining empty cells and hiding other categories in
-place. [Stage 3](inventory_persistence.md) persists and replicates these positions. Starting capacity
-remains 12, and the protected bag follows the main bag in the read-only view.
-The footer reports both real capacities and pages through the full slot span.
+place. [Stage 3](inventory_persistence.md) persists and replicates these positions.
+Select Main bag or Protected bag to page through that bag's capacity. The footer
+shows occupied cells and total capacity for the selected bag.
 EquipmentDefinition items go to Equip, food/drink/return items to Use, QUEST
 category to Quest, and the rest to Etc. `quest_protected` alone does not move a
 return seed out of Use. Equipped items appear in the equipment window only.
@@ -36,6 +36,28 @@ serialization and server mutation authority are unchanged. The existing HUD
 keeps storage/unsecured loot, crafting, quests, Save/Load and quick consumption;
 its duplicate carried/equipment text is replaced with the I/P shortcut hint.
 
+## Slot controls (Stage 4-A)
+
+Drag within the selected bag to move to a free slot, swap different stacks, or
+merge compatible stacks up to the target's limit. Hold Shift when starting a
+drag onto a free slot to choose a split amount. Shift over the inventory belongs
+to the drag gesture; away from the window the usual dodge binding applies.
+**Sort whole bag** sorts every category in the selected bag.
+
+A grid cell addresses `page * 24 + cell` within the selected bag. Category tabs
+hide contents in place. A hidden occupied cell refuses a drop with an
+explanation, and padding outside the current capacity refuses drops. Drag data
+holds bag/index/category and the UI gesture generation. The presenter checks
+the displayed item revision against the current owner before submitting.
+
+The presenter calls the existing `request_slot_command()` and waits for the
+matching `slot_result` sequence. Only one request is pending per window. The
+authoritative layout or validated owner mirror drives the display. Rejections
+show the current layout with an explanation, and delayed results for other
+sequences do not affect the current interaction. World or owner changes
+invalidate unfinished gestures. Disconnect resets pending UI and closes the
+split dialog.
+
 ## Validation
 
 ```powershell
@@ -46,15 +68,17 @@ python tools/build_windows_demo.py --godot <Godot-4.7.2> --rendered
 ```
 
 The focused integration suite uses physical-key events and GUI hit-tested mouse
-events for tabs, selection, dragging and closing; checks tooltip bounds and data,
-empty cells, placeholder/custom icons, pagination, read-only snapshots, world
+events for tabs, selection, dragging and closing. It exercises all five slot
+commands, canceling and rejecting drops, split limits, same-bag enforcement and
+the Shift binding. It checks tooltip data and bounds, icons, empty cells, world
 replacement, Disconnect cleanup, identity, New Game and Save/Load model rebinding.
 The rendered helper uses an isolated profile directory and writes a real viewport
 screenshot to `build/validation/inventory-ui/inventory-ui.png`.
 
 The existing three-process lifecycle now exercises I/P, all four tabs, hover and
-selection on offline, Host and Client owners, before/after New/Load and map
-transitions. Menu cleanup requires both windows/tooltip closed and models unbound.
+selection on offline, Host and Client owners. Client drags verify that the layout
+remains unchanged while pending, reject during a pending world transition, and
+work again after world travel and reattachment. Menu cleanup requires both windows/tooltip closed and models unbound.
 The same assertions run inside the actual embedded-PCK Windows release EXE,
 headless and rendered. Export content checks explicitly load all four UI scenes
 and the SVG placeholder, so missing dynamically loaded UI resources fail release

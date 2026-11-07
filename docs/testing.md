@@ -341,7 +341,7 @@ original Editor/content/Host-Join checks remain and are extended by real release
 EXE New/Load/rehost/rejoin/map roster tests, in both headless and GUI modes.
 
 
-## Read-only inventory / equipment UI (Stage 1)
+## Inventory / equipment GUI
 
 See [inventory_ui.md](inventory_ui.md) for the UI/model boundary and controls.
 The full runner includes `test_inventory_windows.gd`; use `--inventory-ui-only`
@@ -349,6 +349,11 @@ for focused checks. `tools/test_inventory_ui.py --rendered` uses isolated profil
 and real Godot GUI input, validates read-only snapshots, and captures a viewport
 PNG. Windows release lifecycle checks also exercise these windows in the actual
 EXE; existing content/ENet/roster/recovery assertions remain in place.
+
+Stage 4-A adds hit-tested drags, split confirmation/cancel, hidden slot and bag
+guards, second-page indices, whole-bag sort and Shift/dodge routing. The shared
+Editor/EXE lifecycle checks real client drag approval, pending immutability,
+duplicate input, old results, server rejection, world travel and reconnect.
 
 ## Fixed inventory slot model (Stage 2)
 
