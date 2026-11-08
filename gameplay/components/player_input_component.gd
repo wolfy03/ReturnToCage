@@ -13,6 +13,7 @@ signal dodge_requested(horizontal_direction: float)
 signal interact_requested
 signal quick_item_requested
 signal inventory_requested
+signal equipment_requested
 signal pause_requested
 
 ## Below this the stick is treated as centred, so a resting analogue stick does
@@ -30,49 +31,119 @@ var gameplay_actions_enabled: bool = true
 var network_intents_enabled: bool = false
 var _jump_pressed: bool = false
 
-func configure_input(p_local_input_enabled: bool, p_gameplay_actions_enabled: bool) -> void:
+const GAMEPLAY_ACTIONS := [
+	&"move_left", &"move_right", &"move_up", &"move_down",
+	&"jump", &"primary_attack", &"dodge", &"interact", &"use_quick_item",
+]
+
+var _held_actions: Dictionary[StringName, bool] = {}
+var _local_combat_buffer: CombatInputBufferComponent
+
+func _enter_tree() -> void:
+	LocalInputContext.gameplay_input_blocked_changed.connect(_on_gameplay_blocked_changed)
+	if LocalInputContext.is_gameplay_blocked():
+		_on_gameplay_blocked_changed(true)
+
+func _exit_tree() -> void:
+	LocalInputContext.gameplay_input_blocked_changed.disconnect(_on_gameplay_blocked_changed)
+
+func configure_input(
+	p_local_input_enabled: bool,
+	p_gameplay_actions_enabled: bool,
+	local_combat_buffer: CombatInputBufferComponent = null
+) -> void:
 	local_input_enabled = p_local_input_enabled
 	gameplay_actions_enabled = p_gameplay_actions_enabled
+	_local_combat_buffer = local_combat_buffer
+	_held_actions.clear()
 	if not local_input_enabled:
-		move_axis = 0.0
-		vertical_axis = 0.0
-		_jump_pressed = false
+		_neutralize()
+	if LocalInputContext.is_gameplay_blocked():
+		_on_gameplay_blocked_changed(true)
+
+func _on_gameplay_blocked_changed(blocked: bool) -> void:
+	if not local_input_enabled and _local_combat_buffer == null:
+		return
+	if blocked:
+		_neutralize()
+		if _local_combat_buffer != null:
+			_local_combat_buffer.clear()
+	elif local_input_enabled:
+		# Held actions need a fresh press after the last UI owner releases input.
+		_held_actions.clear()
+		for action: StringName in GAMEPLAY_ACTIONS:
+			if Input.is_action_pressed(action):
+				_held_actions[action] = true
+
+func _neutralize() -> void:
+	move_axis = 0.0
+	vertical_axis = 0.0
+	_jump_pressed = false
+
+func _forget_released_actions() -> void:
+	for action in _held_actions.keys():
+		if not Input.is_action_pressed(action):
+			_held_actions.erase(action)
+
+func _input(_event: InputEvent) -> void:
+	# Observe releases before the GUI can consume them, even within one frame.
+	if local_input_enabled and not _held_actions.is_empty():
+		_forget_released_actions()
 
 func _process(_delta: float) -> void:
 	if not local_input_enabled:
 		return
-	move_axis = Input.get_axis(&"move_left", &"move_right")
-	vertical_axis = Input.get_axis(&"move_up", &"move_down")
+	if LocalInputContext.is_gameplay_blocked():
+		_neutralize()
+		return
+	if not _held_actions.is_empty():
+		_forget_released_actions()
+	move_axis = _sample_axis(&"move_left", &"move_right")
+	vertical_axis = _sample_axis(&"move_up", &"move_down")
+
+func _sample_axis(negative: StringName, positive: StringName) -> float:
+	if not _held_actions.has(negative) and not _held_actions.has(positive):
+		return Input.get_axis(negative, positive)
+	var negative_strength := 0.0 if _held_actions.has(negative) else Input.get_action_strength(negative)
+	var positive_strength := 0.0 if _held_actions.has(positive) else Input.get_action_strength(positive)
+	return positive_strength - negative_strength
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not local_input_enabled:
 		return
-	if event.is_action_pressed(&"jump"):
+	# GUI and Presenter handlers get priority through Godot's input dispatch.
+	if event.is_action_pressed(&"open_inventory"):
+		inventory_requested.emit()
+	elif event.is_action_pressed(&"open_equipment"):
+		equipment_requested.emit()
+	elif event.is_action_pressed(&"pause"):
+		pause_requested.emit()
+	elif not LocalInputContext.is_gameplay_blocked():
+		_handle_gameplay_input(event)
+
+func _handle_gameplay_input(event: InputEvent) -> void:
+	if _is_fresh_press(event, &"jump"):
 		_jump_pressed = true
 		if gameplay_actions_enabled:
 			jump_requested.emit()
-	elif event.is_action_pressed(&"primary_attack"):
-		if gameplay_actions_enabled or network_intents_enabled:
+	elif gameplay_actions_enabled or network_intents_enabled:
+		if _is_fresh_press(event, &"primary_attack"):
 			attack_requested.emit()
-	elif event.is_action_pressed(&"dodge"):
-		if gameplay_actions_enabled or network_intents_enabled:
+		elif _is_fresh_press(event, &"dodge"):
 			dodge_requested.emit(_current_horizontal_intent())
-	elif event.is_action_pressed(&"interact"):
-		if gameplay_actions_enabled or network_intents_enabled:
+		elif _is_fresh_press(event, &"interact"):
 			interact_requested.emit()
-	elif event.is_action_pressed(&"use_quick_item"):
-		if gameplay_actions_enabled or network_intents_enabled:
+		elif _is_fresh_press(event, &"use_quick_item"):
 			quick_item_requested.emit()
-	elif event.is_action_pressed(&"open_inventory"):
-		inventory_requested.emit()
-	elif event.is_action_pressed(&"pause"):
-		pause_requested.emit()
+
+func _is_fresh_press(event: InputEvent, action: StringName) -> bool:
+	return not _held_actions.has(action) and event.is_action_pressed(action)
 
 ## Reads the movement actions directly rather than the cached axis, so a dodge
 ## pressed on the same frame as a turn rolls the way the player is pressing.
 ## Returns exactly -1, +1 or 0 — never a raw analogue value.
 func _current_horizontal_intent() -> float:
-	var axis := Input.get_axis(&"move_left", &"move_right")
+	var axis := _sample_axis(&"move_left", &"move_right")
 	return signf(axis) if absf(axis) >= HORIZONTAL_INTENT_DEADZONE else 0.0
 
 func take_jump_pressed() -> bool:
@@ -81,6 +152,8 @@ func take_jump_pressed() -> bool:
 	return pressed
 
 func apply_move_command(command: PlayerMoveCommand) -> void:
+	if _local_combat_buffer != null and LocalInputContext.is_gameplay_blocked():
+		return
 	move_axis = command.move_axis
 	vertical_axis = command.vertical_axis
 	if command.jump_pressed:

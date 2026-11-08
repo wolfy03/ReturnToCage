@@ -22,6 +22,7 @@ NetworkManager="*res://autoload/network_manager.gd"
 GameSession="*res://autoload/game_session.gd"
 SaveManager="*res://autoload/save_manager.gd"
 SceneRouter="*res://autoload/scene_router.gd"
+LocalInputContext="*res://autoload/local_input_context.gd"
 
 [display]
 

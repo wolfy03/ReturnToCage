@@ -5,6 +5,10 @@ var passed: int = 0
 
 func _ready() -> void:
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	if arguments.has("--local-input-only"):
+		await preload("res://tests/unit/test_local_input_context.gd").new().run(self)
+		_finish_tests()
+		return
 	if arguments.has("--item-boundaries-only"):
 		preload("res://tests/unit/test_item_transaction_boundaries.gd").new().run(self)
 		_finish_tests()
@@ -44,6 +48,7 @@ func _ready() -> void:
 	run_all()
 
 func run_all() -> void:
+	await preload("res://tests/unit/test_local_input_context.gd").new().run(self)
 	preload("res://tests/unit/test_item_transaction_boundaries.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_slots.gd").new().run(self)

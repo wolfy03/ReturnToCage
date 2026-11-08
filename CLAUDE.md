@@ -29,9 +29,10 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 
 ## 1. 절대 규칙 (기존 아키텍처가 강제하는 것)
 
-- **새 autoload 를 추가하지 않는다.** 현재 5개(`ContentRegistry`, `NetworkManager`,
-  `GameSession`, `SaveManager`, `SceneRouter`)가 전부다. 전역이 필요하면 `GameSession`
-  facade 뒤의 State/Service 로, 월드 단위면 world scene 자식 노드로 넣는다.
+- **새 autoload 를 추가하지 않는다.** 기존 세션 autoload는 `ContentRegistry`,
+  `NetworkManager`, `GameSession`, `SaveManager`, `SceneRouter`다. 로컬 전용 예외인
+  `LocalInputContext`는 UI의 입력 차단 소유권만 관리한다. 게임 상태는 `GameSession` facade 뒤의 State/Service
+  또는 world scene 자식 노드에 둔다.
 - **Resource 는 정적 콘텐츠, RefCounted 모델은 런타임 상태.** 현재 수량·내구도·효과
   잔여시간·회수 여부·위치를 Resource 에 쓰지 않는다. 테스트에서 Resource 를 바꿔야 하면
   `duplicate()` 하거나 임시 등록 후 정리한다.

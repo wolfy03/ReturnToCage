@@ -32,7 +32,9 @@ func configure(p_actor: PlayerActor, p_input: PlayerInputComponent, p_movement: 
 	input = p_input
 	movement = p_movement
 	var reads_local_input := actor.is_local_player()
-	input.configure_input(reads_local_input, actor.is_simulation_authority())
+	# The Host also has a separate authoritative receiver for its own local commands.
+	var local_buffer := actor.input_buffer if actor.is_simulation_authority() and actor.peer_id == NetworkManager.local_peer_id() else null
+	input.configure_input(reads_local_input, actor.is_simulation_authority(), local_buffer)
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
 	if runtime != null:
 		_local_sequence = runtime.move_input_sequence
