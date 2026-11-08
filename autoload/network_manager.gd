@@ -37,7 +37,7 @@ signal enemy_spawn_received(world_id: StringName, payload: Dictionary)
 signal enemy_despawn_received(world_id: StringName, entity_id: int)
 signal enemy_snapshot_received(world_id: StringName, payload: Dictionary, reliable: bool)
 signal loot_spawn_received(world_id: StringName, payload: Dictionary)
-signal loot_despawn_received(world_id: StringName, entity_id: int)
+signal loot_despawn_received(world_id: StringName, entity_id: int, collector_peer_id: int, collector_position: Vector2)
 signal loot_pickup_requested(peer_id: int, world_id: StringName, entity_id: int)
 signal loot_pickup_result_received(success: bool, item_id: StringName, quantity: int, message: String)
 signal return_channel_received(active: bool, progress: float)
@@ -772,8 +772,12 @@ func _receive_enemy_despawn(world_id: StringName, revision: int, entity_id: int)
 func broadcast_loot_spawn(world_id: StringName, payload: Dictionary) -> void:
 	_broadcast_world_payload(world_id, &"loot_spawn", payload)
 
-func broadcast_loot_despawn(world_id: StringName, entity_id: int) -> void:
-	_broadcast_world_payload(world_id, &"loot_despawn", {"entity_id": entity_id})
+func broadcast_loot_despawn(
+	world_id: StringName, entity_id: int, collector_peer_id: int = 0, collector_position: Vector2 = Vector2.ZERO
+) -> void:
+	_broadcast_world_payload(world_id, &"loot_despawn", {
+		"entity_id": entity_id, "collector_peer_id": collector_peer_id, "collector_position": collector_position,
+	})
 
 func send_loot_roster(peer_id: int, world_id: StringName, payloads: Array[Dictionary]) -> void:
 	if not is_host_session_ready() or not is_peer_world_ready(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
@@ -819,9 +823,12 @@ func _receive_loot_spawn(world_id: StringName, revision: int, payload: Dictionar
 		loot_spawn_received.emit(world_id, payload)
 
 @rpc("authority", "call_remote", "reliable")
-func _receive_loot_despawn(world_id: StringName, revision: int, entity_id: int) -> void:
-	if _accept_current_world_packet(world_id, revision):
-		loot_despawn_received.emit(world_id, entity_id)
+func _receive_loot_despawn(
+	world_id: StringName, revision: int, entity_id: int, collector_peer_id: int, collector_position: Vector2
+) -> void:
+	if entity_id > 0 and collector_peer_id >= 0 and collector_position.is_finite() \
+			and _accept_current_world_packet(world_id, revision):
+		loot_despawn_received.emit(world_id, entity_id, collector_peer_id, collector_position)
 
 func request_gather(interaction_id: StringName) -> void:
 	if interaction_id.is_empty() or not is_local_world_ready():
@@ -869,13 +876,16 @@ func _broadcast_world_payload(world_id: StringName, kind: StringName, payload: D
 			&"enemy_spawn": _receive_enemy_spawn.rpc_id(peer_id, world_id, ready.revision, payload)
 			&"enemy_despawn": _receive_enemy_despawn.rpc_id(peer_id, world_id, ready.revision, int(payload.get("entity_id", 0)))
 			&"loot_spawn": _receive_loot_spawn.rpc_id(peer_id, world_id, ready.revision, payload)
-			&"loot_despawn": _receive_loot_despawn.rpc_id(peer_id, world_id, ready.revision, int(payload.get("entity_id", 0)))
+			&"loot_despawn":
+				_receive_loot_despawn.rpc_id(peer_id, world_id, ready.revision, payload.entity_id,
+					payload.collector_peer_id, payload.collector_position)
 	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
 		match kind:
 			&"enemy_spawn": enemy_spawn_received.emit(world_id, payload)
 			&"enemy_despawn": enemy_despawn_received.emit(world_id, int(payload.get("entity_id", 0)))
 			&"loot_spawn": loot_spawn_received.emit(world_id, payload)
-			&"loot_despawn": loot_despawn_received.emit(world_id, int(payload.get("entity_id", 0)))
+			&"loot_despawn":
+				loot_despawn_received.emit(world_id, payload.entity_id, payload.collector_peer_id, payload.collector_position)
 
 func _accept_current_world_packet(world_id: StringName, revision: int) -> bool:
 	if is_server() or not _session_entered or not is_local_world_ready():

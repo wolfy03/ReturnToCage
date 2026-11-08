@@ -2,7 +2,7 @@ extends RefCounted
 
 func run(t: Node) -> void:
 	t.assert_equal(SaveManager.CURRENT_VERSION, 5, "indexed inventories use Save v5")
-	t.assert_equal(NetworkProtocol.VERSION, 17, "indexed owner snapshots use protocol v17")
+	t.assert_equal(NetworkProtocol.VERSION, 19, "indexed owner snapshots use protocol v19")
 	if not GameSession.player.inventory.has_method("to_slot_dict"):
 		t.assert_true(false, "inventory exposes indexed serialization")
 		return
@@ -48,11 +48,11 @@ func run(t: Node) -> void:
 	forged.revision += 1
 	forged.inventory[0].index = float(forged.inventory[0].index)
 	var invalid := PlayerItemStateSnapshot.from_payload(forged, ContentRegistry, owner)
-	t.assert_true(not invalid.error_message.is_empty() and not mirror.apply_item_network_mirror(invalid), "v17 rejects floating slot indices at the native wire boundary")
+	t.assert_true(not invalid.error_message.is_empty() and not mirror.apply_item_network_mirror(invalid), "v19 rejects floating slot indices at the native wire boundary")
 	t.assert_equal(mirror.to_save_dict(true), mirror_before, "rejected snapshot does not partially apply another private model")
 	var dense_payload := payload.duplicate(true)
 	dense_payload.inventory = GameSession.player.inventory.to_array()
-	t.assert_true(not PlayerItemStateSnapshot.from_payload(dense_payload, ContentRegistry, owner).error_message.is_empty(), "v17 does not accept a v16 dense item body")
+	t.assert_true(not PlayerItemStateSnapshot.from_payload(dense_payload, ContentRegistry, owner).error_message.is_empty(), "v19 does not accept a v16 dense item body")
 	_test_rejection(t, saved, path)
 	var legacy := saved.duplicate(true)
 	legacy.format_version = 4

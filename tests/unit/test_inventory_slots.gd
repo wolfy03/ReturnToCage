@@ -339,14 +339,14 @@ func _test_save_and_wire_limits(t: Node) -> void:
 	var expected_keys := ["equipment", "inventory", "inventory_capacity", "owner_player_id", "protected_capacity", "protected_inventory", "revision"]
 	var keys := payload.keys()
 	keys.sort()
-	t.assert_equal(keys, expected_keys, "Protocol v17 retains the owner snapshot envelope")
+	t.assert_equal(keys, expected_keys, "Protocol v19 retains the owner snapshot envelope")
 	var parsed := PlayerItemStateSnapshot.from_payload(payload, ContentRegistry, owner)
 	t.assert_true(parsed.error_message.is_empty() and mirror.apply_item_network_mirror(parsed), "existing owner snapshot atomically replaces a larger sparse mirror")
 	t.assert_equal(mirror.inventory.capacity, GameSession.player.inventory.capacity, "mirror capacity replaces occupied old tail safely")
-	t.assert_true(mirror.inventory.to_slot_dict() == GameSession.player.inventory.to_slot_dict(), "v17 replicates exact source coordinates")
+	t.assert_true(mirror.inventory.to_slot_dict() == GameSession.player.inventory.to_slot_dict(), "v19 replicates exact source coordinates")
 	t.assert_equal(_totals(mirror.inventory), _totals(GameSession.player.inventory), "wire limitation does not lose or duplicate quantities")
 	t.assert_equal(SaveManager.CURRENT_VERSION, 5, "Save uses v5")
-	t.assert_equal(NetworkProtocol.VERSION, 17, "Protocol uses v17")
+	t.assert_equal(NetworkProtocol.VERSION, 19, "Protocol uses v19")
 	t.assert_equal(LocalPlayerProfile.PROFILE_VERSION, 1, "Profile remains v1")
 	GameSession.start_new_game()
 

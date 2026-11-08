@@ -373,7 +373,7 @@ The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-o
 
 ## Slot persistence and server intents (Stage 3)
 
-The full runner includes `test_inventory_persistence.gd`; `--inventory-persistence-only` runs its Save v5/v17 boundaries. The source/release lifecycle adds real positive and forged slot RPCs, reconnect/world/privacy checks. Restart probes validate expanded sparse bags/storage, and mismatch uses v16 against v17. See [inventory_persistence.md](inventory_persistence.md).
+The full runner includes `test_inventory_persistence.gd`; `--inventory-persistence-only` runs its Save v5/v17 boundaries. The source/release lifecycle adds real positive and forged slot RPCs, reconnect/world/privacy checks. Restart probes validate expanded sparse bags/storage, and mismatch uses v18 against v19. See [inventory_persistence.md](inventory_persistence.md).
 
 ## Item data stability (Stage 6-A)
 

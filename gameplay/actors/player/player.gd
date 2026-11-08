@@ -15,6 +15,7 @@ signal attack_presented(
 signal dodge_presented(sequence: int, direction: float, duration_seconds: float)
 signal hurt_presented(sequence: int, duration_seconds: float)
 
+const ITEM_THROW_OFFSET := Vector2(12, -20)
 const PLAYER_VISUAL_SCENE_PATH := "res://presentation/player/player_visual.tscn"
 
 @onready var input: PlayerInputComponent = %Input
@@ -65,6 +66,9 @@ func is_local_player() -> bool:
 
 func is_simulation_authority() -> bool:
 	return simulation_enabled and NetworkManager.is_authoritative_simulation()
+
+func item_throw_origin() -> Vector2:
+	return to_global(Vector2(ITEM_THROW_OFFSET.x * facing, ITEM_THROW_OFFSET.y))
 
 func player_state() -> PlayerState:
 	return _bound_state

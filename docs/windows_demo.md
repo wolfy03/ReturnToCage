@@ -1,7 +1,7 @@
 # Windows demo export and verification
 
 Godot **4.7.2**, Windows Desktop **x86_64 release**. The current build uses
-NetworkProtocol **17**, Save **5**, and Local Profile **1**. Build from the latest `master`;
+NetworkProtocol **19**, Save **5**, and Local Profile **1**. Build from the latest `master`;
 existing uncommitted art and other user files are not part of a reproducible
 repository build and must be preserved separately.
 

@@ -94,6 +94,10 @@ func _run() -> void:
 			_fail("The packed item icon could not be displayed as field loot")
 			return
 		_report["authored_loot_icon"] = true
+		if not await _verify_loot_animation():
+			_fail("Packed loot throw, floating handoff or pickup cleanup failed")
+			return
+		_report["loot_animation"] = true
 		await get_tree().process_frame
 		await get_tree().process_frame
 		_pass()
@@ -170,6 +174,35 @@ func _verify_authored_loot_icon() -> bool:
 		and (icon.get_size() * visual.scale).is_equal_approx(Vector2(32, 32))
 	actor.free()
 	return valid
+
+func _verify_loot_animation() -> bool:
+	if not GameSession.start_new_game() or not SceneRouter.go_to_settlement():
+		return false
+	_app.menu.hide()
+	var player := NetworkManager.authoritative_actor(1)
+	var world: Node = _app.world_layer.get_child(0)
+	var manager := world.get_node_or_null("LootSpawnManager") as LootSpawnManager
+	if player == null or manager == null:
+		return false
+	var origin := player.item_throw_origin()
+	var landing := player.item_drop_point.global_position
+	var id := manager.spawn_loot(ItemStack.new(&"berry", 1), landing, Callable(), origin)
+	var loot := manager.get_loot(id)
+	var visual := loot.get_node_or_null("Visual") as Sprite2D if loot != null else null
+	if visual == null or visual.texture == null or loot._throw_tween == null \
+			or not visual.global_position.is_equal_approx(origin):
+		return false
+	if not await _wait(func() -> bool: return loot._throw_tween == null) \
+			or not loot.global_position.is_equal_approx(landing) \
+			or visual.get_instance_shader_parameter(&"float_weight") != 1.0:
+		return false
+	var bag := GameSession.get_local_player().inventory
+	var before := bag.count(&"berry")
+	if not manager.server_try_pickup(1, id).success or manager.get_loot(id) != null \
+			or visual.get_parent() != world or bag.count(&"berry") != before + 1:
+		return false
+	var visual_path := visual.get_path()
+	return await _wait(func() -> bool: return get_node_or_null(visual_path) == null)
 
 func _all_ready() -> bool:
 	for peer in NetworkManager.players:

@@ -109,9 +109,10 @@ func _run_host_scenario() -> void:
 	var unsecured_before := unsecured.to_slot_dict()
 	var loot_position := runtime.loot_manager().get_loot(_sewer_roster_id).global_position
 	NetworkManager.authoritative_actor(b).global_position = loot_position + Vector2.UP * 12
-	_confirmations.erase("CLAIM_INVENTORY_LOOT:%d" % b)
-	_send_command(b, "CLAIM_INVENTORY_LOOT", _sewer_roster_id)
-	if not await _wait_until(func() -> bool: return _confirmed("CLAIM_INVENTORY_LOOT", b)) \
+	var claim_command := "CLAIM_SETTLED_LOOT" if c > 0 else "CLAIM_INVENTORY_LOOT"
+	_confirmations.erase("%s:%d" % [claim_command, b])
+	_send_command(b, claim_command, _sewer_roster_id)
+	if not await _wait_until(func() -> bool: return _confirmed(claim_command, b)) \
 			or unsecured.to_slot_dict() != unsecured_before or runtime.loot_manager().get_loot(_sewer_roster_id) != null:
 		_fail("Sewer pickup failed to restore carried items to the owner-private main bag")
 		return
@@ -289,6 +290,7 @@ func _test_settlement_drops(client: int, other_client: int) -> bool:
 	var slot := _seed_drop_slot(host_bag, gear)
 	if slot < 0:
 		return false
+	var throw_origin := NetworkManager.authoritative_actor(1).item_throw_origin()
 	_item_service.request_drop_slot(PlayerItemCommandService.SlotInventory.MAIN, slot)
 	if host_bag.get_slot(slot) != null or manager.entity_ids().size() != 1:
 		return false
@@ -296,10 +298,20 @@ func _test_settlement_drops(client: int, other_client: int) -> bool:
 	var dropped := manager.get_loot(id)
 	var host_gear := _loot_manager().get_loot(id)
 	if dropped.stack.to_dict() != gear.to_dict() or dropped.has_node("Visual") \
-			or host_gear == null or not _uses_loot_texture(host_gear, ItemSlotView.PLACEHOLDER.resource_path.get_file()):
+			or host_gear == null or not host_gear._throw_origin.is_equal_approx(throw_origin) \
+			or not _uses_loot_texture(host_gear, ItemSlotView.PLACEHOLDER.resource_path.get_file()):
 		return false
-	NetworkManager.authoritative_actor(client).global_position = dropped.global_position + Vector2.UP * 12
+	var landing_x := dropped.global_position.x
+	var effect_path := NodePath("LootPickup_%d" % id)
+	NetworkManager.authoritative_actor(client).global_position = dropped.global_position + Vector2(50, -12)
+	if not await _wait_until(func() -> bool: return _actor(client).global_position.x > landing_x + 35.0):
+		return false
 	_send_command(client, "CLAIM_INVENTORY_LOOT", id)
+	if not await _wait_until(func() -> bool:
+		var effect := _current_world_root().get_node_or_null(effect_path) as Sprite2D
+		return effect != null and effect.global_position.x > landing_x + 18.0
+	) or manager.get_parent().has_node(effect_path) or manager.get_loot(id) != null:
+		return false
 	if not await _wait_until(func() -> bool: return _confirmed("CLAIM_INVENTORY_LOOT", client)) \
 			or manager.get_loot(id) != null or not gear.to_dict() in client_bag.to_array():
 		return false
@@ -466,12 +478,15 @@ func _command(command: String, value: int) -> void:
 				_fail("another world's loot appeared in the local scene")
 				return
 			NetworkManager.request_loot_pickup(value)
-		"CLAIM_INVENTORY_LOOT":
+		"CLAIM_INVENTORY_LOOT", "CLAIM_SETTLED_LOOT":
 			if not await _wait_until(func() -> bool: return _loot_manager().get_loot(value) != null):
 				_fail("Host drop did not reach client")
 				return
 			var loot := _loot_manager().get_loot(value)
 			var stack := loot.stack
+			if loot._throw_origin.is_finite() != (command == "CLAIM_INVENTORY_LOOT"):
+				_fail("loot throw origin does not match live spawn or roster")
+				return
 			var file_name := ItemSlotView.PLACEHOLDER.resource_path.get_file() if stack.item_id == &"leaf_vest" else "temp_usable_item_img.png"
 			if not _uses_loot_texture(loot, file_name):
 				_fail("client displayed the wrong field loot category")
@@ -488,6 +503,9 @@ func _command(command: String, value: int) -> void:
 		"INVENTORY_DROP_VISIBLE", "SETTLEMENT_LOOT_ROSTER":
 			if not await _wait_until(func() -> bool: return _loot_manager().get_loot(value) != null):
 				_fail("same-world peer did not receive inventory drop")
+				return
+			if command == "SETTLEMENT_LOOT_ROSTER" and _loot_manager().get_loot(value)._throw_origin.is_finite():
+				_fail("roster replayed an inventory throw on entry")
 				return
 		"FAR_ENTRY":
 			NetworkManager._request_enter_region.rpc_id(1, &"sewer_gate", &"sewer_region", world.world_id, world.revision)

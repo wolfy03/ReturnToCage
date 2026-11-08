@@ -1200,7 +1200,9 @@ func execute_slot_command(peer_id: int, command: Dictionary) -> CommandResult:
 	var manager := actor.get_parent().get_node_or_null("LootSpawnManager") as LootSpawnManager
 	if manager == null or manager.world_id != world.world_id or (NetworkManager.is_multiplayer_active() and not manager.authoritative_runtime):
 		return CommandResult.make(false, "Item drops require an active field")
-	return _player_item_command_service.try_slot_command(player, command, manager, actor.item_drop_point.global_position)
+	return _player_item_command_service.try_slot_command(
+		player, command, manager, actor.item_drop_point.global_position, actor.item_throw_origin()
+	)
 
 func apply_settlement_network_snapshot(snapshot: SettlementStateSnapshot) -> bool:
 	if not NetworkManager.is_session_connected() or NetworkManager.is_server() or snapshot == null:

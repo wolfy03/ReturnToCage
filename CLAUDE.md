@@ -292,7 +292,7 @@ python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
 
 ### payload 를 바꿀 때 함께 볼 것
 
-`NetworkProtocol.VERSION`(현재 **17**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
+`NetworkProtocol.VERSION`(현재 **19**) 상향 → 해당 DTO 의 `to_payload()`/`from_payload()`
 validator → 관련 unit test(인라인 payload 를 쓰는 테스트 포함) → handshake mismatch 테스트.
 같은 버전 안에서 구/신 payload 를 섞어 허용하지 않는다.
 

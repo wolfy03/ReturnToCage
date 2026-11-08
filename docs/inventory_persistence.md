@@ -1,6 +1,6 @@
 # Indexed inventory persistence — Stage 3
 
-Save **v5** and NetworkProtocol **v17** preserve capacity, gaps, quantity,
+Save **v5** and NetworkProtocol **v19** preserve capacity, gaps, quantity,
 instance identity and durability. Profile **v1** and the persistent `player_id`
 remain unchanged. Stage 4-A binds inventory controls to the existing intent API.
 
@@ -95,7 +95,7 @@ layout and revision unchanged.
   exact indices, instance IDs, quantities and owner-private state across restart.
   `tools/test_multiplayer_restart.py --rendered` can run the same assertions on
   Windows Compatibility; CI keeps its default headless probes.
-- Protocol mismatch E2E submits v16 to the v17 server and requires rejection.
+- Protocol mismatch E2E submits v18 to the v19 server and requires rejection.
 
 ## Data stability boundaries (Stage 6-A)
 

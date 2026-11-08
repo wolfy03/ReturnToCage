@@ -186,7 +186,8 @@ func try_slot_command(
 	player: PlayerState,
 	command: Dictionary,
 	loot_manager: LootSpawnManager = null,
-	drop_position: Vector2 = Vector2.INF
+	drop_position: Vector2 = Vector2.INF,
+	throw_origin: Vector2 = Vector2.INF
 ) -> CommandResult:
 	if player == null or not valid_slot_command(command):
 		return CommandResult.make(false, "Malformed inventory slot command")
@@ -194,7 +195,7 @@ func try_slot_command(
 		return CommandResult.make(false, "Stale inventory revision")
 	var inventory := slot_inventory(player, command.inventory)
 	if command.action == SlotAction.DROP:
-		return _try_drop_slot(inventory, command, loot_manager, drop_position)
+		return _try_drop_slot(inventory, command, loot_manager, drop_position, throw_origin)
 	if command.action == SlotAction.SORT:
 		if command.from != -1 or command.to != -1 or command.amount != 0 or not command.source.is_empty() or not command.target.is_empty():
 			return CommandResult.make(false, "Invalid inventory sort")
@@ -214,7 +215,10 @@ func try_slot_command(
 		SlotAction.SPLIT: return inventory.split_stack(from, to, command.amount)
 	return CommandResult.make(false, "Unknown inventory slot action")
 
-func _try_drop_slot(inventory: InventoryModel, command: Dictionary, loot_manager: LootSpawnManager, position: Vector2) -> CommandResult:
+func _try_drop_slot(
+	inventory: InventoryModel, command: Dictionary, loot_manager: LootSpawnManager,
+	position: Vector2, throw_origin: Vector2
+) -> CommandResult:
 	if command.inventory != SlotInventory.MAIN:
 		return CommandResult.make(false, "Only the main inventory can drop items")
 	if command.from < 0 or command.from >= inventory.capacity or command.to != -1 or not command.target.is_empty():
@@ -233,9 +237,9 @@ func _try_drop_slot(inventory: InventoryModel, command: Dictionary, loot_manager
 	var dropped := source.duplicate_stack()
 	dropped.quantity = command.amount
 	inventory.begin_update()
-	var entity_id := loot_manager.spawn_loot(dropped, position, func() -> bool:
+	var commit_source := func() -> bool:
 		return inventory.remove_from_slot(command.from, source, command.amount).success
-	)
+	var entity_id := loot_manager.spawn_loot(dropped, position, commit_source, throw_origin)
 	inventory.end_update()
 	if entity_id <= 0:
 		return CommandResult.make(false, "Could not drop item")

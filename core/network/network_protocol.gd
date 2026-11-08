@@ -19,7 +19,9 @@ extends RefCounted
 # v17: indexed item snapshots and revision-checked owner slot intents.
 # DROP is an optional action in the existing slot intent. Earlier hosts reject
 # the unknown action through the existing slot result without changing state.
-const VERSION := 17
+# v18 adds the live loot throw origin. Rosters carry null and skip the throw.
+# v19 adds the approved collector and body position to loot despawn.
+const VERSION := 19
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

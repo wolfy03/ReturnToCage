@@ -74,6 +74,8 @@ func run(t: Node) -> void:
 	var loot_id := loot_manager.entity_ids()[0]
 	var loot := loot_manager.get_loot(loot_id)
 	var sprite := loot.get_node_or_null("Visual") as Sprite2D
+	t.assert_true(not loot._throw_origin.is_finite() and sprite != null and sprite.position == Vector2(0, -5),
+		"monster loot appears already settled")
 	t.assert_true(sprite != null and sprite.texture == ItemSlotView.PLACEHOLDER,
 		"monster materials display their authored item icons")
 	loot.global_position = player.global_position

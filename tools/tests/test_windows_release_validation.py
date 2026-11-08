@@ -113,7 +113,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
         self.assertEqual(manifest["sha256"], hashlib.sha256(self.output.read_bytes()).hexdigest())
         self.assertFalse(manifest["source_dirty"])
         self.assertFalse(manifest["manual_two_pc_test"])
-        self.assertEqual((manifest["protocol"], manifest["save"], manifest["profile"]), (17, 5, 1))
+        self.assertEqual((manifest["protocol"], manifest["save"], manifest["profile"]), (19, 5, 1))
 
 
 if __name__ == "__main__":

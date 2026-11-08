@@ -86,7 +86,7 @@ class Probe:
         command = {"sequence": item["sequence"], "action": action, **values}
         publish_command(item["folder"], command)
         data = self.wait(role, item["sequence"])
-        if data["profile_id"] != item["player_id"] or (data["protocol"], data["save"], data["profile"]) != (17, 5, 1):
+        if data["profile_id"] != item["player_id"] or (data["protocol"], data["save"], data["profile"]) != (19, 5, 1):
             raise RuntimeError("persistent identity or version contract changed")
         if self.args.rendered and data["display_server"] == "headless":
             raise RuntimeError("rendered GUI verification ran headless")

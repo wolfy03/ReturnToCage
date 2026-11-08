@@ -162,6 +162,8 @@ func _test_offline(t: Node) -> void:
 		t.assert_true(not settlement_loot.server_try_pickup(1, id).success, "full Settlement bag rejects pickup")
 		t.assert_true(settlement_loot.get_loot(id) == loot and loot.claim_state == LootActor.ClaimState.AVAILABLE,
 			"failed pickup keeps the entity available")
+		t.assert_true(not settlement_loot.get_parent().has_node("LootPickup_%d" % id),
+			"rejected pickup creates no absorption effect")
 		t.assert_equal(bag.to_slot_dict(), full, "failed pickup rolls back even the portion that could merge")
 		t.assert_equal(GameSession.get_local_player().item_state_revision, revision, "failed pickup preserves item revision")
 		bag.clear()
@@ -172,6 +174,7 @@ func _test_offline(t: Node) -> void:
 		t.assert_equal(bag.count(&"berry"), 2, "Settlement interaction restores the full stack to MAIN")
 		t.assert_equal(nested, [false], "reentrant pickup cannot claim the same stack")
 		t.assert_true(settlement_loot.get_loot(id) == null, "successful pickup removes Settlement loot")
+	await _test_throw(t, settlement_loot)
 	t.assert_true(NetworkManager.request_enter_region(&"sewer_gate", &"sewer_region").success, "offline fixture enters Sewer through the gameplay path")
 	t.assert_equal(SceneRouter.current_world_id(), &"adventure:sewer_region", "offline Sewer scene loads")
 	t.assert_true(service.request_drop_slot(main, 0) > 0 and responses.pop_back().success, "offline authority can drop an entire stack")
@@ -182,11 +185,160 @@ func _test_offline(t: Node) -> void:
 		t.assert_true(sewer_loot.server_try_pickup(1, id).success and bag.count(&"berry") == 2,
 			"offline Adventure pickup restores the carried stack to MAIN")
 	ContentRegistry._definitions[berry.id] = berry
+	_test_visual_failures(t, sewer_loot)
+	var actor := NetworkManager.authoritative_actor(1)
+	var pickup_id := sewer_loot.spawn_loot(ItemStack.new(&"berry", 1), actor.global_position)
+	t.assert_true(sewer_loot.server_try_pickup(1, pickup_id).success, "absorption starts before changing worlds")
+	var leaving_effect := sewer_loot.get_parent().get_node_or_null("LootPickup_%d" % pickup_id) as Sprite2D
+	t.assert_true(leaving_effect != null, "pickup effect is owned by the current world")
+	var despawn_id := sewer_loot.spawn_loot(ItemStack.new(&"berry", 1), actor.global_position)
+	NetworkManager.loot_despawn_received.emit(sewer_loot.world_id, despawn_id, 0, Vector2.ZERO)
+	t.assert_true(sewer_loot.get_loot(despawn_id) == null and not sewer_loot.get_parent().has_node("LootPickup_%d" % despawn_id),
+		"a plain despawn removes loot without creating an absorption effect")
+	t.assert_true(service.request_drop_slot(main, 0) > 0 and responses.pop_back().success, "retiring world starts a throw")
+	var departing := sewer_loot.get_loot(sewer_loot.entity_ids()[0])
+	t.assert_true(departing._throw_origin.is_finite(), "world is retired during an active throw")
+	t.assert_true(NetworkManager.request_return_to_settlement(AdventureSession.Result.NORMAL_ESCAPE).success \
+		and SceneRouter.current_world_id() == &"settlement", "world transition succeeds during an active throw")
+	await t.get_tree().process_frame
+	t.assert_true(not is_instance_valid(departing), "world transition frees the active throw")
+	t.assert_true(not is_instance_valid(leaving_effect), "world transition frees the active absorption")
 	NetworkManager.leave_game()
 	SceneRouter.register_world_layer(null)
 	service.queue_free()
 	layer.queue_free()
 	await t.get_tree().process_frame
+
+func _test_throw(t: Node, loot_manager: LootSpawnManager) -> void:
+	var player_actor := NetworkManager.authoritative_actor(1)
+	var bag := GameSession.get_local_player().inventory
+	var original_slots := bag.slots()
+	var original_capacity := bag.capacity
+	bag.initialize_slots([ItemStack.new(&"berry", 1), ItemStack.new(&"water_drop", 1)], 2)
+	var main := PlayerItemCommandService.SlotInventory.MAIN
+	var original_facing := player_actor.facing
+	var landing := player_actor.item_drop_point.global_position
+	var throws: Array[LootActor] = []
+	for index in 2:
+		player_actor.facing = 1.0 if index == 0 else -1.0
+		var origin := player_actor.item_throw_origin()
+		t.assert_true(origin.y < player_actor.global_position.y and absf(origin.x - player_actor.global_position.x) < 20.0,
+			"the authoritative throw starts near the player's head")
+		t.assert_true(service.request_drop_slot(main, index) > 0 and responses.pop_back().success, "offline slot drop starts a throw")
+		var loot := loot_manager.get_loot(loot_manager.entity_ids().back())
+		var visual := loot.get_node("Visual") as Sprite2D
+		t.assert_true(visual.global_position.is_equal_approx(origin) and visual.get_instance_shader_parameter(&"float_weight") == 0.0,
+			"the sprite starts at the supplied origin with floating disabled")
+		throws.append(loot)
+	player_actor.facing = original_facing
+
+	await t.get_tree().create_timer(0.2).timeout
+	for loot in throws:
+		var visual := loot.get_node("Visual") as Sprite2D
+		var progress := visual.rotation / TAU
+		var rest := landing + Vector2(0, -5)
+		var chord := loot._throw_origin.lerp(rest, progress)
+		t.assert_true(progress > 0.0 and progress < 1.0 and is_equal_approx(visual.global_position.x, chord.x) \
+			and visual.global_position.y < chord.y and visual.global_position.y < loot._throw_origin.y,
+			"each sprite rotates as it travels above the chord between its start and landing")
+		var shape := loot.get_node("CollisionShape2D") as CollisionShape2D
+		t.assert_true(loot.global_position.is_equal_approx(landing) and shape.global_position.is_equal_approx(landing),
+			"throwing never moves the entity or its collision")
+	var removed: LootActor = throws.pop_back()
+	var effect := removed.get_node("Visual") as Sprite2D
+	var handoff := effect.global_transform
+	var initial_scale := effect.scale
+	var old_throw := removed._throw_tween
+	var removed_id := removed.network_entity_id
+	var material := effect.material
+	removed.activated.emit(player_actor)
+	t.assert_true(effect.get_parent() == loot_manager.get_parent() and effect.get_child_count() == 0 \
+		and effect.global_transform.is_equal_approx(handoff) and effect.material == material and not old_throw.is_valid(),
+		"absorption reuses the current visual, with no collision child or handoff jump")
+	t.assert_true(removed._throw_tween == null, "pickup releases its interrupted throw tween")
+	t.assert_true(not loot_manager.server_try_pickup(1, removed_id).success, "a repeated pickup cannot claim an absorbing item")
+	var world := loot_manager.get_parent()
+	var children_before_replay := world.get_child_count()
+	NetworkManager.loot_despawn_received.emit(loot_manager.world_id, removed_id, 1, player_actor.global_position)
+	t.assert_true(world.get_child_count() == children_before_replay \
+		and world.get_node_or_null("LootPickup_%d" % removed_id) == effect,
+		"a repeated despawn leaves the single absorption sprite intact")
+	await t.get_tree().process_frame
+	t.assert_true(not is_instance_valid(removed) and bag.count(&"water_drop") == 1,
+		"pickup removes the entity immediately while the absorption continues")
+	await t.get_tree().create_timer(0.10).timeout
+	t.assert_true(is_instance_valid(effect) and effect.scale.x < initial_scale.x \
+		and effect.global_position.distance_to(player_actor.global_position) < handoff.origin.distance_to(player_actor.global_position),
+		"the detached sprite shrinks and moves toward the player")
+	await t.get_tree().create_timer(0.55).timeout
+	t.assert_true(not is_instance_valid(effect), "the absorption sprite frees itself after its tween")
+	var landed := throws[0].get_node("Visual") as Sprite2D
+	t.assert_true(landed.position.is_equal_approx(Vector2(0, -5)) and is_equal_approx(cos(landed.rotation), 1.0) \
+		and is_equal_approx(float(landed.get_instance_shader_parameter(&"float_weight")), 1.0),
+		"the other sprite lands upright and resumes full shader floating")
+	t.assert_true(throws[0]._throw_tween == null, "settled loot releases its completed throw tween")
+	var settled_position := landed.global_position
+	throws[0].activated.emit(player_actor)
+	t.assert_true(landed.global_position.is_equal_approx(settled_position) \
+		and landed.get_instance_shader_parameter(&"float_weight") == 1.0, "settled pickup keeps the bob at visual handoff")
+	bag.initialize_slots(original_slots, original_capacity)
+
+func _test_visual_failures(t: Node, loot_manager: LootSpawnManager) -> void:
+	var actor := NetworkManager.authoritative_actor(1)
+	var scene_path := LootActor.VISUAL_SCENE_PATH
+	var scene := LootActor._visual_scene
+	var attempted := LootActor._visual_scene_load_attempted
+	var wrong_root := Node2D.new()
+	var wrong_scene := PackedScene.new()
+	var packed := wrong_scene.pack(wrong_root)
+	wrong_root.free()
+	t.assert_equal(packed, OK, "invalid visual root fixture packs successfully")
+	# Replace the resource cache entry without touching the project files.
+	for bad_scene: Resource in [Resource.new(), PackedScene.new(), wrong_scene]:
+		bad_scene.take_over_path(scene_path)
+		LootActor._visual_scene = null
+		LootActor._visual_scene_load_attempted = false
+		_check_pickup_without_visual(t, loot_manager, actor, false)
+		scene.take_over_path(scene_path)
+		_check_pickup_without_visual(t, loot_manager, actor, false)
+	LootActor._visual_scene = scene
+	LootActor._visual_scene_load_attempted = attempted
+
+	var category := ItemDisplayCategory.Kind.CONSUMABLE
+	var texture_path: String = LootActor.DISPLAY_TEXTURE_PATHS[category]
+	var texture := ResourceLoader.load(texture_path)
+	var cached := LootActor._display_textures.duplicate()
+	var bad_texture := Resource.new()
+	bad_texture.take_over_path(texture_path)
+	LootActor._display_textures.erase(category)
+	_check_pickup_without_visual(t, loot_manager, actor, true)
+	texture.take_over_path(texture_path)
+	_check_pickup_without_visual(t, loot_manager, actor, true)
+	LootActor._display_textures.assign(cached)
+
+func _check_pickup_without_visual(t: Node, loot_manager: LootSpawnManager, actor: PlayerActor, expect_sprite: bool) -> void:
+	var position := actor.item_drop_point.global_position
+	# Resource failures are intentional. Keep other test errors visible.
+	var print_errors := Engine.print_error_messages
+	Engine.print_error_messages = false
+	var id := loot_manager.spawn_loot(ItemStack.new(&"berry", 1), position)
+	Engine.print_error_messages = print_errors
+	var loot := loot_manager.get_loot(id)
+	t.assert_true(loot != null, "loot remains registered when a visual resource fails")
+	if loot == null:
+		return
+	var visual := loot.get_node_or_null("Visual") as Sprite2D
+	t.assert_true((visual != null and visual.texture == null) if expect_sprite else visual == null,
+		"failed visual resource is not retried even after the resource cache is repaired")
+	var shape := loot.get_node("CollisionShape2D") as CollisionShape2D
+	t.assert_true(loot.global_position.is_equal_approx(position) and shape.global_position.is_equal_approx(position) \
+		and not shape.disabled and loot.collision_layer == 8 and loot.stack.to_dict() == ItemStack.new(&"berry", 1).to_dict() \
+		and loot.can_interact(actor), "visual failure preserves item data, collision and interaction")
+	var personal := GameSession.adventure_session_for_peer(actor.peer_id).get_player_adventure(actor.peer_id)
+	var previous := personal.unsecured_loot.count(&"berry")
+	loot.activated.emit(actor)
+	t.assert_true(personal.unsecured_loot.count(&"berry") == previous + 1 and loot_manager.get_loot(id) == null,
+		"loot with a visual failure can still be picked up")
 
 func _test_sprites(t: Node) -> void:
 	var quest := ItemDefinition.new()

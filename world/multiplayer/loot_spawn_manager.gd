@@ -5,6 +5,8 @@ signal pickup_result(success: bool, item_id: StringName, quantity: int, message:
 
 const LOOT_SCENE := preload("res://gameplay/actors/loot/loot_actor.tscn")
 const PICKUP_RANGE := 82.0
+const PICKUP_DURATION := 0.25
+const PICKUP_FLOAT_FADE := 0.10
 
 var _registry: NetworkEntityRegistry
 var _loot: Dictionary[int, LootActor] = {}
@@ -55,7 +57,10 @@ func _exit_tree() -> void:
 
 ## Commit a carried stack only after its loot actor is registered, before publishing it.
 ## Re-picking carried drops does not grant quest collection credit.
-func spawn_loot(stack: ItemStack, position: Vector2, commit_source: Callable = Callable()) -> int:
+func spawn_loot(
+	stack: ItemStack, position: Vector2, commit_source: Callable = Callable(),
+	throw_origin: Vector2 = Vector2.INF
+) -> int:
 	if not _can_mutate_loot() or not position.is_finite():
 		return 0
 	var world := get_parent()
@@ -72,7 +77,7 @@ func spawn_loot(stack: ItemStack, position: Vector2, commit_source: Callable = C
 		actor.free()
 		return 0
 	actor.name = "Loot_%d" % entity_id
-	actor.configure(entity_id, stack, self)
+	actor.configure(entity_id, stack, self, throw_origin)
 	actor.dropped_from_inventory = commit_source.is_valid()
 	actor.position = (world as Node2D).to_local(position) if world is Node2D else position
 	world.add_child(actor, true)
@@ -86,7 +91,9 @@ func spawn_loot(stack: ItemStack, position: Vector2, commit_source: Callable = C
 	_loot[entity_id] = actor
 	print("[LOOT] Spawn %d (%s x%d)" % [entity_id, stack.item_id, stack.quantity])
 	if NetworkManager.is_server():
-		NetworkManager.broadcast_loot_spawn(world_id, _snapshot(actor).to_payload())
+		var snapshot := _snapshot(actor)
+		snapshot.throw_origin = throw_origin
+		NetworkManager.broadcast_loot_spawn(world_id, snapshot.to_payload())
 	return entity_id
 
 func request_pickup(entity_id: int) -> void:
@@ -135,7 +142,7 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 		return result
 	var item_id := loot.stack.item_id
 	var quantity := loot.stack.quantity
-	_despawn_authoritative(entity_id)
+	_despawn_authoritative(entity_id, player)
 	destination.end_update()
 	if not loot.dropped_from_inventory:
 		GameSession.report_gameplay_event(GameplayEvent.collect_item(world.player_id, item_id, quantity))
@@ -157,15 +164,49 @@ func _on_loot_pickup_requested(peer_id: int, p_world_id: StringName, entity_id: 
 func _on_loot_pickup_result_received(success: bool, item_id: StringName, quantity: int, message: String) -> void:
 	pickup_result.emit(success, item_id, quantity, message)
 
-func _despawn_authoritative(entity_id: int) -> void:
+func _despawn_authoritative(entity_id: int, collector: PlayerActor) -> void:
 	var actor: LootActor = _loot.get(entity_id)
 	_loot.erase(entity_id)
 	_registry.unregister_entity(entity_id)
-	if is_instance_valid(actor):
-		actor.claim_state = LootActor.ClaimState.DESPAWNED
-		actor.queue_free()
+	var collector_position := collector.global_position
+	_retire_loot(actor, collector.peer_id, collector_position)
 	if NetworkManager.is_server():
-		NetworkManager.broadcast_loot_despawn(world_id, entity_id)
+		NetworkManager.broadcast_loot_despawn(world_id, entity_id, collector.peer_id, collector_position)
+
+func _retire_loot(actor: LootActor, collector_peer_id: int, collector_position: Vector2) -> void:
+	if not is_instance_valid(actor):
+		return
+	actor.claim_state = LootActor.ClaimState.DESPAWNED
+	if not authoritative_runtime and collector_peer_id > 0:
+		_play_pickup_effect(actor, collector_peer_id, collector_position)
+	actor.queue_free()
+
+func _play_pickup_effect(actor: LootActor, collector_peer_id: int, collector_position: Vector2) -> void:
+	var visual := actor.detach_pickup_visual()
+	if visual == null:
+		return
+	var player_manager := get_parent().get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
+	var collector := player_manager.get_actor(collector_peer_id) if player_manager != null else null
+	var collector_ref: WeakRef = weakref(collector) if collector != null else null
+	var start := visual.global_position
+	var start_scale := visual.scale
+	var tween := visual.create_tween()
+	tween.tween_method(func(progress: float) -> void:
+		var destination := collector_position
+		var target := collector_ref.get_ref() as PlayerActor if collector_ref != null else null
+		if target != null and target.is_inside_tree() and not target.is_queued_for_deletion():
+			destination = target.global_position
+		visual.global_position = start.lerp(destination, progress)
+		visual.scale = start_scale * lerpf(1.0, 0.2, progress)
+	, 0.0, 1.0, PICKUP_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	# Keep the displayed bob at handoff, then fade it out during the flight.
+	var weight: Variant = visual.get_instance_shader_parameter(&"float_weight")
+	var initial_weight := float(weight) if weight != null else 1.0
+	if initial_weight > 0.0:
+		tween.parallel().tween_method(func(value: float) -> void:
+			visual.set_instance_shader_parameter(&"float_weight", value)
+		, initial_weight, 0.0, PICKUP_FLOAT_FADE)
+	tween.tween_callback(visual.queue_free)
 
 func _snapshot(actor: LootActor) -> LootEntitySnapshot:
 	var snapshot := LootEntitySnapshot.new()
@@ -195,19 +236,19 @@ func _on_loot_spawn_received(p_world_id: StringName, payload: Dictionary) -> voi
 		actor.free()
 		return
 	actor.name = "Loot_%d" % snapshot.entity_id
-	actor.configure(snapshot.entity_id, snapshot.stack, self)
+	actor.configure(snapshot.entity_id, snapshot.stack, self, snapshot.throw_origin)
 	var world := get_parent()
 	actor.position = (world as Node2D).to_local(snapshot.position) if world is Node2D else snapshot.position
 	world.add_child(actor, true)
 	_loot[snapshot.entity_id] = actor
 
-func _on_loot_despawn_received(p_world_id: StringName, entity_id: int) -> void:
+func _on_loot_despawn_received(
+	p_world_id: StringName, entity_id: int, collector_peer_id: int, collector_position: Vector2
+) -> void:
 	if authoritative_runtime or p_world_id != world_id or entity_id <= 0:
 		return
 	var actor: LootActor = _loot.get(entity_id)
 	_loot.erase(entity_id)
 	if _registry != null:
 		_registry.unregister_entity(entity_id)
-	if is_instance_valid(actor):
-		actor.claim_state = LootActor.ClaimState.DESPAWNED
-		actor.queue_free()
+	_retire_loot(actor, collector_peer_id, collector_position)

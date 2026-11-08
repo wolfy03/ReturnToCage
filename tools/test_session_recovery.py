@@ -216,7 +216,7 @@ class LifecycleChecks(RosterController):
             result = self.wait(role, item["sequence"])
             if result["process_id"] != item["game_pid"] or result["profile_id"] != item["player_id"] or (
                 result["protocol"], result["save"], result["profile"]
-            ) != (17, 5, 1):
+            ) != (19, 5, 1):
                 raise RuntimeError("Craft race changed process, profile or version contract")
             if result["field_gear_won"]:
                 winners.append(role)

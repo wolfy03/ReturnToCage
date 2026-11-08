@@ -35,7 +35,7 @@ func _ready() -> void:
 		multiplayer.connected_to_server.connect(func() -> void:
 			NetworkManager.state = NetworkManager.ConnectionState.CONNECTED
 			NetworkManager._local_peer_id = multiplayer.get_unique_id()
-			NetworkManager._request_handshake.rpc_id(1, 15, NetworkManager.local_profile_player_id(), "v15 client")
+			NetworkManager._request_handshake.rpc_id(1, 18, NetworkManager.local_profile_player_id(), "v18 client")
 		)
 		NetworkManager.connection_failed.connect(func() -> void:
 			if NetworkManager.last_error != "Incompatible multiplayer protocol version":

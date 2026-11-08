@@ -73,8 +73,22 @@ func run(t: Node) -> void:
 	valid_enemy["enemy_id"] = "missing_enemy"
 	t.assert_true(not EnemyRuntimeSnapshot.from_payload(valid_enemy).error_message.is_empty(), "unknown enemy snapshot is rejected")
 
-	var loot_payload := {"entity_id": 5, "position": Vector2.ZERO, "stack": ItemStack.new(&"rusty_scrap", 2).to_dict()}
-	t.assert_true(LootEntitySnapshot.from_payload(loot_payload).error_message.is_empty(), "validated loot snapshot is accepted")
+	var loot_payload := {
+		"entity_id": 5, "position": Vector2.ZERO, "stack": ItemStack.new(&"rusty_scrap", 2).to_dict(),
+		"throw_origin": null,
+	}
+	var roster := LootEntitySnapshot.from_payload(loot_payload)
+	t.assert_true(roster.error_message.is_empty() and not roster.throw_origin.is_finite(), "loot roster has no throw")
+	loot_payload["throw_origin"] = Vector2(12, -32)
+	var live := LootEntitySnapshot.from_payload(loot_payload)
+	t.assert_equal(live.to_payload(), loot_payload, "live loot keeps the server throw origin")
+	loot_payload["throw_origin"] = Vector2.INF
+	t.assert_true(not LootEntitySnapshot.from_payload(loot_payload).error_message.is_empty(), "nonfinite throw origin is rejected")
+	loot_payload["throw_origin"] = "forged"
+	t.assert_true(not LootEntitySnapshot.from_payload(loot_payload).error_message.is_empty(), "wrong throw origin type is rejected")
+	loot_payload.erase("throw_origin")
+	t.assert_true(not LootEntitySnapshot.from_payload(loot_payload).error_message.is_empty(), "v17 loot payload is rejected")
+	loot_payload["throw_origin"] = null
 	loot_payload["entity_id"] = -1
 	t.assert_true(not LootEntitySnapshot.from_payload(loot_payload).error_message.is_empty(), "negative loot entity id is rejected")
 	loot_payload["entity_id"] = 5
