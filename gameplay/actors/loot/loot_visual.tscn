@@ -5,8 +5,7 @@
 [sub_resource type="ShaderMaterial" id="LootFloatMaterial"]
 shader = ExtResource("2")
 
-[node name="Visual" type="Polygon2D"]
+[node name="Visual" type="Sprite2D"]
+texture_filter = 1
 material = SubResource("LootFloatMaterial")
 position = Vector2(0, -5)
-polygon = PackedVector2Array(-10, -8, 10, -8, 13, 5, 0, 12, -13, 5)
-color = Color(0.88, 0.72, 0.25, 1)

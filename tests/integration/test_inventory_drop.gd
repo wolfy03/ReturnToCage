@@ -126,6 +126,8 @@ func run(t: Node) -> void:
 	await t.get_tree().process_frame
 	NetworkManager.leave_game()
 	await _test_offline(t)
+	_test_sprites(t)
+	_test_authored_sprites(t)
 
 func _test_offline(t: Node) -> void:
 	var layer := Node.new()
@@ -137,6 +139,10 @@ func _test_offline(t: Node) -> void:
 		responses.append(CommandResult.make(success, message))
 	)
 	t.assert_true(GameSession.start_new_game() and SceneRouter.go_to_settlement(), "offline drop fixture starts in Settlement")
+	var berry := ContentRegistry.get_item(&"berry")
+	var authored_berry := berry.duplicate() as ItemDefinition
+	authored_berry.icon = ItemSlotView.PLACEHOLDER
+	ContentRegistry._definitions[berry.id] = authored_berry
 	var bag := GameSession.get_local_player().inventory
 	bag.initialize([ItemStack.new(&"berry", 2)])
 	var main := PlayerItemCommandService.SlotInventory.MAIN
@@ -147,6 +153,8 @@ func _test_offline(t: Node) -> void:
 		var id := settlement_loot.entity_ids()[0]
 		var loot := settlement_loot.get_loot(id)
 		t.assert_equal(loot.stack.quantity, 2, "Settlement field holds the entire dropped stack")
+		var visual := loot.get_node_or_null("Visual") as Sprite2D
+		t.assert_true(visual != null and visual.texture == authored_berry.icon, "inventory drop displays its authored icon")
 		var almost_full := ContentRegistry.get_item(&"berry").max_stack - 1
 		bag.initialize([ItemStack.new(&"berry", almost_full)], 1)
 		var full := bag.to_slot_dict()
@@ -173,11 +181,117 @@ func _test_offline(t: Node) -> void:
 		var id := sewer_loot.entity_ids()[0]
 		t.assert_true(sewer_loot.server_try_pickup(1, id).success and bag.count(&"berry") == 2,
 			"offline Adventure pickup restores the carried stack to MAIN")
+	ContentRegistry._definitions[berry.id] = berry
 	NetworkManager.leave_game()
 	SceneRouter.register_world_layer(null)
 	service.queue_free()
 	layer.queue_free()
 	await t.get_tree().process_frame
+
+func _test_sprites(t: Node) -> void:
+	var quest := ItemDefinition.new()
+	quest.id = &"test_field_quest_sprite"
+	quest.category = ItemDefinition.ItemCategory.QUEST
+	quest.hunger_restore = 1.0
+	ContentRegistry._definitions[quest.id] = quest
+	var consumable := ItemDefinition.new()
+	consumable.hunger_restore = 1.0
+	t.assert_equal(InventoryWindow.tab_for(consumable), InventoryWindow.Tab.CONSUMABLE, "usable resource stays in the consumable tab")
+	var gear := EquipmentDefinition.new()
+	gear.category = ItemDefinition.ItemCategory.QUEST
+	t.assert_equal(InventoryWindow.tab_for(gear), InventoryWindow.Tab.EQUIPMENT, "equipment takes precedence over quest category")
+	var fixtures := {
+		&"leaf_vest": ["equipment", InventoryWindow.Tab.EQUIPMENT],
+		&"berry": ["usable", InventoryWindow.Tab.CONSUMABLE],
+		&"return_seed": ["usable", InventoryWindow.Tab.CONSUMABLE],
+		&"water_drop": ["usable", InventoryWindow.Tab.CONSUMABLE],
+		&"rusty_scrap": ["etc", InventoryWindow.Tab.OTHER],
+		quest.id: ["quest", InventoryWindow.Tab.QUEST],
+	}
+	var material: Material
+	var consumable_texture: Texture2D
+	var phases: Array[float] = []
+	var scene := preload("res://gameplay/actors/loot/loot_actor.tscn")
+	for id: StringName in fixtures:
+		var loot := scene.instantiate() as LootActor
+		loot.configure(phases.size() + 1, ItemStack.new(id, 1), null)
+		loot.position = Vector2(90, 110)
+		t.add_child(loot)
+		var visual := loot.get_node_or_null("Visual") as Sprite2D
+		t.assert_equal(InventoryWindow.tab_for(ContentRegistry.get_item(id)), fixtures[id][1], "inventory and loot category agree for %s" % id)
+		t.assert_true(visual != null and visual.texture != null, "field Sprite2D has a texture for %s" % id)
+		if visual != null and visual.texture != null:
+			var path := "res://assets/item/temp_%s_item_img.png" % fixtures[id][0]
+			t.assert_equal(visual.texture.resource_path, path, "loot uses the category texture for %s" % id)
+			t.assert_equal(visual.texture.get_size(), Vector2(32, 32), "imported texture fits the 32px display size")
+			t.assert_true(visual.centered and visual.position == Vector2(0, -5) and visual.scale == Vector2.ONE \
+				and visual.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "sprite preserves the unscaled float origin and nearest filtering")
+			if material == null:
+				material = visual.material
+			t.assert_true(material is ShaderMaterial and visual.material == material, "loot shares one ShaderMaterial")
+			if fixtures[id][0] == "usable":
+				if consumable_texture == null:
+					consumable_texture = visual.texture
+				t.assert_true(visual.texture == consumable_texture, "consumable sprites share one Texture2D")
+			var phase: float = visual.get_instance_shader_parameter(&"phase")
+			t.assert_true(phase not in phases, "loot retains its individual float phase")
+			phases.append(phase)
+		var shape := loot.get_node("CollisionShape2D") as CollisionShape2D
+		t.assert_true(loot.position == Vector2(90, 110) and shape.position == Vector2.ZERO \
+			and (shape.shape as CircleShape2D).radius == 18.0 and not loot.is_processing() and not loot.is_physics_processing(),
+			"sprite initialization preserves the collision and adds no frame callback")
+		loot.free()
+	ContentRegistry._definitions.erase(quest.id)
+
+func _test_authored_sprites(t: Node) -> void:
+	var quest := ItemDefinition.new()
+	quest.id = &"test_authored_quest_icon"
+	quest.category = ItemDefinition.ItemCategory.QUEST
+	var definitions: Array[ItemDefinition] = [
+		ContentRegistry.get_item(&"leaf_vest"), ContentRegistry.get_item(&"berry"),
+		ContentRegistry.get_item(&"rusty_scrap"), quest,
+	]
+	var sizes := [Vector2i(80, 40), Vector2i(12, 18), Vector2i(16, 64), Vector2i(80, 40)]
+	var displayed := [Vector2(32, 16), Vector2(12, 18), Vector2(8, 32), Vector2(32, 16)]
+	var scene := preload("res://gameplay/actors/loot/loot_actor.tscn")
+	var shared_material: ShaderMaterial
+	var shared_icon: Texture2D
+	for index in definitions.size():
+		var original := definitions[index]
+		var fixture := original.duplicate() as ItemDefinition
+		if index == definitions.size() - 1:
+			fixture.icon = shared_icon
+		else:
+			var image := Image.create_empty(sizes[index].x, sizes[index].y, false, Image.FORMAT_RGBA8)
+			image.fill_rect(Rect2i(Vector2i.ONE, sizes[index] - Vector2i(2, 2)), Color.ORANGE_RED)
+			fixture.icon = ImageTexture.create_from_image(image)
+			if index == 0:
+				shared_icon = fixture.icon
+		ContentRegistry._definitions[fixture.id] = fixture
+		var loot := scene.instantiate() as LootActor
+		loot.configure(20 + index, ItemStack.new(fixture.id, 1), null)
+		loot.position = Vector2(90, 110)
+		t.add_child(loot)
+		var visual := loot.get_node_or_null("Visual") as Sprite2D
+		t.assert_true(visual != null and visual.texture == fixture.icon, "authored icon wins for %s" % fixture.id)
+		if visual != null and visual.texture != null:
+			t.assert_true((visual.texture.get_size() * visual.scale).is_equal_approx(displayed[index]),
+				"authored icon fits within 32px without changing its aspect ratio or enlarging it")
+			t.assert_equal(fixture.icon.get_size(), Vector2(sizes[index]), "display size preserves the shared texture dimensions")
+			if shared_material == null:
+				shared_material = visual.material as ShaderMaterial
+			t.assert_true(shared_material != null and visual.material == shared_material, "authored icons share one float material")
+			var compensation: Variant = visual.get_instance_shader_parameter(&"inverse_display_scale")
+			t.assert_true(compensation != null and is_equal_approx(float(compensation) * visual.scale.y, 1.0),
+				"float amplitude is independent of the sprite display scale")
+			t.assert_true(visual.centered and visual.position == Vector2(0, -5) and loot.position == Vector2(90, 110) \
+				and (loot.get_node("CollisionShape2D") as CollisionShape2D).position == Vector2.ZERO,
+				"authored icons preserve the visual origin and collision coordinates")
+		loot.free()
+		if original == quest:
+			ContentRegistry._definitions.erase(quest.id)
+		else:
+			ContentRegistry._definitions[original.id] = original
 
 func _command(kind: int, source: int, amount: int) -> Dictionary:
 	return service.make_slot_intent(PlayerItemCommandService.SlotAction.DROP, kind, source, -1, amount)

@@ -22,7 +22,12 @@ class SlotDrag extends RefCounted:
 	var revision: int
 	var split: bool
 
-enum Tab { EQUIPMENT, CONSUMABLE, OTHER, QUEST }
+enum Tab {
+	EQUIPMENT = ItemDisplayCategory.Kind.EQUIPMENT,
+	CONSUMABLE = ItemDisplayCategory.Kind.CONSUMABLE,
+	OTHER = ItemDisplayCategory.Kind.OTHER,
+	QUEST = ItemDisplayCategory.Kind.QUEST,
+}
 const SLOT_SCENE := preload("res://ui/inventory/item_slot_view.tscn")
 const PAGE_SIZE := 24
 const TAB_NAMES := ["Equip", "Use", "Etc", "Quest"]
@@ -82,14 +87,7 @@ func _ready() -> void:
 	display_items([], "")
 
 static func tab_for(definition: ItemDefinition) -> Tab:
-	if definition is EquipmentDefinition:
-		return Tab.EQUIPMENT
-	if definition != null:
-		if definition.category == ItemDefinition.ItemCategory.QUEST:
-			return Tab.QUEST
-		if definition.category in [ItemDefinition.ItemCategory.FOOD, ItemDefinition.ItemCategory.DRINK, ItemDefinition.ItemCategory.RETURN_ITEM] or definition.is_consumable():
-			return Tab.CONSUMABLE
-	return Tab.OTHER
+	return ItemDisplayCategory.for_item(definition) as Tab
 
 func display_items(items: Array[ItemStack], capacity_text: String) -> void:
 	invalidate_gesture()

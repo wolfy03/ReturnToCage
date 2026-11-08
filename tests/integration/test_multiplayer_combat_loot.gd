@@ -57,15 +57,25 @@ func run(t: Node) -> void:
 	enemy.health.invulnerable_remaining = 0.0
 	enemy.health.current_health = 1.0
 	var dead_enemy_id := enemy.network_entity_id
+	var original_items: Array[ItemDefinition] = [ContentRegistry.get_item(&"moss_fiber"), ContentRegistry.get_item(&"clean_pebble")]
+	for original in original_items:
+		var fixture := original.duplicate() as ItemDefinition
+		fixture.icon = ItemSlotView.PLACEHOLDER
+		ContentRegistry._definitions[fixture.id] = fixture
 	var lethal := DamageContext.new(10.0, &"physical", player, &"player")
 	t.assert_true(enemy.health.receive_damage(lethal), "lethal enemy damage is accepted once")
 	t.assert_true(not enemy.health.receive_damage(lethal), "dead enemy rejects duplicate lethal damage")
 	await t.get_tree().create_timer(0.55).timeout
+	for original in original_items:
+		ContentRegistry._definitions[original.id] = original
 	t.assert_true(enemy_manager.get_enemy(dead_enemy_id) == null, "enemy death unregisters and despawns the network entity")
 	t.assert_equal(loot_manager.entity_ids().size(), 1, "enemy death rolls and spawns loot exactly once")
 
 	var loot_id := loot_manager.entity_ids()[0]
 	var loot := loot_manager.get_loot(loot_id)
+	var sprite := loot.get_node_or_null("Visual") as Sprite2D
+	t.assert_true(sprite != null and sprite.texture == ItemSlotView.PLACEHOLDER,
+		"monster materials display their authored item icons")
 	loot.global_position = player.global_position
 	var personal := GameSession.adventure.active_session.get_player_adventure(player.peer_id)
 	var before_count := personal.unsecured_loot.count(loot.stack.item_id)

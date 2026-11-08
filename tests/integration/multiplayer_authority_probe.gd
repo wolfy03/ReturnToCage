@@ -9,6 +9,9 @@ var _settlement_roster_id: int
 var _sewer_roster_id: int
 
 func _ready() -> void:
+	var gear := ContentRegistry.get_item(&"leaf_vest").duplicate() as ItemDefinition
+	gear.icon = ItemSlotView.PLACEHOLDER
+	ContentRegistry._definitions[gear.id] = gear
 	_item_service = PlayerItemReplicationService.new()
 	_item_service.name = "PlayerItemReplicationService"
 	add_child(_item_service)
@@ -291,7 +294,9 @@ func _test_settlement_drops(client: int, other_client: int) -> bool:
 		return false
 	var id := manager.entity_ids()[0]
 	var dropped := manager.get_loot(id)
-	if dropped.stack.to_dict() != gear.to_dict() or dropped.has_node("Visual"):
+	var host_gear := _loot_manager().get_loot(id)
+	if dropped.stack.to_dict() != gear.to_dict() or dropped.has_node("Visual") \
+			or host_gear == null or not _uses_loot_texture(host_gear, ItemSlotView.PLACEHOLDER.resource_path.get_file()):
 		return false
 	NetworkManager.authoritative_actor(client).global_position = dropped.global_position + Vector2.UP * 12
 	_send_command(client, "CLAIM_INVENTORY_LOOT", id)
@@ -308,7 +313,7 @@ func _test_settlement_drops(client: int, other_client: int) -> bool:
 	id = int(_confirmation("INVENTORY_DROP", client).get("id", 0))
 	dropped = manager.get_loot(id)
 	var host_visible := _loot_manager().get_loot(id)
-	if dropped == null or host_visible == null or not host_visible.has_node("Visual") \
+	if dropped == null or host_visible == null or not _uses_loot_texture(host_visible, "temp_usable_item_img.png") \
 			or not host_visible.global_position.is_equal_approx(dropped.global_position) or client_bag.get_slot(slot) != null:
 		return false
 	var contender := other_client if other_client > 0 else 1
@@ -423,8 +428,12 @@ func _request_inventory_drop(slot: int) -> int:
 		return 0
 	for id in manager.entity_ids():
 		if id not in before:
-			return id
+			return id if _uses_loot_texture(manager.get_loot(id), "temp_usable_item_img.png") else 0
 	return 0
+
+func _uses_loot_texture(loot: LootActor, file_name: String) -> bool:
+	var visual := loot.get_node_or_null("Visual") as Sprite2D
+	return visual != null and visual.texture != null and visual.texture.resource_path.get_file() == file_name
 
 func _protected_state(peer: int) -> Dictionary:
 	var session := GameSession.adventure_session_for_peer(peer)
@@ -461,7 +470,12 @@ func _command(command: String, value: int) -> void:
 			if not await _wait_until(func() -> bool: return _loot_manager().get_loot(value) != null):
 				_fail("Host drop did not reach client")
 				return
-			var stack := _loot_manager().get_loot(value).stack
+			var loot := _loot_manager().get_loot(value)
+			var stack := loot.stack
+			var file_name := ItemSlotView.PLACEHOLDER.resource_path.get_file() if stack.item_id == &"leaf_vest" else "temp_usable_item_img.png"
+			if not _uses_loot_texture(loot, file_name):
+				_fail("client displayed the wrong field loot category")
+				return
 			var inventory := GameSession.get_local_player().inventory
 			var expected_count := inventory.count(stack.item_id) + stack.quantity
 			NetworkManager.request_loot_pickup(value)

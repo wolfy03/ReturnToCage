@@ -72,10 +72,28 @@ func _run() -> void:
 				"res://ui/inventory/equipment_window.tscn",
 				"res://ui/inventory/item_slot_view.tscn",
 				"res://ui/inventory/item_tooltip.tscn",
-				"res://ui/inventory/item_placeholder.svg"]:
+				"res://ui/inventory/item_placeholder.svg",
+				LootActor.VISUAL_SCENE_PATH]:
 			if ResourceLoader.load(path) == null:
 				_fail("Missing dynamically loaded resource: %s" % path)
 				return
+		var loot_textures: Array[String] = []
+		for path: String in LootActor.DISPLAY_TEXTURE_PATHS.values():
+			var texture := ResourceLoader.load(path) as Texture2D
+			if texture == null or texture.get_size() != Vector2(32, 32):
+				_fail("Missing or invalid loot texture: %s" % path)
+				return
+			if DisplayServer.get_name() != "headless":
+				var image := texture.get_image()
+				if image == null or image.detect_alpha() == Image.ALPHA_NONE:
+					_fail("Loot texture has no transparency: %s" % path)
+					return
+			loot_textures.append(path)
+		_report["loot_textures"] = loot_textures
+		if not _verify_authored_loot_icon():
+			_fail("The packed item icon could not be displayed as field loot")
+			return
+		_report["authored_loot_icon"] = true
 		await get_tree().process_frame
 		await get_tree().process_frame
 		_pass()
@@ -133,6 +151,25 @@ func _run() -> void:
 		_fail("Launcher never released the probe")
 		return
 	_pass()
+
+func _verify_authored_loot_icon() -> bool:
+	# Reuse a packaged, oversized texture as a test-only item icon.
+	var icon := ResourceLoader.load("res://icon.svg") as Texture2D
+	if icon == null:
+		return false
+	var original := ContentRegistry.get_item(&"berry")
+	var fixture := original.duplicate() as ItemDefinition
+	fixture.icon = icon
+	ContentRegistry._definitions[fixture.id] = fixture
+	var actor := preload("res://gameplay/actors/loot/loot_actor.tscn").instantiate() as LootActor
+	actor.configure(1, ItemStack.new(fixture.id, 1), null)
+	add_child(actor)
+	ContentRegistry._definitions[original.id] = original
+	var visual := actor.get_node_or_null("Visual") as Sprite2D
+	var valid := visual != null and visual.texture == icon \
+		and (icon.get_size() * visual.scale).is_equal_approx(Vector2(32, 32))
+	actor.free()
+	return valid
 
 func _all_ready() -> bool:
 	for peer in NetworkManager.players:
