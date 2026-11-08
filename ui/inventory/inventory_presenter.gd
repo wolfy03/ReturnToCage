@@ -15,6 +15,8 @@ var _hovered: ItemSlotView
 var _refresh_queued := false
 var _service: PlayerItemReplicationService
 var _pending_sequence := -1
+var _pending_drop_revision := -1
+var _drop_acknowledged := false
 var _pending_item_type := -1
 var _pending_item_revision := -1
 var _accepted_item_result: CommandResult
@@ -41,6 +43,7 @@ func _ready() -> void:
 	inventory_window.selection_changed.connect(_refresh_tooltip)
 	inventory_window.bag_changed.connect(refresh)
 	inventory_window.slot_command_requested.connect(_request_slot_command)
+	inventory_window.world_drop_released.connect(_request_world_drop)
 	inventory_window.item_activated.connect(_on_inventory_activation)
 	equipment_window.unequip_requested.connect(_request_unequip)
 	equipment_window.closed.connect(inventory_window.invalidate_gesture)
@@ -133,7 +136,7 @@ func _on_session_reset() -> void:
 	_on_phase_changed()
 
 func _reset_item_interaction() -> void:
-	_pending_sequence = -1
+	_clear_slot_request()
 	_clear_pending_item()
 	inventory_window.reset_interaction()
 	equipment_window.show_status("")
@@ -171,6 +174,9 @@ func refresh() -> void:
 	equipment_window.display_equipment(equipped)
 	equipment_window.display_stats(_stats)
 	_refresh_tooltip()
+	if _drop_acknowledged and revision > _pending_drop_revision:
+		_clear_slot_request()
+		inventory_window.show_status("")
 	if _accepted_item_result != null and revision > _pending_item_revision:
 		var message := _accepted_item_result.message
 		_clear_pending_item()
@@ -256,6 +262,9 @@ func _hide_tooltip() -> void:
 func _on_local_world_changed(player_id: StringName, _world: PlayerWorldState) -> void:
 	if player_id == GameSession.get_local_player_id():
 		inventory_window.invalidate_gesture()
+		if _pending_drop_revision >= 0:
+			_clear_slot_request()
+			inventory_window.show_status("")
 		_hide_tooltip()
 
 func _on_player_life_changed(peer_id: int, _life_id: int, life_phase: int) -> void:
@@ -265,6 +274,16 @@ func _on_player_life_changed(peer_id: int, _life_id: int, life_phase: int) -> vo
 		close_all()
 	else:
 		inventory_window.invalidate_gesture()
+
+func _request_world_drop(drag: InventoryWindow.SlotDrag, position: Vector2) -> void:
+	var world := GameSession.get_local_player_world()
+	if world == null or SceneRouter.current_world_id() != world.world_id:
+		return
+	for overlay: Control in [inventory_window, equipment_window, tooltip]:
+		if overlay.is_visible_in_tree() \
+				and Rect2(Vector2.ZERO, overlay.size).has_point(overlay.get_global_transform_with_canvas().affine_inverse() * position):
+			return
+	_request_slot_command(InventoryWindow.Action.DROP, drag.kind, drag.index, -1, 0, drag.revision)
 
 func _request_slot_command(action: int, kind: int, from: int, to: int, amount: int, revision: int) -> void:
 	if _pending_sequence >= 0 or _pending_item_type >= 0 or not inventory_window.is_visible_in_tree():
@@ -276,15 +295,29 @@ func _request_slot_command(action: int, kind: int, from: int, to: int, amount: i
 		refresh()
 		inventory_window.show_status("Inventory changed. Try again.")
 		return
-	_pending_sequence = _service.request_slot_command(action, kind, from, to, amount)
+	if action == InventoryWindow.Action.DROP:
+		_pending_sequence = _service.request_drop_slot(kind, from)
+		if _pending_sequence >= 0:
+			_pending_drop_revision = revision
+	else:
+		_pending_sequence = _service.request_slot_command(action, kind, from, to, amount)
 	inventory_window.set_pending(_pending_sequence >= 0)
 	inventory_window.show_status("Waiting for the inventory update…" if _pending_sequence >= 0 else "Cannot send the inventory action. Try again.")
 
-func _on_slot_result(sequence: int, success: bool, message: String) -> void:
-	if sequence != _pending_sequence or _pending_sequence < 0:
-		return
+func _clear_slot_request() -> void:
 	_pending_sequence = -1
+	_pending_drop_revision = -1
+	_drop_acknowledged = false
 	inventory_window.set_pending(false)
+
+func _on_slot_result(sequence: int, success: bool, message: String) -> void:
+	if sequence != _pending_sequence or _pending_sequence < 0 or _drop_acknowledged:
+		return
+	if success and _pending_drop_revision >= 0:
+		_drop_acknowledged = true
+		refresh()
+		return
+	_clear_slot_request()
 	refresh()
 	if success:
 		inventory_window.show_status("")

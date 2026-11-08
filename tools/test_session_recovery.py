@@ -180,13 +180,17 @@ class LifecycleChecks(RosterController):
         self.worlds[role] = "adventure:sewer_region" if action == "enter" else "settlement"
         self.check(role + " " + action)
 
-    def run(self) -> None:
+    def run(self, world_drop_only: bool = False) -> None:
         try:
-            self._run_sequence()
+            if world_drop_only:
+                self._run_world_drop()
+            else:
+                self._run_sequence()
         except (OSError, RuntimeError, subprocess.SubprocessError):
             states = {}
             for role, item in self.roles.items():
-                item["log_file"].flush()
+                if not item["log_file"].closed:
+                    item["log_file"].flush()
                 report = item["folder"] / "result.json"
                 try:
                     states[role] = json.loads(report.read_text(encoding="utf-8"))
@@ -222,6 +226,26 @@ class LifecycleChecks(RosterController):
         if len(winners) != 1:
             raise RuntimeError(f"Exactly one request may spend the shared field gear inputs: {winners}")
         return winners[0]
+
+    def _check_world_drop(self) -> None:
+        self.call("A", "slot_seed", player=self.roles["B"]["player_id"])
+        self.call("B", "slot_ready")
+        self.call("B", "slot_ui", world_drop=True)
+        self.call("A", "slot_drop_observe", player=self.roles["B"]["player_id"])
+
+    def _run_world_drop(self) -> None:
+        self.launch("A")
+        self.call("A", "host")
+        self.worlds["A"] = "settlement"
+        self.launch("B")
+        self.call("B", "join", address="127.0.0.1")
+        self.worlds["B"] = "settlement"
+        self.check("two-player drop fixture")
+        self._check_world_drop()
+        self.call("A", "disconnect")
+        self.worlds.clear()
+        self.call("B", "check_menu")
+        self._finish_processes()
 
     def _run_sequence(self) -> None:
         self.launch("A")
@@ -446,8 +470,12 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
         self.check("original host rehosts after offline New Game")
+        self._check_world_drop()
         self.call("A", "disconnect")
         self.worlds.clear()
+        self._finish_processes()
+
+    def _finish_processes(self) -> None:
         for role in self.roles:
             self.call(role, "quit")
         for role, item in self.roles.items():
@@ -460,7 +488,7 @@ class LifecycleChecks(RosterController):
                    "steps": len(self.steps), "process_ids": {r: i["game_pid"] for r, i in self.roles.items()},
                    "manual_two_pc_test": False, "audio_playback_verified": False}
         (self.directory / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        print("SESSION LIFECYCLE RECOVERY PASS (3 unchanged processes)", flush=True)
+        print(f"SESSION LIFECYCLE RECOVERY PASS ({len(self.roles)} unchanged processes)", flush=True)
 
 
 def main() -> int:
@@ -469,6 +497,7 @@ def main() -> int:
     parser.add_argument("--exe", type=Path)
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--rendered", action="store_true")
+    parser.add_argument("--world-drop-only", action="store_true", help="Exercise a Client GUI drop and the Host replica.")
     parser.add_argument("--rendering-method", choices=("gl_compatibility", "forward_plus"))
     args = parser.parse_args()
     if args.exe and sys.platform != "win32":
@@ -476,7 +505,7 @@ def main() -> int:
     artifacts = args.artifacts or Path(tempfile.mkdtemp(prefix="rtc_lifecycle_")) / "checks"
     checks = LifecycleChecks(args.godot, args.exe, artifacts, args.rendered, args.rendering_method)
     try:
-        checks.run()
+        checks.run(world_drop_only=args.world_drop_only)
         return 0
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print("Session lifecycle validation failed:", error, file=sys.stderr)

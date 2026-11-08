@@ -527,16 +527,18 @@ func current_difficulty() -> DifficultyDefinition:
 	return difficulty.effective(ContentRegistry)
 
 func adventure_session_for_world(world_id: StringName) -> AdventureSession:
-	return _adventure_sessions_by_world.get(world_id)
+	var session: AdventureSession = _adventure_sessions_by_world.get(world_id)
+	# Offline scene transitions still use the local Adventure compatibility path.
+	if session == null and not NetworkManager.is_multiplayer_active() and adventure.active_session != null \
+			and world_id == PlayerWorldState.adventure_world_id(adventure.active_session.context.region_id):
+		return adventure.active_session
+	return session
 
 func adventure_session_for_peer(peer_id: int) -> AdventureSession:
 	return adventure_session_for_world(get_peer_world_id(peer_id))
 
 func current_difficulty_for_world(world_id: StringName) -> DifficultyDefinition:
 	var session := adventure_session_for_world(world_id)
-	if session == null and not NetworkManager.is_multiplayer_active() and adventure.active_session != null \
-			and world_id == PlayerWorldState.adventure_world_id(adventure.active_session.context.region_id):
-		session = adventure.active_session
 	return session.rules.effective() if session != null and session.rules != null else difficulty.effective(ContentRegistry)
 
 func can_mutate_authoritative_state() -> bool:
@@ -1186,7 +1188,19 @@ func execute_slot_command(peer_id: int, command: Dictionary) -> CommandResult:
 		return CommandResult.make(false, "Inventory slot commands require a live authoritative actor")
 	if actor.hurt.is_active() or actor.dodge.is_active() or actor.return_channel > 0.0:
 		return CommandResult.make(false, "Player is busy")
-	return _player_item_command_service.try_slot_command(get_player(peer_id), command)
+	var player := get_player(peer_id)
+	if command.action != PlayerItemCommandService.SlotAction.DROP:
+		return _player_item_command_service.try_slot_command(player, command)
+	if world.world_kind == PlayerWorldState.WorldKind.ADVENTURE:
+		var adventure_session := adventure_session_for_world(world.world_id)
+		if adventure_session == null or adventure_session.get_player_adventure(peer_id) == null:
+			return CommandResult.make(false, "Item drops require an active field")
+	if actor.is_queued_for_deletion() or actor.player_state() != player:
+		return CommandResult.make(false, "Item drops require the current authoritative actor")
+	var manager := actor.get_parent().get_node_or_null("LootSpawnManager") as LootSpawnManager
+	if manager == null or manager.world_id != world.world_id or (NetworkManager.is_multiplayer_active() and not manager.authoritative_runtime):
+		return CommandResult.make(false, "Item drops require an active field")
+	return _player_item_command_service.try_slot_command(player, command, manager, actor.item_drop_point.global_position)
 
 func apply_settlement_network_snapshot(snapshot: SettlementStateSnapshot) -> bool:
 	if not NetworkManager.is_session_connected() or NetworkManager.is_server() or snapshot == null:

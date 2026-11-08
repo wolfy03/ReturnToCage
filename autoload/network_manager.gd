@@ -776,7 +776,13 @@ func broadcast_loot_despawn(world_id: StringName, entity_id: int) -> void:
 	_broadcast_world_payload(world_id, &"loot_despawn", {"entity_id": entity_id})
 
 func send_loot_roster(peer_id: int, world_id: StringName, payloads: Array[Dictionary]) -> void:
-	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+	if not is_host_session_ready() or not is_peer_world_ready(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+		return
+	if peer_id == local_peer_id():
+		for payload in payloads:
+			loot_spawn_received.emit(world_id, payload)
+		return
+	if not can_send_to_peer(peer_id):
 		return
 	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
 	for payload in payloads:
@@ -793,7 +799,8 @@ func request_loot_pickup(entity_id: int) -> void:
 @rpc("any_peer", "call_remote", "reliable")
 func _request_world_loot_pickup(entity_id: int) -> void:
 	var sender := multiplayer.get_remote_sender_id()
-	if is_host_session_ready() and entity_id > 0 and has_peer(sender) and is_peer_world_ready(sender):
+	if is_host_session_ready() and entity_id > 0 and has_peer(sender) and is_peer_world_ready(sender) \
+			and player_id_for_peer(sender) == GameSession.get_player_id(sender) and not _pending_world_transitions.has(sender):
 		loot_pickup_requested.emit(sender, GameSession.get_peer_world_id(sender), entity_id)
 
 func send_loot_pickup_result(peer_id: int, success: bool, item_id: StringName, quantity: int, message: String) -> void:

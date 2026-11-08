@@ -7,6 +7,13 @@ class DelayedUseService extends PlayerItemReplicationService:
 		submissions += 1
 		return true
 
+class DelayedDropService extends PlayerItemReplicationService:
+	var submissions: Array[Vector2i] = []
+
+	func request_drop_slot(kind: int, index: int, _amount: int = -1) -> int:
+		submissions.append(Vector2i(kind, index))
+		return _next_sequence()
+
 var app: AppRoot
 var presenter: InventoryPresenter
 
@@ -181,6 +188,7 @@ func run(t: Node) -> void:
 	await key(t, KEY_I)
 	await _check_delayed_owner_update(t, bag)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	await _check_world_drop(t, bag, gear)
 	await _check_death_and_teardown(t)
 	NetworkManager.leave_game()
 	app.queue_free()
@@ -412,7 +420,9 @@ func _check_expanded_gear(t: Node, bag: InventoryWindow, gear: EquipmentWindow) 
 	var before := player.equipment.to_dict()
 	await _drag(t, view, gear.slot_views[EquipmentDefinition.EquipmentSlot.ACCESSORY_2].get_global_rect().get_center())
 	t.assert_true(player.equipment.to_dict() == before and bag._status.text.contains("different equipment slot"), "drag rejects the wrong accessory slot")
+	var sequence := PlayerItemReplicationService._next_local_sequence
 	await _drag(t, view, gear.slot_views[neck].get_global_rect().get_center())
+	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence + 1, "equipment drop submits only the equip command")
 	t.assert_true(gear.slot_views[neck].stack != null and gear._stat_values[&"max_health"].text == "165.0", "equipping the accessory matches its comparison and refreshes the stat panel")
 	await double_click(t, gear.slot_views[neck])
 	t.assert_true(gear.slot_views[neck].stack == null and gear._stat_values[&"max_health"].text == "150.0", "unequip restores the buffed value without the equipment bonus")
@@ -471,8 +481,8 @@ func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	await _drag(t, bag.slots[0], bag.slots[1].get_global_rect().get_center())
 	t.assert_true(bag._status.text.contains("another tab") and main.to_slot_dict() == before, "hidden target refuses drop with an explanation")
 	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence, "hidden target never submits a command")
-	await _drag(t, bag.slots[0], Vector2(5, 5))
-	t.assert_equal(main.to_slot_dict(), before, "releasing outside the grid cancels the drag")
+	await _drag(t, bag.slots[0], bag.title_bar.get_global_rect().get_center())
+	t.assert_equal(main.to_slot_dict(), before, "releasing on the inventory title bar cancels the drag")
 	var escape := func() -> void:
 		var event := InputEventKey.new()
 		event.keycode = KEY_ESCAPE
@@ -499,6 +509,7 @@ func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	t.assert_true(bag.current_tab == InventoryWindow.Tab.OTHER and main.to_slot_dict() == before, "switching tabs with GUI input invalidates the active drag")
 	await click(t, bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE])
 	await _drag(t, bag.slots[0], bag.slots[3].get_global_rect().get_center())
+	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence + 1, "slot drop submits only the move command")
 	t.assert_true(main.get_slot(0) == null and main.get_slot(3) != null and bag.slots[3].stack != null, "GUI drag moves into a real empty slot")
 	await _drag(t, bag.slots[3], bag.slots[2].get_global_rect().get_center())
 	t.assert_true(main.get_slot(2) != null and main.get_slot(2).item_id == &"berry" and main.get_slot(3).item_id == &"return_seed", "GUI drag swaps different visible items")
@@ -607,6 +618,117 @@ func _check_delayed_owner_update(t: Node, bag: InventoryWindow) -> void:
 	else:
 		presenter._service = original
 	delayed.free()
+
+func _check_world_drop(t: Node, bag: InventoryWindow, gear: EquipmentWindow) -> void:
+	await click(t, app.new_game_button)
+	await key(t, KEY_I)
+	await key(t, KEY_P)
+	var state := GameSession.get_local_player()
+	var cells: Array[ItemStack] = []
+	cells.resize(26)
+	cells[0] = ItemStack.new(&"berry", 4)
+	cells[1] = ItemStack.new(&"return_seed", 1)
+	cells[24] = ItemStack.new(&"berry", 3)
+	state.inventory.initialize_slots(cells, 26)
+	await _frames(t)
+	var ground := Vector2(5, 5)
+	var before := state.inventory.to_slot_dict()
+	var sequence := PlayerItemReplicationService._next_local_sequence
+	await _drag(t, bag.slots[1], ground)
+	t.assert_true(PlayerItemReplicationService._next_local_sequence == sequence + 1 \
+		and state.inventory.to_slot_dict() == before and bag._status.text.contains("cannot be dropped"), "a world drop rejected by the server keeps the stack and shows feedback")
+
+	sequence = PlayerItemReplicationService._next_local_sequence
+	for destination in [Vector2(-5, 5), bag.slots[0].get_global_rect().get_center(),
+			bag._status.get_global_rect().get_center(), gear.title_bar.get_global_rect().get_center(),
+			app.multiplayer_panel.address_edit.get_global_rect().get_center()]:
+		await _drag(t, bag.slots[0], destination)
+	await _drag(t, bag.slots[0], ground, true)
+	await _drag(t, bag.slots[0], ground, false, func() -> void:
+		_parse_key(KEY_ESCAPE, true)
+		_parse_key(KEY_ESCAPE, false)
+	)
+	var popup := ConfirmationDialog.new()
+	popup.visible = false
+	app.add_child(popup)
+	await _drag(t, bag.slots[0], Vector2(55, 55), false, func() -> void:
+		popup.popup(Rect2i(15, 15, 150, 90))
+	)
+	popup.hide()
+	t.get_viewport().gui_cancel_drag()
+	popup.queue_free()
+	await _drag(t, bag.slots[0], ground, false, func() -> void: bag._change_page(1))
+	t.assert_equal(bag.page, 1, "changing pages during a drag changes the visible page")
+	await _drag(t, bag.slots[0], ground, false, func() -> void: bag.select_tab(InventoryWindow.Tab.OTHER))
+	bag.select_tab(InventoryWindow.Tab.CONSUMABLE)
+	await _drag(t, bag.slots[0], ground, false, func() -> void: bag.hide_window())
+	bag.show_window()
+	t.assert_true(PlayerItemReplicationService._next_local_sequence == sequence and state.inventory.to_slot_dict() == before,
+		"outside viewport, slot, window chrome, other UI, modal, Shift, Escape, page, tab and close never submit a world drop")
+
+	await _drag(t, bag.slots[0], ground, false, func() -> void: state.inventory.add_item(&"rusty_scrap", 1))
+	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence, "an owner revision change invalidates the old drag")
+	state.inventory.initialize_slots(cells, 26)
+	await _frames(t)
+	await _drag(t, bag.slots[0], ground, false, func() -> void:
+		t.assert_true(GameSession.begin_player_adventure(1, &"sewer_gate", &"sewer_region").success, "drop fixture enters Sewer")
+		app._present_local_world_assignment()
+	)
+	t.assert_equal(PlayerItemReplicationService._next_local_sequence, sequence, "world change invalidates the old drag")
+
+	var original := presenter._service
+	var delayed := DelayedDropService.new()
+	presenter._service = delayed
+	delayed.slot_result.connect(presenter._on_slot_result, CONNECT_DEFERRED)
+	await _drag(t, bag.slots[0], ground)
+	var pending := presenter._pending_sequence
+	t.assert_true(bag._pending and delayed.submissions == [Vector2i(InventoryWindow.Bag.MAIN, 0)] \
+		and state.inventory.to_slot_dict() == before, "world drop waits for authority without editing the displayed stack")
+	await _drag(t, bag.slots[0], ground)
+	delayed.slot_result.emit(pending - 1, false, "Retired request")
+	await _frames(t)
+	t.assert_true(bag._pending and delayed.submissions.size() == 1, "pending drop blocks another drag and ignores unrelated results")
+	delayed.slot_result.emit(pending, true, "Dropped item")
+	await _frames(t)
+	t.assert_true(bag._pending and state.inventory.to_slot_dict() == before, "successful response waits for the owner update")
+	var snapshot := PlayerItemStateSnapshot.from_state(GameSession.get_local_player_id(), state)
+	snapshot.revision += 1
+	snapshot.inventory[0] = null
+	t.assert_true(state.apply_item_network_mirror(snapshot), "delayed owner snapshot applies")
+	await _frames(t)
+	t.assert_true(not bag._pending and bag.slots[0].stack == null, "owner snapshot updates the slot and releases the drop")
+	presenter._service = original
+
+	var world := app.world_layer.get_child(0)
+	var manager := world.get_node("LootSpawnManager") as LootSpawnManager
+	var existing := manager.entity_ids()
+	await click(t, bag.get_node("%Next"))
+	await _drag(t, bag.slots[0], ground)
+	t.assert_true(state.inventory.get_slot(24) == null and bag.slots[0].stack == null, "world drop removes the actual second-page slot")
+	var dropped: LootActor
+	for id in manager.entity_ids():
+		if id not in existing:
+			dropped = manager.get_loot(id)
+	t.assert_true(dropped != null and dropped.stack.item_id == &"berry" and dropped.stack.quantity == 3,
+		"the authoritative manager creates the complete dropped stack")
+
+	state.inventory.add_item(&"berry", 1)
+	await _frames(t)
+	await click(t, bag.get_node("%Previous"))
+	presenter._service = delayed
+	await _drag(t, bag.slots[0], ground)
+	pending = presenter._pending_sequence
+	t.assert_true(bag._pending, "drop is pending before leaving the world")
+	t.assert_true(GameSession.finish_player_adventure(1, AdventureSession.Result.NORMAL_ESCAPE).success, "pending-drop fixture leaves Sewer")
+	app._present_local_world_assignment()
+	delayed.slot_result.emit(pending, false, "Old world response")
+	await _frames(t)
+	t.assert_true(not bag._pending and bag._status.text.is_empty() and state.inventory.count(&"berry") == 1,
+		"late drop result cannot change the new world's UI or inventory")
+	presenter._service = original
+	delayed.free()
+	app._leave_game()
+	await _frames(t)
 
 static func _drag(t: Node, source: ItemSlotView, destination: Vector2, split: bool = false, during: Callable = Callable()) -> void:
 	var origin := source.get_global_rect().get_center()

@@ -235,6 +235,24 @@ func _execute(command: Dictionary) -> void:
 			if not await _slot_ui(command):
 				_fail("slot GUI did not reconcile the owner snapshot and result: %s" % command)
 				return
+		"slot_drop_observe":
+			var peer := NetworkManager.peer_id_for_player(target)
+			var player := GameSession.get_player(peer)
+			var runtime := NetworkManager.server_world_runtime(SceneRouter.current_world_id())
+			var presentation := _visible_loot_manager()
+			if player == null or player.inventory.get_slot(0) != null or runtime == null or presentation == null:
+				_fail("client drag did not clear the authoritative slot")
+				return
+			var ids := runtime.loot_manager().entity_ids()
+			if ids.size() != 1:
+				_fail("client drag did not create exactly one field item")
+				return
+			var server_loot := runtime.loot_manager().get_loot(ids[0])
+			var visible := presentation.get_loot(ids[0])
+			if visible == null or visible.stack.item_id != &"berry" or visible.stack.quantity != 6 \
+					or not visible.global_position.is_equal_approx(server_loot.global_position):
+				_fail("Host did not see the exact field item at the server position")
+				return
 		"slot_transition_fixture":
 			var peer := NetworkManager.peer_id_for_player(target)
 			if not NetworkManager.is_server() or not NetworkManager.is_peer_world_ready(peer):
@@ -700,6 +718,11 @@ func _slot_rpc(command: Dictionary) -> bool:
 		PlayerItemCommandService.SlotAction.SORT: result = expected.sort_slots()
 	return result != null and result.success and player.inventory.to_slot_dict() == expected.to_slot_dict()
 
+func _visible_loot_manager() -> LootSpawnManager:
+	if app.world_layer.get_child_count() != 1:
+		return null
+	return app.world_layer.get_child(0).get_node_or_null("LootSpawnManager") as LootSpawnManager
+
 func _slot_ui(command: Dictionary) -> bool:
 	var offline := not NetworkManager.is_multiplayer_active()
 	if NetworkManager.is_server():
@@ -713,13 +736,14 @@ func _slot_ui(command: Dictionary) -> bool:
 	var player := GameSession.get_local_player()
 	var from := int(command.get("from", 0))
 	var to := int(command.get("to", 4))
+	var world_drop: bool = command.get("world_drop", false)
 	var source := player.inventory.get_slot(from)
-	if source == null or player.inventory.get_slot(to) != null or bag.slots[from].stack == null:
+	if source == null or bag.slots[from].stack == null or (not world_drop and player.inventory.get_slot(to) != null):
 		return false
 	var before := _slot_layout(player)
 	var revision := player.item_state_revision
 	var origin := bag.slots[from].get_global_rect().get_center()
-	var destination := bag.slots[to].get_global_rect().get_center()
+	var destination := Vector2(5, 5) if world_drop else bag.slots[to].get_global_rect().get_center()
 	var motion := InputEventMouseMotion.new()
 	motion.position = origin
 	motion.global_position = origin
@@ -750,7 +774,8 @@ func _slot_ui(command: Dictionary) -> bool:
 	var sequence := presenter._pending_sequence
 	if sequence <= 0 or not bag._pending or not bag._sort.disabled:
 		return false
-	if not offline and (_slot_layout(player) != before or bag.slots[from].stack == null or bag.slots[to].stack != null):
+	if not offline and (_slot_layout(player) != before or bag.slots[from].stack == null \
+			or (not world_drop and bag.slots[to].stack != null)):
 		return false
 	# A second gesture and an older result must not replace the pending action.
 	bag._request_sort()
@@ -764,6 +789,14 @@ func _slot_ui(command: Dictionary) -> bool:
 		return not bag._pending and player.item_state_revision == revision and _slot_layout(player) == before \
 			and bag.slots[from].stack != null and bag.slots[to].stack == null and bag.selected_slot == from \
 			and bag._status.text.contains("world to finish loading")
+	if world_drop:
+		var manager := _visible_loot_manager()
+		if manager == null or not await _wait(func() -> bool: return manager.entity_ids().size() == 1):
+			return false
+		var loot := manager.get_loot(manager.entity_ids()[0])
+		return not bag._pending and bag._status.text.is_empty() and player.item_state_revision == revision + 1 \
+			and player.inventory.get_slot(from) == null and bag.slots[from].stack == null \
+			and loot != null and loot.stack.to_dict() == source.to_dict()
 	var moved := player.inventory.get_slot(to)
 	return not bag._pending and bag._status.text.is_empty() and player.item_state_revision == revision + 1 \
 		and player.inventory.get_slot(from) == null and moved != null and moved.to_dict() == source.to_dict() \

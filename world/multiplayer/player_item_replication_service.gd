@@ -48,6 +48,16 @@ func request_use_item(item_id: StringName) -> bool:
 func request_transfer(direction: int, item_id: StringName, amount: int, instance_id: String = "") -> void:
 	_submit(CommandType.TRANSFER, "", direction, item_id, instance_id, amount)
 
+## A missing amount drops the full stack observed by this owner.
+func request_drop_slot(inventory_kind: int, from: int, amount: int = -1) -> int:
+	if amount == -1:
+		var inventory := PlayerItemCommandService.slot_inventory(GameSession.get_local_player(), inventory_kind)
+		var stack := inventory.get_slot(from) if inventory != null else null
+		if stack == null:
+			return -1
+		amount = stack.quantity
+	return request_slot_command(PlayerItemCommandService.SlotAction.DROP, inventory_kind, from, -1, amount)
+
 ## Submits a local owner's intent and returns its sequence, or -1 if unavailable.
 func request_slot_command(action: int, inventory_kind: int, from: int = -1, to: int = -1, amount: int = 0) -> int:
 	var command := make_slot_intent(action, inventory_kind, from, to, amount)
@@ -56,7 +66,8 @@ func request_slot_command(action: int, inventory_kind: int, from: int = -1, to: 
 	if NetworkManager.is_authoritative_simulation():
 		_execute_slot(NetworkManager.local_peer_id(), command, true)
 	elif NetworkManager.is_session_connected():
-		_request_slot_command.rpc_id(1, command)
+		if rpc_id(1, &"_request_slot_command", command) != OK:
+			return -1
 	else:
 		return -1
 	return command.sequence

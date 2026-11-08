@@ -47,7 +47,9 @@ func _ready() -> void:
 	refresh_all()
 
 func _build_ui() -> void:
+	# Layout-only containers leave the exposed game view available to the mouse.
 	var margin := MarginContainer.new()
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left", 18)
 	margin.add_theme_constant_override("margin_top", 14)
@@ -55,14 +57,19 @@ func _build_ui() -> void:
 	margin.add_theme_constant_override("margin_bottom", 14)
 	add_child(margin)
 	var root := VBoxContainer.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(root)
 	var top := HBoxContainer.new()
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(top)
 	vitals_label = Label.new(); vitals_label.custom_minimum_size = Vector2(420, 0); top.add_child(vitals_label)
 	status_label = Label.new(); status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL; status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT; status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; top.add_child(status_label)
 	return_bar = ProgressBar.new(); return_bar.visible = false; return_bar.max_value = 1.0; return_bar.custom_minimum_size = Vector2(300, 18); root.add_child(return_bar)
 	prompt_label = Label.new(); prompt_label.add_theme_font_size_override("font_size", 22); prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER; root.add_child(prompt_label)
-	var spacer := Control.new(); spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL; root.add_child(spacer)
+	var spacer := Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(spacer)
 	detail_panel = PanelContainer.new(); detail_panel.visible = true; root.add_child(detail_panel)
 	var details := HBoxContainer.new(); detail_panel.add_child(details)
 	inventory_label = Label.new(); inventory_label.custom_minimum_size = Vector2(260, 115); inventory_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; details.add_child(inventory_label)

@@ -3,6 +3,10 @@ extends Node
 
 const MAX_ENTITY_ID := 2147483647
 const DEFAULT_SCOPE: StringName = &"__default__"
+# Pickup intents carry a numeric ID. Never reuse a loot ID in another world
+# or a recreated runtime, even though the lookup itself is world-scoped.
+static var _next_loot_id := 1
+
 var world_id: StringName = &""
 var _next_entity_ids: Dictionary[StringName, int] = {}
 var _entities_by_world: Dictionary[StringName, Dictionary] = {}
@@ -31,9 +35,21 @@ func register_entity(node: Node) -> int:
 	return register_entity_in_world(world_id, node)
 
 func register_entity_in_world(p_world_id: StringName, node: Node) -> int:
+	return _register_next_entity(p_world_id, node, 1)
+
+func register_loot_entity(node: Node) -> int:
+	var id := _register_next_entity(world_id, node, _next_loot_id)
+	if id > 0:
+		_next_loot_id = id + 1
+	return id
+
+func _register_next_entity(p_world_id: StringName, node: Node, minimum_id: int) -> int:
 	var scope := _scope(p_world_id)
 	var next_id: int = _next_entity_ids.get(scope, 1)
-	if node == null or next_id <= 0 or next_id > MAX_ENTITY_ID:
+	if node == null or next_id <= 0:
+		return 0
+	next_id = maxi(next_id, minimum_id)
+	if next_id > MAX_ENTITY_ID:
 		return 0
 	var entity_id := next_id
 	_next_entity_ids[scope] = next_id + 1

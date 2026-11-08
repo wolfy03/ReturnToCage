@@ -2,7 +2,7 @@ class_name PlayerItemCommandService
 extends RefCounted
 
 enum TransferDirection { DEPOSIT, WITHDRAW }
-enum SlotAction { MOVE, SWAP, MERGE, SPLIT, SORT }
+enum SlotAction { MOVE, SWAP, MERGE, SPLIT, SORT, DROP }
 enum SlotInventory { MAIN, PROTECTED }
 
 var registry: Node
@@ -182,12 +182,19 @@ static func valid_slot_command(command: Dictionary) -> bool:
 			return false
 	return true
 
-func try_slot_command(player: PlayerState, command: Dictionary) -> CommandResult:
+func try_slot_command(
+	player: PlayerState,
+	command: Dictionary,
+	loot_manager: LootSpawnManager = null,
+	drop_position: Vector2 = Vector2.INF
+) -> CommandResult:
 	if player == null or not valid_slot_command(command):
 		return CommandResult.make(false, "Malformed inventory slot command")
 	if command.revision != player.item_state_revision:
 		return CommandResult.make(false, "Stale inventory revision")
 	var inventory := slot_inventory(player, command.inventory)
+	if command.action == SlotAction.DROP:
+		return _try_drop_slot(inventory, command, loot_manager, drop_position)
 	if command.action == SlotAction.SORT:
 		if command.from != -1 or command.to != -1 or command.amount != 0 or not command.source.is_empty() or not command.target.is_empty():
 			return CommandResult.make(false, "Invalid inventory sort")
@@ -206,3 +213,30 @@ func try_slot_command(player: PlayerState, command: Dictionary) -> CommandResult
 		SlotAction.MERGE: return inventory.merge_slots(from, to)
 		SlotAction.SPLIT: return inventory.split_stack(from, to, command.amount)
 	return CommandResult.make(false, "Unknown inventory slot action")
+
+func _try_drop_slot(inventory: InventoryModel, command: Dictionary, loot_manager: LootSpawnManager, position: Vector2) -> CommandResult:
+	if command.inventory != SlotInventory.MAIN:
+		return CommandResult.make(false, "Only the main inventory can drop items")
+	if command.from < 0 or command.from >= inventory.capacity or command.to != -1 or not command.target.is_empty():
+		return CommandResult.make(false, "Invalid drop slot")
+	var source := inventory.get_slot(command.from)
+	if source == null or command.source != slot_fingerprint(source):
+		return CommandResult.make(false, "Inventory slot contents changed")
+	if command.amount <= 0 or command.amount > source.quantity:
+		return CommandResult.make(false, "Invalid drop amount")
+	var definition := ContentRegistry.get_item(source.item_id)
+	if definition == null or not definition.discardable or definition.quest_protected:
+		return CommandResult.make(false, "This item cannot be dropped")
+	if loot_manager == null:
+		return CommandResult.make(false, "Item drops require an active field")
+
+	var dropped := source.duplicate_stack()
+	dropped.quantity = command.amount
+	inventory.begin_update()
+	var entity_id := loot_manager.spawn_loot(dropped, position, func() -> bool:
+		return inventory.remove_from_slot(command.from, source, command.amount).success
+	)
+	inventory.end_update()
+	if entity_id <= 0:
+		return CommandResult.make(false, "Could not drop item")
+	return CommandResult.make(true, "Dropped item")

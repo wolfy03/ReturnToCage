@@ -437,6 +437,23 @@ func _commit_layout(next: Array[ItemStack]) -> void:
 func _valid_index(index: int) -> bool:
 	return index >= 0 and index < capacity
 
+## Removes only the expected stack from this index.
+func remove_from_slot(index: int, expected: ItemStack, amount: int) -> CommandResult:
+	var error := _slot_command_error(index, index)
+	if not error.is_empty():
+		return CommandResult.make(false, error)
+	var stack := _slots[index]
+	if stack == null or expected == null or stack.to_dict() != expected.to_dict():
+		return CommandResult.make(false, "Inventory slot contents changed")
+	if amount <= 0 or amount > stack.quantity or (not stack.instance_id.is_empty() and amount != stack.quantity):
+		return CommandResult.make(false, "Invalid inventory slot amount")
+	if amount == stack.quantity:
+		_slots[index] = null
+	else:
+		stack.quantity -= amount
+	_notify_changed()
+	return CommandResult.make(true)
+
 func _slot_command_error(a: int, b: int) -> String:
 	if not _mutation_allowed():
 		return "Inventory is a read-only mirror"

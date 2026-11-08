@@ -13,6 +13,7 @@ func configure_server_runtime(p_world_id: StringName, _region_id: StringName = &
 	if manager != null:
 		manager.world_id = p_world_id
 		manager.authoritative_runtime = true
+	(get_node("LootSpawnManager") as LootSpawnManager).configure_world(p_world_id)
 	_remove_runtime_duplicate_services()
 
 func _ready() -> void:

@@ -9,6 +9,7 @@ signal unequip_dropped(slot: int)
 signal tab_changed
 signal bag_changed
 signal slot_command_requested(action: int, kind: int, from: int, to: int, amount: int, revision: int)
+signal world_drop_released(drag: SlotDrag, position: Vector2)
 
 const Bag := PlayerItemCommandService.SlotInventory
 const Action := PlayerItemCommandService.SlotAction
@@ -18,6 +19,7 @@ class SlotDrag extends RefCounted:
 	var index: int
 	var category: int
 	var view_epoch: int
+	var revision: int
 	var split: bool
 
 enum Tab { EQUIPMENT, CONSUMABLE, OTHER, QUEST }
@@ -36,6 +38,8 @@ var _fixed_slots := false
 var _revision := -1
 var _view_epoch := 0
 var _pending := false
+var _active_drag: SlotDrag
+var _drag_release: InputEventMouseButton
 var _split_drag: SlotDrag
 var _split_target := -1
 @onready var _bag_picker: OptionButton = %BagPicker
@@ -71,7 +75,10 @@ func _ready() -> void:
 	_split_dialog.confirmed.connect(_confirm_split)
 	_split_dialog.canceled.connect(_clear_split)
 	_split_dialog.register_text_enter(_split_amount)
-	closed.connect(invalidate_gesture)
+	visibility_changed.connect(func() -> void:
+		if not is_visible_in_tree():
+			invalidate_gesture()
+	)
 	display_items([], "")
 
 static func tab_for(definition: ItemDefinition) -> Tab:
@@ -152,6 +159,7 @@ func _select_slot(index: int) -> void:
 		slots[slot_index].set_selected(slot_index == selected_slot)
 
 func _change_page(direction: int) -> void:
+	invalidate_gesture()
 	page += direction
 	selected_slot = -1
 	_refresh()
@@ -183,6 +191,8 @@ func reset_interaction() -> void:
 
 func invalidate_gesture() -> void:
 	_view_epoch += 1
+	_active_drag = null
+	_drag_release = null
 	_clear_split()
 
 func set_pending(pending: bool) -> void:
@@ -201,12 +211,50 @@ func _drag_data(_position: Vector2, view: ItemSlotView, cell: int) -> Variant:
 	drag.index = _slot_index(cell)
 	drag.category = current_tab
 	drag.view_epoch = _view_epoch
+	drag.revision = _revision
 	drag.split = view.shift_drag or Input.is_key_pressed(KEY_SHIFT)
 	_select_slot(cell)
 	show_status("")
 	item_unhovered.emit(view)
 	view.preview_item_drag()
+	_active_drag = drag
 	return drag
+
+func _input(event: InputEvent) -> void:
+	super._input(event)
+	if _active_drag == null:
+		return
+	_drag_release = null
+	if not event is InputEventMouseButton or event.button_index != MOUSE_BUTTON_LEFT \
+			or event.pressed or event.is_canceled():
+		return
+	var viewport := get_viewport()
+	# Hover reflects the release position before the GUI dispatches the drop.
+	if not viewport.gui_is_dragging() or viewport.gui_get_hovered_control() != null \
+			or not viewport.get_embedded_subwindows().is_empty() or not get_viewport_rect().has_point(event.position):
+		return
+	_drag_release = event
+	_clear_drag_release.call_deferred(event)
+
+func _clear_drag_release(event: InputEventMouseButton) -> void:
+	if _drag_release == event:
+		_drag_release = null
+
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_DRAG_END or _active_drag == null:
+		return
+	var drag := _active_drag
+	var release := _drag_release
+	_active_drag = null
+	_drag_release = null
+	# The native drop targets have already had their chance at this point.
+	if release == null or get_viewport().gui_is_drag_successful() or drag.split or _pending:
+		return
+	if not is_visible_in_tree() or drag.view_epoch != _view_epoch or drag.revision != _revision \
+			or drag.kind != inventory_kind or drag.category != current_tab \
+			or drag.index >= _items.size() or _items[drag.index] == null:
+		return
+	world_drop_released.emit(drag, release.position)
 
 func _on_item_activated(view: ItemSlotView) -> void:
 	if not _pending and _fixed_slots and _revision >= 0:

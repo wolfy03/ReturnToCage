@@ -17,6 +17,8 @@ extends RefCounted
 # v16 replaces client-selected escape results with world/revision-bound intents,
 # and adds authoritative return-channel and death-drop replication. Save is unchanged.
 # v17: indexed item snapshots and revision-checked owner slot intents.
+# DROP is an optional action in the existing slot intent. Earlier hosts reject
+# the unknown action through the existing slot result without changing state.
 const VERSION := 17
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:

@@ -17,6 +17,10 @@ func _ready() -> void:
 		preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)
 		_finish_tests()
 		return
+	if arguments.has("--inventory-drop-only"):
+		await preload("res://tests/integration/test_inventory_drop.gd").new().run(self)
+		_finish_tests()
+		return
 	if arguments.has("--inventory-slots-only"):
 		preload("res://tests/unit/test_inventory_slots.gd").new().run(self)
 		_finish_tests()
@@ -48,6 +52,7 @@ func _ready() -> void:
 	run_all()
 
 func run_all() -> void:
+	await preload("res://tests/integration/test_inventory_drop.gd").new().run(self)
 	await preload("res://tests/unit/test_local_input_context.gd").new().run(self)
 	preload("res://tests/unit/test_item_transaction_boundaries.gd").new().run(self)
 	preload("res://tests/unit/test_inventory_persistence.gd").new().run(self)

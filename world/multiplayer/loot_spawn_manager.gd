@@ -32,12 +32,14 @@ func _ready() -> void:
 		world_id = GameSession.get_peer_world_id(GameSession.get_local_peer_id())
 	if _registry != null:
 		_registry.configure_world(world_id)
-	NetworkManager.loot_spawn_received.connect(_on_loot_spawn_received)
-	NetworkManager.loot_despawn_received.connect(_on_loot_despawn_received)
-	NetworkManager.loot_pickup_result_received.connect(_on_loot_pickup_result_received)
-	if authoritative_runtime and NetworkManager.is_server():
-		NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
-		NetworkManager.loot_pickup_requested.connect(_on_loot_pickup_requested)
+	if authoritative_runtime:
+		if NetworkManager.is_server():
+			NetworkManager.peer_world_ready.connect(_on_peer_world_ready)
+			NetworkManager.loot_pickup_requested.connect(_on_loot_pickup_requested)
+	else:
+		NetworkManager.loot_spawn_received.connect(_on_loot_spawn_received)
+		NetworkManager.loot_despawn_received.connect(_on_loot_despawn_received)
+		NetworkManager.loot_pickup_result_received.connect(_on_loot_pickup_result_received)
 
 func _exit_tree() -> void:
 	if NetworkManager.loot_spawn_received.is_connected(_on_loot_spawn_received):
@@ -51,21 +53,36 @@ func _exit_tree() -> void:
 	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
 		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
 
-func spawn_loot(stack: ItemStack, position: Vector2) -> int:
-	if not NetworkManager.is_authoritative_simulation() or _registry == null or not position.is_finite():
+## Commit a carried stack only after its loot actor is registered, before publishing it.
+## Re-picking carried drops does not grant quest collection credit.
+func spawn_loot(stack: ItemStack, position: Vector2, commit_source: Callable = Callable()) -> int:
+	if not _can_mutate_loot() or not position.is_finite():
+		return 0
+	var world := get_parent()
+	if not is_instance_valid(_registry) or _registry.is_queued_for_deletion():
 		return 0
 	var definition := ContentRegistry.get_item(stack.item_id) if stack != null else null
 	if not StackValidation.runtime_error(stack, definition).is_empty():
 		return 0
 	var actor := LOOT_SCENE.instantiate() as LootActor
-	var entity_id := _registry.register_entity(actor)
+	if actor == null:
+		return 0
+	var entity_id := _registry.register_loot_entity(actor)
 	if entity_id <= 0:
 		actor.free()
 		return 0
 	actor.name = "Loot_%d" % entity_id
 	actor.configure(entity_id, stack, self)
-	actor.global_position = position
-	get_parent().add_child(actor, true)
+	actor.dropped_from_inventory = commit_source.is_valid()
+	actor.position = (world as Node2D).to_local(position) if world is Node2D else position
+	world.add_child(actor, true)
+	if not actor.is_inside_tree() or actor.is_queued_for_deletion() or world.is_queued_for_deletion() \
+			or (commit_source.is_valid() and not commit_source.call()):
+		_registry.unregister_entity(entity_id)
+		actor.claim_state = LootActor.ClaimState.DESPAWNED
+		actor.hide()
+		actor.queue_free()
+		return 0
 	_loot[entity_id] = actor
 	print("[LOOT] Spawn %d (%s x%d)" % [entity_id, stack.item_id, stack.quantity])
 	if NetworkManager.is_server():
@@ -73,18 +90,14 @@ func spawn_loot(stack: ItemStack, position: Vector2) -> int:
 	return entity_id
 
 func request_pickup(entity_id: int) -> void:
-	if entity_id <= 0:
-		return
-	if NetworkManager.is_authoritative_simulation():
-		NetworkManager.request_loot_pickup(entity_id)
-	elif NetworkManager.is_session_connected():
+	if NetworkManager.is_session_connected():
 		NetworkManager.request_loot_pickup(entity_id)
 
 func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
-	if not NetworkManager.is_authoritative_simulation() or entity_id <= 0:
+	if not _can_mutate_loot() or entity_id <= 0:
 		return CommandResult.make(false, "Invalid pickup authority or entity")
-	var effective_world := world_id if not world_id.is_empty() else GameSession.get_peer_world_id(peer_id)
-	if not world_id.is_empty() and GameSession.get_peer_world_id(peer_id) != world_id:
+	var world := GameSession.get_peer_world(peer_id)
+	if world == null or world.world_id != world_id:
 		return CommandResult.make(false, "Loot belongs to another world")
 	var loot: LootActor = _loot.get(entity_id)
 	var player_manager := get_parent().get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
@@ -92,7 +105,10 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 	var runtime := GameSession.get_player_runtime(peer_id)
 	if loot == null or not is_instance_valid(loot) or _registry.get_entity(entity_id) != loot:
 		return CommandResult.make(false, "Loot is unavailable")
-	if player == null or runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
+	var state := GameSession.get_player(peer_id)
+	if state == null or player == null or player.player_state() != state or not player.is_simulation_authority() \
+			or player.world_id != world_id or player.is_queued_for_deletion() or player.is_death_handled() \
+			or runtime == null or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
 		return CommandResult.make(false, "Player cannot pick up loot")
 	if player.hurt.is_active():
 		return CommandResult.make(false, "Player cannot pick up loot while hurt")
@@ -100,27 +116,36 @@ func server_try_pickup(peer_id: int, entity_id: int) -> CommandResult:
 		return CommandResult.make(false, "Player cannot pick up loot while dodging")
 	if player.global_position.distance_to(loot.global_position) > PICKUP_RANGE:
 		return CommandResult.make(false, "Loot is out of range")
-	var adventure_session := GameSession.adventure_session_for_world(effective_world)
-	if adventure_session == null:
-		adventure_session = GameSession.adventure.active_session
-	if loot.claim_state != LootActor.ClaimState.AVAILABLE or adventure_session == null:
+	if loot.claim_state != LootActor.ClaimState.AVAILABLE:
 		return CommandResult.make(false, "Loot is already claimed")
-	var personal := adventure_session.get_player_adventure(peer_id)
-	if personal == null:
-		return CommandResult.make(false, "Adventure player is unavailable")
+	var destination := state.inventory
+	if world.world_kind == PlayerWorldState.WorldKind.ADVENTURE:
+		var session := GameSession.adventure_session_for_world(world_id)
+		var personal := session.get_player_adventure(peer_id) if session != null else null
+		if personal == null:
+			return CommandResult.make(false, "Adventure player is unavailable")
+		if not loot.dropped_from_inventory:
+			destination = personal.unsecured_loot
 	loot.claim_state = LootActor.ClaimState.CLAIMING
-	var outputs: Array[ItemStack] = [loot.stack.duplicate_stack()]
-	var result := personal.unsecured_loot.exchange([], outputs)
+	destination.begin_update()
+	var result := destination.exchange([], [loot.stack])
 	if not result.success:
 		loot.claim_state = LootActor.ClaimState.AVAILABLE
+		destination.end_update()
 		return result
 	var item_id := loot.stack.item_id
 	var quantity := loot.stack.quantity
-	GameSession.report_gameplay_event(GameplayEvent.collect_item(GameSession.get_player_id(peer_id), item_id, quantity))
-	print("[LOOT] Claimed entity %d by peer %d" % [entity_id, peer_id])
 	_despawn_authoritative(entity_id)
+	destination.end_update()
+	if not loot.dropped_from_inventory:
+		GameSession.report_gameplay_event(GameplayEvent.collect_item(world.player_id, item_id, quantity))
+	print("[LOOT] Claimed entity %d by peer %d" % [entity_id, peer_id])
 	NetworkManager.send_loot_pickup_result(peer_id, true, item_id, quantity, "Picked up")
 	return CommandResult.make(true, "Picked up")
+
+func _can_mutate_loot() -> bool:
+	return NetworkManager.is_authoritative_simulation() and is_inside_tree() and not is_queued_for_deletion() \
+		and not get_parent().is_queued_for_deletion() and (not NetworkManager.is_multiplayer_active() or authoritative_runtime)
 
 func _on_loot_pickup_requested(peer_id: int, p_world_id: StringName, entity_id: int) -> void:
 	if not authoritative_runtime or p_world_id != world_id:
@@ -146,11 +171,12 @@ func _snapshot(actor: LootActor) -> LootEntitySnapshot:
 	var snapshot := LootEntitySnapshot.new()
 	snapshot.entity_id = actor.network_entity_id
 	snapshot.position = actor.global_position
-	snapshot.stack = actor.stack.duplicate_stack()
+	snapshot.stack = actor.stack # to_payload() immediately copies the wire fields.
 	return snapshot
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+	if GameSession.get_peer_world_id(peer_id) != world_id \
+			or (peer_id != NetworkManager.local_peer_id() and not NetworkManager.can_send_to_peer(peer_id)):
 		return
 	var payloads: Array[Dictionary] = []
 	for actor in _loot.values():
@@ -170,8 +196,9 @@ func _on_loot_spawn_received(p_world_id: StringName, payload: Dictionary) -> voi
 		return
 	actor.name = "Loot_%d" % snapshot.entity_id
 	actor.configure(snapshot.entity_id, snapshot.stack, self)
-	actor.global_position = snapshot.position
-	get_parent().add_child(actor, true)
+	var world := get_parent()
+	actor.position = (world as Node2D).to_local(snapshot.position) if world is Node2D else snapshot.position
+	world.add_child(actor, true)
 	_loot[snapshot.entity_id] = actor
 
 func _on_loot_despawn_received(p_world_id: StringName, entity_id: int) -> void:

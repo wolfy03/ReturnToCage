@@ -4,8 +4,14 @@ var _drop_id: String = ""
 var _failures_seen: int = 0
 var _channel_events: Array[bool] = []
 var _drop_events: int = 0
+var _item_service: PlayerItemReplicationService
+var _settlement_roster_id: int
+var _sewer_roster_id: int
 
 func _ready() -> void:
+	_item_service = PlayerItemReplicationService.new()
+	_item_service.name = "PlayerItemReplicationService"
+	add_child(_item_service)
 	NetworkManager.world_transition_failed.connect(func(_message: String) -> void: _failures_seen += 1)
 	NetworkManager.return_channel_received.connect(func(active: bool, _progress: float) -> void: _channel_events.append(active))
 	NetworkManager.death_drop_state_received.connect(func(_world: StringName, _payload: Dictionary) -> void: _drop_events += 1)
@@ -31,11 +37,19 @@ func _run_host_scenario() -> void:
 	if not await _wait_until(func() -> bool: return _confirmed("FAR_ENTRY", b)) or _protected_state(b) != before:
 		_fail("forged distant entry mutated state")
 		return
+	if not await _test_settlement_drops(b, c):
+		_fail("Settlement field drops failed Host/Client replication or competing pickup")
+		return
 	for peer in _remote_peers:
 		_send_command(peer, "ENTER", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("ENTER", peer)):
 			_fail("valid near entry failed")
 			return
+	_send_command(b, "INVENTORY_DROP_ISOLATED", _settlement_roster_id)
+	if not await _wait_until(func() -> bool: return _confirmed("INVENTORY_DROP_ISOLATED", b)) \
+			or _server_root.runtime(SETTLEMENT).loot_manager().get_loot(_settlement_roster_id) == null:
+		_fail("Sewer client could see or claim a Settlement drop")
+		return
 	var runtime := _server_root.runtime(SEWER)
 	var runtime_id := runtime.get_instance_id()
 	for enemy_id in runtime.enemy_manager()._enemies:
@@ -43,6 +57,9 @@ func _run_host_scenario() -> void:
 	var actor := NetworkManager.authoritative_actor(b)
 	actor.position = Vector2(700, 510)
 	actor.survival.set_process(false)
+	if not await _test_inventory_drop(b, c, runtime.loot_manager()):
+		_fail("inventory drop failed real RPC validation or world-scoped replication")
+		return
 	before = _protected_state(b)
 	_send_command(b, "FORGED_ESCAPES", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("FORGED_ESCAPES", b)) or _protected_state(b) != before:
@@ -58,14 +75,43 @@ func _run_host_scenario() -> void:
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN", b)):
 		_fail("valid normal escape failed")
 		return
+	if not await _check_settlement_roster(b):
+		_fail("returning player did not receive the surviving Settlement drop")
+		return
 	if c > 0 and (_server_root.runtime(SEWER).get_instance_id() != runtime_id or GameSession.get_peer_world_id(c) != SEWER):
 		_fail("individual normal escape destroyed C runtime")
+		return
+	if c == 0 and not await _wait_until(func() -> bool: return _server_root.runtime(SEWER) == null):
+		_fail("empty Sewer runtime was not retired")
 		return
 	_send_command(b, "REENTER", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REENTER", b)):
 		_fail("return-channel reentry failed")
 		return
 	runtime = _server_root.runtime(SEWER)
+	if c > 0:
+		_send_command(b, "INVENTORY_DROP_VISIBLE", _sewer_roster_id)
+		if not await _wait_until(func() -> bool: return _confirmed("INVENTORY_DROP_VISIBLE", b)):
+			_fail("Sewer re-entry did not restore the occupied world's drop roster")
+			return
+	else:
+		var retired_id := _sewer_roster_id
+		if runtime.get_instance_id() == runtime_id or runtime.loot_manager().get_loot(retired_id) != null:
+			_fail("retired Sewer runtime retained a transient drop")
+			return
+		if not await _test_inventory_drop(b, 0, runtime.loot_manager()) or _sewer_roster_id == retired_id:
+			_fail("recreated Sewer runtime reused the retired loot ID")
+			return
+	var unsecured := GameSession.adventure_session_for_peer(b).get_player_adventure(b).unsecured_loot
+	var unsecured_before := unsecured.to_slot_dict()
+	var loot_position := runtime.loot_manager().get_loot(_sewer_roster_id).global_position
+	NetworkManager.authoritative_actor(b).global_position = loot_position + Vector2.UP * 12
+	_confirmations.erase("CLAIM_INVENTORY_LOOT:%d" % b)
+	_send_command(b, "CLAIM_INVENTORY_LOOT", _sewer_roster_id)
+	if not await _wait_until(func() -> bool: return _confirmed("CLAIM_INVENTORY_LOOT", b)) \
+			or unsecured.to_slot_dict() != unsecured_before or runtime.loot_manager().get_loot(_sewer_roster_id) != null:
+		_fail("Sewer pickup failed to restore carried items to the owner-private main bag")
+		return
 	for enemy_id in runtime.enemy_manager()._enemies:
 		runtime.enemy_manager().get_enemy(enemy_id).set_physics_process(false)
 	actor = NetworkManager.authoritative_actor(b)
@@ -168,6 +214,9 @@ func _run_host_scenario() -> void:
 		_fail("persistent owner did not reconnect with a fresh peer")
 		return
 	b = NetworkManager.peer_id_for_player(b_identity)
+	if not await _check_settlement_roster(b):
+		_fail("reconnecting player did not receive the surviving Settlement drop")
+		return
 	if GameSession.get_player(b).inventory.count(&"return_seed") != seed_count:
 		_fail("disconnect consumed a return item")
 		return
@@ -218,8 +267,164 @@ func _run_host_scenario() -> void:
 	if _drop_events != 0 or _current_world_root().get_instance_id() != host_scene or SceneRouter.current_world_id() != SETTLEMENT:
 		_fail("Sewer death drops or transition leaked into Host Settlement")
 		return
+	if not await _check_host_loot_reentry(b):
+		_fail("Host presentation did not receive the surviving Settlement roster after travel")
+		return
+	print("SETTLEMENT + ADVENTURE FIELD DROPS, PICKUP AND LOOT ROSTER PASS")
 	print("GAMEPLAY AUTHORITY RPC NEGATIVES + CHANNEL + DEATH + RECONNECT PASS")
 	_finish_success()
+
+func _test_settlement_drops(client: int, other_client: int) -> bool:
+	var manager := _server_root.runtime(SETTLEMENT).loot_manager()
+	if manager == null:
+		return false
+	var gear := ItemStack.new(&"leaf_vest", 1)
+	gear.instance_id = "enet-settlement-drop-gear"
+	gear.durability = 37
+	var host_bag := GameSession.get_player(1).inventory
+	var client_bag := GameSession.get_player(client).inventory
+	var slot := _seed_drop_slot(host_bag, gear)
+	if slot < 0:
+		return false
+	_item_service.request_drop_slot(PlayerItemCommandService.SlotInventory.MAIN, slot)
+	if host_bag.get_slot(slot) != null or manager.entity_ids().size() != 1:
+		return false
+	var id := manager.entity_ids()[0]
+	var dropped := manager.get_loot(id)
+	if dropped.stack.to_dict() != gear.to_dict() or dropped.has_node("Visual"):
+		return false
+	NetworkManager.authoritative_actor(client).global_position = dropped.global_position + Vector2.UP * 12
+	_send_command(client, "CLAIM_INVENTORY_LOOT", id)
+	if not await _wait_until(func() -> bool: return _confirmed("CLAIM_INVENTORY_LOOT", client)) \
+			or manager.get_loot(id) != null or not gear.to_dict() in client_bag.to_array():
+		return false
+
+	slot = _seed_drop_slot(client_bag, ItemStack.new(&"berry", 3))
+	if slot < 0:
+		return false
+	_send_command(client, "INVENTORY_DROP", slot)
+	if not await _wait_until(func() -> bool: return _confirmed("INVENTORY_DROP", client)):
+		return false
+	id = int(_confirmation("INVENTORY_DROP", client).get("id", 0))
+	dropped = manager.get_loot(id)
+	var host_visible := _loot_manager().get_loot(id)
+	if dropped == null or host_visible == null or not host_visible.has_node("Visual") \
+			or not host_visible.global_position.is_equal_approx(dropped.global_position) or client_bag.get_slot(slot) != null:
+		return false
+	var contender := other_client if other_client > 0 else 1
+	var contender_bag := GameSession.get_player(contender).inventory
+	var combined := client_bag.count(&"berry") + contender_bag.count(&"berry")
+	NetworkManager.authoritative_actor(contender).global_position = dropped.global_position + Vector2(25, -12)
+	_send_command(client, "PICKUP", id)
+	if contender == 1:
+		NetworkManager.request_loot_pickup(id)
+	else:
+		_send_command(contender, "PICKUP", id)
+	if not await _wait_until(func() -> bool:
+		return _confirmed("PICKUP", client) and (contender == 1 or _confirmed("PICKUP", contender)) and manager.get_loot(id) == null
+	) or client_bag.count(&"berry") + contender_bag.count(&"berry") != combined + 3 or _loot_manager().get_loot(id) != null:
+		return false
+	slot = _seed_drop_slot(host_bag, ItemStack.new(&"water_drop", 1))
+	if slot < 0:
+		return false
+	_item_service.request_drop_slot(PlayerItemCommandService.SlotInventory.MAIN, slot)
+	if manager.entity_ids().size() != 1:
+		return false
+	_settlement_roster_id = manager.entity_ids()[0]
+	return _settlement_roster_id != id
+
+func _seed_drop_slot(inventory: InventoryModel, stack: ItemStack) -> int:
+	var slots := inventory.slots()
+	var slot := slots.find(null)
+	if slot < 0:
+		return -1
+	slots[slot] = stack
+	return slot if inventory.initialize_slots(slots).success else -1
+
+func _check_settlement_roster(peer: int) -> bool:
+	_confirmations.erase("SETTLEMENT_LOOT_ROSTER:%d" % peer)
+	_send_command(peer, "SETTLEMENT_LOOT_ROSTER", _settlement_roster_id)
+	return await _wait_until(func() -> bool: return _confirmed("SETTLEMENT_LOOT_ROSTER", peer))
+
+func _check_host_loot_reentry(settlement_peer: int) -> bool:
+	if GameSession.get_peer_world_id(settlement_peer) != SETTLEMENT:
+		return false
+	var actor := NetworkManager.authoritative_actor(1)
+	actor.position = Vector2(865, 510)
+	if not NetworkManager.request_enter_region(&"sewer_gate", &"sewer_region").success:
+		return false
+	if not await _wait_until(func() -> bool: return SceneRouter.current_world_id() == SEWER and NetworkManager.is_local_world_ready()):
+		return false
+	actor = NetworkManager.authoritative_actor(1)
+	actor.position = Vector2(70, 510)
+	if not NetworkManager._return_player_to_settlement(1, AdventureSession.Result.NORMAL_ESCAPE, &"sewer_entrance").success:
+		return false
+	return await _wait_until(func() -> bool:
+		return SceneRouter.current_world_id() == SETTLEMENT and _loot_manager().get_loot(_settlement_roster_id) != null
+	)
+
+func _test_inventory_drop(owner: int, observer: int, manager: LootSpawnManager) -> bool:
+	var inventory := GameSession.get_player(owner).inventory
+	var slots := inventory.slots()
+	var slot := slots.find(null)
+	if slot < 0:
+		return false
+	slots[slot] = ItemStack.new(&"berry", 3)
+	if not inventory.initialize_slots(slots).success:
+		return false
+	var before := manager.entity_ids()
+	_confirmations.erase("INVENTORY_DROP:%d" % owner)
+	_send_command(owner, "INVENTORY_DROP", slot)
+	if not await _wait_until(func() -> bool: return _confirmed("INVENTORY_DROP", owner)):
+		return false
+	var id := int(_confirmation("INVENTORY_DROP", owner).get("id", 0))
+	var loot := manager.get_loot(id)
+	if inventory.get_slot(slot) != null or manager.entity_ids().size() != before.size() + 1 \
+			or id in before or id == _settlement_roster_id or loot == null \
+			or loot.stack.to_dict() != slots[slot].to_dict() or _sewer_loot_events != 0:
+		return false
+	if observer > 0:
+		_send_command(observer, "INVENTORY_DROP_VISIBLE", id)
+		if not await _wait_until(func() -> bool: return _confirmed("INVENTORY_DROP_VISIBLE", observer)):
+			return false
+	_sewer_roster_id = id
+	return true
+
+func _request_inventory_drop(slot: int) -> int:
+	var player := GameSession.get_local_player()
+	if not await _wait_until(func() -> bool:
+		var stack := player.inventory.get_slot(slot)
+		return stack != null and stack.item_id == &"berry" and stack.quantity == 3
+	):
+		return 0
+	var revision := player.item_state_revision
+	var manager := _loot_manager()
+	var before := manager.entity_ids()
+	var action := PlayerItemCommandService.SlotAction.DROP
+	var kind := PlayerItemCommandService.SlotInventory.MAIN
+	var wrong_world := _item_service.make_slot_intent(action, kind, slot, -1, 3)
+	wrong_world.world_id = String(SEWER if SceneRouter.current_world_id() == SETTLEMENT else SETTLEMENT)
+	var valid := _item_service.make_slot_intent(action, kind, slot, -1, 3)
+	var replies: Array[Array] = []
+	var record := func(sequence: int, success: bool, message: String) -> void:
+		replies.append([sequence, success, message])
+	_item_service.slot_result.connect(record)
+	_item_service._request_slot_command.rpc_id(1, wrong_world)
+	_item_service._request_slot_command.rpc_id(1, valid)
+	_item_service._request_slot_command.rpc_id(1, valid)
+	var complete := await _wait_until(func() -> bool:
+		return replies.size() == 3 and player.item_state_revision == revision + 1 and manager.entity_ids().size() == before.size() + 1
+	)
+	_item_service.slot_result.disconnect(record)
+	if not complete or player.inventory.get_slot(slot) != null \
+			or replies[0] != [wrong_world.sequence, false, "Stale inventory command world"] \
+			or replies[1].slice(0, 2) != [valid.sequence, true] \
+			or replies[2] != [valid.sequence, false, "Stale slot command sequence"]:
+		return 0
+	for id in manager.entity_ids():
+		if id not in before:
+			return id
+	return 0
 
 func _protected_state(peer: int) -> Dictionary:
 	var session := GameSession.adventure_session_for_peer(peer)
@@ -240,6 +445,36 @@ func _command(command: String, value: int) -> void:
 	var failures_before := _failures_seen
 	var expected_failures := 0
 	match command:
+		"INVENTORY_DROP":
+			var id := await _request_inventory_drop(value)
+			if id <= 0:
+				_fail("owner did not reconcile inventory drop and rejected RPCs")
+				return
+			_confirm.rpc_id(1, command, {"id": id})
+			return
+		"INVENTORY_DROP_ISOLATED":
+			if _loot_manager().get_loot(value) != null:
+				_fail("another world's loot appeared in the local scene")
+				return
+			NetworkManager.request_loot_pickup(value)
+		"CLAIM_INVENTORY_LOOT":
+			if not await _wait_until(func() -> bool: return _loot_manager().get_loot(value) != null):
+				_fail("Host drop did not reach client")
+				return
+			var stack := _loot_manager().get_loot(value).stack
+			var inventory := GameSession.get_local_player().inventory
+			var expected_count := inventory.count(stack.item_id) + stack.quantity
+			NetworkManager.request_loot_pickup(value)
+			if not await _wait_until(func() -> bool:
+				return _loot_manager().get_loot(value) == null and inventory.count(stack.item_id) == expected_count \
+					and (stack.instance_id.is_empty() or stack.to_dict() in inventory.to_array())
+			):
+				_fail("client did not receive the exact Host equipment or the despawn")
+				return
+		"INVENTORY_DROP_VISIBLE", "SETTLEMENT_LOOT_ROSTER":
+			if not await _wait_until(func() -> bool: return _loot_manager().get_loot(value) != null):
+				_fail("same-world peer did not receive inventory drop")
+				return
 		"FAR_ENTRY":
 			NetworkManager._request_enter_region.rpc_id(1, &"sewer_gate", &"sewer_region", world.world_id, world.revision)
 			expected_failures = 1

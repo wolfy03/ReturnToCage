@@ -32,6 +32,7 @@ const PLAYER_VISUAL_SCENE_PATH := "res://presentation/player/player_visual.tscn"
 @onready var network_combat: NetworkCombatComponent = %NetworkCombat
 @onready var network_dodge: NetworkDodgeComponent = %NetworkDodge
 @onready var presentation_anchor: Node2D = %PresentationAnchor
+@onready var item_drop_point: Marker2D = %ItemDropPoint
 @export var peer_id: int = GameSession.LOCAL_SINGLEPLAYER_PEER_ID
 var simulation_enabled: bool = true
 var presentation_enabled: bool = true

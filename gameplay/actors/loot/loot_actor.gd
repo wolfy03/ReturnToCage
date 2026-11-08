@@ -3,10 +3,16 @@ extends InteractionTarget
 
 enum ClaimState { AVAILABLE, CLAIMING, DESPAWNED }
 
+# The golden angle spreads consecutive entity IDs around the cycle.
+const FLOAT_PHASE_STEP := 2.399963229728653
+const VISUAL_SCENE_PATH := "res://gameplay/actors/loot/loot_visual.tscn"
+static var _visual_scene: PackedScene
+
 var network_entity_id: int
 var stack: ItemStack
 var claim_state: ClaimState = ClaimState.AVAILABLE
 var spawn_manager: LootSpawnManager
+var dropped_from_inventory: bool = false
 
 func configure(entity_id: int, p_stack: ItemStack, manager: LootSpawnManager) -> void:
 	network_entity_id = entity_id
@@ -20,6 +26,14 @@ func _ready() -> void:
 	collision_layer = 8
 	collision_mask = 0
 	activated.connect(_on_activated)
+
+	if spawn_manager != null and spawn_manager.authoritative_runtime:
+		return
+	if _visual_scene == null:
+		_visual_scene = load(VISUAL_SCENE_PATH) as PackedScene
+	var visual := _visual_scene.instantiate() as Polygon2D
+	add_child(visual)
+	visual.set_instance_shader_parameter(&"phase", fposmod(network_entity_id * FLOAT_PHASE_STEP, TAU))
 
 func can_interact(_actor: Node) -> bool:
 	return enabled and claim_state == ClaimState.AVAILABLE and stack != null
