@@ -21,6 +21,7 @@ func run(t: Node) -> void:
 	t.assert_true(not presenter.inventory_window.visible, "inventory cannot open in menu")
 	await click(t, app.new_game_button)
 	await _frames(t)
+	await _check_input_capture(t)
 	var original_id := GameSession.get_local_player_id()
 	var original_capacity := GameSession.player.inventory.capacity
 	var snapshot := _items()
@@ -127,14 +128,22 @@ func run(t: Node) -> void:
 	small_viewport.queue_free()
 	await _frames(t)
 	var instance := presenter.get_instance_id()
+	var former_actor := NetworkManager.authoritative_actor(1).get_instance_id()
+	_parse_key(KEY_A, true)
 	t.assert_true(GameSession.begin_player_adventure(1, &"sewer_gate", &"sewer_region").success, "world fixture enters Sewer")
 	app._present_local_world_assignment()
 	await _frames(t)
 	t.assert_true(presenter.get_instance_id() == instance and bag.visible and gear.visible, "open windows survive local world presentation replacement")
+	var replacement := NetworkManager.authoritative_actor(1)
+	t.assert_true(LocalInputContext.is_gameplay_blocked() and replacement != null \
+		and replacement.get_instance_id() != former_actor and replacement.input.move_vector == Vector2.ZERO,
+		"new world actor starts blocked while the same windows remain visible")
+	_parse_key(KEY_A, false)
 	var old := GameSession.player
 	app._leave_game()
 	await _frames(t)
 	t.assert_true(not bag.visible and not gear.visible and not presenter.tooltip.visible, "Disconnect closes both windows and tooltip")
+	t.assert_true(not LocalInputContext.is_gameplay_blocked(), "returning to the menu releases both owners")
 	t.assert_true(presenter._state == null and bag.slots[0].stack == null, "menu releases old owner models and item snapshots")
 	t.assert_true(not old.inventory.changed.is_connected(presenter.queue_refresh) \
 		and not old.item_state_changed.is_connected(presenter._on_item_state_changed), "retired models release presenter signals")
@@ -150,6 +159,17 @@ func run(t: Node) -> void:
 	SceneRouter.go_to_settlement()
 	await _frames(t)
 	t.assert_true(presenter._state == GameSession.player, "Load rebinds presenter to restored model")
+	t.assert_true(not LocalInputContext.is_gameplay_blocked(), "Load closes and releases the previous windows")
+	var user_root := OS.get_environment("RTC_TEST_USER_ROOT").replace("\\", "/").trim_suffix("/")
+	var default_save := ProjectSettings.globalize_path(SaveManager.SAVE_PATH).replace("\\", "/")
+	if not user_root.is_empty() and default_save.begins_with(user_root + "/"):
+		var loaded_session := GameSession.session_id
+		t.assert_true(SaveManager.save_game(), "isolated GUI fixture writes the default save")
+		app._leave_game()
+		await _frames(t)
+		await click(t, app.load_game_button)
+		t.assert_true(not app.menu.visible and GameSession.session_id == loaded_session \
+			and not LocalInputContext.is_gameplay_blocked(), "actual Load Game click restores the isolated save with no stale owner")
 	await key(t, KEY_I)
 	await key(t, KEY_P)
 	t.assert_true(bag.visible and gear.visible, "Load Game permits I/P windows")
@@ -161,11 +181,152 @@ func run(t: Node) -> void:
 	await key(t, KEY_I)
 	await _check_delayed_owner_update(t, bag)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	await _check_death_and_teardown(t)
 	NetworkManager.leave_game()
-	app.get_parent().remove_child(app)
 	app.queue_free()
 	SceneRouter.register_world_layer(null)
 	await _frames(t)
+
+func _check_input_capture(t: Node) -> void:
+	var bag := presenter.inventory_window
+	var gear := presenter.equipment_window
+	var actor := NetworkManager.authoritative_actor(1)
+	t.assert_true(actor != null, "GUI input fixture has the offline actor")
+	if actor == null:
+		return
+	for frame in 45:
+		if actor.is_on_floor():
+			break
+		await t.get_tree().physics_frame
+	_parse_key(KEY_D, true)
+	await _frames(t)
+	t.assert_true(Input.is_action_pressed(&"move_right") and actor.input.move_axis > 0.0, "real D key starts movement before opening inventory")
+	await key(t, KEY_I)
+	t.assert_true(bag.visible and not gear.visible and LocalInputContext.is_gameplay_blocked(), "I opens the inventory and acquires input")
+	t.assert_equal(actor.input.move_vector, Vector2.ZERO, "opening the inventory immediately neutralizes held movement")
+	# The actor keeps its authored locomotion deceleration after input stops.
+	for frame in 30:
+		if is_zero_approx(actor.velocity.x):
+			break
+		await t.get_tree().physics_frame
+	var stopped_x := actor.position.x
+	for frame in 4:
+		await t.get_tree().physics_frame
+	t.assert_true(is_zero_approx(actor.velocity.x) and is_equal_approx(actor.position.x, stopped_x),
+		"held D cannot keep the real actor moving while the inventory is visible")
+
+	var actions: Array[String] = []
+	var jump := func() -> void: actions.append("jump")
+	var attack := func() -> void: actions.append("attack")
+	var dodge := func(_axis: float) -> void: actions.append("dodge")
+	var interact := func() -> void: actions.append("interact")
+	var quick_item := func() -> void: actions.append("quick item")
+	actor.input.jump_requested.connect(jump)
+	actor.input.attack_requested.connect(attack)
+	actor.input.dodge_requested.connect(dodge)
+	actor.input.interact_requested.connect(interact)
+	actor.input.quick_item_requested.connect(quick_item)
+	await _hover(t, Vector2(600, 680))
+	for physical in [KEY_SPACE, KEY_J, KEY_SHIFT, KEY_E, KEY_Q]:
+		await key(t, physical)
+	t.assert_true(actions.is_empty() and not actor.input.take_jump_pressed(),
+		"gameplay keys emit no action or pending jump while the pointer is over the world")
+	for physical in [KEY_W, KEY_S, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
+		_parse_key(physical, true)
+		await _frames(t)
+		t.assert_equal(actor.input.move_vector, Vector2.ZERO, "blocked movement or climb key %s keeps both axes neutral" % physical)
+		_parse_key(physical, false)
+	actor.input.jump_requested.disconnect(jump)
+	actor.input.attack_requested.disconnect(attack)
+	actor.input.dodge_requested.disconnect(dodge)
+	actor.input.interact_requested.disconnect(interact)
+	actor.input.quick_item_requested.disconnect(quick_item)
+
+	await key(t, KEY_P)
+	t.assert_true(bag.visible and gear.visible and LocalInputContext.is_gameplay_blocked(), "I and P can show both input owners")
+	for editor in [LineEdit.new(), TextEdit.new()]:
+		presenter.get_child(0).add_child(editor)
+		editor.position = Vector2(850, 85)
+		editor.size = Vector2(130, 60)
+		editor.grab_focus()
+		await key(t, KEY_I, 105)
+		await key(t, KEY_P, 112)
+		await key(t, KEY_ESCAPE)
+		t.assert_true(editor.text == "ip" and bag.visible and gear.visible and not t.get_tree().paused,
+			"text entry owns I/P and Escape without changing the item windows or pause")
+		editor.free()
+
+	await click(t, bag.close_button)
+	t.assert_true(not bag.visible and gear.visible and LocalInputContext.is_gameplay_blocked(),
+		"closing one window by mouse leaves the equipment window's block active")
+	await key(t, KEY_ESCAPE)
+	t.assert_true(not gear.visible and not LocalInputContext.is_gameplay_blocked() and not t.get_tree().paused,
+		"Escape closes the last window without also pausing")
+	t.assert_equal(actor.input.move_vector, Vector2.ZERO, "D held across close is still neutral")
+	_parse_key(KEY_D, false)
+	_parse_key(KEY_D, true)
+	await _frames(t)
+	t.assert_true(actor.input.move_axis > 0.0, "releasing and pressing D again restores normal movement")
+	_parse_key(KEY_D, false)
+
+	await key(t, KEY_ESCAPE)
+	t.assert_true(t.get_tree().paused, "Escape pauses only after all item windows close")
+	await key(t, KEY_ESCAPE)
+	t.assert_true(not t.get_tree().paused, "a second Escape resumes gameplay")
+	t.get_tree().paused = false
+	for physical in [KEY_P, KEY_P, KEY_I, KEY_I]:
+		await key(t, physical)
+	t.assert_true(not bag.visible and not gear.visible and not LocalInputContext.is_gameplay_blocked(),
+		"rapid I and P toggles leave no stale owner")
+
+	await key(t, KEY_I)
+	var window_root := bag.get_parent() as Control
+	window_root.hide()
+	t.assert_true(not bag.is_visible_in_tree() and not LocalInputContext.is_gameplay_blocked(),
+		"hiding a window ancestor releases the effective visibility block")
+	window_root.show()
+	t.assert_true(bag.is_visible_in_tree() and LocalInputContext.is_gameplay_blocked(),
+		"showing the ancestor reacquires the visible window's block")
+	presenter.hide()
+	t.assert_true(not LocalInputContext.is_gameplay_blocked(), "hiding the presenter's canvas releases input")
+	presenter.show()
+	t.assert_true(LocalInputContext.is_gameplay_blocked(), "showing the presenter's canvas restores its visible owner")
+	await key(t, KEY_I)
+
+func _check_death_and_teardown(t: Node) -> void:
+	await click(t, app.new_game_button)
+	await key(t, KEY_I)
+	await key(t, KEY_P)
+	var actor := NetworkManager.authoritative_actor(1)
+	t.assert_true(actor != null and LocalInputContext.is_gameplay_blocked(), "death fixture starts with both windows open")
+	if actor != null:
+		var old_actor_id := actor.get_instance_id()
+		actor.health.invulnerable_remaining = 0.0
+		var damage := DamageContext.new(10000.0, &"item_ui_probe", null, &"environment")
+		damage.can_be_evaded = false
+		actor.health.receive_damage(damage)
+		t.assert_true(not presenter.inventory_window.visible and not presenter.equipment_window.visible \
+			and not LocalInputContext.is_gameplay_blocked(), "local death closes both windows and releases immediately")
+		await key(t, KEY_I)
+		t.assert_true(not presenter.inventory_window.visible, "item windows stay closed while respawning")
+		await t.get_tree().create_timer(1.1).timeout
+		var respawned := NetworkManager.authoritative_actor(1)
+		t.assert_true(respawned != null and respawned.get_instance_id() != old_actor_id \
+			and not LocalInputContext.is_gameplay_blocked(), "respawn creates a new actor with no stale block")
+
+	await key(t, KEY_I)
+	await key(t, KEY_P)
+	t.assert_true(LocalInputContext.is_gameplay_blocked(), "newly visible item windows reacquire after respawn")
+	app.get_parent().remove_child(app)
+	t.assert_true(not LocalInputContext.is_gameplay_blocked(), "detaching the visible presenter releases input before the nodes are freed")
+
+static func _parse_key(physical: Key, pressed: bool) -> void:
+	var event := InputEventKey.new()
+	event.keycode = physical
+	event.physical_keycode = physical
+	event.pressed = pressed
+	Input.parse_input_event(event)
+	Input.flush_buffered_events()
 
 func _check_item_actions(t: Node, bag: InventoryWindow, gear: EquipmentWindow, path: String) -> void:
 	var player := GameSession.player
@@ -391,9 +552,15 @@ func _check_slot_controls(t: Node, bag: InventoryWindow) -> void:
 	t.assert_true(main.get_slot(25) == null and main.count(&"berry") == 16 and main.count(&"rusty_scrap") == 2, "whole main bag sort includes categories hidden by the tab")
 	await _hover(t, Vector2(5, 5))
 	t.get_viewport().push_input(shift, true)
-	t.assert_equal(dodge_requests[0], 1, "Left Shift outside inventory still sends the gameplay input")
+	t.assert_equal(dodge_requests[0], 0, "Left Shift over the world cannot dodge while item windows are visible")
 	t.get_viewport().push_input(shift_up, true)
+	await click(t, bag.close_button)
+	await click(t, presenter.equipment_window.close_button)
+	await key(t, KEY_SHIFT)
+	t.assert_equal(dodge_requests[0], 1, "Left Shift sends a gameplay input after both item windows close")
 	actor.input.dodge_requested.disconnect(count_dodge)
+	await key(t, KEY_I)
+	await key(t, KEY_P)
 
 func _check_delayed_owner_update(t: Node, bag: InventoryWindow) -> void:
 	var original := presenter._service
@@ -473,9 +640,13 @@ static func _frames(t: Node) -> void:
 	await t.get_tree().process_frame
 	await t.get_tree().process_frame
 
-static func key(t: Node, physical: Key) -> void:
+static func key(t: Node, physical: Key, unicode: int = 0) -> void:
 	var event := InputEventKey.new()
 	event.physical_keycode = physical
+	event.keycode = physical
+	event.unicode = unicode
+	if physical == KEY_SHIFT:
+		event.location = KEY_LOCATION_LEFT
 	event.pressed = true
 	t.get_viewport().push_input(event, true)
 	event = event.duplicate()

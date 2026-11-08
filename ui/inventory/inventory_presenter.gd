@@ -186,21 +186,22 @@ func close_all() -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not _active() or event.is_echo():
 		return
-	if event.is_action_pressed(&"pause") and _close_front_item_window():
-		get_viewport().set_input_as_handled()
-		return
+	var pause_pressed := event.is_action_pressed(&"pause")
 	var focus := get_viewport().gui_get_focus_owner()
 	if focus is LineEdit or focus is TextEdit:
+		# GUI text entry gets first use of the key. Keep an unhandled Escape
+		# from closing an item window or reaching GameHUD's pause action.
+		if pause_pressed:
+			get_viewport().set_input_as_handled()
 		return
-	var hovered := get_viewport().gui_get_hovered_control()
-	if event is InputEventKey and event.is_action_pressed(&"dodge") \
-			and (event.keycode == KEY_SHIFT or event.physical_keycode == KEY_SHIFT) \
-			and inventory_window.is_visible_in_tree() \
-			and (hovered != null and inventory_window.is_ancestor_of(hovered) \
-				or get_viewport().gui_get_drag_data() is InventoryWindow.SlotDrag):
-		# Shift is the split modifier when the pointer is in the inventory.
-		get_viewport().set_input_as_handled()
-	elif event.is_action_pressed(&"open_inventory"):
+	if pause_pressed:
+		if _close_front_item_window():
+			get_viewport().set_input_as_handled()
+		return
+	var runtime := GameSession.get_player_runtime(NetworkManager.local_peer_id())
+	if runtime != null and runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE:
+		return
+	if event.is_action_pressed(&"open_inventory"):
 		_toggle(inventory_window)
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed(&"open_equipment"):
@@ -257,8 +258,12 @@ func _on_local_world_changed(player_id: StringName, _world: PlayerWorldState) ->
 		inventory_window.invalidate_gesture()
 		_hide_tooltip()
 
-func _on_player_life_changed(peer_id: int, _life_id: int, _life_phase: int) -> void:
-	if peer_id == NetworkManager.local_peer_id():
+func _on_player_life_changed(peer_id: int, _life_id: int, life_phase: int) -> void:
+	if peer_id != NetworkManager.local_peer_id():
+		return
+	if life_phase != PlayerRuntimeState.LifePhase.ALIVE:
+		close_all()
+	else:
 		inventory_window.invalidate_gesture()
 
 func _request_slot_command(action: int, kind: int, from: int, to: int, amount: int, revision: int) -> void:

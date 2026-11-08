@@ -7,15 +7,21 @@ var _drag_offset := Vector2.ZERO
 @onready var title_bar: Control = %TitleBar
 @onready var close_button: Button = %CloseButton
 
+func _enter_tree() -> void:
+	visibility_changed.connect(_on_visibility_changed)
+	_on_visibility_changed()
+
 func _ready() -> void:
 	theme = ItemUIStyle.make_theme()
 	title_bar.gui_input.connect(_on_title_input)
 	close_button.pressed.connect(hide_window)
-	visibility_changed.connect(_on_visibility_changed)
+	_on_visibility_changed()
 	get_viewport().size_changed.connect(fit_to_viewport)
 	call_deferred("fit_to_viewport")
 
 func _exit_tree() -> void:
+	visibility_changed.disconnect(_on_visibility_changed)
+	LocalInputContext.release(self)
 	if get_viewport().size_changed.is_connected(fit_to_viewport):
 		get_viewport().size_changed.disconnect(fit_to_viewport)
 
@@ -30,7 +36,10 @@ func hide_window() -> void:
 	closed.emit()
 
 func _on_visibility_changed() -> void:
-	if not visible:
+	if is_visible_in_tree():
+		LocalInputContext.acquire(self)
+	else:
+		LocalInputContext.release(self)
 		_dragging = false
 
 func fit_to_viewport() -> void:

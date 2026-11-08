@@ -1,10 +1,13 @@
 # Inventory / equipment UI
 
-`I` opens the inventory and `P` opens equipment. `E` remains interaction. Escape
-cancels a slot drag or closes the front item window before reaching the game's
-pause action. Drag either title bar to move its window. The window and tooltip stay inside the viewport,
-including after a viewport resize. Both windows close on Disconnect/session reset
-and refuse to open in the menu. Typing into a text field does not toggle windows.
+`I` opens the inventory and `P` opens equipment. While either window is
+visible, local gameplay input is blocked. Releasing the last window restores
+input. Held gameplay keys need a fresh press. Escape cancels a slot drag or
+closes the front item window before reaching the game's pause action. Text
+entry keeps I, P and Escape from affecting the windows or pause. Drag either
+title bar to move its window. The window and tooltip stay inside the viewport
+after a resize. Both windows close on local death, Disconnect, or session reset.
+A normal world change preserves the visible windows and their input block.
 
 The dark brown/green panels use beige text and a shared supply-pouch placeholder
 when an item has no authored icon. Clicking selects a cell for inspection only.
@@ -41,8 +44,8 @@ its duplicate carried/equipment text is replaced with the I/P shortcut hint.
 
 Drag within the selected bag to move to a free slot, swap different stacks, or
 merge compatible stacks up to the target's limit. Hold Shift when starting a
-drag onto a free slot to choose a split amount. Shift over the inventory belongs
-to the drag gesture; away from the window the usual dodge binding applies.
+drag onto a free slot to choose a split amount. Shift can trigger dodge again
+after both item windows close.
 **Sort whole bag** sorts every category in the selected bag.
 
 A grid cell addresses `page * 24 + cell` within the selected bag. Category tabs

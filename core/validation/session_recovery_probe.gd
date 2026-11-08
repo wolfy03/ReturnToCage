@@ -328,11 +328,24 @@ func _execute(command: Dictionary) -> void:
 			_saw_motion = false
 			_saw_run = false
 		"move":
+			# Exercise real movement with the item windows closed, then restore
+			# the existing lifecycle fixture's window state for later checks.
+			var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+			var restore_inventory := items.inventory_window.visible
+			var restore_equipment := items.equipment_window.visible
+			if restore_inventory:
+				await _item_key(KEY_I)
+			if restore_equipment:
+				await _item_key(KEY_P)
 			var input_action: StringName = &"move_left" if command.get("left", false) else &"move_right"
 			Input.action_press(input_action)
 			await get_tree().create_timer(0.6).timeout
 			Input.action_release(input_action)
 			await get_tree().create_timer(0.15).timeout
+			if restore_inventory:
+				await _item_key(KEY_I)
+			if restore_equipment:
+				await _item_key(KEY_P)
 		"assert_motion":
 			if not await _wait(func() -> bool: return _saw_motion and _saw_run):
 				var actor := _actor(_watched_id)
