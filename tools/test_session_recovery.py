@@ -100,6 +100,11 @@ class LifecycleChecks(RosterController):
             values["pressed"] = pressed
         self.call(role, "input_key", key=key, **values)
 
+    def start_input_movement(self, role: str, *, left: bool = False) -> dict:
+        origin = self.authority_input(role)
+        self.input_key(role, "left" if left else "right", True)
+        return self.authority_input(role, -1 if left else 1, after=origin["sequence"], from_x=origin["x"])
+
     def verify_input_isolation(self, *, third: bool) -> None:
         self.input_windows("B")
         self.input_windows("A", gear=True)
@@ -109,12 +114,10 @@ class LifecycleChecks(RosterController):
                           effect=role == "B" and third)
         self.input_key("A", "left", True)
         host_blocked = self.authority_input("A")
-        self.input_key("B", "right", True)
-        moving = self.authority_input("B", 1)
+        moving = self.start_input_movement("B")
         self.authority_input("A", after=host_blocked["sequence"])
         if third:
-            self.input_key("D", "right", True)
-            self.authority_input("D", 1)
+            self.start_input_movement("D")
             self.input_key("D", "right", False)
             self.authority_input("D")
         self.input_key("A", "left", False)
@@ -123,14 +126,13 @@ class LifecycleChecks(RosterController):
         neutral = self.authority_input("B", after=moving["sequence"])
         self.call("B", "input_blocked_edges")
         self.input_windows("A", escape=True)
-        self.input_key("A", "right", True)
-        self.authority_input("A", 1)
+        self.start_input_movement("A")
         self.input_key("A", "right", False)
         self.authority_input("A")
         if third:
-            self.input_key("D", "right", True)
-            self.authority_input("D", 1)
-            self.input_key("D", "right", False)
+            self.call("A", "input_place", player=self.roles["D"]["player_id"], x=670)
+            self.start_input_movement("D", left=True)
+            self.input_key("D", "left", False)
             self.authority_input("D")
             self.call("A", "item_seed", player=self.roles["B"]["player_id"], instance="input-isolation-vest")
             self.call("B", "item_ui", operation="equip")
@@ -160,8 +162,7 @@ class LifecycleChecks(RosterController):
             self.input_key("B", "jump")
             self.authority_input("B", jump=still_neutral["jump"] + 1)
         self.input_key("B", "right", False)
-        self.input_key("B", "left", True)
-        self.authority_input("B", -1)
+        self.start_input_movement("B", left=True)
         self.input_key("B", "left", False)
         self.authority_input("B")
         if third:
@@ -405,8 +406,7 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
         self.check("same-process client rejoin")
-        self.input_key("B", "right", True)
-        self.authority_input("B", 1)
+        self.start_input_movement("B")
         self.input_key("B", "right", False)
         self.authority_input("B")
         self.call("B", "slot_check")

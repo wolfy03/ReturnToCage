@@ -1083,8 +1083,12 @@ func _check_authoritative_input(player_id: StringName, command: Dictionary) -> b
 	var direction := float(command.get("axis", 0))
 	if not await _wait(func() -> bool:
 		_record_authoritative_input(actor)
-		var axis_matches := actor.input.move_vector == Vector2.ZERO if is_zero_approx(direction) \
-			else actor.input.move_axis * direction > 0.5 and actor.velocity.x * direction > 5.0
+		var axis_matches := actor.input.move_vector == Vector2.ZERO
+		if not is_zero_approx(direction):
+			# A slow runner can sample after the actor reaches a collider. Measure
+			# the authoritative displacement from before the key press instead.
+			var displacement := actor.position.x - float(command.from_x)
+			axis_matches = actor.input.move_axis * direction > 0.5 and displacement * direction > 5.0
 		return axis_matches and _input_sample.sequence > int(command.get("after", -2)) \
 			and _input_sample.jump >= int(command.get("jump", 0)) \
 			and _input_sample.attack >= int(command.get("attack", -1)) \
@@ -1110,7 +1114,8 @@ func _record_authoritative_input(actor: PlayerActor) -> void:
 	_input_sample = {"sequence": actor.network._last_received_sequence, "jump": edges[0],
 		"attack_executed": edges[1], "dodge_executed": edges[2],
 		"attack": actor.network_combat._last_server_sequence, "dodge": actor.network_dodge._last_server_sequence,
-		"axes": str(actor.input.move_vector), "position": str(actor.position), "velocity": str(actor.velocity),
+		"axes": str(actor.input.move_vector), "x": actor.position.x,
+		"position": str(actor.position), "velocity": str(actor.velocity),
 		"hunger": state.survival.hunger, "thirst": state.survival.thirst, "quick_paws": effect.remaining if effect != null else -1.0,
 		"snapshot": actor.network._snapshot_sequence}
 
