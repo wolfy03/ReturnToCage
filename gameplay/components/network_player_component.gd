@@ -78,7 +78,9 @@ func _process(_delta: float) -> void:
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
 	if runtime != null:
 		runtime.move_input_sequence = _local_sequence
-	var command := PlayerMoveCommand.new(_local_sequence, input.move_axis, input.vertical_axis, input.take_jump_pressed())
+	# Keep sending sequenced neutral moves while blocked so the server
+	# replaces the last movement command without a new UI authority RPC.
+	var command := input.take_local_move_command(_local_sequence)
 	if command.is_valid_after(_local_sequence - 1):
 		NetworkManager.submit_player_move_input(
 			actor.peer_id, command.sequence, command.move_axis, command.vertical_axis, command.jump_pressed

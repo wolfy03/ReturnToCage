@@ -2,7 +2,10 @@
 
 `I` opens the inventory and `P` opens equipment. While either window is
 visible, local gameplay input is blocked. Releasing the last window restores
-input. Held gameplay keys need a fresh press. Escape cancels a slot drag or
+input. Held gameplay keys need a fresh press, even after actor replacement.
+Clients continue to send sequenced neutral movement through the existing
+server-authoritative command while blocked. Other players and world simulation
+continue normally. Escape cancels a slot drag or
 closes the front item window before reaching the game's pause action. Text
 entry keeps I, P and Escape from affecting the windows or pause. Drag either
 title bar to move its window. The window and tooltip stay inside the viewport
@@ -129,7 +132,11 @@ screenshot to `build/validation/inventory-ui/inventory-ui.png`.
 The existing three-process lifecycle now exercises I/P, all four tabs, hover and
 selection on offline, Host and Client owners. Client drags verify that the layout
 remains unchanged while pending, reject during a pending world transition, and
-work again after world travel and reattachment. Menu cleanup requires both windows/tooltip closed and models unbound.
+work again after world travel and reattachment. The two- and three-peer input
+checks read the server actor's accepted sequence, axes, velocity and action
+edges. They also cover input after Disconnect and across a new actor, continued
+enemy, effect and survival ticks, and item commands while a window is open.
+Menu cleanup requires both windows and tooltip closed and models unbound.
 The same assertions run inside the actual embedded-PCK Windows release EXE,
 headless and rendered. Export content checks explicitly load all four UI scenes
 and the SVG placeholder, so missing dynamically loaded UI resources fail release

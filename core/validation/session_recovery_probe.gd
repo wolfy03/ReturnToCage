@@ -16,6 +16,12 @@ var _watch_origin: Vector2
 var _watch_direction := 1.0
 var _saw_motion := false
 var _saw_run := false
+var _input_sample: Dictionary = {}
+var _input_edges: Dictionary[int, Array] = {}
+const INPUT_KEYS := {
+	"left": KEY_A, "right": KEY_D, "up": KEY_W, "jump": KEY_SPACE,
+	"attack": KEY_J, "dodge": KEY_SHIFT, "interact": KEY_E, "quick": KEY_Q,
+}
 var _remembered: Dictionary[StringName, int] = {}
 var _gui_mode := false
 var _context: Dictionary = {}
@@ -153,6 +159,9 @@ func _execute(command: Dictionary) -> void:
 				_fail("Load Game did not restore equipment stats or storage")
 				return
 		"save_fixture":
+			if command.get("require_input_block", false) and not LocalInputContext.is_gameplay_blocked():
+				_fail("Save fixture requires an open input-blocking window")
+				return
 			var inventory := GameSession.player.inventory
 			if not inventory.add_item(&"rusty_scrap", 3).success or not inventory.expand_capacity(6).success:
 				_fail("could not add Save fixture resources")
@@ -317,6 +326,61 @@ func _execute(command: Dictionary) -> void:
 			if not await _check_item_windows():
 				_fail("inventory/equipment GUI validation failed")
 				return
+		"input_windows":
+			if not await _set_input_windows(command):
+				_fail("visible item windows and local input block disagree")
+				return
+		"input_key":
+			var physical: Key = INPUT_KEYS.get(String(command.key), KEY_NONE)
+			if physical == KEY_NONE:
+				_fail("unknown physical input fixture key")
+				return
+			if command.get("expect_interact", false):
+				var actor := _actor(_player_id)
+				if actor == null:
+					_fail("interaction fixture requires a local actor")
+					return
+				var delivered := [false]
+				var observe := func() -> void: delivered[0] = true
+				actor.input.interact_requested.connect(observe)
+				await _tap_probe_key(physical)
+				actor.input.interact_requested.disconnect(observe)
+				if not delivered[0]:
+					_fail("other player's interaction was not dispatched")
+					return
+			elif command.has("pressed"):
+				_probe_key(physical, bool(command.pressed))
+				await get_tree().process_frame
+			else:
+				await _tap_probe_key(physical)
+		"input_storage":
+			if not await _check_blocked_storage():
+				_fail("blocked owner did not reconcile a Settlement storage round trip")
+				return
+		"input_blocked_edges":
+			if not await _check_blocked_edges():
+				_fail("a gameplay action leaked from the blocked local keyboard")
+				return
+		"input_authority":
+			if not await _check_authoritative_input(target, command):
+				_fail("authoritative input mismatch: %s sample=%s" % [command, _input_sample])
+				return
+		"input_place":
+			var actor := NetworkManager.authoritative_actor(NetworkManager.peer_id_for_player(target))
+			if not NetworkManager.is_server() or actor == null:
+				_fail("input fixture needs a real authoritative actor")
+				return
+			actor.position = Vector2(float(command.x), 520.0)
+			actor.velocity = Vector2.ZERO
+			if command.get("effect", false):
+				var effect := ContentRegistry.get_definition(&"quick_paws") as EffectDefinition
+				actor.player_state().effects.apply_effect(effect, ItemDefinition.FoodSlot.SNACK)
+			await get_tree().physics_frame
+			await get_tree().physics_frame
+		"input_world_tick":
+			if not await _check_blocked_enemy_tick(target):
+				_fail("blocked Host did not observe Sewer enemy physics and replication progress")
+				return
 		"watch":
 			var actor := _actor(target)
 			if actor == null:
@@ -340,6 +404,11 @@ func _execute(command: Dictionary) -> void:
 			var input_action: StringName = &"move_left" if command.get("left", false) else &"move_right"
 			Input.action_press(input_action)
 			await get_tree().create_timer(0.6).timeout
+			# Keep the original run assertion even on a slow rendered runner.
+			# Give the local presentation time to observe its replicated run.
+			var run_deadline := Time.get_ticks_msec() + 500
+			while _watched_id == _player_id and not _saw_run and Time.get_ticks_msec() < run_deadline:
+				await get_tree().process_frame
 			Input.action_release(input_action)
 			await get_tree().create_timer(0.15).timeout
 			if restore_inventory:
@@ -739,8 +808,9 @@ func _craft_field_gear(action: String, sequence_offset: int) -> bool:
 		service._request_craft.rpc_id(1, &"field_gear_recipe", _field_gear_sequence + sequence_offset)
 	elif role == "B" or not NetworkManager.is_multiplayer_active():
 		var hud := app.get_node("UILayer/GameHUD")
-		hud.inventory_presenter.close_all()
-		_expect_item_windows = false
+		if not LocalInputContext.is_gameplay_blocked():
+			service.craft_result.disconnect(receive)
+			return false
 		var craft_button: Button
 		for button in hud.network_settlement_buttons:
 			if button.text == "Craft: field_gear_recipe":
@@ -911,6 +981,155 @@ func _item_snapshot() -> Dictionary:
 	var player := GameSession.get_local_player()
 	return {"inventory": player.inventory.to_array(), "protected": player.protected_inventory.to_array(), "equipment": player.equipment.to_dict()}
 
+func _set_input_windows(command: Dictionary) -> bool:
+	var items: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
+	var bag := bool(command.bag)
+	var gear := bool(command.gear)
+	var connection := NetworkManager.state
+	var session := GameSession.session_id
+	if command.get("escape", false):
+		await _item_key(KEY_ESCAPE)
+	else:
+		var focus := get_viewport().gui_get_focus_owner()
+		if focus != null:
+			focus.release_focus()
+		if items.inventory_window.visible != bag:
+			await _item_key(KEY_I)
+		if items.equipment_window.visible != gear:
+			await _item_key(KEY_P)
+	return items.inventory_window.visible == bag and items.equipment_window.visible == gear \
+		and LocalInputContext.is_gameplay_blocked() == (bag or gear) and not get_tree().paused \
+		and NetworkManager.state == connection and GameSession.session_id == session
+
+func _check_blocked_storage() -> bool:
+	var player := GameSession.get_local_player()
+	var service := _item_service()
+	if not LocalInputContext.is_gameplay_blocked() or service == null or player.inventory.count(&"berry") == 0:
+		return false
+	var carried := player.inventory.count(&"berry")
+	var storage := GameSession.settlement.storage
+	var stored := storage.count(&"berry")
+	var results: Array[bool] = []
+	var receive := func(success: bool, _message: String) -> void: results.append(success)
+	service.transfer_result.connect(receive)
+	service.request_transfer(PlayerItemCommandService.TransferDirection.DEPOSIT, &"berry", 1)
+	var deposited := await _wait(func() -> bool:
+		return results == [true] and player.inventory.count(&"berry") == carried - 1 and storage.count(&"berry") == stored + 1
+	)
+	var restored := false
+	if deposited:
+		service.request_transfer(PlayerItemCommandService.TransferDirection.WITHDRAW, &"berry", 1)
+		restored = await _wait(func() -> bool:
+			return results == [true, true] and player.inventory.count(&"berry") == carried and storage.count(&"berry") == stored
+		)
+	service.transfer_result.disconnect(receive)
+	return restored and LocalInputContext.is_gameplay_blocked()
+
+func _probe_key(physical: Key, pressed: bool) -> void:
+	var event := InputEventKey.new()
+	event.keycode = physical
+	event.physical_keycode = physical
+	event.pressed = pressed
+	if physical == KEY_SHIFT:
+		event.location = KEY_LOCATION_LEFT
+	Input.parse_input_event(event)
+	Input.flush_buffered_events()
+
+func _tap_probe_key(physical: Key) -> void:
+	_probe_key(physical, true)
+	await get_tree().process_frame
+	_probe_key(physical, false)
+	await get_tree().process_frame
+
+func _check_blocked_edges() -> bool:
+	var actor := _actor(_player_id)
+	if actor == null or not LocalInputContext.is_gameplay_blocked():
+		return false
+	var leaked: Array[bool] = []
+	var edge := func() -> void: leaked.append(true)
+	var dodge := func(_direction: float) -> void: leaked.append(true)
+	var signals := [actor.input.jump_requested, actor.input.attack_requested,
+		actor.input.interact_requested, actor.input.quick_item_requested]
+	for input_signal: Signal in signals:
+		input_signal.connect(edge)
+	actor.input.dodge_requested.connect(dodge)
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus != null:
+		focus.release_focus()
+	for name in ["jump", "attack", "dodge", "interact", "quick"]:
+		_probe_key(INPUT_KEYS[name], true)
+		await get_tree().process_frame
+		_probe_key(INPUT_KEYS[name], false)
+	for input_signal: Signal in signals:
+		input_signal.disconnect(edge)
+	actor.input.dodge_requested.disconnect(dodge)
+	return leaked.is_empty() and actor.input.move_vector == Vector2.ZERO
+
+func _check_authoritative_input(player_id: StringName, command: Dictionary) -> bool:
+	if not NetworkManager.is_authoritative_simulation() \
+			or (command.get("held_right", false) and not Input.is_action_pressed(&"move_right")):
+		return false
+	var peer := GameSession.get_local_peer_id() if player_id == _player_id or player_id.is_empty() else NetworkManager.peer_id_for_player(player_id)
+	var actor := NetworkManager.authoritative_actor(peer)
+	if actor == null or not actor.is_simulation_authority():
+		return false
+	var actor_id := actor.get_instance_id()
+	if not _input_edges.has(actor_id):
+		var edges := [0, 0, 0]
+		_input_edges[actor_id] = edges
+		actor.input.jump_requested.connect(func() -> void: edges[0] += 1)
+		actor.input_buffer.attack_executed.connect(func(_sequence: int, _facing: float) -> void: edges[1] += 1)
+		actor.input_buffer.dodge_executed.connect(func(_sequence: int, _direction: float) -> void: edges[2] += 1)
+	var direction := float(command.get("axis", 0))
+	if not await _wait(func() -> bool:
+		_record_authoritative_input(actor)
+		var axis_matches := actor.input.move_vector == Vector2.ZERO if is_zero_approx(direction) \
+			else actor.input.move_axis * direction > 0.5 and actor.velocity.x * direction > 5.0
+		return axis_matches and _input_sample.sequence > int(command.get("after", -2)) \
+			and _input_sample.jump >= int(command.get("jump", 0)) \
+			and _input_sample.attack >= int(command.get("attack", -1)) \
+			and _input_sample.dodge >= int(command.get("dodge", -1)) \
+			and _input_sample.attack_executed >= int(command.get("attack_executed", 0)) \
+			and _input_sample.dodge_executed >= int(command.get("dodge_executed", 0)) \
+			and (not command.get("ready_action", false) or (actor.combat_action.is_idle() and actor.is_on_floor())) \
+			and (not is_zero_approx(direction) or absf(actor.velocity.x) < 0.01)
+	):
+		return false
+	if is_zero_approx(direction):
+		var stopped_x := actor.position.x
+		await get_tree().create_timer(0.1).timeout
+		_record_authoritative_input(actor)
+		return actor.input.move_vector == Vector2.ZERO and absf(actor.velocity.x) < 0.01 \
+			and is_equal_approx(actor.position.x, stopped_x)
+	return true
+
+func _record_authoritative_input(actor: PlayerActor) -> void:
+	var state := actor.player_state()
+	var effect: ActiveEffect = state.effects.active_effects.get(&"quick_paws")
+	var edges := _input_edges[actor.get_instance_id()]
+	_input_sample = {"sequence": actor.network._last_received_sequence, "jump": edges[0],
+		"attack_executed": edges[1], "dodge_executed": edges[2],
+		"attack": actor.network_combat._last_server_sequence, "dodge": actor.network_dodge._last_server_sequence,
+		"axes": str(actor.input.move_vector), "position": str(actor.position), "velocity": str(actor.velocity),
+		"hunger": state.survival.hunger, "thirst": state.survival.thirst, "quick_paws": effect.remaining if effect != null else -1.0,
+		"snapshot": actor.network._snapshot_sequence}
+
+func _check_blocked_enemy_tick(player_id: StringName) -> bool:
+	if not NetworkManager.is_server() or not LocalInputContext.is_gameplay_blocked():
+		return false
+	var root := app.get_node("ServerWorldRoot") as ServerWorldRoot
+	var runtime := root.runtime(GameSession.get_peer_world_id(NetworkManager.peer_id_for_player(player_id)))
+	var manager := runtime.enemy_manager() if runtime != null else null
+	if manager == null or manager._enemies.is_empty():
+		return false
+	var enemy: EnemyAgent = manager._enemies.values()[0]
+	var origin := enemy.position
+	var sequence := enemy.network._sequence
+	return await _wait(func() -> bool:
+		return LocalInputContext.is_gameplay_blocked() and is_instance_valid(enemy) and enemy.is_simulation_authority() \
+			and enemy.position.distance_to(origin) > 2.0 and enemy.network._sequence > sequence
+	)
+
 func _item_key(key: Key) -> void:
 	var event := InputEventKey.new()
 	event.physical_keycode = key
@@ -1031,7 +1250,8 @@ func _write(status: String, error: String = "") -> void:
 		"world": String(SceneRouter.current_world_id()), "peer_id": NetworkManager.local_peer_id(),
 		"process_id": OS.get_process_id(), "rendering_method": RenderingServer.get_current_rendering_method(),
 		"rendered_frames": Engine.get_frames_drawn(),
-		"session_id": GameSession.session_id, "field_gear_won": _field_gear_won, "state": _state_dump(), "export_context": _context}
+		"session_id": GameSession.session_id, "field_gear_won": _field_gear_won, "input_sample": _input_sample,
+		"state": _state_dump(), "export_context": _context}
 	var file := FileAccess.open(result_path + ".tmp", FileAccess.WRITE)
 	file.store_string(JSON.stringify(data, "\t"))
 	file.close()

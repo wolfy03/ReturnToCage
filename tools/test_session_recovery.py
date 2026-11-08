@@ -88,6 +88,91 @@ class LifecycleChecks(RosterController):
         for observer in observers:
             self.call(observer, "assert_motion")
 
+    def authority_input(self, role: str, axis: int = 0, **requirements) -> dict:
+        player = self.roles[role]["player_id"]
+        return self.call("A", "input_authority", player=player, axis=axis, **requirements)["input_sample"]
+
+    def input_windows(self, role: str, *, bag: bool = False, gear: bool = False, escape: bool = False) -> None:
+        self.call(role, "input_windows", bag=bag, gear=gear, escape=escape)
+
+    def input_key(self, role: str, key: str, pressed: bool | None = None, **values) -> None:
+        if pressed is not None:
+            values["pressed"] = pressed
+        self.call(role, "input_key", key=key, **values)
+
+    def verify_input_isolation(self, *, third: bool) -> None:
+        self.input_windows("B")
+        self.input_windows("A", gear=True)
+        for role, position in (("A", 1100), ("B", 800), ("D", 180)):
+            if role in self.worlds:
+                self.call("A", "input_place", player=self.roles[role]["player_id"], x=position,
+                          effect=role == "B" and third)
+        self.input_key("A", "left", True)
+        host_blocked = self.authority_input("A")
+        self.input_key("B", "right", True)
+        moving = self.authority_input("B", 1)
+        self.authority_input("A", after=host_blocked["sequence"])
+        if third:
+            self.input_key("D", "right", True)
+            self.authority_input("D", 1)
+            self.input_key("D", "right", False)
+            self.authority_input("D")
+        self.input_key("A", "left", False)
+
+        self.input_windows("B", bag=True)
+        neutral = self.authority_input("B", after=moving["sequence"])
+        self.call("B", "input_blocked_edges")
+        self.input_windows("A", escape=True)
+        self.input_key("A", "right", True)
+        self.authority_input("A", 1)
+        self.input_key("A", "right", False)
+        self.authority_input("A")
+        if third:
+            self.input_key("D", "right", True)
+            self.authority_input("D", 1)
+            self.input_key("D", "right", False)
+            self.authority_input("D")
+            self.call("A", "item_seed", player=self.roles["B"]["player_id"], instance="input-isolation-vest")
+            self.call("B", "item_ui", operation="equip")
+            self.call("B", "input_storage")
+            self.call("D", "slot_privacy")
+            self.input_key("D", "interact", expect_interact=True)
+            self.input_key("D", "attack")
+            self.authority_input("D", attack=0, attack_executed=1, ready_action=True)
+            self.input_key("D", "dodge")
+            self.authority_input("D", dodge=0, dodge_executed=1)
+
+        self.input_windows("B", bag=True, gear=True)
+        self.input_windows("B", gear=True)
+        still_neutral = self.authority_input("B", after=neutral["sequence"])
+        if any(still_neutral[edge] != moving[edge] for edge in ("jump", "attack", "dodge")):
+            raise RuntimeError("Blocked B reached an authoritative action receiver")
+        if third and not (
+            still_neutral["snapshot"] > neutral["snapshot"]
+            and still_neutral["hunger"] < neutral["hunger"]
+            and still_neutral["thirst"] < neutral["thirst"]
+            and 0 < still_neutral["quick_paws"] < neutral["quick_paws"]
+        ):
+            raise RuntimeError("B's blocked UI stopped authority, survival, or buff ticks")
+        self.input_windows("B", escape=True)
+        self.authority_input("B", after=still_neutral["sequence"])
+        if third:
+            self.input_key("B", "jump")
+            self.authority_input("B", jump=still_neutral["jump"] + 1)
+        self.input_key("B", "right", False)
+        self.input_key("B", "left", True)
+        self.authority_input("B", -1)
+        self.input_key("B", "left", False)
+        self.authority_input("B")
+        if third:
+            self.authority_input("B", ready_action=True)
+            self.input_key("B", "attack")
+            self.authority_input("B", attack=still_neutral["attack"] + 1, attack_executed=1, ready_action=True)
+            self.input_key("B", "dodge")
+            self.authority_input("B", dodge=still_neutral["dodge"] + 1, dodge_executed=1)
+        self.input_windows("A", bag=True, gear=True)
+        self.input_windows("B", bag=True, gear=True)
+
     def travel(self, role: str, action: str) -> None:
         self.call("A", "place", player=self.roles[role]["player_id"], destination=action)
         self.call(role, action)
@@ -151,7 +236,7 @@ class LifecycleChecks(RosterController):
                                               ("seed_ring", "stamina_regen", 20.0, 35)):
             self.call("A", "item_ui", operation="equip", item=item, stat=stat, value=value, durability=durability)
         self.movement("A")
-        self.call("A", "save_fixture")
+        self.call("A", "save_fixture", require_input_block=True)
         self.call("A", "to_menu")
         self.call("A", "load_game")
         self.call("A", "item_display")
@@ -183,10 +268,12 @@ class LifecycleChecks(RosterController):
         # Walk away from each other so both peers can observe a sustained run.
         self.movement("A", left=True)
         self.movement("B")
+        self.verify_input_isolation(third=False)
         self.launch("D")
         self.call("D", "join", address="127.0.0.1")
         self.worlds["D"] = "settlement"
         self.check("three-player late join")
+        self.verify_input_isolation(third=True)
         self.call("A", "field_gear_materials")
         if self.race_field_gear() != "B":
             self.call("A", "field_gear_materials")
@@ -215,6 +302,9 @@ class LifecycleChecks(RosterController):
         self.call("D", "slot_privacy")
         self.call("B", "item_ui", operation="use", hold_response=True)
         self.travel("B", "enter")
+        self.input_windows("A", gear=True)
+        self.call("A", "input_world_tick", player=self.roles["B"]["player_id"])
+        self.input_windows("A", escape=True)
         self.call("B", "item_display")
         self.call("B", "slot_remember")
         self.travel("B", "return")
@@ -300,11 +390,14 @@ class LifecycleChecks(RosterController):
         self.call("B", "slot_remember")
         self.call("A", "slot_transition_fixture", player=self.roles["B"]["player_id"], block=True)
         self.call("B", "item_ui", operation="use", hold_response=True)
+        self.input_key("B", "right", True)
         self.call("B", "disconnect")
         del self.worlds["B"]
         self.check("manual client leave")
         self.call("D", "check_menu")
         self.call("B", "new_game")
+        self.call("B", "input_authority", held_right=True)
+        self.input_key("B", "right", False)
         self.call("B", "item_windows")
         self.movement("B")
         self.call("B", "to_menu")
@@ -312,6 +405,10 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address="127.0.0.1")
         self.worlds["B"] = "settlement"
         self.check("same-process client rejoin")
+        self.input_key("B", "right", True)
+        self.authority_input("B", 1)
+        self.input_key("B", "right", False)
+        self.authority_input("B")
         self.call("B", "slot_check")
         self.call("B", "slot_ui")
         self.call("B", "item_ui", operation="unequip")

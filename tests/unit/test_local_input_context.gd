@@ -68,6 +68,13 @@ func _test_local_input(t: Node) -> void:
 	LocalInputContext.acquire(owner)
 	t.assert_equal(local.move_vector, Vector2.ZERO, "acquire immediately clears axes before another process tick")
 	t.assert_true(not local.take_jump_pressed(), "acquire clears a jump waiting for the network tick")
+	# Even stale axes and a pending edge cannot leak at the transport boundary.
+	local.move_axis = 1.0
+	local.vertical_axis = -1.0
+	local._jump_pressed = true
+	var neutral := local.take_local_move_command(73)
+	t.assert_true(neutral.sequence == 73 and neutral.move_axis == 0.0 and neutral.vertical_axis == 0.0 \
+		and not neutral.jump_pressed and not local.take_jump_pressed(), "blocked Client packet advances sequence with neutral input")
 	seen.clear()
 	for action in ACTIONS:
 		Input.action_press(action)
@@ -88,6 +95,12 @@ func _test_local_input(t: Node) -> void:
 	_send(local, ACTIONS)
 	t.assert_equal(local.move_vector, Vector2.ZERO, "held movement stays neutral after closing the UI")
 	t.assert_true(seen.is_empty() and not local.take_jump_pressed(), "held actions do not replay on close")
+	var replacement := PlayerInputComponent.new()
+	t.add_child(replacement)
+	replacement.configure_input(true, true)
+	replacement._process(0.0)
+	t.assert_equal(replacement.move_vector, Vector2.ZERO, "replacement actor cannot replay keys held across the last UI close")
+	replacement.free()
 	Input.action_press(&"move_left")
 	local._process(0.0)
 	t.assert_equal(local.move_axis, -1.0, "a fresh opposite movement key works while the old direction is still held")
@@ -97,7 +110,7 @@ func _test_local_input(t: Node) -> void:
 	# A release observed before the GUI consumes it allows a new press in the same frame.
 	var release := InputEventAction.new()
 	release.action = &"jump"
-	local._input(release)
+	LocalInputContext._input(release)
 	Input.action_press(&"move_right")
 	local._process(0.0)
 	t.assert_equal(local.move_vector, Vector2.RIGHT, "release and new press rearm movement")
