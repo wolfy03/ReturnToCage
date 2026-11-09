@@ -17,7 +17,7 @@ static func world_position(canvas: Transform2D, cursor: Vector2, interval: float
 	var world := canvas.affine_inverse() * cursor
 	return world.snapped(Vector2.ONE * interval) if interval > 0.0 else world
 
-static func make_node(entry: Dictionary, root: Node2D, catalog: RefCounted) -> Node2D:
+static func make_node(entry: Dictionary, root: Node2D, catalog: RefCounted, reserved: Dictionary[StringName, bool] = {}) -> Node2D:
 	var id: StringName = entry.id
 	match entry.kind:
 		"enemy":
@@ -25,7 +25,7 @@ static func make_node(entry: Dictionary, root: Node2D, catalog: RefCounted) -> N
 				return null
 			var point := FieldEnemySpawnPoint.new()
 			point.enemy_id = id
-			point.spawn_id = _unique_id(root, String(id) + "_spawn")
+			point.spawn_id = _unique_id(root, String(id) + "_spawn", reserved)
 			point.name = "EnemySpawn"
 			return point
 		"gather":
@@ -33,7 +33,7 @@ static func make_node(entry: Dictionary, root: Node2D, catalog: RefCounted) -> N
 				return null
 			var point := FieldGatherPoint.new()
 			point.item_id = id
-			point.interaction_id = _unique_id(root, String(id) + "_gather")
+			point.interaction_id = _unique_id(root, String(id) + "_gather", reserved)
 			point.name = "GatherPoint"
 			return point
 		"entry", "escape":

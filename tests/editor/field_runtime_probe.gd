@@ -48,7 +48,64 @@ func _run() -> void:
 		valid = valid and marker.get_child_count(true) == 0
 	authority.queue_free()
 	await get_tree().process_frame
-	_finish(valid)
+	_finish(valid and await _generated_region())
+
+func _generated_region() -> bool:
+	GameSession.start_new_game()
+	var region := ContentRegistry.get_definition(&"step5_flat") as RegionDefinition
+	if region == null or not ContentRegistry.get_definition(&"step5_empty") is RegionDefinition or not ContentRegistry.get_definition(&"step5_platform") is RegionDefinition:
+		return false
+	var exit := SettlementExitDefinition.new()
+	exit.id = &"step5_test_exit"
+	exit.connected_region_ids = [region.id]
+	exit.entry_point_id = region.entry_point_ids[0]
+	ContentRegistry._definitions[exit.id] = exit
+	GameSession.progression.unlocked_regions.append(region.id)
+	GameSession.progression.unlocked_exits.append(exit.id)
+	var context := GameSession.begin_adventure(exit.id, region.id, exit.entry_point_id)
+	var packed := load(region.scene_path) as PackedScene
+	if context == null or packed == null:
+		return false
+	var layer := Node2D.new()
+	add_child(layer)
+	SceneRouter.register_world_layer(layer)
+	if not SceneRouter.go_to_adventure(context):
+		SceneRouter.register_world_layer(null)
+		layer.queue_free()
+		return false
+	var presentation := layer.get_child(0)
+	var valid: bool = SceneRouter.current_world_id() == PlayerWorldState.adventure_world_id(region.id)
+	valid = valid and presentation.get_node("Decorations").get_child_count() == 2
+	for decoration in presentation.get_node("Decorations").get_children():
+		valid = valid and decoration.get_child_count(true) == 1
+	SceneRouter.clear_presented_world()
+	SceneRouter.register_world_layer(null)
+	layer.queue_free()
+	await get_tree().process_frame
+	var authority := packed.instantiate()
+	authority.configure_server_runtime(PlayerWorldState.adventure_world_id(region.id), region.id)
+	add_child(authority)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var peer := GameSession.get_local_peer_id()
+	var manager := authority.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	var actor := manager.get_actor(peer)
+	valid = valid and actor != null and actor.global_position.x >= 150 and actor.global_position.x <= 294
+	valid = valid and authority.get_node("EnemySpawnManager")._enemies.size() == 2 and authority._gather_targets.size() == 2
+	if actor != null and not authority._gather_targets.is_empty():
+		var id: StringName = authority._gather_targets.keys()[0]
+		actor.global_position = authority._gather_targets[id].global_position
+		valid = authority._try_gather(peer, id) and not authority._try_gather(peer, id) and valid
+	for decoration in authority.get_node("Decorations").get_children():
+		valid = valid and decoration.get_child_count(true) == 0
+	var query := PhysicsPointQueryParameters2D.new()
+	query.position = Vector2(600, 565)
+	query.collision_mask = 1
+	valid = valid and not authority.get_world_2d().direct_space_state.intersect_point(query).is_empty()
+	authority.queue_free()
+	await get_tree().process_frame
+	print("GENERATED REGION RUNTIME ", "PASS" if valid else "FAIL")
+	return valid
 
 func _finish(valid: bool) -> void:
 	print("AUTHORED FIELD RUNTIME ", "PASS" if valid else "FAIL")

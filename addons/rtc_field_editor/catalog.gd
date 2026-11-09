@@ -1,6 +1,8 @@
 @tool
 extends RefCounted
 
+const Preset := preload("placement_preset.gd")
+
 var regions: Array[RegionDefinition] = []
 var entries: Array[Dictionary] = []
 var definitions: Dictionary[StringName, ContentDefinition] = {}
@@ -43,6 +45,10 @@ func _scan(directory: EditorFileSystemDirectory) -> void:
 				_add("Gather", definition.display_name, "gather", path, definition.id)
 			elif definition is ClimbableDefinition:
 				_add("Climbables", definition.display_name, "climb", path, definition.id)
+		elif path.begins_with("res://addons/rtc_field_editor/presets/") and path.ends_with(".tres"):
+			var preset := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as Preset
+			if preset != null:
+				_add("Presets", preset.label, "preset", path)
 		elif not path.begins_with("res://tests/") and not path.begins_with("res://addons/"):
 			if ClassDB.is_parent_class(type, "Texture2D"):
 				_add("Decorations", path.get_file().get_basename(), "texture", path)

@@ -107,6 +107,7 @@ func _run() -> void:
 				break
 		var reopened := _field_root()
 		_check(reopened != null and reopened != root and reopened.get_node("SpawnPoints").get_child_count() == 2, "reopen saved field tab")
+	await _exercise_step5()
 	print("FIELD EDITOR PROBE ", "PASS" if _failures == 0 else "FAIL", " failures=", _failures)
 	get_tree().quit(0 if _failures == 0 else 1)
 
@@ -333,6 +334,32 @@ func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, 
 	await get_tree().process_frame
 	_check(_field_root() == root and history.get_current_action() == action, "scene switch preserves sync history")
 	_check(history.undo() and region.entry_point_ids != entries and history.redo() and region.entry_point_ids == entries, "sync history still writes after scene switch")
+	var bytes := FileAccess.get_file_as_bytes(resource_path)
+	var external := region.duplicate() as RegionDefinition
+	external.description += " external edit"
+	_check(ResourceSaver.save(external, resource_path) == OK, "write external resource change")
+	var external_hash := FileAccess.get_sha256(resource_path)
+	_check(history.undo(), "engine dispatched stale sync undo")
+	await get_tree().process_frame
+	_check(history.get_current_action() == action and FileAccess.get_sha256(resource_path) == external_hash and region.entry_point_ids == entries, "external file change blocks undo and restores cursor")
+	_check(not _apply_region_plan(root, plan), "cache-disk conflict blocks sync until reviewed")
+	FileAccess.open(resource_path, FileAccess.WRITE).store_buffer(bytes)
+	region.description += " unsaved inspector edit"
+	_check(history.undo(), "engine dispatched cache-conflicted undo")
+	await get_tree().process_frame
+	_check(history.get_current_action() == action and FileAccess.get_file_as_bytes(resource_path) == bytes, "cached resource edit blocks undo without changing disk")
+	region.description = region.description.trim_suffix(" unsaved inspector edit")
+	_check(history.undo(), "undo after cache reconciled")
+	var before_bytes := FileAccess.get_file_as_bytes(resource_path)
+	external = region.duplicate() as RegionDefinition
+	external.description += " external edit before redo"
+	_check(ResourceSaver.save(external, resource_path) == OK, "write external change before redo")
+	external_hash = FileAccess.get_sha256(resource_path)
+	_check(history.redo(), "engine dispatched stale redo")
+	await get_tree().process_frame
+	_check(history.get_current_action() == action - 1 and FileAccess.get_sha256(resource_path) == external_hash, "external file change blocks redo and preserves bytes")
+	FileAccess.open(resource_path, FileAccess.WRITE).store_buffer(before_bytes)
+	_check(history.redo(), "redo after disk reconciled")
 
 func _exercise_step4_gui(root: Node2D) -> void:
 	_set_test_tool(Stroke.Mode.SELECT)
@@ -582,3 +609,139 @@ func _check(condition: bool, label: String) -> void:
 	if not condition:
 		_failures += 1
 		push_error("Field editor probe: " + label)
+
+func _exercise_step5() -> void:
+	var original := _field_root()
+	var scene_path := "res://world/adventure/step5_flat.tscn"
+	var resource_path := "res://data/content/regions/step5_flat.tres"
+	var values := {"id": "step5_flat", "name": "Step 5 Flat", "description": "Disposable probe",
+		"scene": scene_path, "resource": resource_path, "entry": "step5_entry", "escape": "step5_exit",
+		"template": 1, "danger": 1, "slots": 4, "environment": ""}
+	_check(not Wizard.validate(values.merged({"scene": "res://world/adventure/../bad.tscn"}, true), _catalog).is_empty(), "wizard rejects escaped path")
+	_check(not Wizard.validate(values.merged({"id": "sewer_region"}, true), _catalog).is_empty(), "wizard rejects existing content ID")
+	_check(not Wizard.validate(values.merged({"environment": "res://data/content/items/berry.tres"}, true), _catalog).is_empty(), "wizard rejects non-environment asset")
+	for template in 3:
+		var id: String = ["step5_empty", "step5_flat", "step5_platform"][template]
+		var options := values.merged({"template": template, "id": id, "scene": "res://world/adventure/%s.tscn" % id,
+			"resource": "res://data/content/regions/%s.tres" % id}, true)
+		var issue := ""
+		if template == 1 and DisplayServer.get_name() != "headless":
+			_wizard.popup_centered(Vector2i(720, 460))
+			for key in _wizard.fields:
+				var control := _wizard.fields[key]
+				if control is LineEdit:
+					control.text = options[key]
+				elif control is SpinBox:
+					control.value = options[key]
+				elif control is OptionButton:
+					control.select(options[key])
+			_wizard._preview()
+			_check(_wizard._review.visible and _wizard._review.dialog_text.contains(options.resource), "wizard displays creation review")
+			_wizard._review.confirmed.emit()
+			_wizard._review.hide()
+			for frame in 20:
+				await get_tree().process_frame
+			issue = "Wizard failed to publish." if not FileAccess.file_exists(options.resource) else ""
+		else:
+			issue = Wizard.create_region(options, _catalog)
+		_check(issue.is_empty(), "create template %d: %s" % [template, issue])
+		if not issue.is_empty():
+			return
+		var packed := ResourceLoader.load(options.scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+		var region := ResourceLoader.load(options.resource, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+		var instance := packed.instantiate()
+		_check(region.scene_path == options.scene and region.entry_point_ids == [&"step5_entry"], "region links survive reload")
+		_check(instance.get_node("PlayerSpawnPoint3").get_parent() == instance and instance.get_node("Terrain").get_child_count() == [0, 1, 3][template], "template terrain and direct slots")
+		if template == 2:
+			_check(instance.get_node("Climbables").get_child_count() == 1 and instance.get_node("Climbables").get_child(0).top_marker != null, "platform template preserves climb marker ownership")
+		instance.free()
+	_check(not Wizard.validate(values.merged({"id": "other_id", "resource": "res://data/content/regions/other_id.tres"}, true), _catalog).is_empty(), "scene collision rejected")
+	_check(not Wizard.validate(values.merged({"id": "other_id", "scene": "res://world/adventure/other_id.tscn"}, true), _catalog).is_empty(), "resource collision rejected")
+	var rollback_scene := "res://world/adventure/step5_rollback.tscn"
+	var rollback_resource := "res://data/content/regions/step5_rollback.tres"
+	var rollback_region := (load(resource_path) as RegionDefinition).duplicate() as RegionDefinition
+	rollback_region.id = &"step5_rollback"
+	rollback_region.scene_path = rollback_scene
+	var publish_attempts: Array[String] = []
+	var failed := Wizard._publish_pair(load(scene_path), rollback_region, rollback_scene, rollback_resource,
+		func(stage: String, target: String) -> Error:
+			publish_attempts.append(target)
+			return ERR_CANT_CREATE if target == rollback_resource else Wizard._publish_file(stage, target))
+	_check(publish_attempts == [rollback_scene, rollback_resource] and not failed.is_empty() and not FileAccess.file_exists(rollback_scene) and not FileAccess.file_exists(rollback_resource), "failed second publish rolls back only created files")
+
+	var selection: Array[Node] = [original.get_node("SpawnPoints/SewerBeetle"), original.get_node("GatherPoints/ScrapCacheA"),
+		original.get_node("Decorations").get_child(0)]
+	var preset := Presets.capture(selection, original, "Step 5 kit")
+	_check(preset != null and preset.objects.size() == 3, "capture mixed preset")
+	if preset == null:
+		return
+	var single: Array[Node] = []
+	for node in original.get_node("Terrain").get_children():
+		if node is FieldPlatform:
+			single.append(node)
+			break
+	var platform_preset := Presets.capture(single, original, "Platform")
+	_check(platform_preset != null and platform_preset.objects.size() == 1, "capture single platform preset")
+	var path := "res://addons/rtc_field_editor/presets/probe_kit.tres"
+	DirAccess.make_dir_recursive_absolute(Presets.FOLDER)
+	_check(ResourceSaver.save(preset, path) == OK, "save preset resource")
+	_filesystem.scan()
+	EditorInterface.open_scene_from_path(scene_path)
+	for frame in 90:
+		await get_tree().process_frame
+		if _field_root() != null and _field_root().scene_file_path == scene_path:
+			break
+	var root := _field_root()
+	if root == null or root == original:
+		_check(false, "open generated field")
+		return
+	if DisplayServer.get_name() == "headless":
+		_check(_place_preset(root, path, Vector2(420, 500)), "place preset in another region")
+	else:
+		await _drag_step5_preset(root)
+	_check(_place_preset(root, path, Vector2(720, 500)), "place preset again")
+	var enemies := root.get_node("SpawnPoints").get_children()
+	var gathers := root.get_node("GatherPoints").get_children()
+	_check(enemies.size() == 2 and gathers.size() == 2 and enemies[0].spawn_id != enemies[1].spawn_id and gathers[0].interaction_id != gathers[1].interaction_id, "preset reissues enemy and gather IDs")
+	var history := get_undo_redo().get_history_undo_redo(get_undo_redo().get_object_history_id(root))
+	_check(history.undo() and root.get_node("SpawnPoints").get_child_count() == 1, "preset batch undo")
+	_check(history.redo() and root.get_node("SpawnPoints").get_child_count() == 2, "preset batch redo")
+	_check((gathers[0].global_position - enemies[0].global_position).is_equal_approx(preset.objects[1].transform.origin), "preset relative position preserved")
+	var broken := preset.duplicate(true) as Presets.Preset
+	broken.objects[0].id = &"not_an_enemy"
+	_check(Presets.build(broken, root, _catalog).is_empty(), "invalid preset reference rejects entire batch")
+	_check(Visualization.describe(enemies[0]).index == 0 and Visualization.describe(gathers[0]).index == 1
+		and Visualization.describe(root.get_node("PlayerSpawnPoint0")).index == 2 and Visualization.describe(root.get_node("RegionPoints/Escape")).label.begins_with("ESCAPE"), "preview describes gameplay markers")
+	_visualization.enabled = [true, true, true, true, true, true]
+	update_overlays()
+	await get_tree().process_frame
+	_check(_save_probe_scene(root) == OK, "save generated region with presets")
+
+func _drag_step5_preset(root: Node2D) -> void:
+	for frame in 90:
+		await get_tree().process_frame
+		if not _catalog.search("Step 5 kit").is_empty():
+			break
+	_search.text = "Step 5 kit"
+	_populate()
+	var category := _tree.get_root().get_first_child()
+	if category == null or not is_instance_valid(_overlay):
+		_check(false, "preset available in GUI palette")
+		return
+	var item := category.get_first_child()
+	var start := _tree.get_global_transform_with_canvas() * _tree.get_item_area_rect(item, 0).get_center()
+	var destination := _overlay.get_global_transform_with_canvas() * (_overlay.size * Vector2(0.62, 0.42))
+	get_tree().root.warp_mouse(start)
+	await get_tree().process_frame
+	_mouse_motion(start, Vector2.ZERO, false)
+	_mouse_button(start, true)
+	_mouse_motion(start + Vector2(18, 0), Vector2(18, 0), true)
+	for frame in 4:
+		await get_tree().process_frame
+	get_tree().root.warp_mouse(destination)
+	_mouse_motion(destination, destination - start - Vector2(18, 0), true)
+	for frame in 4:
+		await get_tree().process_frame
+	_mouse_button(destination, false)
+	await get_tree().process_frame
+	_check(root.get_node("SpawnPoints").get_child_count() == 1 and root.get_node("GatherPoints").get_child_count() == 1, "GUI preset drop adds mixed batch")

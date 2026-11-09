@@ -129,6 +129,7 @@ func prepare_points(region: RegionDefinition, entries: Array[StringName], escape
 		return {"error": ERR_FILE_NOT_FOUND}
 	if read_only(destination):
 		return {"error": ERR_FILE_NO_PERMISSION}
+	var original_hash := FileAccess.get_sha256(destination)
 	var path := stage_path(destination.get_extension())
 	if path.is_empty():
 		return {"error": ERR_CANT_CREATE}
@@ -141,10 +142,10 @@ func prepare_points(region: RegionDefinition, entries: Array[StringName], escape
 		error = ResourceSaver.set_uid(path, uid)
 	if error != OK:
 		discard(path)
-	return {"error": error, "path": path}
+	return {"error": error, "path": path, "hash": original_hash}
 
-func publish_points(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName], staged: String) -> Error:
-	var error := replace_file(staged, region.resource_path)
+func publish_points(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName], staged: String, expected_hash: String) -> Error:
+	var error := replace_file(staged, region.resource_path) if FileAccess.get_sha256(region.resource_path) == expected_hash else ERR_BUSY
 	discard(staged)
 	if error == OK:
 		region.entry_point_ids = entries
@@ -156,15 +157,19 @@ func write_points(region: RegionDefinition, entries: Array[StringName], escapes:
 	var prepared := prepare_points(region, entries, escapes)
 	if prepared.error != OK:
 		return prepared.error
-	return publish_points(region, entries, escapes, prepared.path)
+	return publish_points(region, entries, escapes, prepared.path, prepared.hash)
 
 
 func write_history(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName],
-		undo: EditorUndoRedoManager, history_id: int, undoing: bool, notice: Callable) -> void:
+		undo: EditorUndoRedoManager, history_id: int, undoing: bool, notice: Callable, state: Dictionary) -> void:
 	if _reversing:
 		return
-	var error := write_points(region, entries, escapes)
+	var expected: Dictionary = state.after if undoing else state.before
+	var conflict: bool = region.entry_point_ids != expected.entries or region.escape_point_ids != expected.escapes or FileAccess.get_sha256(region.resource_path) != expected.hash or not disk_matches(region)
+	var error := ERR_BUSY if conflict else write_points(region, entries, escapes)
 	if error == OK:
+		var destination: Dictionary = state.before if undoing else state.after
+		destination.hash = FileAccess.get_sha256(region.resource_path)
 		_report(notice, "Saved %s." % region.resource_path)
 		return
 	var history := undo.get_history_undo_redo(history_id)
@@ -172,6 +177,8 @@ func write_history(region: RegionDefinition, entries: Array[StringName], escapes
 	var version := history.get_version() + (-1 if undoing else 1)
 	recovery_pending = true
 	var message := "RegionDefinition %s failed: %s. File and resource unchanged." % ["undo" if undoing else "redo", error_string(error)]
+	if conflict:
+		message += " External or cached resource edits detected. Reload and review before syncing."
 	_restore_cursor.call_deferred(undo, history_id, action, version, undoing, notice, message)
 
 func _restore_cursor(undo: EditorUndoRedoManager, history_id: int, action: int, version: int,
@@ -195,3 +202,16 @@ static func _report(notice: Callable, message: String, failed: bool = false) -> 
 		notice.call(message)
 	elif failed:
 		push_warning(message)
+
+
+static func disk_matches(region: RegionDefinition) -> bool:
+	if not FileAccess.file_exists(region.resource_path):
+		return false
+	var disk := ResourceLoader.load(region.resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	if disk == null:
+		return false
+	for property in region.get_property_list():
+		if property.usage & PROPERTY_USAGE_STORAGE and property.name != "script":
+			if region.get(property.name) != disk.get(property.name):
+				return false
+	return region.resource_name == disk.resource_name

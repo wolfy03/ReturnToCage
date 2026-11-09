@@ -11,6 +11,9 @@ const TerrainCommands := preload("terrain_commands.gd")
 const Resize := preload("platform_resize.gd")
 const DecorationStroke := preload("decoration_stroke.gd")
 const Maintenance := preload("field_maintenance.gd")
+const Wizard := preload("region_wizard.gd")
+const Presets := preload("preset_tools.gd")
+const Visualization := preload("field_visualization.gd")
 
 var _catalog := Catalog.new()
 var _export_filter := ExportFilter.new()
@@ -25,6 +28,7 @@ var _interval: SpinBox
 var _nested: CheckButton
 var _drop_surface: Control
 var _drag: Dictionary = {}
+var _drag_preset: Resource
 var _drag_root: Node2D
 var _filesystem: EditorFileSystem
 var _layers := Layers.new()
@@ -54,6 +58,11 @@ var _seed: SpinBox
 var _flip: CheckBox
 var _avoid: CheckBox
 var _maintenance := Maintenance.new()
+var _wizard: Wizard
+var _visualization := Visualization.new()
+var _preset_dialog: ConfirmationDialog
+var _preset_name: LineEdit
+var _created_region_path := ""
 var _maintenance_dialog: ConfirmationDialog
 var _conflicts: ItemList
 var _conflict_nodes: Array[Node] = []
@@ -90,6 +99,7 @@ func _enter_tree() -> void:
 	_nested = _toggle("Use selected Node2D group", false)
 	_add_terrain_controls()
 	_add_maintenance_controls()
+	_add_creation_controls()
 	var validate := Button.new()
 	validate.text = "Validate field"
 	validate.pressed.connect(_validate)
@@ -141,13 +151,14 @@ func _rebuild() -> void:
 		return
 	_catalog.rebuild(_filesystem.get_filesystem())
 	_populate()
+	_validate_created_region.call_deferred()
 
 func _populate() -> void:
 	_tree.clear()
 	var root := _tree.create_item()
 	var groups: Dictionary[String, TreeItem] = {}
 	var icons := {"Terrain": "StaticBody2D", "Enemy": "Marker2D", "Gather": "Marker2D",
-		"Region Points": "Marker2D", "Spawns": "Marker2D", "Climbables": "Area2D", "Decorations": "Sprite2D"}
+		"Region Points": "Marker2D", "Spawns": "Marker2D", "Climbables": "Area2D", "Decorations": "Sprite2D", "Presets": "PackedScene"}
 	for entry in _catalog.search(_search.text):
 		var category: String = entry.category
 		if not groups.has(category):
@@ -174,6 +185,7 @@ func _scene_changed(root: Node) -> void:
 	_sync_tool_surface()
 	_scene_label.text = root.scene_file_path.get_file() if root != null else "No scene"
 	_scene_label.tooltip_text = root.scene_file_path if root != null else ""
+	_validate_created_region.call_deferred()
 	_status.text = "Drag an asset into the 2D viewport." if _field_root() != null else "Open an AdventureRegion scene."
 
 func _field_root() -> Node2D:
@@ -190,6 +202,8 @@ func _start_drag(entry: Dictionary) -> void:
 		_status.text = "Open a field scene and enable placement."
 		return
 	_drag = entry
+	if entry.kind == "preset" and ResourceLoader.exists(entry.path):
+		_drag_preset = ResourceLoader.load(entry.path) as Presets.Preset
 	_sync_tool_surface()
 	set_process(true)
 	update_overlays()
@@ -202,6 +216,7 @@ func _process(_delta: float) -> void:
 
 func _cancel_drag() -> void:
 	_drag = {}
+	_drag_preset = null
 	_drag_root = null
 	set_process(false)
 	if is_instance_valid(_drop_surface):
@@ -269,6 +284,7 @@ func _notification(what: int) -> void:
 
 func _forward_canvas_force_draw_over_viewport(overlay: Control) -> void:
 	_canvas_overlay = overlay
+	_visualization.draw(_field_root(), overlay, EditorInterface.get_editor_viewport_2d().global_canvas_transform, _layers.hidden)
 	if not is_instance_valid(_tool_surface):
 		_install_tool_surface.call_deferred(overlay)
 	if _drag.is_empty():
@@ -290,6 +306,12 @@ func _forward_canvas_force_draw_over_viewport(overlay: Control) -> void:
 	overlay.draw_line(snapped - Vector2(12, 0), snapped + Vector2(12, 0), color)
 	overlay.draw_line(snapped - Vector2(0, 12), snapped + Vector2(0, 12), color)
 	overlay.draw_string(_tree.get_theme_default_font(), snapped + Vector2(14, -8), _drag.label)
+	if _drag.kind == "preset":
+		var preset := _drag_preset as Presets.Preset
+		if preset != null:
+			for entry in preset.objects:
+				if entry.get("transform") is Transform2D and entry.transform.is_finite():
+					overlay.draw_circle(canvas * (world + entry.transform.origin), 4, color)
 
 func _install_drop_surface(overlay: Control) -> void:
 	if _drag.is_empty() or not is_instance_valid(overlay) or is_instance_valid(_drop_surface):
@@ -317,6 +339,8 @@ func _place(entry: Dictionary, world: Vector2) -> bool:
 	var root := _field_root()
 	if root == null or not _enabled.button_pressed or not world.is_finite():
 		return false
+	if entry.kind == "preset":
+		return _place_preset(root, entry.path, world)
 	var group_name := Placement.group_for(entry.kind)
 	var issue := _layers.issue("SpawnPoints" if entry.kind == "player" else group_name)
 	if not issue.is_empty():
@@ -403,9 +427,20 @@ func _validate() -> void:
 	var issues := RegionDefinition.validate_field_nodes(region, root, _catalog)
 	if region == null:
 		issues.insert(0, "No RegionDefinition points to this scene. Save it and set scene_path and point IDs explicitly.")
-	if issues.is_empty():
-		issues.append("Field validation passed.")
+	else:
+		if not region.environment_path.is_empty() and (not ResourceLoader.exists(region.environment_path) or not ResourceLoader.load(region.environment_path) is EnvironmentDefinition):
+			issues.append("Invalid EnvironmentDefinition: " + region.environment_path)
+		if issues.is_empty():
+			issues.append("Field structure and content links passed.")
+		var connected := false
+		for definition in _catalog.definitions.values():
+			if definition is SettlementExitDefinition and region.id in definition.connected_region_ids and definition.entry_point_id in region.entry_point_ids and not definition.development_locked:
+				connected = true
+		issues.append("Check unlock rules in game." if connected else "No usable settlement exit references this region. Link an exit and configure unlocks before play.")
 	issues.append_array(RegionDefinition.FieldSceneChecks.spawn_warnings(root))
+	if root.find_children("*", "StaticBody2D", true, false).is_empty():
+		issues.append("No static terrain found. Add a safe spawn surface before play.")
+	issues.append("Editor preview does not run gameplay.")
 	_status.text = "\n".join(issues)
 
 # Canvas input forwarding depends on the editor's current object selection.
@@ -838,7 +873,12 @@ func _region_sync_plan(root: Node2D) -> Dictionary:
 	for region in _catalog.regions:
 		if region.scene_path == root.scene_file_path:
 			matches.append(region)
-	return Maintenance.sync_plan(root, matches, _catalog)
+	var plan := Maintenance.sync_plan(root, matches, _catalog)
+	if not plan.has("error"):
+		if not Maintenance.disk_matches(plan.region):
+			return {"error": "RegionDefinition cache differs from disk. Reload the resource and review again."}
+		plan.disk_hash = FileAccess.get_sha256(plan.region.resource_path)
+	return plan
 
 func _review_sync() -> void:
 	var root := _field_root()
@@ -860,7 +900,7 @@ func _review_sync() -> void:
 		if _field_root() != root:
 			return
 		var fresh := _region_sync_plan(root)
-		if fresh.has("error") or fresh.changes != plan.changes or fresh.region != plan.region:
+		if fresh.has("error") or fresh.changes != plan.changes or fresh.region != plan.region or fresh.disk_hash != plan.disk_hash:
 			_status.text = "Region points changed. Review the sync again."
 			return
 		_apply_region_plan(root, fresh, EditorInterface.save_scene)
@@ -871,6 +911,9 @@ func _apply_region_plan(root: Node2D, plan: Dictionary, save_scene: Callable = C
 		_status.text = "Wait for the previous sync history recovery."
 		return false
 	var region: RegionDefinition = plan.region
+	if FileAccess.file_exists(region.resource_path) and not Maintenance.disk_matches(region):
+		_status.text = "RegionDefinition cache differs from disk. Reload and review before syncing."
+		return false
 	var old_entries := region.entry_point_ids.duplicate()
 	var old_escapes := region.escape_point_ids.duplicate()
 	var prepared := _maintenance.prepare_points(region, plan.entries, plan.escapes)
@@ -890,16 +933,20 @@ func _apply_region_plan(root: Node2D, plan: Dictionary, save_scene: Callable = C
 			Maintenance.discard(prepared.path)
 			_rollback_sync_scene(scene_path, backup, "Scene save failed.")
 			return false
-	var error := _maintenance.publish_points(region, plan.entries, plan.escapes, prepared.path)
+	var error := _maintenance.publish_points(region, plan.entries, plan.escapes, prepared.path, prepared.hash)
 	if error != OK:
 		_rollback_sync_scene(scene_path, backup, "RegionDefinition save failed: %s." % error_string(error))
 		return false
 	Maintenance.discard(backup)
 	var undo := get_undo_redo()
 	var history_id := undo.get_object_history_id(root)
+	var state := {
+		"before": {"hash": prepared.hash, "entries": old_entries, "escapes": old_escapes},
+		"after": {"hash": FileAccess.get_sha256(region.resource_path), "entries": plan.entries.duplicate(), "escapes": plan.escapes.duplicate()}
+	}
 	undo.create_action("Sync region point declarations", UndoRedo.MERGE_DISABLE, root)
-	undo.add_do_method(_maintenance, "write_history", region, plan.entries, plan.escapes, undo, history_id, false, _sync_notice)
-	undo.add_undo_method(_maintenance, "write_history", region, old_entries, old_escapes, undo, history_id, true, _sync_notice)
+	undo.add_do_method(_maintenance, "write_history", region, plan.entries, plan.escapes, undo, history_id, false, _sync_notice, state)
+	undo.add_undo_method(_maintenance, "write_history", region, old_entries, old_escapes, undo, history_id, true, _sync_notice, state)
 	undo.commit_action(false)
 	_status.text = "Saved %s." % region.resource_path
 	return true
@@ -933,3 +980,142 @@ func _rollback_sync_scene(path: String, backup: String, message: String) -> void
 func _sync_notice(message: String) -> void:
 	if is_instance_valid(_status):
 		_status.text = message
+
+func _add_creation_controls() -> void:
+	var row := HBoxContainer.new()
+	_dock.add_child(row)
+	var create := Button.new()
+	create.text = "New Region"
+	row.add_child(create)
+	_wizard = Wizard.new()
+	_wizard.catalog = _catalog
+	_dock.add_child(_wizard)
+	create.pressed.connect(func() -> void: _wizard.popup_centered(Vector2i(720, 460)))
+	_wizard.region_created.connect(func(path: String) -> void:
+		_created_region_path = path
+		_filesystem.scan()
+		_rebuild()
+		EditorInterface.open_scene_from_path(path)
+		_validate_created_region.call_deferred())
+
+	var preset := Button.new()
+	preset.text = "Save Preset"
+	row.add_child(preset)
+	_preset_dialog = ConfirmationDialog.new()
+	_preset_dialog.title = "Save selected objects as a placement preset"
+	_preset_dialog.dialog_hide_on_ok = false
+	_dock.add_child(_preset_dialog)
+	_preset_name = LineEdit.new()
+	_preset_name.placeholder_text = "Preset name"
+	_preset_dialog.add_child(_preset_name)
+	preset.pressed.connect(func() -> void: _preset_dialog.popup_centered(Vector2i(480, 140)))
+	_preset_dialog.confirmed.connect(_save_preset)
+
+	var options := MenuButton.new()
+	options.text = "Visualize"
+	row.add_child(options)
+	var menu := options.get_popup()
+	menu.hide_on_checkable_item_selection = false
+	for index in Visualization.LABELS.size():
+		menu.add_check_item("Show " + Visualization.LABELS[index], index)
+		menu.set_item_checked(index, _visualization.enabled[index])
+	menu.id_pressed.connect(func(index: int) -> void:
+		_visualization.enabled[index] = not _visualization.enabled[index]
+		menu.set_item_checked(index, _visualization.enabled[index])
+		update_overlays())
+
+func _save_preset() -> void:
+	var root := _field_root()
+	if root == null:
+		return
+	var label := _preset_name.text.strip_edges()
+	var filename := label.to_snake_case().replace(" ", "_")
+	var preset := Presets.capture(EditorInterface.get_selection().get_selected_nodes(), root, label)
+	if preset == null or not Wizard.valid_id(filename):
+		_preset_dialog.dialog_text = "Select supported field objects and enter a name that converts to snake_case."
+		return
+	var path := Presets.FOLDER.path_join(filename + ".tres")
+	if Wizard.occupied(path):
+		_preset_dialog.dialog_text = "Preset already exists. Choose another name."
+		return
+	var error := DirAccess.make_dir_recursive_absolute(Presets.FOLDER)
+	if error == OK:
+		error = ResourceSaver.save(preset, path)
+	if error != OK:
+		_preset_dialog.dialog_text = error_string(error)
+		return
+	_preset_dialog.hide()
+	_filesystem.scan()
+	_status.text = "Saved placement preset " + label
+
+func _place_preset(root: Node2D, path: String, world: Vector2) -> bool:
+	if not ResourceLoader.exists(path):
+		_status.text = "Preset no longer exists."
+		return false
+	var preset := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as Presets.Preset
+	if preset == null:
+		_status.text = "Invalid placement preset."
+		return false
+	var parents: Dictionary[String, Node2D] = {}
+	var groups: Dictionary[String, Node2D] = {}
+	for entry in preset.objects:
+		var kind: Variant = entry.get("kind")
+		if not kind is String:
+			_status.text = "Invalid preset object kind."
+			return false
+		var layer := Placement.group_for(kind)
+		var issue := _layers.issue(layer)
+		var existing := root.get_node_or_null(layer) if not layer.is_empty() else null
+		if not issue.is_empty() or layer.is_empty() or (existing != null and not _editable_group(existing, root)):
+			_status.text = issue if not issue.is_empty() else "Invalid preset layer or destination group."
+			return false
+		var parent := root if existing == null else existing as Node2D
+		if not _invertible(parent.global_transform):
+			_status.text = "Preset parent has a singular transform."
+			return false
+		parents[layer] = parent
+	var nodes := Presets.build(preset, root, _catalog)
+	if nodes.is_empty():
+		_status.text = "Preset contains invalid objects or missing content."
+		return false
+	var undo := get_undo_redo()
+	undo.create_action("Place field preset", UndoRedo.MERGE_DISABLE, root)
+	for layer in parents:
+		if parents[layer] == root:
+			var group := Node2D.new()
+			group.name = layer
+			groups[layer] = group
+			undo.add_do_method(root, "add_child", group, true)
+			undo.add_do_method(group, "set_owner", root)
+			undo.add_do_reference(group)
+	for index in nodes.size():
+		var node := nodes[index]
+		var layer := Placement.group_for(preset.objects[index].kind)
+		var parent: Node2D = groups.get(layer, parents[layer])
+		var transform := node.transform
+		transform.origin += world
+		node.transform = parents[layer].global_transform.affine_inverse() * transform
+		undo.add_do_method(parent, "add_child", node, true)
+		undo.add_do_method(node, "set_owner", root)
+		if node is ClimbableArea2D:
+			for child in node.get_children():
+				undo.add_do_method(child, "set_owner", root)
+		undo.add_do_reference(node)
+		undo.add_undo_method(parent, "remove_child", node)
+	for group in groups.values():
+		undo.add_undo_method(root, "remove_child", group)
+	undo.commit_action()
+	_status.text = "Placed %d preset objects." % nodes.size()
+	return true
+
+func _validate_created_region() -> void:
+	if _created_region_path.is_empty() or not is_instance_valid(_dock):
+		return
+	var root := _field_root()
+	if root == null or root.scene_file_path != _created_region_path:
+		return
+	for region in _catalog.regions:
+		if region.scene_path == _created_region_path:
+			_created_region_path = ""
+			_validate()
+			return

@@ -74,3 +74,5 @@ Polygon2D 외곽을 함께 편집한다. 일반 지형의 layer와 mask는 1이�
 검증은 씬을 트리에 붙이기 전에 수행하므로 편집과 검증에서 시뮬레이션이 시작되지 않는다.
 
 GUI에서 씬 배치를 편집하는 방법은 [Field Editor 사용법](field_editor.md)을 참고한다.
+
+새 AdventureRegion은 [New Region과 배치 프리셋](field_editor.md#지역-생성과-배치-프리셋)으로 시작할 수 있다. 생성 후 출구 연결과 해금 조건을 작성한다.

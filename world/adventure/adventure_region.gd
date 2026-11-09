@@ -155,7 +155,7 @@ func _create_gather(point: FieldGatherPoint) -> void:
 	if definition == null or id.is_empty() or point.amount <= 0 or _gather_targets.has(id):
 		push_error("Invalid gather marker: %s" % point.get_path())
 		return
-	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, point.amount], to_local(point.global_position), Vector2(42, 42), Color("8b6f47"), 2)
+	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, point.amount], to_local(point.global_position), FieldGatherPoint.TARGET_SIZE, Color("8b6f47"), 2)
 	target.add_to_group(&"world_gather")
 	_gather_targets[id] = target
 	_gather_items[id] = point
@@ -184,7 +184,7 @@ func _try_gather(peer_id: int, interaction_id: StringName) -> bool:
 	if target == null or point == null or actor == null or runtime == null \
 			or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE \
 			or actor.hurt.is_active() or actor.dodge.is_active() \
-			or actor.global_position.distance_to(target.global_position) > 90.0:
+			or actor.global_position.distance_to(target.global_position) > FieldGatherPoint.SERVER_DISTANCE:
 		return false
 	var result := GameSession.collect_adventure_loot_for_peer(
 		point.item_id, point.amount, peer_id
