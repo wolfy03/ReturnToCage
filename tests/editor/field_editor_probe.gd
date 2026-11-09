@@ -78,7 +78,9 @@ func _run() -> void:
 	_check(history.redo() and decoration.owner == root, "redo restores node and owner")
 	_validate()
 	_check(_status.text.begins_with("No RegionDefinition"), "unregistered scene reports explicit registration")
+	_check_step3_contracts(root)
 	_exercise_terrain_transactions(root)
+	_exercise_step4_transactions(root)
 	var path := root.scene_file_path
 	if DisplayServer.get_name() == "headless":
 		var packed := PackedScene.new()
@@ -152,7 +154,181 @@ func _exercise_gui(root: Node2D) -> void:
 		var placed := terrain.get_child(-1) as Node2D
 		_check(placed.global_position.is_equal_approx(expected), "native drop uses overlay canvas transform: expected %s, got %s" % [expected, placed.global_position])
 		await _exercise_terrain_gui(root)
+		await _exercise_step4_gui(root)
 		_check(EditorInterface.save_scene() == OK, "save after native drag and strokes")
+
+func _exercise_step4_transactions(root: Node2D) -> void:
+	var history := get_undo_redo().get_history_undo_redo(get_undo_redo().get_object_history_id(root))
+	var existing := root.get_node("SpawnPoints/SewerBeetle") as FieldEnemySpawnPoint
+	var duplicate := existing.duplicate() as FieldEnemySpawnPoint
+	existing.get_parent().add_child(duplicate, true)
+	duplicate.owner = root
+	var gather := root.get_node("GatherPoints/ScrapCacheA") as FieldGatherPoint
+	var gather_copy := gather.duplicate() as FieldGatherPoint
+	gather.get_parent().add_child(gather_copy, true)
+	gather_copy.owner = root
+	var old_enemy := existing.spawn_id
+	var old_gather := gather.interaction_id
+	_check(Maintenance.duplicates(root).size() == 2, "detect enemy and gather duplicates")
+	_check(Maintenance.repair(root, get_undo_redo()) == 2 and Maintenance.duplicates(root).is_empty(), "repair duplicate IDs")
+	var replacement := duplicate.spawn_id
+	_check(existing.spawn_id == old_enemy and gather.interaction_id == old_gather, "repair preserves first IDs")
+	_check(history.undo() and duplicate.spawn_id == old_enemy and gather_copy.interaction_id == old_gather, "ID undo")
+	_check(history.redo() and duplicate.spawn_id == replacement, "ID redo deterministic")
+	var pack := PackedScene.new()
+	_check(pack.pack(root) == OK, "pack repaired ID scene")
+	var clone := pack.instantiate()
+	_check(clone.get_node(root.get_path_to(duplicate)).spawn_id == replacement, "repaired ID serialized")
+	clone.free()
+	duplicate.free()
+	gather_copy.free()
+
+	var template := _catalog.get_definition(&"sewer_region") as RegionDefinition
+	var region := template.duplicate() as RegionDefinition
+	region.scene_path = root.scene_file_path
+	var path := "res://tests/editor/probe_region.tres"
+	_check(ResourceSaver.save(region, path) == OK, "create disposable region")
+	region = ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	_check(Maintenance.sync_plan(root, [region], _catalog).changes.size() == 2, "sync previews added ENTRY and ESCAPE")
+	_check(Maintenance.sync_plan(root, [], _catalog).has("error") and Maintenance.sync_plan(root, [region, region], _catalog).has("error"), "missing and ambiguous region rejected")
+	var entry := root.get_node("Entry") as RegionPoint
+	var old_id := entry.point_id
+	entry.point_id = &"temporary_unlinked_entry"
+	var blocked := Maintenance.sync_plan(root, [region], _catalog)
+	_check(blocked.has("error") and blocked.error.contains("settlement exit"), "referenced entry removal blocked")
+	entry.point_id = old_id
+	var point := entry.duplicate() as RegionPoint
+	root.add_child(point, true)
+	_check(Maintenance.sync_plan(root, [region], _catalog).has("error"), "duplicate region point blocks sync")
+	point.free()
+	var plan := Maintenance.sync_plan(root, [region], _catalog)
+	_check(_apply_region_plan(root, plan), "save RegionDefinition sync")
+	var reloaded := ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	_check(reloaded.entry_point_ids == plan.entries and reloaded.escape_point_ids == plan.escapes, "synced resource reload")
+	_check(Maintenance.sync_plan(root, [region], _catalog).changes.is_empty(), "matching declarations unchanged")
+	_check(history.undo(), "sync undo")
+	reloaded = ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	_check(reloaded.entry_point_ids == template.entry_point_ids and reloaded.escape_point_ids == template.escape_point_ids, "undo persists old declarations")
+	_check(history.redo(), "sync redo")
+	reloaded = ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	_check(reloaded.entry_point_ids == plan.entries and reloaded.escape_point_ids == plan.escapes, "redo persists new declarations")
+
+	var first := DecorationStroke.new()
+	var second := DecorationStroke.new()
+	var no_existing: Array[Vector2] = []
+	var strokes: Array[DecorationStroke] = [first, second]
+	for stroke in strokes:
+		stroke.begin(Vector2.ZERO, 32, 20, Vector2(0.5, 1.5), 42, true, true, no_existing)
+		stroke.extend(Vector2(96, 0))
+		stroke.extend(Vector2.ZERO)
+	_check(first.transforms == second.transforms and first.transforms.size() == 4, "seeded brush transform and duplicate avoidance")
+	_check(first.transforms[2].origin == Vector2(64, 0), "brush maintains world spacing")
+	var decor := root.get_node("Decorations") as Node2D
+	var before := decor.get_child_count()
+	var transforms: Array[Transform2D] = first.transforms.duplicate()
+	for i in transforms.size():
+		transforms[i].origin += Vector2(800, 110)
+	TerrainCommands.decorate(get_undo_redo(), root, decor, null, "res://world/decorations/sewer_wall_mark.tscn", transforms)
+	var stamp := decor.get_child(-1) as FieldDecoration
+	_check(decor.get_child_count() == before + 4 and stamp.global_transform.is_equal_approx(transforms[-1]), "brush commits deterministic transforms")
+	_check(history.undo() and decor.get_child_count() == before, "headless brush undo")
+	_check(history.redo() and stamp.owner == root and stamp.global_transform.is_equal_approx(transforms[-1]), "headless brush redo")
+	var platform: FieldPlatform
+	for node in root.get_node("Terrain").get_children():
+		if node is FieldPlatform:
+			platform = node
+	_check(platform != null, "resize fixture exists")
+	if platform == null:
+		return
+	var original_transform := platform.transform
+	platform.transform = Transform2D(0.35, Vector2(-1.3, 0.6), 0.12, platform.position)
+	for direction in Resize.HANDLES:
+		var gesture := Resize.new()
+		gesture.begin(platform, direction)
+		var opposite: Vector2 = gesture.basis * (-direction * gesture.original_size * 0.5)
+		gesture.preview(gesture.basis * (direction * (gesture.original_size * 0.5 + Vector2(18, 12))))
+		var new_basis := gesture.basis
+		new_basis.origin = gesture.parent.to_global(gesture.position)
+		_check((new_basis * (-direction * gesture.size * 0.5)).is_equal_approx(opposite), "resize fixes opposite edge " + str(direction))
+		gesture.preview(opposite)
+		_check(gesture.size.x >= 4 and gesture.size.y >= 4, "resize clamps minimum")
+	platform.transform = original_transform
+
+func _exercise_step4_gui(root: Node2D) -> void:
+	_set_test_tool(Stroke.Mode.SELECT)
+	var terrain := root.get_node("Terrain")
+	var platform := terrain.get_child(-1) as FieldPlatform
+	if platform == null:
+		_check(false, "GUI resize fixture exists")
+		return
+	_select_nodes([platform])
+	await get_tree().process_frame
+	var canvas := EditorInterface.get_editor_viewport_2d().global_canvas_transform
+	var edge := canvas * (platform.global_transform * Vector2(platform.size.x * 0.5, 0))
+	var inside := Rect2(Vector2.ZERO, _overlay.size)
+	_check(inside.has_point(edge) and inside.has_point(edge + Vector2(35, 0)), "resize handle visible in viewport")
+	var old_size := platform.size
+	var old_position := platform.position
+	await _canvas_stroke(edge, edge + Vector2(35, 0), true)
+	_check(platform.size == old_size and platform.position == old_position, "Escape cancels GUI resize")
+	await _canvas_stroke(edge, edge + Vector2(35, 0))
+	_check(platform.size.x > old_size.x and platform.get_node("CollisionShape2D").shape.size == platform.size, "GUI resize updates collision")
+	var resized := platform.size
+	var history := get_undo_redo().get_history_undo_redo(get_undo_redo().get_object_history_id(root))
+	_check(history.undo() and platform.size == old_size, "GUI resize undo")
+	_check(history.redo() and platform.size == resized, "GUI resize redo")
+	_search.text = "sewer_wall_mark"
+	_populate()
+	var item := _tree.get_root().get_first_child().get_first_child()
+	item.select(0)
+	_set_test_tool(Stroke.Mode.DECORATION)
+	await get_tree().process_frame
+	var decorations := root.get_node("Decorations")
+	var before := decorations.get_child_count()
+	await _canvas_stroke(_overlay.size * Vector2(0.30, 0.65), _overlay.size * Vector2(0.65, 0.65))
+	var count := decorations.get_child_count()
+	_check(count > before + 1, "GUI decoration brush paints repeated nodes")
+	if count > before:
+		var stamp := decorations.get_child(-1) as FieldDecoration
+		var transform := stamp.transform
+		_check(history.undo() and decorations.get_child_count() == before, "one brush undo")
+		_check(history.redo() and stamp.owner == root and stamp.transform == transform, "brush redo restores exact transform")
+	_set_test_tool(Stroke.Mode.SELECT)
+	_check(EditorInterface.save_scene() == OK, "save after GUI resize and decoration brush")
+	var packed := ResourceLoader.load(root.scene_file_path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	var instance := packed.instantiate()
+	_check(instance.get_node(root.get_path_to(platform)).size == resized, "resized platform Size survives reload")
+	_check(instance.get_node("Decorations").get_child_count() == count, "decoration brush survives reload")
+	instance.free()
+
+func _check_step3_contracts(root: Node2D) -> void:
+	var terrain := root.get_node("Terrain") as Node2D
+	var large := Placement.PLATFORM.instantiate() as FieldPlatform
+	var small := Placement.PLATFORM.instantiate() as FieldPlatform
+	terrain.add_child(large)
+	terrain.add_child(small)
+	large.owner = root
+	small.owner = root
+	large.size = Vector2(160, 32)
+	large.global_position = Vector2(832, 160)
+	var order := terrain.get_children()
+	TerrainCommands.erase(get_undo_redo(), root, [small, large])
+	var history := get_undo_redo().get_history_undo_redo(get_undo_redo().get_object_history_id(root))
+	_check(history.undo() and terrain.get_children() == order and large.owner == root and small.owner == root, "erase restores sibling order and owners")
+	var stroke := Stroke.new()
+	stroke.begin(Stroke.Mode.PAINT, Vector2(896, 160), 32, [large])
+	_check(stroke.cells.is_empty(), "paint skips occupied area away from platform center")
+	_nested.button_pressed = true
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(root.get_node("Decorations"))
+	_mode.select(Stroke.Mode.RECTANGLE)
+	_begin_stroke(Vector2(0, 0))
+	_check(_stroke == null, "incompatible nested decoration group rejects terrain")
+	_cancel_stroke()
+	_nested.button_pressed = false
+	_mode.select(Stroke.Mode.SELECT)
+	large.free()
+	small.free()
 
 func _exercise_terrain_transactions(root: Node2D) -> void:
 	var terrain := root.get_node("Terrain") as Node2D

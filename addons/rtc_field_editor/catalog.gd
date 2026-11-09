@@ -1,6 +1,7 @@
 @tool
 extends RefCounted
 
+var regions: Array[RegionDefinition] = []
 var entries: Array[Dictionary] = []
 var definitions: Dictionary[StringName, ContentDefinition] = {}
 var duplicates: Dictionary[StringName, bool] = {}
@@ -9,6 +10,7 @@ func get_definition(id: StringName) -> ContentDefinition:
 	return definitions.get(id) if not duplicates.has(id) else null
 
 func rebuild(directory: EditorFileSystemDirectory) -> void:
+	regions.clear()
 	entries.clear()
 	definitions.clear()
 	duplicates.clear()
@@ -30,6 +32,8 @@ func _scan(directory: EditorFileSystemDirectory) -> void:
 			var definition := load(path) as ContentDefinition
 			if definition == null or definition.id.is_empty():
 				continue
+			if definition is RegionDefinition:
+				regions.append(definition)
 			if definitions.has(definition.id):
 				duplicates[definition.id] = true
 			definitions[definition.id] = definition

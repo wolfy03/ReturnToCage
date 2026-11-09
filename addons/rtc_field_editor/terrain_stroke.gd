@@ -1,7 +1,7 @@
 @tool
 extends RefCounted
 
-enum Mode { SELECT, RECTANGLE, PAINT, ERASE }
+enum Mode { SELECT, RECTANGLE, PAINT, ERASE, DECORATION }
 const MIN_SIZE := 4.0
 const MAX_CELLS := 2048
 const ERASE_RADIUS := 10.0
@@ -12,7 +12,8 @@ var cursor: Vector2
 var previous: Vector2
 var grid: float
 var cells: Dictionary[Vector2i, bool] = {}
-var occupied: Dictionary[Vector2i, bool] = {}
+var occupied: Array[Dictionary] = []
+var _tested: Dictionary[Vector2i, bool] = {}
 var candidates: Array[FieldPlatform] = []
 var erased: Dictionary[FieldPlatform, bool] = {}
 
@@ -25,7 +26,12 @@ func begin(tool: Mode, world: Vector2, interval: float, platforms: Array[FieldPl
 	candidates = platforms
 	if mode == Mode.PAINT:
 		for platform in platforms:
-			occupied[_cell(platform.global_position)] = true
+			var half := platform.size * 0.5
+			var points := _corners(Rect2(-half, platform.size), platform.global_transform)
+			var bounds := Rect2(points[0], Vector2.ZERO)
+			for point in points:
+				bounds = bounds.expand(point)
+			occupied.append({"bounds": bounds, "points": points})
 	extend(world)
 
 func extend(world: Vector2) -> void:
@@ -36,8 +42,10 @@ func extend(world: Vector2) -> void:
 			var cell := _cell(previous.lerp(world, float(i) / steps))
 			if cells.size() >= MAX_CELLS:
 				break
-			if not occupied.has(cell):
-				cells[cell] = true
+			if not _tested.has(cell):
+				_tested[cell] = true
+				if not _overlaps_platform(cell_rect(cell)):
+					cells[cell] = true
 	elif mode == Mode.ERASE:
 		for platform in candidates:
 			if not is_instance_valid(platform) or erased.has(platform):
@@ -72,3 +80,16 @@ static func hits_platform(platform: FieldPlatform, from: Vector2, to: Vector2) -
 		if Geometry2D.segment_intersects_segment(a, b, corners[i], corners[(i + 1) % 4]) != null:
 			return true
 	return false
+
+func _overlaps_platform(rect: Rect2) -> bool:
+	for item in occupied:
+		if not rect.intersects(item.bounds):
+			continue
+		for polygon in Geometry2D.intersect_polygons(_corners(rect, Transform2D.IDENTITY), item.points):
+			if polygon.size() >= 3:
+				return true
+	return false
+
+static func _corners(rect: Rect2, transform: Transform2D) -> PackedVector2Array:
+	return PackedVector2Array([transform * rect.position, transform * Vector2(rect.end.x, rect.position.y),
+		transform * rect.end, transform * Vector2(rect.position.x, rect.end.y)])

@@ -15,7 +15,10 @@ func _run() -> void:
 	add_child(presentation)
 	var valid: bool = presentation.get_node("EnemySpawnManager")._enemies.size() == 2
 	valid = valid and presentation._gather_targets.has(&"rusty_scrap_gather_1")
-	valid = valid and presentation.get_node("Decorations").get_child(0).get_child_count(true) == 1
+	var decorations := presentation.get_node("Decorations")
+	valid = valid and decorations.get_child_count() >= 6
+	for decoration in decorations.get_children():
+		valid = valid and decoration.get_child_count(true) == 1
 	presentation.queue_free()
 	await get_tree().process_frame
 

@@ -114,8 +114,8 @@ static func _has_point(root: Node2D, id: StringName, kind: RegionPoint.Kind) -> 
 			return true
 	return false
 
-static func _unique_id(root: Node2D, stem: String) -> StringName:
-	var used: Dictionary[StringName, bool] = {}
+static func _unique_id(root: Node2D, stem: String, reserved: Dictionary[StringName, bool] = {}) -> StringName:
+	var used := reserved.duplicate()
 	for marker in root.find_children("*", "Marker2D", true, false):
 		if marker is RegionPoint:
 			used[marker.point_id] = true
