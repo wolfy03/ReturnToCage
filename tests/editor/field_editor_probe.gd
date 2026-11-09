@@ -78,6 +78,7 @@ func _run() -> void:
 	_check(history.redo() and decoration.owner == root, "redo restores node and owner")
 	_validate()
 	_check(_status.text.begins_with("No RegionDefinition"), "unregistered scene reports explicit registration")
+	_exercise_terrain_transactions(root)
 	var path := root.scene_file_path
 	if DisplayServer.get_name() == "headless":
 		var packed := PackedScene.new()
@@ -125,6 +126,7 @@ func _exercise_gui(root: Node2D) -> void:
 	if not is_instance_valid(_overlay) or not _tree.is_visible_in_tree():
 		_check(false, "rendered dock and canvas overlay are visible (overlay=%s, tree=%s, parent=%s)" % [is_instance_valid(_overlay), _tree.is_visible_in_tree(), _dock.get_parent()])
 		return
+	_set_test_tool(Stroke.Mode.RECTANGLE)
 	var item := _tree.get_root().get_first_child().get_first_child()
 	var start := _tree.get_global_transform_with_canvas() * _tree.get_item_area_rect(item, 0).get_center()
 	var local := _overlay.size * Vector2(0.62, 0.45)
@@ -149,7 +151,159 @@ func _exercise_gui(root: Node2D) -> void:
 	if terrain.get_child_count() > before:
 		var placed := terrain.get_child(-1) as Node2D
 		_check(placed.global_position.is_equal_approx(expected), "native drop uses overlay canvas transform: expected %s, got %s" % [expected, placed.global_position])
-		_check(EditorInterface.save_scene() == OK, "save after native drag")
+		await _exercise_terrain_gui(root)
+		_check(EditorInterface.save_scene() == OK, "save after native drag and strokes")
+
+func _exercise_terrain_transactions(root: Node2D) -> void:
+	var terrain := root.get_node("Terrain") as Node2D
+	var original_transform := terrain.transform
+	var nested := Node2D.new()
+	nested.name = "NestedTerrain"
+	terrain.add_child(nested)
+	nested.owner = root
+	nested.transform = Transform2D(0.2, Vector2(-2, 0.5), 0.0, Vector2(45, 80))
+	_nested.button_pressed = true
+	EditorInterface.get_selection().clear()
+	EditorInterface.get_selection().add_node(nested)
+	var before := terrain.get_child_count()
+	_mode.select(Stroke.Mode.RECTANGLE)
+	_begin_stroke(Vector2(900, 290))
+	_end_stroke(Vector2(804, 242))
+	var platform := nested.get_child(0) as FieldPlatform if nested.get_child_count() > 0 else null
+	_check(nested.get_child_count() == 1 and platform != null, "reverse rectangle creates one nested platform")
+	if platform == null:
+		return
+	_check(platform.size == Vector2(96, 48) and platform.global_position.is_equal_approx(Vector2(852, 266)), "reverse rectangle size and world center")
+	_check(platform.global_transform.is_equal_approx(Transform2D(0.0, Vector2(852, 266))), "negative nonuniform parent basis compensated")
+	_check(platform.get_node("CollisionShape2D").shape.size == platform.size, "collision follows rectangle size")
+	var visual := platform.get_node("Visual") as Polygon2D
+	var polygon := visual.polygon
+	visual.polygon = PackedVector2Array([Vector2.ZERO, Vector2.ONE, Vector2.UP])
+	var diagnostics := RegionDefinition.validate_field_nodes(null, root, _catalog)
+	_check("\n".join(diagnostics).contains("collision and visual bounds differ"), "validator catches a platform visual size mismatch")
+	visual.polygon = polygon
+	var history := get_undo_redo().get_history_undo_redo(get_undo_redo().get_object_history_id(root))
+	_check(history.undo() and nested.get_child_count() == 0, "rectangle undo")
+	_check(history.redo() and platform.owner == root, "rectangle redo restores owner")
+	_check(history.undo(), "undo transformed probe")
+	_nested.button_pressed = false
+	terrain.transform = original_transform
+	_mode.select(Stroke.Mode.RECTANGLE)
+	_begin_stroke(Vector2(672, 160))
+	_end_stroke(Vector2(673, 161))
+	_check(terrain.get_child_count() == before, "tiny rectangle skipped")
+	terrain.scale.x = 0.0
+	_begin_stroke(Vector2(672, 160))
+	_check(_stroke == null, "singular parent rejected")
+	terrain.transform = original_transform
+	_layer_menu.select(1)
+	_layer_selected(1)
+	_set_layer_locked(true)
+	_begin_stroke(Vector2(672, 160))
+	_check(_stroke == null, "locked terrain rejects tool")
+	_check(not _place({"kind": "platform", "label": "Platform", "id": &""}, Vector2(10, 10)), "locked terrain rejects palette placement")
+	_set_layer_locked(false)
+	_check(Layers.for_node(root.get_node("PlayerSpawnPoint0"), root) == "SpawnPoints", "root player spawn is logically classified")
+	_check(Layers.for_node(root.get_node("SpawnPoints/SewerBeetle"), root) == "SpawnPoints", "nested enemy spawn is classified")
+	_set_layer_visible(false)
+	_check(terrain.visible and terrain.get_node("Floor").visible and not terrain.get_node("Floor/CollisionShape2D").disabled, "preview hiding never changes authored visibility or collision")
+	_set_layer_visible(true)
+	_layer_menu.select(0)
+	_layer_selected(0)
+	_begin_stroke(Vector2(672, 160))
+	_end_stroke(Vector2(736, 192))
+	_check(terrain.get_child_count() == before + 1, "authored rectangle remains for save and runtime check")
+	var canvas := EditorInterface.get_editor_viewport_2d()
+	var original_canvas := canvas.global_canvas_transform
+	canvas.global_canvas_transform = Transform2D(Vector2(2, 0), Vector2(0, 2), Vector2(60, -20))
+	var sample := canvas.global_canvas_transform * Vector2(49, 19)
+	_check(_stroke_world(sample, false) == Vector2(64, 32), "snap after inverse zoom and pan")
+	_check(_stroke_world(sample, true).is_equal_approx(Vector2(49, 19)), "Alt bypass under zoom and pan")
+	canvas.global_canvas_transform = original_canvas
+	_mode.select(Stroke.Mode.SELECT)
+
+func _exercise_terrain_gui(root: Node2D) -> void:
+	var terrain := root.get_node("Terrain")
+	var before := terrain.get_child_count()
+	EditorInterface.get_selection().clear()
+	await get_tree().process_frame
+	_set_test_tool(Stroke.Mode.RECTANGLE)
+	var from := _overlay.size * Vector2(0.72, 0.30)
+	var to := _overlay.size * Vector2(0.55, 0.18)
+	await _canvas_stroke(from, to)
+	_check(terrain.get_child_count() == before + 1, "GUI rectangle creates a platform without a selection")
+	if terrain.get_child_count() == before + 1:
+		var platform := terrain.get_child(-1) as FieldPlatform
+		await _check_layer_visibility(root, platform)
+	var before_outside := terrain.get_child_count()
+	await _canvas_stroke(from, Vector2(-40, from.y))
+	_check(terrain.get_child_count() == before_outside, "release outside viewport discards rectangle")
+	var history := get_undo_redo().get_history_undo_redo(get_undo_redo().get_object_history_id(root))
+	_set_test_tool(Stroke.Mode.PAINT)
+	from = _overlay.size * Vector2(0.28, 0.25)
+	to = _overlay.size * Vector2(0.48, 0.25)
+	before = terrain.get_child_count()
+	await _canvas_stroke(from, to)
+	var painted := terrain.get_child_count() - before
+	_check(painted > 2, "GUI paint fills fast motion between endpoints")
+	_check(history.undo() and terrain.get_child_count() == before, "one undo removes whole paint stroke")
+	_check(history.redo() and terrain.get_child_count() == before + painted, "one redo restores whole paint stroke")
+	await _canvas_stroke(from, to)
+	_check(terrain.get_child_count() == before + painted, "repainting same grid cells does not duplicate platforms")
+	await _canvas_stroke(from + Vector2(0, 55), to + Vector2(0, 55), true)
+	_check(terrain.get_child_count() == before + painted, "Escape discards pending GUI stroke")
+	_set_test_tool(Stroke.Mode.ERASE)
+	await _canvas_stroke(from, to)
+	_check(terrain.get_child_count() < before + painted and terrain.has_node("Floor") and root.has_node("EnemySpawnManager"), "GUI erase removes painted terrain and protects existing nodes")
+	var erased_count := terrain.get_child_count()
+	_check(history.undo() and terrain.get_child_count() == before + painted, "one undo restores whole erase stroke")
+	for child in terrain.get_children():
+		if child is FieldPlatform:
+			_check(child.owner == root, "erase undo restores owner")
+	_check(history.redo() and terrain.get_child_count() == erased_count, "erase redo removes same terrain")
+	_set_test_tool(Stroke.Mode.SELECT)
+
+func _check_layer_visibility(root: Node2D, platform: FieldPlatform) -> void:
+	var canvas := EditorInterface.get_editor_viewport_2d().global_canvas_transform
+	var screen := _overlay.get_global_transform_with_canvas() * (canvas * platform.global_position)
+	var pixel := Vector2i(screen + Vector2(4, 4))
+	await RenderingServer.frame_post_draw
+	var visible_color := get_tree().root.get_texture().get_image().get_pixelv(pixel)
+	_layer_menu.select(1)
+	_layer_selected(1)
+	_set_layer_visible(false)
+	await RenderingServer.frame_post_draw
+	var hidden_color := get_tree().root.get_texture().get_image().get_pixelv(pixel)
+	_check(not visible_color.is_equal_approx(hidden_color), "terrain hide changes rendered editor pixels")
+	_check(EditorInterface.save_scene() == OK, "save field while terrain preview is hidden")
+	var packed := ResourceLoader.load(root.scene_file_path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	var instance := packed.instantiate()
+	var saved := instance.get_node(root.get_path_to(platform)) as FieldPlatform
+	_check(saved.visible and not saved.get_node("CollisionShape2D").disabled and saved.size == platform.size, "hidden preview does not serialize visibility, collision or size changes")
+	instance.free()
+	_set_layer_visible(true)
+	_layer_menu.select(0)
+	_layer_selected(0)
+
+func _set_test_tool(mode: int) -> void:
+	_mode.select(mode)
+	_mode.item_selected.emit(mode)
+
+func _canvas_stroke(from: Vector2, to: Vector2, cancel := false) -> void:
+	var transform := _overlay.get_global_transform_with_canvas()
+	var first := transform * from
+	var last := transform * to
+	get_tree().root.warp_mouse(first)
+	await get_tree().process_frame
+	_mouse_button(first, true)
+	_mouse_motion(last, last - first, true)
+	if cancel:
+		var escape := InputEventKey.new()
+		escape.keycode = KEY_ESCAPE
+		escape.pressed = true
+		get_tree().root.push_input(escape, true)
+	_mouse_button(last, false)
+	await get_tree().process_frame
 
 func _mouse_motion(position: Vector2, relative: Vector2, pressed: bool) -> void:
 	var event := InputEventMouseMotion.new()

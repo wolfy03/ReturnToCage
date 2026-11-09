@@ -5,6 +5,9 @@ const Catalog := preload("catalog.gd")
 const Placement := preload("placement.gd")
 const PaletteTree := preload("palette_tree.gd")
 const ExportFilter := preload("export_filter.gd")
+const Layers := preload("field_layers.gd")
+const Stroke := preload("terrain_stroke.gd")
+const TerrainCommands := preload("terrain_commands.gd")
 
 var _catalog := Catalog.new()
 var _export_filter := ExportFilter.new()
@@ -21,13 +24,31 @@ var _drop_surface: Control
 var _drag: Dictionary = {}
 var _drag_root: Node2D
 var _filesystem: EditorFileSystem
+var _layers := Layers.new()
+var _mode: OptionButton
+var _layer_menu: OptionButton
+var _layer_visible: CheckBox
+var _layer_locked: CheckBox
+var _preview_pending := false
+var _stroke: Stroke
+var _stroke_root: Node2D
+var _stroke_parent: Node2D
+var _stroke_transform: Transform2D
+var _stroke_history: UndoRedo
+var _stroke_version: int
+var _stroke_obstacle: bool
+var _canvas_overlay: Control
+var _tool_surface: Control
 
 func _enter_tree() -> void:
 	_dock = VBoxContainer.new()
 	_dock.name = "Field Editor"
 	_dock.custom_minimum_size.x = 220
 	_enabled = _toggle("Placement enabled", true)
-	_enabled.toggled.connect(func(_value: bool) -> void: _cancel_drag())
+	_enabled.toggled.connect(func(_value: bool) -> void:
+		_cancel_drag()
+		_cancel_stroke()
+		_sync_tool_surface())
 	_scene_label = Label.new()
 	_scene_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_dock.add_child(_scene_label)
@@ -37,7 +58,7 @@ func _enter_tree() -> void:
 	_tree = PaletteTree.new()
 	_tree.hide_root = true
 	_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_tree.custom_minimum_size.y = 180
+	_tree.custom_minimum_size.y = 120
 	_tree.drag_started.connect(_start_drag)
 	_dock.add_child(_tree)
 	_snap = _toggle("Grid snap (Alt bypass)", true)
@@ -48,12 +69,13 @@ func _enter_tree() -> void:
 	_interval.suffix = "px"
 	_dock.add_child(_interval)
 	_nested = _toggle("Use selected Node2D group", false)
+	_add_terrain_controls()
 	var validate := Button.new()
 	validate.text = "Validate field"
 	validate.pressed.connect(_validate)
 	_dock.add_child(validate)
 	_status = RichTextLabel.new()
-	_status.custom_minimum_size.y = 104
+	_status.custom_minimum_size.y = 68
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_status.text = "Drag an asset into the 2D viewport."
 	_dock.add_child(_status)
@@ -63,6 +85,8 @@ func _enter_tree() -> void:
 	_filesystem = EditorInterface.get_resource_filesystem()
 	_filesystem.filesystem_changed.connect(_rebuild)
 	scene_changed.connect(_scene_changed)
+	get_tree().node_added.connect(_layer_tree_changed)
+	get_tree().node_removed.connect(_layer_tree_changed)
 	set_input_event_forwarding_always_enabled()
 	set_force_draw_over_forwarding_enabled()
 	_scene_changed(EditorInterface.get_edited_scene_root())
@@ -70,6 +94,12 @@ func _enter_tree() -> void:
 
 func _exit_tree() -> void:
 	_cancel_drag()
+	_cancel_stroke()
+	_layers.restore()
+	if is_instance_valid(_tool_surface):
+		_tool_surface.queue_free()
+	get_tree().node_added.disconnect(_layer_tree_changed)
+	get_tree().node_removed.disconnect(_layer_tree_changed)
 	_filesystem.filesystem_changed.disconnect(_rebuild)
 	scene_changed.disconnect(_scene_changed)
 	remove_export_plugin(_export_filter)
@@ -110,6 +140,13 @@ func _populate() -> void:
 
 func _scene_changed(root: Node) -> void:
 	_cancel_drag()
+	_cancel_stroke()
+	_layers.restore()
+	_layers.hidden.clear()
+	_layers.locked.clear()
+	_layer_menu.select(0)
+	_layer_selected(0)
+	_sync_tool_surface()
 	_scene_label.text = root.scene_file_path.get_file() if root != null else "No scene"
 	_scene_label.tooltip_text = root.scene_file_path if root != null else ""
 	_status.text = "Drag an asset into the 2D viewport." if _field_root() != null else "Open an AdventureRegion scene."
@@ -121,12 +158,14 @@ func _field_root() -> Node2D:
 	return null
 
 func _start_drag(entry: Dictionary) -> void:
+	_cancel_stroke()
 	_cancel_drag()
 	_drag_root = _field_root()
 	if _drag_root == null or not _enabled.button_pressed:
 		_status.text = "Open a field scene and enable placement."
 		return
 	_drag = entry
+	_sync_tool_surface()
 	set_process(true)
 	update_overlays()
 
@@ -144,6 +183,7 @@ func _cancel_drag() -> void:
 		_drop_surface.hide()
 		_drop_surface.queue_free()
 	_drop_surface = null
+	_sync_tool_surface()
 	update_overlays()
 
 func _forward_canvas_gui_input(event: InputEvent) -> bool:
@@ -152,8 +192,57 @@ func _forward_canvas_gui_input(event: InputEvent) -> bool:
 		return true
 	return false
 
+func _terrain_input(event: InputEvent) -> bool:
+	if _mode.selected == Stroke.Mode.SELECT or not _enabled.button_pressed:
+		return false
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.ctrl_pressed and not event.meta_pressed:
+		if event.pressed:
+			if _field_root() == null:
+				return false
+			_begin_stroke(_stroke_world(event.position, event.alt_pressed))
+			return true
+		if _stroke != null:
+			if is_instance_valid(_canvas_overlay) and not Rect2(Vector2.ZERO, _canvas_overlay.size).has_point(event.position):
+				_cancel_stroke()
+			else:
+				_end_stroke(_stroke_world(event.position, event.alt_pressed))
+			return true
+	if event is InputEventMouseMotion and _stroke != null:
+		if event.button_mask & MOUSE_BUTTON_MASK_LEFT == 0:
+			_cancel_stroke()
+		else:
+			_extend_stroke(_stroke_world(event.position, event.alt_pressed))
+		return true
+	return false
+
+func _input(event: InputEvent) -> void:
+	if _stroke == null:
+		return
+	if event is InputEventKey and event.pressed:
+		if event.keycode == KEY_ESCAPE:
+			_cancel_stroke()
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_Z and (event.ctrl_pressed or event.meta_pressed):
+			_cancel_stroke()
+	elif event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		# Canvas forwarding commits in the same input dispatch. A release
+		# anywhere else only reaches this deferred cancellation.
+		_cancel_if_current.call_deferred(_stroke)
+
+func _cancel_if_current(stroke: Stroke) -> void:
+	if _stroke == stroke:
+		_cancel_stroke()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and _stroke != null:
+		_cancel_stroke()
+
 func _forward_canvas_force_draw_over_viewport(overlay: Control) -> void:
+	_canvas_overlay = overlay
+	if not is_instance_valid(_tool_surface):
+		_install_tool_surface.call_deferred(overlay)
 	if _drag.is_empty():
+		_draw_stroke(overlay)
 		return
 	if not is_instance_valid(_drop_surface) or _drop_surface.get_parent() != overlay:
 		_install_drop_surface.call_deferred(overlay)
@@ -161,7 +250,10 @@ func _forward_canvas_force_draw_over_viewport(overlay: Control) -> void:
 	if not Rect2(Vector2.ZERO, overlay.size).has_point(mouse):
 		return
 	var canvas := EditorInterface.get_editor_viewport_2d().global_canvas_transform
-	var snapped := canvas * _world_position(mouse)
+	var world := _world_position(mouse)
+	if not world.is_finite():
+		return
+	var snapped := canvas * world
 	var color := Color("8ee8ce")
 	overlay.draw_circle(snapped, 7, color, false, 2)
 	overlay.draw_line(snapped - Vector2(12, 0), snapped + Vector2(12, 0), color)
@@ -181,7 +273,8 @@ func _can_drop(_position: Vector2, data: Variant) -> bool:
 
 func _world_position(cursor: Vector2) -> Vector2:
 	var interval := _interval.value if _snap.button_pressed and not Input.is_key_pressed(KEY_ALT) else 0.0
-	return Placement.world_position(EditorInterface.get_editor_viewport_2d().global_canvas_transform, cursor, interval)
+	var canvas := EditorInterface.get_editor_viewport_2d().global_canvas_transform
+	return Placement.world_position(canvas, cursor, interval) if _invertible(canvas) else Vector2.INF
 
 func _drop(position: Vector2, data: Variant) -> void:
 	if not _can_drop(position, data):
@@ -194,6 +287,10 @@ func _place(entry: Dictionary, world: Vector2) -> bool:
 	if root == null or not _enabled.button_pressed or not world.is_finite():
 		return false
 	var group_name := Placement.group_for(entry.kind)
+	var issue := _layers.issue("SpawnPoints" if entry.kind == "player" else group_name)
+	if not issue.is_empty():
+		_status.text = issue
+		return false
 	var parent := root
 	var new_group: Node2D
 	if _nested.button_pressed and entry.kind != "player":
@@ -210,7 +307,7 @@ func _place(entry: Dictionary, world: Vector2) -> bool:
 			return false
 		else:
 			parent = existing
-	if is_zero_approx(parent.global_transform.determinant()):
+	if not _invertible(parent.global_transform):
 		_status.text = "Placement parent has a singular transform."
 		if new_group != null:
 			new_group.free()
@@ -274,3 +371,217 @@ func _validate() -> void:
 		issues.append("Field validation passed.")
 	issues.append_array(RegionDefinition.FieldSceneChecks.spawn_warnings(root))
 	_status.text = "\n".join(issues)
+
+# Canvas input forwarding depends on the editor's current object selection.
+# An overlay control routes tool gestures even when the selection is empty.
+func _install_tool_surface(overlay: Control) -> void:
+	if not is_inside_tree() or not is_instance_valid(overlay) or is_instance_valid(_tool_surface):
+		return
+	_tool_surface = Control.new()
+	_tool_surface.mouse_force_pass_scroll_events = true
+	overlay.add_child(_tool_surface)
+	_tool_surface.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_tool_surface.gui_input.connect(func(event: InputEvent) -> void:
+		if _terrain_input(event):
+			_tool_surface.accept_event())
+	_sync_tool_surface()
+
+func _sync_tool_surface() -> void:
+	if is_instance_valid(_tool_surface):
+		var active := _enabled.button_pressed and _mode.selected != Stroke.Mode.SELECT and _drag.is_empty() and _field_root() != null
+		_tool_surface.mouse_filter = Control.MOUSE_FILTER_PASS if active else Control.MOUSE_FILTER_IGNORE
+
+func _add_terrain_controls() -> void:
+	var tools := HBoxContainer.new()
+	_dock.add_child(tools)
+	var tools_label := Label.new()
+	tools_label.text = "Tool"
+	tools.add_child(tools_label)
+	_mode = OptionButton.new()
+	for label in ["Select", "Rectangle", "Paint", "Erase"]:
+		_mode.add_item(label)
+	_mode.item_selected.connect(func(_index: int) -> void:
+		_cancel_stroke()
+		_sync_tool_surface()
+		update_overlays())
+	tools.add_child(_mode)
+
+	_layer_menu = OptionButton.new()
+	_layer_menu.add_item("Layer: Auto")
+	for layer in Layers.NAMES:
+		_layer_menu.add_item(layer)
+	_layer_menu.item_selected.connect(_layer_selected)
+	_dock.add_child(_layer_menu)
+	var flags := HBoxContainer.new()
+	_dock.add_child(flags)
+	_layer_visible = CheckBox.new()
+	_layer_visible.text = "Visible"
+	_layer_visible.tooltip_text = "Viewport preview only. Saved visibility and collision stay intact."
+	_layer_visible.toggled.connect(_set_layer_visible)
+	flags.add_child(_layer_visible)
+	_layer_locked = CheckBox.new()
+	_layer_locked.text = "Tool lock"
+	_layer_locked.tooltip_text = "Blocks Field Editor tools. Godot's Select and Inspector remain available."
+	_layer_locked.toggled.connect(_set_layer_locked)
+	flags.add_child(_layer_locked)
+
+func _layer_selected(index: int) -> void:
+	_cancel_stroke()
+	_layers.active = "" if index == 0 else Layers.NAMES[index - 1]
+	_layer_visible.disabled = index == 0
+	_layer_locked.disabled = index == 0
+	_layer_visible.set_pressed_no_signal(not _layers.hidden.get(_layers.active, false))
+	_layer_locked.set_pressed_no_signal(_layers.locked.get(_layers.active, false))
+
+func _set_layer_visible(visible: bool) -> void:
+	if _layers.active.is_empty():
+		return
+	_cancel_stroke()
+	_layers.hidden[_layers.active] = not visible
+	_layers.set_preview(_field_root())
+	update_overlays()
+
+func _set_layer_locked(locked: bool) -> void:
+	if _layers.active.is_empty():
+		return
+	_cancel_stroke()
+	_layers.locked[_layers.active] = locked
+
+func _layer_tree_changed(_node: Node) -> void:
+	if not _preview_pending and _layers.hidden.values().has(true):
+		_preview_pending = true
+		_refresh_layers.call_deferred()
+
+func _refresh_layers() -> void:
+	_preview_pending = false
+	if is_inside_tree() and is_instance_valid(_dock):
+		_layers.set_preview(_field_root())
+
+static func _invertible(transform: Transform2D) -> bool:
+	return transform.is_finite() and not is_zero_approx(transform.determinant())
+
+func _stroke_world(position: Vector2, bypass_snap: bool) -> Vector2:
+	var canvas := EditorInterface.get_editor_viewport_2d().global_canvas_transform
+	if not _invertible(canvas):
+		return Vector2.INF
+	var interval := _interval.value if _mode.selected == Stroke.Mode.RECTANGLE and _snap.button_pressed and not bypass_snap else 0.0
+	return Placement.world_position(canvas, position, interval)
+
+func _terrain_parent(root: Node2D) -> Node2D:
+	if _nested.button_pressed:
+		var selected := EditorInterface.get_selection().get_selected_nodes()
+		if selected.size() == 1 and _editable_group(selected[0], root):
+			return selected[0] as Node2D
+	var group := root.get_node_or_null("Terrain")
+	if group == null:
+		return root
+	return group as Node2D if _editable_group(group, root) else null
+
+static func _editable_group(node: Node, root: Node2D) -> bool:
+	return node.get_class() == "Node2D" and node.get_script() == null and node.owner == root and node.scene_file_path.is_empty()
+
+func _begin_stroke(world: Vector2) -> void:
+	_cancel_stroke()
+	var root := _field_root()
+	var issue := _layers.issue("Terrain")
+	if not issue.is_empty():
+		_status.text = issue
+		return
+	if root == null or not world.is_finite():
+		_status.text = "Terrain stroke requires a finite canvas position."
+		return
+	var parent := root if _mode.selected == Stroke.Mode.ERASE else _terrain_parent(root)
+	if parent == null or not _invertible(parent.global_transform):
+		_status.text = "Terrain parent must be editable and have an invertible transform."
+		return
+	var platforms: Array[FieldPlatform] = []
+	if _mode.selected != Stroke.Mode.RECTANGLE:
+		for node in root.find_children("*", "StaticBody2D", true, false):
+			if node is FieldPlatform and node.owner == root:
+				platforms.append(node)
+	_stroke_root = root
+	_stroke_parent = parent
+	_stroke_transform = parent.global_transform
+	var undo := get_undo_redo()
+	_stroke_history = undo.get_history_undo_redo(undo.get_object_history_id(root))
+	_stroke_version = _stroke_history.get_version() if _stroke_history != null else -1
+	var selected := _tree.get_selected()
+	var entry: Variant = selected.get_metadata(0) if selected != null else null
+	_stroke_obstacle = entry is Dictionary and entry.kind == "obstacle"
+	_stroke = Stroke.new()
+	_stroke.begin(_mode.selected, world, _interval.value, platforms)
+	update_overlays()
+
+func _extend_stroke(world: Vector2) -> void:
+	if not world.is_finite() or _field_root() != _stroke_root or not is_instance_valid(_stroke_parent) or not _stroke_parent.is_inside_tree() or _stroke_parent.global_transform != _stroke_transform:
+		_cancel_stroke()
+		_status.text = "Terrain stroke cancelled because the field or transform changed."
+		return
+	if _stroke_history != null and _stroke_history.get_version() != _stroke_version:
+		_cancel_stroke()
+		return
+	_stroke.extend(world)
+	update_overlays()
+
+func _end_stroke(world: Vector2) -> void:
+	_extend_stroke(world)
+	if _stroke == null:
+		return
+	if _stroke.mode == Stroke.Mode.ERASE:
+		var targets: Array[FieldPlatform] = []
+		for platform in _stroke.erased:
+			if is_instance_valid(platform) and platform.is_inside_tree() and platform.owner == _stroke_root:
+				targets.append(platform)
+		if not targets.is_empty():
+			TerrainCommands.erase(get_undo_redo(), _stroke_root, targets)
+			_status.text = "Erased %d terrain objects." % targets.size()
+	else:
+		var rectangles: Array[Rect2] = []
+		if _stroke.mode == Stroke.Mode.RECTANGLE:
+			var rectangle := _stroke.rectangle()
+			if rectangle.size.is_finite() and rectangle.size.x >= Stroke.MIN_SIZE and rectangle.size.y >= Stroke.MIN_SIZE:
+				rectangles.append(rectangle)
+			else:
+				_status.text = "Rectangle must be at least %d × %d world units." % [Stroke.MIN_SIZE, Stroke.MIN_SIZE]
+		else:
+			for cell in _stroke.cells:
+				rectangles.append(_stroke.cell_rect(cell))
+		if not rectangles.is_empty():
+			var group: Node2D
+			if _stroke_parent == _stroke_root:
+				group = Node2D.new()
+				group.name = "Terrain"
+			TerrainCommands.add(get_undo_redo(), _stroke_root, _stroke_parent, group, rectangles, _stroke_obstacle, _select_nodes)
+			_status.text = "Created %d terrain objects." % rectangles.size()
+	_cancel_stroke()
+
+func _cancel_stroke() -> void:
+	if _stroke != null:
+		_stroke = null
+		update_overlays()
+	_stroke_root = null
+	_stroke_parent = null
+	_stroke_history = null
+
+func _draw_stroke(overlay: Control) -> void:
+	if _stroke == null:
+		return
+	var canvas := EditorInterface.get_editor_viewport_2d().global_canvas_transform
+	if not _invertible(canvas):
+		return
+	var tint := Color(0.30, 0.85, 0.70, 0.36)
+	match _stroke.mode:
+		Stroke.Mode.RECTANGLE:
+			overlay.draw_rect(canvas * _stroke.rectangle(), tint)
+		Stroke.Mode.PAINT:
+			for cell in _stroke.cells:
+				overlay.draw_rect(canvas * _stroke.cell_rect(cell), tint)
+		Stroke.Mode.ERASE:
+			var red := Color(0.95, 0.35, 0.35, 0.75)
+			overlay.draw_circle(canvas * _stroke.cursor, Stroke.ERASE_RADIUS * canvas.x.length(), red, false, 2)
+			for platform in _stroke.erased:
+				if is_instance_valid(platform):
+					var half: Vector2 = platform.size * 0.5
+					var transform: Transform2D = canvas * platform.global_transform
+					overlay.draw_polyline(PackedVector2Array([transform * -half, transform * Vector2(half.x, -half.y),
+						transform * half, transform * Vector2(-half.x, half.y), transform * -half]), red, 2)

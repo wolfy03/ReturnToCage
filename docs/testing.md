@@ -395,3 +395,8 @@ then saves and rehosts with the exact crafted owner layout and identities.
 다른 참가자가 재진입해 이미 소모된 채집 상태를 받는지 검사한다.
 
 에디터 배치와 저장·재열기 검증은 [Field Editor 테스트](field_editor.md#검증)를 참고한다.
+
+STEP 3 Field Editor 프로브는 반대 방향 사각형, 음수·비균일 부모 변환,
+줌·팬 좌표 변환과 Alt 우회, 잠긴 레이어, 스트로크 단위 Undo/Redo를 검사한다.
+렌더링 모드는 실제 에디터 입력 경로로 Rectangle·Paint·Erase를 실행하고,
+레이어 숨김 중 저장한 씬의 충돌 및 가시성을 재로드해 비교한다.

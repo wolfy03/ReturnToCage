@@ -35,8 +35,14 @@ static func validate(root: Node, inspect_decoration_assets: bool) -> PackedStrin
 				errors.append("%s: invalid FieldPlatform size" % path)
 			if not _valid_collision(collision) or not collision.shape is RectangleShape2D:
 				errors.append("%s: FieldPlatform requires an enabled rectangular CollisionShape2D" % path)
-			if not node.get_node_or_null("Visual") is Polygon2D:
+			var visual := node.get_node_or_null("Visual") as Polygon2D
+			if visual == null:
 				errors.append("%s: FieldPlatform requires a Visual Polygon2D" % path)
+			# Detached PackedScene instances still contain the prefab geometry.
+			# FieldPlatform applies its authored Size on ready.
+			elif node.is_node_ready() and collision != null and collision.shape is RectangleShape2D:
+				if not collision.shape.size.is_equal_approx(node.size) or not _polygon_size(visual.polygon).is_equal_approx(node.size):
+					errors.append("%s: FieldPlatform Size, collision and visual bounds differ" % path)
 		elif node is ClimbableArea2D:
 			_validate_climb(node, path, errors)
 		elif node is FieldDecoration:
@@ -77,3 +83,13 @@ static func spawn_warnings(root: Node) -> PackedStringArray:
 		warnings.append("Warning: %d/%d direct player spawn slots; verify multiplayer capacity." % [indices.size(), NetworkManager.MAX_PLAYERS])
 	warnings.append("Spawn clearance and safe footing are checked by the runtime physics policy.")
 	return warnings
+
+static func _polygon_size(polygon: PackedVector2Array) -> Vector2:
+	if polygon.is_empty():
+		return Vector2.ZERO
+	var bounds := Rect2(polygon[0], Vector2.ZERO)
+	for vertex in polygon:
+		if not vertex.is_finite():
+			return Vector2.INF
+		bounds = bounds.expand(vertex)
+	return bounds.size
