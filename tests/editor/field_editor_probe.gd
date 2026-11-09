@@ -669,10 +669,18 @@ func _exercise_step5() -> void:
 			return ERR_CANT_CREATE if target == rollback_resource else Wizard._publish_file(stage, target))
 	_check(publish_attempts == [rollback_scene, rollback_resource] and not failed.is_empty() and not FileAccess.file_exists(rollback_scene) and not FileAccess.file_exists(rollback_resource), "failed second publish rolls back only created files")
 
+	_exercise_region_recovery(scene_path, rollback_region, rollback_scene, rollback_resource)
+	while _filesystem.is_scanning():
+		await get_tree().process_frame
+
 	var selection: Array[Node] = [original.get_node("SpawnPoints/SewerBeetle"), original.get_node("GatherPoints/ScrapCacheA"),
-		original.get_node("Decorations").get_child(0)]
+		original.get_node("Decorations").get_child(0), original.get_node("EmergencyLadder")]
+	var source_parent := selection[1].get_parent() as Node2D
+	var old_transform := source_parent.transform
+	source_parent.transform = Transform2D(0.23, Vector2(-1.4, 0.8), 0.15, Vector2(14, -16))
 	var preset := Presets.capture(selection, original, "Step 5 kit")
-	_check(preset != null and preset.objects.size() == 3, "capture mixed preset")
+	source_parent.transform = old_transform
+	_check(preset != null and preset.objects.size() == 4, "capture mixed preset")
 	if preset == null:
 		return
 	var single: Array[Node] = []
@@ -686,6 +694,7 @@ func _exercise_step5() -> void:
 	DirAccess.make_dir_recursive_absolute(Presets.FOLDER)
 	_check(ResourceSaver.save(preset, path) == OK, "save preset resource")
 	_filesystem.scan()
+	_rebuild()
 	EditorInterface.open_scene_from_path(scene_path)
 	for frame in 90:
 		await get_tree().process_frame
@@ -695,6 +704,8 @@ func _exercise_step5() -> void:
 	if root == null or root == original:
 		_check(false, "open generated field")
 		return
+	var target_parent := root.get_node("GatherPoints") as Node2D
+	target_parent.transform = Transform2D(-0.19, Vector2(-0.9, 1.2), 0.18, Vector2(10, 12))
 	if DisplayServer.get_name() == "headless":
 		_check(_place_preset(root, path, Vector2(420, 500)), "place preset in another region")
 	else:
@@ -707,26 +718,121 @@ func _exercise_step5() -> void:
 	_check(history.undo() and root.get_node("SpawnPoints").get_child_count() == 1, "preset batch undo")
 	_check(history.redo() and root.get_node("SpawnPoints").get_child_count() == 2, "preset batch redo")
 	_check((gathers[0].global_position - enemies[0].global_position).is_equal_approx(preset.objects[1].transform.origin), "preset relative position preserved")
+	var expected: Transform2D = preset.objects[1].transform
+	expected.origin += enemies[0].global_position
+	_check(gathers[0].global_transform.is_equal_approx(expected), "preset preserves full basis through reflected and skewed destination")
+	_check(history.undo() and history.redo() and gathers[0].global_transform.is_equal_approx(expected), "repeated preset undo and redo preserve affine transform")
+	var climbs := root.get_node("Climbables").get_children()
+	_check(climbs.size() == 2 and Visualization.describe(climbs[0]).index == 4, "preview describes preset climbables")
 	var broken := preset.duplicate(true) as Presets.Preset
 	broken.objects[0].id = &"not_an_enemy"
 	_check(Presets.build(broken, root, _catalog).is_empty(), "invalid preset reference rejects entire batch")
+	for invalid in [{"enabled": "true"}, {"transform": Transform2D(Vector2.ZERO, Vector2.UP, Vector2.ZERO)},
+		{"transform": Transform2D(0.0, Vector2(NAN, 0.0))}, {"amount": 0}]:
+		broken = preset.duplicate(true)
+		broken.objects[1].merge(invalid, true)
+		_check(Presets.build(broken, root, _catalog).is_empty(), "invalid gather preset rejects batch")
+	broken = preset.duplicate(true)
+	broken.objects[0].erase("enabled")
+	_check(Presets.build(broken, root, _catalog).is_empty(), "missing required property rejects batch")
+	broken = preset.duplicate(true)
+	broken.objects[2].merge({"kind": "scene", "path": "res://world/adventure/sewer_region.tscn"}, true)
+	_check(Presets.build(broken, root, _catalog).is_empty(), "scripted decoration rejected")
+	broken = preset.duplicate(true)
+	broken.objects[3].collision_transform = Transform2D(Vector2.ZERO, Vector2.DOWN, Vector2.ZERO)
+	_check(Presets.build(broken, root, _catalog).is_empty(), "singular climbable collision rejects batch")
+	broken = preset.duplicate(true)
+	broken.objects.resize(129)
+	_check(Presets.build(broken, root, _catalog).is_empty(), "oversized preset rejects batch")
+	var old_target := target_parent.transform
+	target_parent.scale = Vector2(0.0, 1.0)
+	_check(not _place_preset(root, path, Vector2.ZERO) and target_parent.get_child_count() == 2, "singular parent leaves scene unchanged")
+	target_parent.transform = old_target
 	_check(Visualization.describe(enemies[0]).index == 0 and Visualization.describe(gathers[0]).index == 1
 		and Visualization.describe(root.get_node("PlayerSpawnPoint0")).index == 2 and Visualization.describe(root.get_node("RegionPoints/Escape")).label.begins_with("ESCAPE"), "preview describes gameplay markers")
 	_visualization.enabled = [true, true, true, true, true, true]
 	update_overlays()
 	await get_tree().process_frame
 	_check(_save_probe_scene(root) == OK, "save generated region with presets")
+	var saved := ResourceLoader.load(scene_path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	var restored := saved.instantiate()
+	var restored_gather := restored.get_node("GatherPoints").get_child(0) as Node2D
+	var restored_climb := restored.get_node("Climbables").get_child(0) as ClimbableArea2D
+	_check(restored_gather.owner == restored and restored_gather.global_transform.is_equal_approx(expected)
+		and restored_climb.top_marker.owner == restored and restored_climb.bottom_marker.owner == restored
+		and restored_climb.get_node("CollisionShape2D").owner == restored, "reloaded preset preserves affine basis, marker paths and ownership")
+	restored.free()
+
+func _exercise_region_recovery(source: String, region: RegionDefinition, scene: String, resource: String) -> void:
+	var recovery := Wizard.Recovery
+	_check(recovery.acquire(), "recovery fixture obtains publication lock")
+	var directory := recovery.new_transaction()
+	var journal := directory.path_join(recovery.JOURNAL)
+	var stage_scene := directory.path_join("scene.tscn")
+	var stage_resource := directory.path_join("region.tres")
+	var record := {"scene": scene, "resource": resource, "scene_sha256": "", "resource_sha256": ""}
+	_check(recovery.write_record(directory, record) == OK and recovery.inspect(journal, Wizard.valid_path).state == "before", "journal-only interruption detected")
+	_check(not Wizard.recover(journal, _catalog).is_empty() and FileAccess.file_exists(journal), "active publisher lock blocks recovery")
+	_check(ResourceSaver.save(load(source), stage_scene) == OK and recovery.inspect(journal, Wizard.valid_path).state == "incomplete", "interrupted unverified staging write stays untouched")
+	record.scene_sha256 = FileAccess.get_sha256(stage_scene)
+	_check(recovery.write_record(directory, record) == OK and recovery.inspect(journal, Wizard.valid_path).state == "before", "verified scene staging detected")
+	_check(ResourceSaver.save(region, stage_resource) == OK, "stage recovery region resource")
+	record.resource_sha256 = FileAccess.get_sha256(stage_resource)
+	_check(recovery.write_record(directory, record) == OK and recovery.inspect(journal, Wizard.valid_path).state == "before", "verified pair before publishing detected")
+	_check(Wizard._publish_file(stage_scene, scene) == OK and recovery.inspect(journal, Wizard.valid_path).state == "partial", "scene-only interruption detected")
+	recovery.release()
+	_show_region_recovery()
+	var dialog := _dock.get_child(-1) as ConfirmationDialog
+	_check(dialog != null and not dialog.get_ok_button().disabled, "recovery dialog offers partial publish")
+	dialog.canceled.emit()
+	_check(FileAccess.file_exists(journal) and not FileAccess.file_exists(resource), "cancel preserves recovery record and targets")
+	_show_region_recovery()
+	dialog = _dock.get_child(-1) as ConfirmationDialog
+	dialog.confirmed.emit()
+	_check(not FileAccess.file_exists(journal) and FileAccess.get_sha256(scene) == record.scene_sha256
+		and FileAccess.get_sha256(resource) == record.resource_sha256, "confirmed recovery publishes only the missing definition")
+	directory = recovery.new_transaction()
+	journal = directory.path_join(recovery.JOURNAL)
+	_check(recovery.write_record(directory, record) == OK and recovery.inspect(journal, Wizard.valid_path).state == "complete", "completed pair awaiting cleanup detected")
+	var altered := record.duplicate()
+	altered.scene_sha256 = record.resource_sha256
+	_check(recovery.write_record(directory, altered) == OK and recovery.inspect(journal, Wizard.valid_path).state == "external"
+		and not Wizard.recover(journal, _catalog).is_empty(), "mismatched file hash blocks recovery")
+	altered.scene = "res://world/adventure/../victim.tscn"
+	_check(recovery.write_record(directory, altered) == OK and recovery.inspect(journal, Wizard.valid_path).state == "invalid", "unsafe journal path rejected")
+	_check(recovery.write_record(directory, record) == OK and Wizard.recover(journal, _catalog).is_empty()
+		and FileAccess.get_sha256(scene) == record.scene_sha256 and FileAccess.get_sha256(resource) == record.resource_sha256, "complete recovery keeps published pair")
+	directory = recovery.new_transaction()
+	journal = directory.path_join(recovery.JOURNAL)
+	var malformed := FileAccess.open(journal, FileAccess.WRITE)
+	malformed.store_string("{broken")
+	malformed.close()
+	_check(recovery.inspect(journal, Wizard.valid_path).state == "invalid", "malformed recovery JSON rejected")
+	var missing := {"scene": "res://world/adventure/step5_missing.tscn", "resource": "res://data/content/regions/step5_missing.tres",
+		"scene_sha256": record.scene_sha256, "resource_sha256": record.resource_sha256}
+	_check(recovery.write_record(directory, missing) == OK and Wizard.recover(journal, _catalog).is_empty()
+		and not FileAccess.file_exists(journal), "before publication with missing stages safely clears journal")
+	_check(recovery.acquire(), "reserve fixture lock for interrupted process")
+	var owner := FileAccess.open(recovery.LOCK.path_join("owner.json"), FileAccess.WRITE)
+	owner.store_string(JSON.stringify({"pid": 2147483647}))
+	owner.close()
+	_check(recovery.lock_state() == "stale" and not recovery.claim(false) and recovery.claim(true), "dead owner lock requires explicit confirmation")
+	recovery.release()
+
+
 
 func _drag_step5_preset(root: Node2D) -> void:
-	for frame in 90:
+	EditorInterface.set_main_screen_editor("2D")
+	update_overlays()
+	for frame in 360:
 		await get_tree().process_frame
-		if not _catalog.search("Step 5 kit").is_empty():
+		if not _catalog.search("Step 5 kit").is_empty() and is_instance_valid(_overlay):
 			break
 	_search.text = "Step 5 kit"
 	_populate()
 	var category := _tree.get_root().get_first_child()
 	if category == null or not is_instance_valid(_overlay):
-		_check(false, "preset available in GUI palette")
+		_check(false, "preset available in GUI palette (catalog=%s, overlay=%s, tree=%s)" % [_catalog.search("Step 5 kit").size(), is_instance_valid(_overlay), _tree.is_visible_in_tree()])
 		return
 	var item := category.get_first_child()
 	var start := _tree.get_global_transform_with_canvas() * _tree.get_item_area_rect(item, 0).get_center()

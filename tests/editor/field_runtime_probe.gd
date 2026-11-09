@@ -98,6 +98,13 @@ func _generated_region() -> bool:
 		valid = authority._try_gather(peer, id) and not authority._try_gather(peer, id) and valid
 	for decoration in authority.get_node("Decorations").get_children():
 		valid = valid and decoration.get_child_count(true) == 0
+	var climbs := authority.get_node("Climbables").get_children()
+	valid = valid and climbs.size() == 2
+	for node in climbs:
+		var climb := node as ClimbableArea2D
+		var shape := climb.get_node_or_null("CollisionShape2D") as CollisionShape2D
+		valid = valid and climb.top_marker.global_position.y < climb.bottom_marker.global_position.y and shape.shape is RectangleShape2D and not shape.disabled
+
 	var query := PhysicsPointQueryParameters2D.new()
 	query.position = Vector2(600, 565)
 	query.collision_mask = 1

@@ -2,6 +2,7 @@
 extends RefCounted
 
 const Preset := preload("placement_preset.gd")
+const PRESET_FOLDER := "res://addons/rtc_field_editor/presets"
 
 var regions: Array[RegionDefinition] = []
 var entries: Array[Dictionary] = []
@@ -21,6 +22,7 @@ func rebuild(directory: EditorFileSystemDirectory) -> void:
 			["Spawns", "Player spawn slot", "player"]]:
 		_add(spec[0], spec[1], spec[2])
 	_scan(directory)
+	_scan_presets(PRESET_FOLDER)
 	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return ("%s|%s|%s|%s" % [a.category, a.label.to_lower(), a.path, a.kind]) < ("%s|%s|%s|%s" % [b.category, b.label.to_lower(), b.path, b.kind]))
 
@@ -45,10 +47,6 @@ func _scan(directory: EditorFileSystemDirectory) -> void:
 				_add("Gather", definition.display_name, "gather", path, definition.id)
 			elif definition is ClimbableDefinition:
 				_add("Climbables", definition.display_name, "climb", path, definition.id)
-		elif path.begins_with("res://addons/rtc_field_editor/presets/") and path.ends_with(".tres"):
-			var preset := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as Preset
-			if preset != null:
-				_add("Presets", preset.label, "preset", path)
 		elif not path.begins_with("res://tests/") and not path.begins_with("res://addons/"):
 			if ClassDB.is_parent_class(type, "Texture2D"):
 				_add("Decorations", path.get_file().get_basename(), "texture", path)
@@ -56,6 +54,21 @@ func _scan(directory: EditorFileSystemDirectory) -> void:
 				_add("Decorations", path.get_file().get_basename(), "scene", path)
 	for index in directory.get_subdir_count():
 		_scan(directory.get_subdir(index))
+
+func _scan_presets(folder: String) -> void:
+	# Presets can be saved while the editor filesystem is already scanning.
+	var directory := DirAccess.open(folder)
+	if directory == null:
+		return
+	for filename in directory.get_files():
+		if not directory.is_link(filename) and filename.ends_with(".tres"):
+			var path := folder.path_join(filename)
+			var preset := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as Preset
+			if preset != null:
+				_add("Presets", preset.label, "preset", path)
+	for name in directory.get_directories():
+		if not directory.is_link(name):
+			_scan_presets(folder.path_join(name))
 
 func _add(category: String, label: String, kind: String, path := "", id: StringName = &"") -> void:
 	entries.append({"category": category, "label": label if not label.is_empty() else String(id),

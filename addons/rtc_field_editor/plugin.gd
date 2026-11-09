@@ -998,6 +998,13 @@ func _add_creation_controls() -> void:
 		EditorInterface.open_scene_from_path(path)
 		_validate_created_region.call_deferred())
 
+	var recover := Button.new()
+	recover.text = "Recover Region Creation"
+	_dock.add_child(recover)
+	recover.pressed.connect(_show_region_recovery)
+	if not Wizard.Recovery.journal_paths().is_empty() or Wizard.Recovery.lock_state() != "none":
+		_status.text = "Region publication needs review. Open Recover Region Creation."
+
 	var preset := Button.new()
 	preset.text = "Save Preset"
 	row.add_child(preset)
@@ -1024,6 +1031,67 @@ func _add_creation_controls() -> void:
 		menu.set_item_checked(index, _visualization.enabled[index])
 		update_overlays())
 
+func _show_region_recovery() -> void:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Recover Region Creation"
+	dialog.ok_button_text = "Apply reviewed recovery"
+	dialog.dialog_hide_on_ok = false
+	_dock.add_child(dialog)
+	var body := VBoxContainer.new()
+	dialog.add_child(body)
+	var options := OptionButton.new()
+	body.add_child(options)
+	var details := Label.new()
+	details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.add_child(details)
+	var records := Wizard.Recovery.journal_paths()
+	for path in records:
+		options.add_item(path.get_base_dir().get_file() if path.get_file() == Wizard.Recovery.JOURNAL else path.get_file())
+	var reviewed: Dictionary = {}
+	var refresh := func(index: int) -> void:
+		reviewed["lock"] = Wizard.Recovery.lock_state()
+		var record := Wizard.Recovery.inspect(records[index], Wizard.valid_path) if index >= 0 else {}
+		reviewed["record"] = record
+		details.text = record.get("detail", "No region creation records found.")
+		if record.has("scene"):
+			details.text += "\nScene: %s\nRegionDefinition: %s\nStaging: %s" % [record.scene, record.resource, record.path.get_base_dir()]
+		var applicable: bool = record.get("state", "") in ["before", "partial", "complete"]
+		if reviewed.lock == "stale":
+			details.text += "\nThe recorded owner stopped. Confirm only after checking that no other editor is publishing."
+			applicable = applicable or index < 0
+		elif reviewed.lock != "none":
+			details.text += "\nAnother editor may hold the publication lock. Verify its owner first."
+			applicable = false
+		dialog.get_ok_button().disabled = not applicable
+	options.item_selected.connect(refresh)
+	refresh.call(options.selected)
+	dialog.canceled.connect(func() -> void:
+		dialog.hide()
+		dialog.queue_free())
+	dialog.confirmed.connect(func() -> void:
+		if dialog.get_ok_button().disabled:
+			return
+		var record: Dictionary = reviewed.record
+		if Wizard.Recovery.lock_state() != reviewed.lock or (not record.is_empty() and Wizard.Recovery.inspect(record.path, Wizard.valid_path) != record):
+			refresh.call(options.selected)
+			details.text += "\nFiles changed. Review the updated state before applying."
+			return
+		var issue := ""
+		if not record.is_empty():
+			issue = Wizard.recover(record.path, _catalog, reviewed.lock == "stale", record)
+		elif Wizard.Recovery.claim(true):
+			Wizard.Recovery.release()
+		else:
+			issue = "Could not clear the stale lock."
+		if not issue.is_empty():
+			details.text += "\n" + issue
+			return
+		dialog.hide()
+		dialog.queue_free()
+		_filesystem.scan()
+		_status.text = "Region creation recovery completed.")
+	dialog.popup_centered(Vector2i(750, 340))
+
 func _save_preset() -> void:
 	var root := _field_root()
 	if root == null:
@@ -1046,6 +1114,7 @@ func _save_preset() -> void:
 		return
 	_preset_dialog.hide()
 	_filesystem.scan()
+	_rebuild()
 	_status.text = "Saved placement preset " + label
 
 func _place_preset(root: Node2D, path: String, world: Vector2) -> bool:
@@ -1053,7 +1122,7 @@ func _place_preset(root: Node2D, path: String, world: Vector2) -> bool:
 		_status.text = "Preset no longer exists."
 		return false
 	var preset := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE) as Presets.Preset
-	if preset == null:
+	if preset == null or preset.objects.is_empty() or preset.objects.size() > Presets.MAX_OBJECTS:
 		_status.text = "Invalid placement preset."
 		return false
 	var parents: Dictionary[String, Node2D] = {}
@@ -1070,7 +1139,7 @@ func _place_preset(root: Node2D, path: String, world: Vector2) -> bool:
 			_status.text = issue if not issue.is_empty() else "Invalid preset layer or destination group."
 			return false
 		var parent := root if existing == null else existing as Node2D
-		if not _invertible(parent.global_transform):
+		if not Presets.valid_transform(parent.global_transform):
 			_status.text = "Preset parent has a singular transform."
 			return false
 		parents[layer] = parent
@@ -1078,6 +1147,18 @@ func _place_preset(root: Node2D, path: String, world: Vector2) -> bool:
 	if nodes.is_empty():
 		_status.text = "Preset contains invalid objects or missing content."
 		return false
+	var local_transforms: Array[Transform2D] = []
+	for index in nodes.size():
+		var transform := nodes[index].transform
+		transform.origin += world
+		var layer := Placement.group_for(preset.objects[index].kind)
+		var local := parents[layer].global_transform.affine_inverse() * transform
+		if not Presets.valid_world(nodes[index], transform) or not Presets.valid_transform(local):
+			for detached in nodes:
+				detached.free()
+			_status.text = "Preset transform or climbable geometry is invalid at this destination."
+			return false
+		local_transforms.append(local)
 	var undo := get_undo_redo()
 	undo.create_action("Place field preset", UndoRedo.MERGE_DISABLE, root)
 	for layer in parents:
@@ -1092,9 +1173,7 @@ func _place_preset(root: Node2D, path: String, world: Vector2) -> bool:
 		var node := nodes[index]
 		var layer := Placement.group_for(preset.objects[index].kind)
 		var parent: Node2D = groups.get(layer, parents[layer])
-		var transform := node.transform
-		transform.origin += world
-		node.transform = parents[layer].global_transform.affine_inverse() * transform
+		node.transform = local_transforms[index]
 		undo.add_do_method(parent, "add_child", node, true)
 		undo.add_do_method(node, "set_owner", root)
 		if node is ClimbableArea2D:

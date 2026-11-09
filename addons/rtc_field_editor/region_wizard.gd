@@ -4,7 +4,7 @@ extends ConfirmationDialog
 const Scaffold := preload("region_scaffold.tscn")
 const Placement := preload("placement.gd")
 const Maintenance := preload("field_maintenance.gd")
-const PUBLISH_LOCK := "res://.godot/rtc_field_sync/region_publish_lock"
+const Recovery := preload("region_recovery.gd")
 const TEMPLATES := ["Empty Region", "Flat Ground", "Platform Region"]
 
 signal region_created(path: String)
@@ -191,7 +191,7 @@ static func create_region(values: Dictionary, catalog: RefCounted) -> String:
 	root.free()
 	if packed != OK or not errors.is_empty():
 		return "Template validation failed. " + "; ".join(errors)
-	return _publish_pair(scene, region, values.scene, values.resource)
+	return _publish_pair(scene, region, values.scene, values.resource, _publish_file, catalog)
 
 static func _populate(root: Node2D, values: Dictionary, catalog: RefCounted) -> void:
 	var points := root.get_node("RegionPoints")
@@ -233,72 +233,119 @@ static func _platform(root: Node2D, center: Vector2, size: Vector2, one_way: boo
 	root.get_node("Terrain").add_child(platform, true)
 	platform.owner = root
 
-static func _publish_pair(scene: PackedScene, region: RegionDefinition, scene_path: String, resource_path: String, publisher: Callable = _publish_file) -> String:
-	if region.scene_path != scene_path:
-		return "RegionDefinition does not link to the destination scene."
-	var stage_scene := Maintenance.stage_path("tscn")
-	var stage_resource := Maintenance.stage_path("tres")
-	if stage_scene.is_empty() or stage_resource.is_empty():
-		return "Cannot prepare staging files."
-	var error := ResourceSaver.save(scene, stage_scene)
+static func _publish_pair(scene: PackedScene, region: RegionDefinition, scene_path: String, resource_path: String,
+		publisher: Callable = _publish_file, catalog: RefCounted = null) -> String:
+	if region.scene_path != scene_path or not valid_path(scene_path, "res://world/adventure", "tscn") or not valid_path(resource_path, "res://data/content/regions", "tres"):
+		return "Invalid region destination or scene link."
+	if not Recovery.acquire():
+		return "Region publication is locked. Review Recover Region Creation."
+	var result := _publish_locked(scene, region, scene_path, resource_path, publisher, catalog)
+	Recovery.release()
+	return result
+
+static func _publish_locked(scene: PackedScene, region: RegionDefinition, scene_path: String, resource_path: String,
+		publisher: Callable, catalog: RefCounted) -> String:
+	if occupied(scene_path) or occupied(resource_path) or _id_on_disk("res://data/content", region.id):
+		return "A destination or content ID already exists."
+	var directory := Recovery.new_transaction()
+	if directory.is_empty():
+		return "Cannot reserve a staging directory."
+	var stage_scene := directory.path_join("scene.tscn")
+	var stage_resource := directory.path_join("region.tres")
+	var manifest := directory.path_join(Recovery.JOURNAL)
+	var record := {"scene": scene_path, "resource": resource_path, "scene_sha256": "", "resource_sha256": ""}
+	var error := Recovery.write_record(directory, record)
+	if error == OK:
+		error = ResourceSaver.save(scene, stage_scene)
+	if error == OK:
+		record.scene_sha256 = FileAccess.get_sha256(stage_scene)
+		error = Recovery.write_record(directory, record)
 	if error == OK:
 		error = ResourceSaver.save(region, stage_resource)
-	if error != OK:
-		Maintenance.discard(stage_scene)
-		Maintenance.discard(stage_resource)
-		return "Cannot save staged files: %s." % error_string(error)
-	var staged_scene := ResourceLoader.load(stage_scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
-	var staged_region := ResourceLoader.load(stage_resource, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
-	if staged_scene == null or not staged_scene.can_instantiate() or staged_region == null or staged_region.scene_path != region.scene_path:
-		Maintenance.discard(stage_scene)
-		Maintenance.discard(stage_resource)
-		return "Staged scene or region could not be reloaded."
-	for dependency in ResourceLoader.get_dependencies(stage_scene):
-		if dependency.contains("res://addons/rtc_field_editor/"):
-			Maintenance.discard(stage_scene)
-			Maintenance.discard(stage_resource)
-			return "Staged scene unexpectedly depends on editor assets."
-	var manifest := Maintenance.stage_path("region_pending.json")
-	var journal := FileAccess.open(manifest, FileAccess.WRITE)
-	if journal == null:
-		Maintenance.discard(stage_scene)
-		Maintenance.discard(stage_resource)
-		return "Cannot write creation recovery record."
-	var scene_hash := FileAccess.get_sha256(stage_scene)
-	var region_hash := FileAccess.get_sha256(stage_resource)
-	journal.store_string(JSON.stringify({"scene": scene_path, "resource": resource_path, "staged_scene": stage_scene,
-		"staged_resource": stage_resource, "scene_sha256": scene_hash, "resource_sha256": region_hash}))
-	journal.flush()
-	var journal_error := journal.get_error()
-	journal.close()
-	if journal_error != OK:
-		Maintenance.discard(manifest)
-		Maintenance.discard(stage_scene)
-		Maintenance.discard(stage_resource)
-		return "Cannot persist creation recovery record."
-	var lock := ProjectSettings.globalize_path(PUBLISH_LOCK)
-	if DirAccess.make_dir_absolute(lock) != OK:
-		Maintenance.discard(manifest)
-		Maintenance.discard(stage_scene)
-		Maintenance.discard(stage_resource)
-		return "Another region publication is active. If interrupted, inspect the recovery records before removing its lock."
-	var scene_published := false
-	if occupied(scene_path) or occupied(resource_path) or _id_on_disk("res://data/content", region.id):
+	if error == OK:
+		record.resource_sha256 = FileAccess.get_sha256(stage_resource)
+		error = Recovery.write_record(directory, record)
+	if error == OK and not _pair_matches(stage_scene, stage_resource, region, catalog):
+		error = ERR_INVALID_DATA
+	var scene_uid := ResourceLoader.get_resource_uid(stage_scene) if error == OK else ResourceUID.INVALID_ID
+	var region_uid := ResourceLoader.get_resource_uid(stage_resource) if error == OK else ResourceUID.INVALID_ID
+	if error == OK and (not _uid_available(scene_uid, stage_scene, scene_path) or not _uid_available(region_uid, stage_resource, resource_path)
+			or (scene_uid != ResourceUID.INVALID_ID and scene_uid == region_uid)):
 		error = ERR_ALREADY_EXISTS
-	else:
+	var scene_created := false
+	var resource_created := false
+	if error == OK:
 		error = publisher.call(stage_scene, scene_path)
-		scene_published = error == OK
-		if scene_published:
+		scene_created = error == OK
+		if scene_created:
 			error = publisher.call(stage_resource, resource_path)
-	if error != OK and scene_published and FileAccess.get_sha256(scene_path) == scene_hash:
-		Maintenance.discard(scene_path)
-	Maintenance.discard(stage_scene)
-	Maintenance.discard(stage_resource)
-	DirAccess.remove_absolute(lock)
-	if error != OK and scene_published and FileAccess.file_exists(scene_path):
-		return "Publish failed; inspect the recovery record at %s." % manifest
-	Maintenance.discard(manifest)
+			resource_created = error == OK
+	if error == OK and (FileAccess.get_sha256(scene_path) != record.scene_sha256
+			or FileAccess.get_sha256(resource_path) != record.resource_sha256
+			or ResourceLoader.get_resource_uid(scene_path) != scene_uid
+			or ResourceLoader.get_resource_uid(resource_path) != region_uid
+			or not _pair_matches(scene_path, resource_path, region, catalog)):
+		error = ERR_INVALID_DATA
+	if error != OK:
+		if resource_created and FileAccess.get_sha256(resource_path) == record.resource_sha256:
+			Maintenance.discard(resource_path)
+		if scene_created and FileAccess.get_sha256(scene_path) == record.scene_sha256:
+			Maintenance.discard(scene_path)
+		if (scene_created and FileAccess.file_exists(scene_path)) or (resource_created and FileAccess.file_exists(resource_path)):
+			return "Publish failed; inspect the recovery record at %s." % manifest
+	for path in [stage_scene, stage_resource, directory.path_join("record.tmp"), manifest]:
+		Maintenance.discard(path)
+	DirAccess.remove_absolute(directory)
 	return "" if error == OK else "Region creation failed: %s." % error_string(error)
+
+static func _uid_available(uid: int, stage: String, target: String) -> bool:
+	return uid == ResourceUID.INVALID_ID or not ResourceUID.has_id(uid) or ResourceUID.get_id_path(uid) in [stage, target]
+
+static func _pair_matches(scene_path: String, resource_path: String, region: RegionDefinition, catalog: RefCounted) -> bool:
+	var scene := ResourceLoader.load(scene_path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	var data := ResourceLoader.load(resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	if scene == null or not scene.can_instantiate() or data == null or data.id != region.id or data.scene_path != region.scene_path or data.entry_point_ids != region.entry_point_ids or data.escape_point_ids != region.escape_point_ids:
+		return false
+	for dependency in ResourceLoader.get_dependencies(scene_path):
+		if dependency.contains("res://addons/rtc_field_editor/"):
+			return false
+	if catalog != null:
+		var instance := scene.instantiate()
+		var errors := RegionDefinition.validate_field_nodes(data, instance, catalog)
+		instance.free()
+		return errors.is_empty()
+	return true
+
+static func recover(path: String, catalog: RefCounted, confirmed_stale: bool = false, reviewed: Dictionary = {}) -> String:
+	var record := Recovery.inspect(path, valid_path)
+	if not record.state in ["before", "partial", "complete"]:
+		return record.detail
+	if not Recovery.claim(confirmed_stale):
+		return "Publication lock is active or its owner is unknown."
+	record = Recovery.inspect(path, valid_path)
+	if not reviewed.is_empty() and record != reviewed:
+		Recovery.release()
+		return "Recovery files changed after review."
+	var result: String = record.detail
+	if record.state == "partial":
+		var source: String = record.stages[1]
+		var text := FileAccess.get_file_as_string(source)
+		var safe_resource := text.begins_with("[gd_resource ") and not text.contains("[sub_resource") and ResourceLoader.get_dependencies(source).size() == 1
+		if safe_resource:
+			for dependency in ResourceLoader.get_dependencies(source):
+				safe_resource = safe_resource and dependency.get_slice("::", dependency.get_slice_count("::") - 1) == "res://data/definitions/region_definition.gd"
+		var region := ResourceLoader.load(source, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition if safe_resource else null
+		if region == null or region.scene_path != record.scene or not valid_id(String(region.id)) or _id_on_disk("res://data/content", region.id) or not _pair_matches(record.scene, source, region, catalog):
+			result = "Staged RegionDefinition or scene failed validation. Recovery record preserved."
+		elif not _uid_available(ResourceLoader.get_resource_uid(source), source, record.resource) or _publish_file(source, record.resource) != OK:
+			result = "Could not publish the staged RegionDefinition. Recovery record preserved."
+		else:
+			record = Recovery.inspect(path, valid_path)
+			result = record.detail
+	if record.state in ["before", "complete"]:
+		result = "" if Recovery.cleanup(record) else "Recovery cleanup failed. Remaining record preserved."
+	Recovery.release()
+	return result
 
 static func _publish_file(stage: String, destination: String) -> Error:
 	if occupied(destination):
