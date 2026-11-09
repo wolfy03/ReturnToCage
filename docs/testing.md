@@ -384,3 +384,12 @@ identity, broken or lost gear at respawn, invalid Save v5 and sparse crafting.
 The shared lifecycle probe sends two ENet crafting requests against the same
 materials, checks duplicate and stale sequences while materials are available,
 then saves and rehosts with the exact crafted owner layout and identities.
+
+## Scene 기반 필드 검증
+
+표준 `tools/check_project.py`의 `test_field_scene.gd`가 하수구 지형과 마커의
+이관 값, 잘못된 마커 ID, 필수 매니저, PackedScene 저장 및 캐시 없는 재로드를
+검사한다. `tools/test_multiplayer_world_runtime.py --godot <godot> --players 2`
+및 `--players 3`은 실제 ENet 스폰, 전투와 전리품, 지역 전환, 채집 지급과 중복
+방지를 검증한다. 3인 테스트에서는 한 참가자가 기존 지역에 남은 상태에서
+다른 참가자가 재진입해 이미 소모된 채집 상태를 받는지 검사한다.

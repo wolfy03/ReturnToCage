@@ -273,10 +273,15 @@ func _run_host_scenario() -> void:
 	if gather_target == null or gather_actor == null:
 		_fail("authoritative gather fixture is unavailable")
 		return
+	var personal := GameSession.adventure_session_for_peer(gather_peer).get_player_adventure(gather_peer)
+	var scrap_before := personal.unsecured_loot.count(&"rusty_scrap")
 	gather_actor.global_position = gather_target.global_position
 	_send_command(gather_peer, "GATHER", 0)
 	if not await _wait_until(func() -> bool: return runtime_region._consumed_gather.has(&"scrap_cache_a")):
 		_fail("same-world gather did not commit")
+		return
+	if personal.unsecured_loot.count(&"rusty_scrap") != scrap_before + 2 or runtime_region._try_gather(gather_peer, &"scrap_cache_a"):
+		_fail("authored gather amount or duplicate guard is wrong")
 		return
 	var observe_gather_peer := b_peer if gather_peer == c_peer else c_peer
 	if observe_gather_peer > 0:
@@ -498,6 +503,19 @@ func _run_host_scenario() -> void:
 				or _server_root.runtime(SEWER).get_instance_id() != runtime_identity:
 			_fail("B exit destroyed C's Sewer runtime")
 			return
+		# B loads a fresh presentation while C keeps the consumed world alive.
+		_send_command(b_peer, "REENTER_OCCUPIED", 0)
+		if not await _wait_until(func() -> bool: return _confirmed("REENTER_OCCUPIED", b_peer)):
+			_fail("B did not re-enter the occupied Sewer")
+			return
+		_send_command(b_peer, "REPORT_LATE_GATHER_ABSENT", 0)
+		if not await _wait_until(func() -> bool: return _confirmed("REPORT_LATE_GATHER_ABSENT", b_peer)):
+			_fail("late entrant did not receive consumed gather state")
+			return
+		_send_command(b_peer, "RETURN_FROM_OCCUPIED", 0)
+		if not await _wait_until(func() -> bool: return _confirmed("RETURN_FROM_OCCUPIED", b_peer)):
+			_fail("B did not return after checking the occupied Sewer")
+			return
 		_send_command(c_peer, "RETURN", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("RETURN", c_peer)):
 			_fail("C did not return")
@@ -561,13 +579,13 @@ func _run_host_scenario() -> void:
 @rpc("authority", "call_remote", "reliable")
 func _command(command: String, value: int) -> void:
 	match command:
-		"ENTER", "REENTER":
+		"ENTER", "REENTER", "REENTER_OCCUPIED":
 			var result := NetworkManager.request_enter_region(&"sewer_gate", &"sewer_region")
 			if not result.success:
 				_fail(result.message)
 				return
 			await _confirm_when_world_ready(command, SEWER)
-		"RETURN", "RETURN_FOR_HOST":
+		"RETURN", "RETURN_FOR_HOST", "RETURN_FROM_OCCUPIED":
 			var result := NetworkManager.request_escape_at_point(&"sewer_entrance")
 			if not result.success:
 				_fail(result.message)
@@ -796,7 +814,7 @@ func _command(command: String, value: int) -> void:
 		"GATHER":
 			NetworkManager.request_gather(&"scrap_cache_a")
 			_confirm.rpc_id(1, command, {"requested": true})
-		"REPORT_GATHER_ABSENT":
+		"REPORT_GATHER_ABSENT", "REPORT_LATE_GATHER_ABSENT":
 			if not await _wait_until(func() -> bool:
 				var root := _current_world_root()
 				if root == null:
@@ -806,6 +824,9 @@ func _command(command: String, value: int) -> void:
 			):
 				_fail("same-world gather consumption was not replicated")
 				return
+			if command == "REPORT_LATE_GATHER_ABSENT" and _first_presentation_enemy() != null:
+				_fail("late entrant received an enemy already killed in the occupied Sewer")
+				return
 			_confirm.rpc_id(1, command, {"absent": true})
 
 func _confirm_when_world_ready(command: String, world_id: StringName) -> void:
@@ -814,7 +835,7 @@ func _confirm_when_world_ready(command: String, world_id: StringName) -> void:
 	):
 		_fail("client world transition did not become ready: %s" % command)
 		return
-	if world_id == SEWER:
+	if world_id == SEWER and command != "REENTER_OCCUPIED":
 		if not await _wait_until(func() -> bool: return _enemy_manager() != null and _first_presentation_enemy() != null):
 			_fail("Sewer enemy roster was not replicated")
 			return
@@ -965,9 +986,9 @@ func _parse_arguments() -> void:
 
 # Arrange only authoritative fixture geometry; production RPCs still decide access.
 func _send_command(peer_id: int, command: String, value: int) -> void:
-	if command in ["ENTER", "REENTER", "RETURN", "RETURN_FOR_HOST"]:
+	if command in ["ENTER", "REENTER", "REENTER_OCCUPIED", "RETURN", "RETURN_FOR_HOST", "RETURN_FROM_OCCUPIED"]:
 		var actor := NetworkManager.authoritative_actor(peer_id)
 		if actor != null:
-			actor.position = Vector2(865, 510) if command in ["ENTER", "REENTER"] else Vector2(70, 510)
+			actor.position = Vector2(865, 510) if command in ["ENTER", "REENTER", "REENTER_OCCUPIED"] else Vector2(70, 510)
 			actor.velocity = Vector2.ZERO
 	_command.rpc_id(peer_id, command, value)

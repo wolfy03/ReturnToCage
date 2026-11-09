@@ -50,3 +50,25 @@ Recipes normally deliver their results to Settlement storage. Set
 requesting player's main bag, as in `field_gear_recipe`. Materials still come
 from storage. A full destination rejects the whole exchange. Equipment with
 authored positive maximum durability starts at that durability.
+
+## Scene 기반 필드 배치
+
+`sewer_region.tscn`을 예제로 사용한다. Godot 2D 뷰포트에서 `Terrain`의
+StaticBody2D를 이동한다. 크기를 바꿀 때 CollisionShape2D의 사각형과
+Polygon2D 외곽을 함께 편집한다. 일반 지형의 layer와 mask는 1이며,
+사다리 상단 Landing의 one-way 설정은 해당 충돌 Shape 노드에 있다.
+
+- 적은 `FieldEnemySpawnPoint` Marker2D를 만들고 `spawn_id`, `enemy_id`,
+  `enabled`를 지정한다. ID는 월드 안에서 유일해야 하며, 적 종류는 등록된
+  EnemyDefinition ID를 사용한다.
+- 채집은 `FieldGatherPoint` Marker2D에 `interaction_id`, `item_id`,
+  `amount`, `enabled`를 지정한다. 채집 ID는 다른 채집 지점이나 ESCAPE와
+  겹칠 수 없다. 비활성 마커도 편집 중 검증 대상이다.
+- 입구와 탈출은 기존 `RegionPoint`를 사용한다. ENTRY와 ESCAPE는 각 종류
+  안에서 ID가 유일해야 한다. 기존 하수구 입구는 두 종류에 같은 ID를 사용한다.
+- 두 필드 Marker는 씬 내 폴더 이름에 의존하지 않는다. EditorPlugin이 노드를
+  추가할 때 `owner`를 편집 중인 씬 루트로 지정하고 로컬 transform을 저장한다.
+  팔레트의 적·아이템 선택은 등록된 EnemyDefinition·ItemDefinition을 사용한다.
+  런타임 Actor나 EscapePoint2D는 팔레트에서 직접 배치하지 않는다.
+
+검증은 씬을 트리에 붙이기 전에 수행하므로 편집과 검증에서 시뮬레이션이 시작되지 않는다.

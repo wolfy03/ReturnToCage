@@ -277,12 +277,13 @@ func transition_spawn(peer_id: int, entry_id: StringName = &"") -> PlayerSpawnAs
 		if entry == null:
 			return _failed_assignment("Adventure entry marker unavailable")
 		var index := GameSession.peer_ids_in_world(world_id).size()
+		var entry_position := (get_parent() as Node2D).to_local(entry.global_position)
 		if points.is_empty():
-			candidates.append(entry.position)
+			candidates.append(entry_position)
 		else:
 			for step in points.size():
 				var offset := points[(index + step) % points.size()].position - points[0].position
-				candidates.append(entry.position + offset)
+				candidates.append(entry_position + offset)
 	return PlayerSpawnPolicy.decide(GameSession.session_id, GameSession.get_player_id(peer_id),
 		settlement_spawn_policy, state.last_safe_position, candidates, candidates,
 		Callable(self, "_position_issue").bind(true))

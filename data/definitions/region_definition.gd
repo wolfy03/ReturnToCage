@@ -53,6 +53,23 @@ func validate_definition(registry: Node) -> PackedStringArray:
 		errors.append("%s: region scene missing: %s" % [id, scene_path])
 		return errors
 	var scene: Node = packed.instantiate()
+	errors.append_array(validate_scene(scene, registry))
+	scene.free()
+	return errors
+
+## Validate authored nodes without entering the tree or starting simulation.
+func validate_scene(scene: Node, registry: Node) -> PackedStringArray:
+	var errors := PackedStringArray()
+	if not scene is Node2D or not scene.has_method("configure_server_runtime"):
+		errors.append("%s: invalid region scene root" % id)
+	if not scene.get_node_or_null("PlayerSpawnManager") is PlayerSpawnManager:
+		errors.append("%s: missing PlayerSpawnManager" % id)
+	if not scene.get_node_or_null("EnemySpawnManager") is EnemySpawnManager:
+		errors.append("%s: missing EnemySpawnManager" % id)
+	if not scene.get_node_or_null("LootSpawnManager") is LootSpawnManager:
+		errors.append("%s: missing LootSpawnManager" % id)
+	if not scene.get_node_or_null("NetworkEntityRegistry") is NetworkEntityRegistry:
+		errors.append("%s: missing NetworkEntityRegistry" % id)
 	var points: Array[RegionPoint] = []
 	RegionPoint.collect(scene, points)
 	var entries: Array[StringName] = []
@@ -74,5 +91,21 @@ func validate_definition(registry: Node) -> PackedStringArray:
 	for escape in escapes:
 		if not escape_point_ids.has(escape):
 			errors.append("%s: undeclared scene escape marker %s" % [id, escape])
-	scene.free()
+	var spawn_ids: Dictionary[StringName, bool] = {}
+	var gather_ids: Dictionary[StringName, bool] = {}
+	for marker in scene.find_children("*", "Marker2D", true, false):
+		if marker is FieldEnemySpawnPoint:
+			if marker.spawn_id.is_empty() or spawn_ids.has(marker.spawn_id):
+				errors.append("%s: duplicate or empty enemy spawn ID: %s" % [id, marker.spawn_id])
+			spawn_ids[marker.spawn_id] = true
+			if not registry.get_definition(marker.enemy_id) is EnemyDefinition:
+				errors.append("%s: invalid spawn enemy ID: %s" % [id, marker.enemy_id])
+		elif marker is FieldGatherPoint:
+			if marker.interaction_id.is_empty() or gather_ids.has(marker.interaction_id) or escapes.has(marker.interaction_id):
+				errors.append("%s: duplicate or empty gather ID: %s" % [id, marker.interaction_id])
+			gather_ids[marker.interaction_id] = true
+			if not registry.get_definition(marker.item_id) is ItemDefinition:
+				errors.append("%s: invalid gather item ID: %s" % [id, marker.item_id])
+			if marker.amount <= 0:
+				errors.append("%s: nonpositive gather amount: %s" % [id, marker.interaction_id])
 	return errors

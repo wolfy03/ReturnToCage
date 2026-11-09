@@ -356,11 +356,9 @@ func run(t: Node) -> void:            # 비동기가 필요하면 -> void 유지
 
 ## 6. 월드 씬에 대해 알아둘 것
 
-- 현재 월드 씬(`settlement.tscn`, `sewer_region.tscn`)은 **지오메트리를 코드에서**
-  `WorldHelpers.add_platform/add_label/add_interaction` 으로 생성한다. `.tscn` 에는
-  스폰 포인트, RegionPoint, 등반 Area, 매니저 노드만 있다. TileMap 기반 레벨로 갈 거라면
-  이건 교체 대상이며, 교체 시 `server_runtime_mode` 경로에서 표현 노드가 생기지 않도록
-  주의한다.
+- `sewer_region.tscn`은 지형·안내문·적 스폰·채집 위치를 씬에 저장한다.
+  `AdventureRegion`은 Marker를 읽어 기존 매니저와 상호작용 시스템에 연결한다.
+  `settlement.tscn`의 코드 생성 지형은 기존 방식을 사용한다. 서버 런타임에서 배경 프리셋을 로드하지 않는다.
 - **아트가 없는 것과 아트 구조가 없는 것은 다르다.** player 쪽은 presentation/animation
   구조(manifest → builder → `SpriteFrames` → profile → presenter)와 production 햄스터 sheet가
   연결되어 기본 실행에서 `AnimatedSprite2D`로 그려진다. Polygon은 diagnostic fallback으로만

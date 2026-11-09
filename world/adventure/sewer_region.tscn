@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=20 format=3]
 [ext_resource path="res://world/adventure/adventure_region.gd" type="Script" id="1"]
 [ext_resource path="res://world/region_point.gd" type="Script" id="2"]
 [ext_resource path="res://gameplay/components/climbable_area_2d.gd" type="Script" id="3"]
@@ -9,6 +9,20 @@
 [ext_resource path="res://world/multiplayer/network_entity_registry.gd" type="Script" id="8"]
 [ext_resource path="res://world/multiplayer/loot_spawn_manager.gd" type="Script" id="9"]
 [ext_resource path="res://world/multiplayer/enemy_spawn_manager.gd" type="Script" id="10"]
+[ext_resource path="res://world/adventure/field_enemy_spawn_point.gd" type="Script" id="11"]
+[ext_resource path="res://world/adventure/field_gather_point.gd" type="Script" id="12"]
+[sub_resource type="RectangleShape2D" id="FloorShape"]
+resource_local_to_scene = true
+size = Vector2(1600, 70)
+[sub_resource type="RectangleShape2D" id="WestPlatformShape"]
+resource_local_to_scene = true
+size = Vector2(240, 22)
+[sub_resource type="RectangleShape2D" id="MidPlatformShape"]
+resource_local_to_scene = true
+size = Vector2(210, 22)
+[sub_resource type="RectangleShape2D" id="EastPlatformShape"]
+resource_local_to_scene = true
+size = Vector2(230, 22)
 [sub_resource type="RectangleShape2D" id="LadderShape"]
 size = Vector2(56, 340)
 [sub_resource type="RectangleShape2D" id="RopeShape"]
@@ -91,3 +105,107 @@ shape = SubResource("RopeShape")
 position = Vector2(0, -65)
 [node name="Bottom" type="Marker2D" parent="TestRope"]
 position = Vector2(0, 72)
+
+[node name="Terrain" type="Node2D" parent="."]
+
+[node name="Floor" type="StaticBody2D" parent="Terrain"]
+position = Vector2(750, 570)
+collision_layer = 1
+collision_mask = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/Floor"]
+shape = SubResource("FloorShape")
+
+[node name="Visual" type="Polygon2D" parent="Terrain/Floor"]
+color = Color(0.14901960784313725, 0.23529411764705882, 0.24705882352941178, 1)
+polygon = PackedVector2Array(-800.0, -35.0, 800.0, -35.0, 800.0, 35.0, -800.0, 35.0)
+
+[node name="WestPlatform" type="StaticBody2D" parent="Terrain"]
+position = Vector2(420, 440)
+collision_layer = 1
+collision_mask = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/WestPlatform"]
+shape = SubResource("WestPlatformShape")
+
+[node name="Visual" type="Polygon2D" parent="Terrain/WestPlatform"]
+color = Color(0.21568627450980393, 0.33725490196078434, 0.35294117647058826, 1)
+polygon = PackedVector2Array(-120.0, -11.0, 120.0, -11.0, 120.0, 11.0, -120.0, 11.0)
+
+[node name="MidPlatform" type="StaticBody2D" parent="Terrain"]
+position = Vector2(760, 350)
+collision_layer = 1
+collision_mask = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/MidPlatform"]
+shape = SubResource("MidPlatformShape")
+
+[node name="Visual" type="Polygon2D" parent="Terrain/MidPlatform"]
+color = Color(0.21568627450980393, 0.33725490196078434, 0.35294117647058826, 1)
+polygon = PackedVector2Array(-105.0, -11.0, 105.0, -11.0, 105.0, 11.0, -105.0, 11.0)
+
+[node name="EastPlatform" type="StaticBody2D" parent="Terrain"]
+position = Vector2(1080, 450)
+collision_layer = 1
+collision_mask = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/EastPlatform"]
+shape = SubResource("EastPlatformShape")
+
+[node name="Visual" type="Polygon2D" parent="Terrain/EastPlatform"]
+color = Color(0.21568627450980393, 0.33725490196078434, 0.35294117647058826, 1)
+polygon = PackedVector2Array(-115.0, -11.0, 115.0, -11.0, 115.0, 11.0, -115.0, 11.0)
+
+[node name="Signs" type="Node2D" parent="."]
+
+[node name="Title" type="Label" parent="Signs"]
+modulate = Color(0.6235294117647059, 0.8352941176470589, 0.7803921568627451, 1)
+offset_left = 30.0
+offset_top = 35.0
+theme_override_font_sizes/font_size = 18
+text = "SEWER ROUTE / Danger 1"
+
+[node name="Entrance" type="Label" parent="Signs"]
+modulate = Color(1.0, 1.0, 1.0, 1)
+offset_left = 35.0
+offset_top = 455.0
+theme_override_font_sizes/font_size = 18
+text = "Entrance"
+
+[node name="EmergencyLadder" type="Label" parent="Signs"]
+modulate = Color(1.0, 1.0, 1.0, 1)
+offset_left = 1310.0
+offset_top = 455.0
+theme_override_font_sizes/font_size = 18
+text = "Emergency ladder"
+
+[node name="SpawnPoints" type="Node2D" parent="."]
+
+[node name="SewerBeetle" type="Marker2D" parent="SpawnPoints"]
+position = Vector2(970, 525)
+script = ExtResource("11")
+spawn_id = &"sewer_beetle_a"
+enemy_id = &"sewer_beetle"
+
+[node name="GatherPoints" type="Node2D" parent="."]
+
+[node name="ScrapCacheA" type="Marker2D" parent="GatherPoints"]
+position = Vector2(430, 395)
+script = ExtResource("12")
+interaction_id = &"scrap_cache_a"
+item_id = &"rusty_scrap"
+amount = 2
+
+[node name="ScrapCacheB" type="Marker2D" parent="GatherPoints"]
+position = Vector2(760, 305)
+script = ExtResource("12")
+interaction_id = &"scrap_cache_b"
+item_id = &"rusty_scrap"
+amount = 2
+
+[node name="BerryDrop" type="Marker2D" parent="GatherPoints"]
+position = Vector2(1070, 405)
+script = ExtResource("12")
+interaction_id = &"berry_drop"
+item_id = &"berry"
+amount = 1

@@ -4,7 +4,7 @@ var context: AdventureContext
 var server_runtime_mode: bool = false
 var environment_presenter: EnvironmentPresenter
 var _gather_targets: Dictionary[StringName, InteractionTarget] = {}
-var _gather_items: Dictionary[StringName, Dictionary] = {}
+var _gather_items: Dictionary[StringName, FieldGatherPoint] = {}
 var _consumed_gather: Dictionary[StringName, bool] = {}
 
 func configure(p_context: AdventureContext) -> void:
@@ -48,20 +48,20 @@ func _ready() -> void:
 	# Client visual environment only; never built for ServerWorldRuntime.
 	if not server_runtime_mode:
 		_create_environment()
-	WorldHelpers.add_platform(self, Vector2(750, 570), Vector2(1600, 70), Color("263c3f"))
-	WorldHelpers.add_platform(self, Vector2(420, 440), Vector2(240, 22), Color("37565a"))
-	WorldHelpers.add_platform(self, Vector2(760, 350), Vector2(210, 22), Color("37565a"))
-	WorldHelpers.add_platform(self, Vector2(1080, 450), Vector2(230, 22), Color("37565a"))
-	WorldHelpers.add_label(self, "SEWER ROUTE / Danger 1", Vector2(30, 35), Color("9fd5c7"))
-	WorldHelpers.add_label(self, "Entrance", Vector2(35, 455))
-	WorldHelpers.add_label(self, "Emergency ladder", Vector2(1310, 455))
+	else:
+		var signs := get_node_or_null("Signs") as Node2D
+		if signs != null:
+			signs.hide()
 	_create_escape_points()
 	_create_death_drops()
-	_create_gather(&"scrap_cache_a", &"rusty_scrap", 2, Vector2(430, 395))
-	_create_gather(&"scrap_cache_b", &"rusty_scrap", 2, Vector2(760, 305))
-	_create_gather(&"berry_drop", &"berry", 1, Vector2(1070, 405))
-	if server_runtime_mode or not NetworkManager.is_multiplayer_active() and NetworkManager.is_authoritative_simulation():
-		(get_node("EnemySpawnManager") as EnemySpawnManager).spawn_enemy(&"sewer_beetle", Vector2(970, 525))
+	var spawn_enemies := (NetworkManager.is_authoritative_simulation()
+			and (server_runtime_mode or not NetworkManager.is_multiplayer_active()))
+	var enemy_manager := get_node("EnemySpawnManager") as EnemySpawnManager
+	for marker in find_children("*", "Marker2D", true, false):
+		if marker is FieldGatherPoint and marker.enabled:
+			_create_gather(marker)
+		elif spawn_enemies and marker is FieldEnemySpawnPoint and marker.enabled:
+			enemy_manager.spawn_enemy(marker.enemy_id, marker.global_position)
 	var points: Array[RegionPoint] = []
 	RegionPoint.collect(self, points)
 	var entry: RegionPoint
@@ -146,12 +146,16 @@ func _create_death_drops() -> void:
 	manager.configure(context.region_id, server_runtime_mode or not NetworkManager.is_multiplayer_active())
 	add_child(manager)
 
-func _create_gather(id: StringName, item_id: StringName, amount: int, position: Vector2) -> void:
-	var definition := ContentRegistry.get_item(item_id)
-	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, amount], position, Vector2(42, 42), Color("8b6f47"), 2)
+func _create_gather(point: FieldGatherPoint) -> void:
+	var id := point.interaction_id
+	var definition := ContentRegistry.get_item(point.item_id)
+	if definition == null or id.is_empty() or point.amount <= 0 or _gather_targets.has(id):
+		push_error("Invalid gather marker: %s" % point.get_path())
+		return
+	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, point.amount], to_local(point.global_position), Vector2(42, 42), Color("8b6f47"), 2)
 	target.add_to_group(&"world_gather")
 	_gather_targets[id] = target
-	_gather_items[id] = {"item_id": item_id, "amount": amount}
+	_gather_items[id] = point
 	target.activated.connect(func(actor: Node) -> void:
 		var peer_id := (actor as PlayerActor).peer_id if actor is PlayerActor else GameSession.get_local_peer_id()
 		if server_runtime_mode:
@@ -170,22 +174,22 @@ func _try_gather(peer_id: int, interaction_id: StringName) -> bool:
 			or GameSession.get_peer_world_id(peer_id) != PlayerWorldState.adventure_world_id(context.region_id):
 		return false
 	var target: InteractionTarget = _gather_targets.get(interaction_id)
-	var data: Dictionary = _gather_items.get(interaction_id, {})
+	var point: FieldGatherPoint = _gather_items.get(interaction_id)
 	var player_manager := get_node_or_null("PlayerSpawnManager") as PlayerSpawnManager
 	var actor := player_manager.get_actor(peer_id) if player_manager != null else null
 	var runtime := GameSession.get_player_runtime(peer_id)
-	if target == null or actor == null or runtime == null \
+	if target == null or point == null or actor == null or runtime == null \
 			or runtime.life_phase != PlayerRuntimeState.LifePhase.ALIVE \
 			or actor.hurt.is_active() or actor.dodge.is_active() \
 			or actor.global_position.distance_to(target.global_position) > 90.0:
 		return false
 	var result := GameSession.collect_adventure_loot_for_peer(
-		data.get("item_id", &""), int(data.get("amount", 0)), peer_id
+		point.item_id, point.amount, peer_id
 	)
 	if result.changed <= 0:
 		return false
 	_consumed_gather[interaction_id] = true
-	GameSession.last_message = "Unsecured loot: %s x%d" % [data.get("item_id", &""), result.changed]
+	GameSession.last_message = "Unsecured loot: %s x%d" % [point.item_id, result.changed]
 	_gather_targets.erase(interaction_id)
 	target.enabled = false
 	target.queue_free()

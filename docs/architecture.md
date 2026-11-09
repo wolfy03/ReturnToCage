@@ -148,3 +148,12 @@ InventoryModel stores capacity-sized nullable cells; dense stacks()/to_array() r
 ## Stage 3 slot serialization and authority
 
 SaveData validates the indexed container shared by Save v5 and v17 snapshots. The inventory presenter submits slot intents through the existing owner-private service, which validates them on the server. See [inventory_persistence.md](inventory_persistence.md).
+
+## Scene 기반 하수구 필드
+
+`RegionDefinition.scene_path`가 지형, RegionPoint와 필드 Marker가 배치된
+씬을 가리킨다. 같은 씬을 권위 월드와 표시 월드에서 사용한다. 적 Marker는
+권위 경로에서만 EnemySpawnManager가 처리하고, 채집 Marker는 각 월드의
+InteractionTarget을 구성한다. 서버의 채집 소모 상태는 기존 월드별 이벤트와
+ready 시점 동기화로 전달된다. 마커는 수량과 위치를 정의하며 소모 여부는
+런타임에 남는다. 배경 프리셋은 표시 월드만 비동기로 읽는다.
