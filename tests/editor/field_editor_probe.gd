@@ -28,6 +28,18 @@ func _run() -> void:
 		return
 	var definition := _catalog.get_definition(&"sewer_region") as RegionDefinition
 	_check(RegionDefinition.validate_field_nodes(definition, root, _catalog).is_empty(), "editor validates the unmodified field")
+	var slot := root.get_node("PlayerSpawnPoint1") as PlayerSpawnPoint
+	var undo := get_undo_redo()
+	undo.create_action("Probe duplicate player slot", UndoRedo.MERGE_DISABLE, root)
+	undo.add_do_property(slot, "spawn_index", 0)
+	undo.add_undo_property(slot, "spawn_index", 1)
+	undo.commit_action()
+	var slot_history := undo.get_history_undo_redo(undo.get_object_history_id(root))
+	var duplicate_errors := RegionDefinition.validate_field_nodes(definition, root, _catalog)
+	_check("\n".join(duplicate_errors).contains("PlayerSpawnPoint0 and PlayerSpawnPoint1"), "editor validation identifies duplicate slot")
+	_check(slot_history.undo() and RegionDefinition.validate_field_nodes(definition, root, _catalog).is_empty(), "undo clears duplicate validation")
+	_check(slot_history.redo() and RegionDefinition.validate_field_nodes(definition, root, _catalog) == duplicate_errors, "redo restores identical diagnostics")
+	_check(slot_history.undo(), "restore valid slot before saving")
 	_check(_catalog.search("SEWER_BEETLE").size() == 1, "content ID search")
 	_check(_catalog.search("world/decorations").size() == 1, "asset path search")
 	_check(not _place({"kind": "enemy", "id": &"berry"}, Vector2.ZERO), "wrong content type rejected")
@@ -74,6 +86,7 @@ func _run() -> void:
 		_check(EditorInterface.save_scene() == OK, "editor save")
 	var saved := ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
 	var instance := saved.instantiate() as Node2D
+	_check(instance.get_node("PlayerSpawnPoint1").spawn_index == 1, "reloaded slot retains corrected index")
 	_check(instance.get_node("SpawnPoints").get_child_count() == 2, "saved enemy marker is present")
 	var area := instance.get_node("Climbables").get_child(0) as ClimbableArea2D
 	_check(area.top_marker != null and area.bottom_marker != null and area.top_marker.owner == instance, "climb paths and owners survive reload")

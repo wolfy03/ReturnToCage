@@ -12,7 +12,7 @@ var _dock: VBoxContainer
 var _tree: Tree
 var _search: LineEdit
 var _scene_label: Label
-var _status: Label
+var _status: RichTextLabel
 var _enabled: CheckButton
 var _snap: CheckButton
 var _interval: SpinBox
@@ -52,7 +52,8 @@ func _enter_tree() -> void:
 	validate.text = "Validate field"
 	validate.pressed.connect(_validate)
 	_dock.add_child(validate)
-	_status = Label.new()
+	_status = RichTextLabel.new()
+	_status.custom_minimum_size.y = 104
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_status.text = "Drag an asset into the 2D viewport."
 	_dock.add_child(_status)
@@ -261,9 +262,15 @@ func _validate() -> void:
 	if root == null:
 		_status.text = "Open an AdventureRegion scene."
 		return
+	var region: RegionDefinition
 	for definition in _catalog.definitions.values():
 		if definition is RegionDefinition and definition.scene_path == root.scene_file_path:
-			var errors := RegionDefinition.validate_field_nodes(definition, root, _catalog)
-			_status.text = "Field validation passed." if errors.is_empty() else "\n".join(errors)
-			return
-	_status.text = "No RegionDefinition points to this scene. Save it and set scene_path and point IDs explicitly."
+			region = definition
+			break
+	var issues := RegionDefinition.validate_field_nodes(region, root, _catalog)
+	if region == null:
+		issues.insert(0, "No RegionDefinition points to this scene. Save it and set scene_path and point IDs explicitly.")
+	if issues.is_empty():
+		issues.append("Field validation passed.")
+	issues.append_array(RegionDefinition.FieldSceneChecks.spawn_warnings(root))
+	_status.text = "\n".join(issues)

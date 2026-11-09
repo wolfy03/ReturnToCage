@@ -59,4 +59,64 @@ func run(t: Node) -> void:
 	var errors := "\n".join(definition.validate_scene(scene, ContentRegistry))
 	for message in ["duplicate or empty enemy spawn ID", "invalid spawn enemy ID", "duplicate or empty gather ID", "invalid gather item ID", "nonpositive gather amount", "missing scene entry marker", "undeclared scene entry marker"]:
 		t.assert_true(errors.contains(message), "field validation detects " + message)
+	t.assert_true(errors.contains("SpawnPoints/SewerBeetle and SpawnPoints/"), "enemy duplicate identifies both nodes")
+	t.assert_true(errors.contains("GatherPoints/ScrapCacheA and GatherPoints/ScrapCacheB"), "gather duplicate identifies both nodes")
+	scene.free()
+	_test_structure(t, definition, packed)
+
+func _test_structure(t: Node, definition: RegionDefinition, packed: PackedScene) -> void:
+	var scene := packed.instantiate() as Node2D
+	var manager := scene.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	manager.spawn_validation_collision_mask = 0
+	t.assert_true("\n".join(definition.validate_scene(scene, ContentRegistry)).contains("nonzero spawn collision mask"), "invalid adventure spawn configuration reported")
+	manager.spawn_validation_collision_mask = 1
+	var slot := scene.get_node("PlayerSpawnPoint1") as PlayerSpawnPoint
+	slot.spawn_index = 0
+	var errors := "\n".join(definition.validate_scene(scene, ContentRegistry))
+	t.assert_true(errors.contains("duplicate player spawn index 0 at PlayerSpawnPoint0 and PlayerSpawnPoint1"), "duplicate player slots identify both nodes")
+	slot.spawn_index = 4
+	t.assert_true("\n".join(definition.validate_scene(scene, ContentRegistry)).contains("index 4 outside"), "out of range player slot rejected")
+	slot.spawn_index = 1
+	var terrain := scene.get_node("Terrain") as Node2D
+	slot.owner = null
+	slot.reparent(terrain, false)
+	t.assert_true("\n".join(definition.validate_scene(scene, ContentRegistry)).contains("Terrain/PlayerSpawnPoint1: nested player spawn"), "ignored nested slot reported")
+	slot.reparent(scene, false)
+	var entry := scene.get_node("Entry") as RegionPoint
+	entry.owner = null
+	entry.reparent(terrain, false)
+	terrain.position = Vector2(12, 24)
+	t.assert_true(definition.validate_scene(scene, ContentRegistry).is_empty(), "valid slots and transformed nested ENTRY accepted")
+	entry.position = Vector2(INF, 3)
+	var ladder := scene.get_node("EmergencyLadder") as ClimbableArea2D
+	var top := ladder.top_marker
+	ladder.top_marker = null
+	ladder.get_node("CollisionShape2D").disabled = true
+	var platform := preload("res://world/adventure/field_platform.tscn").instantiate() as FieldPlatform
+	platform.name = "BrokenPlatform"
+	platform.get_node("CollisionShape2D").free()
+	terrain.add_child(platform)
+	var decoration := FieldDecoration.new()
+	decoration.name = "BrokenDecoration"
+	decoration.asset_path = "res://missing_field_texture.png"
+	scene.add_child(decoration)
+	errors = "\n".join(definition.validate_scene(scene, ContentRegistry))
+	for message in ["Terrain/Entry: non-finite", "EmergencyLadder: climbable requires Top and Bottom", "EmergencyLadder: climbable requires an enabled CollisionShape2D", "Terrain/BrokenPlatform: FieldPlatform requires an enabled", "BrokenDecoration: missing or invalid decoration asset path"]:
+		t.assert_true(errors.contains(message), "structural field validation detects " + message)
+	ladder.top_marker = top
+	top.position.y = ladder.bottom_marker.position.y + 1
+	t.assert_true("\n".join(definition.validate_scene(scene, ContentRegistry)).contains("Top must be above Bottom"), "inverted climb endpoints rejected")
+	decoration.asset_path = "res://world/adventure/field_platform.tscn"
+	errors = "\n".join(RegionDefinition.validate_field_nodes(definition, scene, ContentRegistry))
+	t.assert_true(errors.contains("scripted decoration scene node"), "scripted decoration scene rejected without instantiation")
+	var resource_path := (ContentRegistry.get_item(&"berry") as Resource).resource_path
+	t.assert_true(FieldDecoration.asset_issue(resource_path).contains("unsupported decoration resource"), "nonvisual resource rejected")
+	var visual_root := Node2D.new()
+	var child := preload("res://world/decorations/sewer_wall_mark.tscn").instantiate()
+	visual_root.add_child(child)
+	child.owner = visual_root
+	var visual := PackedScene.new()
+	visual.pack(visual_root)
+	t.assert_true(FieldDecoration.visual_scene_issue(visual).contains("nested or inherited"), "nested decoration instance rejected")
+	visual_root.free()
 	scene.free()
