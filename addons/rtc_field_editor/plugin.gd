@@ -863,24 +863,73 @@ func _review_sync() -> void:
 		if fresh.has("error") or fresh.changes != plan.changes or fresh.region != plan.region:
 			_status.text = "Region points changed. Review the sync again."
 			return
-		if EditorInterface.save_scene() != OK:
-			_status.text = "Scene save failed. RegionDefinition was not changed."
-			return
-		_apply_region_plan(root, fresh)
+		_apply_region_plan(root, fresh, EditorInterface.save_scene)
 	_maintenance_dialog.popup_centered(Vector2i(590, 240))
 
-func _apply_region_plan(root: Node2D, plan: Dictionary) -> bool:
+func _apply_region_plan(root: Node2D, plan: Dictionary, save_scene: Callable = Callable()) -> bool:
+	if _maintenance.recovery_pending:
+		_status.text = "Wait for the previous sync history recovery."
+		return false
 	var region: RegionDefinition = plan.region
 	var old_entries := region.entry_point_ids.duplicate()
 	var old_escapes := region.escape_point_ids.duplicate()
-	var error := _maintenance.write_points(region, plan.entries, plan.escapes)
-	if error != OK:
-		_status.text = "RegionDefinition save failed: %s" % error_string(error)
+	var prepared := _maintenance.prepare_points(region, plan.entries, plan.escapes)
+	if prepared.error != OK:
+		_status.text = "RegionDefinition save failed: %s" % error_string(prepared.error)
 		return false
+	var scene_path := root.scene_file_path
+	var backup := ""
+	if save_scene.is_valid():
+		backup = _backup_sync_scene(scene_path)
+		if backup.is_empty():
+			Maintenance.discard(prepared.path)
+			_status.text = "Cannot back up the scene for sync. No files changed."
+			return false
+		var scene_error: Error = save_scene.call()
+		if scene_error != OK:
+			Maintenance.discard(prepared.path)
+			_rollback_sync_scene(scene_path, backup, "Scene save failed.")
+			return false
+	var error := _maintenance.publish_points(region, plan.entries, plan.escapes, prepared.path)
+	if error != OK:
+		_rollback_sync_scene(scene_path, backup, "RegionDefinition save failed: %s." % error_string(error))
+		return false
+	Maintenance.discard(backup)
 	var undo := get_undo_redo()
+	var history_id := undo.get_object_history_id(root)
 	undo.create_action("Sync region point declarations", UndoRedo.MERGE_DISABLE, root)
-	undo.add_do_method(_maintenance, "write_points", region, plan.entries, plan.escapes)
-	undo.add_undo_method(_maintenance, "write_points", region, old_entries, old_escapes)
+	undo.add_do_method(_maintenance, "write_history", region, plan.entries, plan.escapes, undo, history_id, false, _sync_notice)
+	undo.add_undo_method(_maintenance, "write_history", region, old_entries, old_escapes, undo, history_id, true, _sync_notice)
 	undo.commit_action(false)
 	_status.text = "Saved %s." % region.resource_path
 	return true
+
+func _backup_sync_scene(path: String) -> String:
+	if not FileAccess.file_exists(path):
+		return ""
+	var backup := Maintenance.stage_path(path.get_extension())
+	if backup.is_empty():
+		return ""
+	var error := DirAccess.copy_absolute(ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(backup))
+	if error != OK:
+		Maintenance.discard(backup)
+		return ""
+	return backup
+
+func _rollback_sync_scene(path: String, backup: String, message: String) -> void:
+	if backup.is_empty():
+		_status.text = message
+		return
+	if FileAccess.get_sha256(path) == FileAccess.get_sha256(backup):
+		Maintenance.discard(backup)
+		_status.text = message + " Scene file unchanged."
+	elif Maintenance.replace_file(backup, path) == OK:
+		_status.text = message + " Previous scene file restored; edits remain unsaved."
+		EditorInterface.mark_scene_as_unsaved()
+	else:
+		_status.text = message + " Scene restore failed. Recover the original from " + backup
+		EditorInterface.mark_scene_as_unsaved()
+
+func _sync_notice(message: String) -> void:
+	if is_instance_valid(_status):
+		_status.text = message

@@ -80,7 +80,7 @@ func _run() -> void:
 	_check(_status.text.begins_with("No RegionDefinition"), "unregistered scene reports explicit registration")
 	_check_step3_contracts(root)
 	_exercise_terrain_transactions(root)
-	_exercise_step4_transactions(root)
+	await _exercise_step4_transactions(root)
 	var path := root.scene_file_path
 	if DisplayServer.get_name() == "headless":
 		var packed := PackedScene.new()
@@ -202,7 +202,8 @@ func _exercise_step4_transactions(root: Node2D) -> void:
 	_check(Maintenance.sync_plan(root, [region], _catalog).has("error"), "duplicate region point blocks sync")
 	point.free()
 	var plan := Maintenance.sync_plan(root, [region], _catalog)
-	_check(_apply_region_plan(root, plan), "save RegionDefinition sync")
+	var save_scene := _save_probe_scene.bind(root) if DisplayServer.get_name() == "headless" else EditorInterface.save_scene
+	_check(_apply_region_plan(root, plan, save_scene), "save Scene and RegionDefinition sync")
 	var reloaded := ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
 	_check(reloaded.entry_point_ids == plan.entries and reloaded.escape_point_ids == plan.escapes, "synced resource reload")
 	_check(Maintenance.sync_plan(root, [region], _catalog).changes.is_empty(), "matching declarations unchanged")
@@ -212,6 +213,7 @@ func _exercise_step4_transactions(root: Node2D) -> void:
 	_check(history.redo(), "sync redo")
 	reloaded = ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
 	_check(reloaded.entry_point_ids == plan.entries and reloaded.escape_point_ids == plan.escapes, "redo persists new declarations")
+	await _exercise_sync_failures(root, plan, history, path)
 
 	var first := DecorationStroke.new()
 	var second := DecorationStroke.new()
@@ -223,6 +225,21 @@ func _exercise_step4_transactions(root: Node2D) -> void:
 		stroke.extend(Vector2.ZERO)
 	_check(first.transforms == second.transforms and first.transforms.size() == 4, "seeded brush transform and duplicate avoidance")
 	_check(first.transforms[2].origin == Vector2(64, 0), "brush maintains world spacing")
+	var dense: Array[Vector2] = []
+	for x in 3000:
+		dense.append(Vector2(x, 0))
+	var long_stroke := DecorationStroke.new()
+	long_stroke.begin(Vector2.ZERO, 1, 0, Vector2.ONE, 1, false, true, dense)
+	long_stroke.extend(Vector2(6000, 0))
+	_check(long_stroke.transforms.size() == DecorationStroke.LIMIT and long_stroke.transforms[0].origin == Vector2(3000, 0), "long brush crosses dense duplicates before reaching placement cap")
+	var split := DecorationStroke.new()
+	var single := DecorationStroke.new()
+	split.begin(Vector2.ZERO, 1, 20, Vector2(0.5, 1.5), 51, true, false, no_existing)
+	single.begin(Vector2.ZERO, 1, 20, Vector2(0.5, 1.5), 51, true, false, no_existing)
+	for x in range(1, 401):
+		split.extend(Vector2(x * 0.25, 0))
+	single.extend(Vector2(100, 0))
+	_check(single.transforms.size() == 101 and split.transforms == single.transforms, "small spacing and fractional event boundaries preserve identical stamps")
 	var decor := root.get_node("Decorations") as Node2D
 	var before := decor.get_child_count()
 	var transforms: Array[Transform2D] = first.transforms.duplicate()
@@ -253,6 +270,69 @@ func _exercise_step4_transactions(root: Node2D) -> void:
 		gesture.preview(opposite)
 		_check(gesture.size.x >= 4 and gesture.size.y >= 4, "resize clamps minimum")
 	platform.transform = original_transform
+
+func _save_probe_scene(root: Node2D) -> Error:
+	var scene := PackedScene.new()
+	var error := scene.pack(root)
+	return ResourceSaver.save(scene, root.scene_file_path) if error == OK else error
+
+func _set_probe_read_only(path: String, read_only: bool) -> void:
+	if OS.get_name() == "Windows":
+		_check(FileAccess.set_read_only_attribute(path, read_only) == OK, "set fixture read-only attribute")
+	else:
+		_check(FileAccess.set_unix_permissions(path, 0x124 if read_only else 0x1A4) == OK, "set fixture permissions")
+
+func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, resource_path: String) -> void:
+	var scene_path := root.scene_file_path
+	var scene_hash := FileAccess.get_sha256(scene_path)
+	var region_hash := FileAccess.get_sha256(resource_path)
+	var action := history.get_current_action()
+	var region: RegionDefinition = plan.region
+	var entries := region.entry_point_ids.duplicate()
+	var escapes := region.escape_point_ids.duplicate()
+	_check(not _apply_region_plan(root, plan, func() -> Error:
+		FileAccess.open(scene_path, FileAccess.WRITE).store_string("simulated partial scene save")
+		return ERR_CANT_CREATE
+	), "scene save failure rejected")
+	_check(FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "scene save failure restores bytes and preserves history")
+
+	var parked := ProjectSettings.globalize_path(resource_path + ".parked")
+	var actual := ProjectSettings.globalize_path(resource_path)
+	_check(DirAccess.rename_absolute(actual, parked) == OK, "park resource for missing-file failure")
+	_check(not _apply_region_plan(root, plan, _save_probe_scene.bind(root)), "missing resource fails before writing scene")
+	_check(DirAccess.rename_absolute(parked, actual) == OK and FileAccess.get_sha256(scene_path) == scene_hash, "missing resource failure preserves scene")
+	_set_probe_read_only(resource_path, true)
+	var called: Array[bool] = []
+	_check(not _apply_region_plan(root, plan, func() -> Error:
+		called.append(true)
+		return OK
+	) and called.is_empty(), "read-only resource rejected before scene save")
+	_check(history.undo(), "engine dispatched failing sync undo")
+	await get_tree().process_frame
+	_check(history.get_current_action() == action and region.entry_point_ids == entries and region.escape_point_ids == escapes and FileAccess.get_sha256(resource_path) == region_hash, "failed undo restores history and leaves data intact")
+	_set_probe_read_only(resource_path, false)
+	_check(history.undo(), "retry sync undo")
+	var previous_hash := FileAccess.get_sha256(resource_path)
+	_set_probe_read_only(resource_path, true)
+	_check(history.redo(), "engine dispatched failing sync redo")
+	await get_tree().process_frame
+	_check(history.get_current_action() == action - 1 and FileAccess.get_sha256(resource_path) == previous_hash and region.entry_point_ids != entries, "failed redo restores history and leaves data intact")
+	_set_probe_read_only(resource_path, false)
+	_check(history.redo(), "retry sync redo")
+	region_hash = FileAccess.get_sha256(resource_path)
+	_check(not _apply_region_plan(root, plan, func() -> Error:
+		FileAccess.open(scene_path, FileAccess.WRITE).store_string("simulated new scene bytes")
+		_set_probe_read_only(resource_path, true)
+		return OK
+	), "late resource publish failure rejected")
+	_set_probe_read_only(resource_path, false)
+	_check(FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "late resource failure rolls back scene without history action")
+	EditorInterface.open_scene_from_path("res://core/boot.tscn")
+	await get_tree().process_frame
+	EditorInterface.open_scene_from_path(scene_path)
+	await get_tree().process_frame
+	_check(_field_root() == root and history.get_current_action() == action, "scene switch preserves sync history")
+	_check(history.undo() and region.entry_point_ids != entries and history.redo() and region.entry_point_ids == entries, "sync history still writes after scene switch")
 
 func _exercise_step4_gui(root: Node2D) -> void:
 	_set_test_tool(Stroke.Mode.SELECT)

@@ -29,14 +29,25 @@ func begin(world: Vector2, spacing: float, angle: float, scales: Vector2, seed_v
 
 func extend(world: Vector2) -> void:
 	var distance := _last.distance_to(world)
-	if not is_finite(distance) or distance < 0.0001:
+	if not is_finite(distance) or distance <= 0.0 or transforms.size() >= LIMIT:
 		return
-	var steps := 0
-	while _remaining <= distance and steps < LIMIT and transforms.size() < LIMIT:
-		_add(_last.lerp(world, _remaining / distance))
-		_remaining += _spacing
-		steps += 1
-	_remaining = _remaining - distance if _remaining > distance else _spacing
+	var epsilon := _spacing * 0.000001
+	# The cap counts placed nodes. A long segment may encounter more than
+	# LIMIT occupied positions before the first available one.
+	var budget := LIMIT - transforms.size() + (_seen.size() if _avoid else 0)
+	var sample := _remaining
+	for _step in budget:
+		if sample > distance + epsilon or transforms.size() >= LIMIT:
+			break
+		var fraction := minf(sample / distance, 1.0)
+		# Scalar floats retain precision until the final Vector2 conversion.
+		_add(Vector2(lerpf(_last.x, world.x, fraction), lerpf(_last.y, world.y, fraction)))
+		sample += _spacing
+	if distance + epsilon < _remaining:
+		_remaining -= distance
+	else:
+		var remainder := fposmod(distance - _remaining, _spacing)
+		_remaining = _spacing if remainder < epsilon or _spacing - remainder < epsilon else _spacing - remainder
 	_last = world
 
 func _key(point: Vector2) -> Vector2i:

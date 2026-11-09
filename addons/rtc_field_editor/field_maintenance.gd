@@ -3,6 +3,9 @@ extends RefCounted
 
 const Placement := preload("placement.gd")
 
+var recovery_pending := false
+var _reversing := false
+
 static func duplicates(root: Node2D) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var seen: Dictionary[String, Node] = {}
@@ -97,16 +100,98 @@ static func _preserve_order(old: Array[StringName], current: Array[StringName]) 
 			result.append(id)
 	return result
 
-func write_points(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName]) -> Error:
-	var previous_entries := region.entry_point_ids
-	var previous_escapes := region.escape_point_ids
-	region.entry_point_ids = entries
-	region.escape_point_ids = escapes
-	var error := ResourceSaver.save(region, region.resource_path)
+const STAGE_DIR := "res://.godot/rtc_field_sync"
+
+static func stage_path(extension: String) -> String:
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(STAGE_DIR)) != OK:
+		return ""
+	return STAGE_DIR.path_join("%d.%s" % [Time.get_ticks_usec(), extension])
+
+static func read_only(path: String) -> bool:
+	if not FileAccess.file_exists(path):
+		return false
+	if OS.get_name() == "Windows":
+		return FileAccess.get_read_only_attribute(path)
+	return (FileAccess.get_unix_permissions(path) & 0x92) == 0
+
+static func discard(path: String) -> void:
+	if not path.is_empty() and FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+static func replace_file(staged: String, destination: String) -> Error:
+	if read_only(destination):
+		return ERR_FILE_NO_PERMISSION
+	return DirAccess.rename_absolute(ProjectSettings.globalize_path(staged), ProjectSettings.globalize_path(destination))
+
+func prepare_points(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName]) -> Dictionary:
+	var destination := region.resource_path
+	if destination.is_empty() or not FileAccess.file_exists(destination):
+		return {"error": ERR_FILE_NOT_FOUND}
+	if read_only(destination):
+		return {"error": ERR_FILE_NO_PERMISSION}
+	var path := stage_path(destination.get_extension())
+	if path.is_empty():
+		return {"error": ERR_CANT_CREATE}
+	var copy := region.duplicate() as RegionDefinition
+	copy.entry_point_ids = entries
+	copy.escape_point_ids = escapes
+	var error := ResourceSaver.save(copy, path)
+	var uid := ResourceLoader.get_resource_uid(destination)
+	if error == OK and uid != ResourceUID.INVALID_ID:
+		error = ResourceSaver.set_uid(path, uid)
 	if error != OK:
-		region.entry_point_ids = previous_entries
-		region.escape_point_ids = previous_escapes
-		push_error("Cannot save field point declarations: %s (%s)" % [region.resource_path, error_string(error)])
-	else:
+		discard(path)
+	return {"error": error, "path": path}
+
+func publish_points(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName], staged: String) -> Error:
+	var error := replace_file(staged, region.resource_path)
+	discard(staged)
+	if error == OK:
+		region.entry_point_ids = entries
+		region.escape_point_ids = escapes
 		region.emit_changed()
 	return error
+
+func write_points(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName]) -> Error:
+	var prepared := prepare_points(region, entries, escapes)
+	if prepared.error != OK:
+		return prepared.error
+	return publish_points(region, entries, escapes, prepared.path)
+
+
+func write_history(region: RegionDefinition, entries: Array[StringName], escapes: Array[StringName],
+		undo: EditorUndoRedoManager, history_id: int, undoing: bool, notice: Callable) -> void:
+	if _reversing:
+		return
+	var error := write_points(region, entries, escapes)
+	if error == OK:
+		_report(notice, "Saved %s." % region.resource_path)
+		return
+	var history := undo.get_history_undo_redo(history_id)
+	var action := history.get_current_action() - (1 if undoing else 0)
+	var version := history.get_version() + (-1 if undoing else 1)
+	recovery_pending = true
+	var message := "RegionDefinition %s failed: %s. File and resource unchanged." % ["undo" if undoing else "redo", error_string(error)]
+	_restore_cursor.call_deferred(undo, history_id, action, version, undoing, notice, message)
+
+func _restore_cursor(undo: EditorUndoRedoManager, history_id: int, action: int, version: int,
+		undoing: bool, notice: Callable, message: String) -> void:
+	recovery_pending = false
+	if not is_instance_valid(undo):
+		return
+	var history := undo.get_history_undo_redo(history_id)
+	# Godot advances the cursor even when a method returns a file error.
+	# Reverse only our own transition once the engine finishes dispatching it.
+	if history == null or history.get_current_action() != action or history.get_version() != version:
+		_report(notice, message + " History changed before recovery; review and sync again.", true)
+		return
+	_reversing = true
+	var recovered := history.redo() if undoing else history.undo()
+	_reversing = false
+	_report(notice, message + (" History restored; fix the file and retry." if recovered else " Review and sync again."), true)
+
+static func _report(notice: Callable, message: String, failed: bool = false) -> void:
+	if notice.is_valid():
+		notice.call(message)
+	elif failed:
+		push_warning(message)
