@@ -1,3 +1,4 @@
+@tool
 class_name FieldEnemySpawnPoint
 extends Marker2D
 

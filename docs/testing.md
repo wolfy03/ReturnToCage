@@ -393,3 +393,5 @@ then saves and rehosts with the exact crafted owner layout and identities.
 및 `--players 3`은 실제 ENet 스폰, 전투와 전리품, 지역 전환, 채집 지급과 중복
 방지를 검증한다. 3인 테스트에서는 한 참가자가 기존 지역에 남은 상태에서
 다른 참가자가 재진입해 이미 소모된 채집 상태를 받는지 검사한다.
+
+에디터 배치와 저장·재열기 검증은 [Field Editor 테스트](field_editor.md#검증)를 참고한다.

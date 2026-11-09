@@ -59,6 +59,12 @@ func validate_definition(registry: Node) -> PackedStringArray:
 
 ## Validate authored nodes without entering the tree or starting simulation.
 func validate_scene(scene: Node, registry: Node) -> PackedStringArray:
+	return validate_field_nodes(self, scene, registry)
+
+static func validate_field_nodes(definition: RegionDefinition, scene: Node, registry: Object) -> PackedStringArray:
+	var id := definition.id
+	var entry_point_ids := definition.entry_point_ids
+	var escape_point_ids := definition.escape_point_ids
 	var errors := PackedStringArray()
 	if not scene is Node2D or not scene.has_method("configure_server_runtime"):
 		errors.append("%s: invalid region scene root" % id)

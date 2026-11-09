@@ -48,6 +48,9 @@ func _ready() -> void:
 	# Client visual environment only; never built for ServerWorldRuntime.
 	if not server_runtime_mode:
 		_create_environment()
+		for marker in find_children("*", "Marker2D", true, false):
+			if marker is FieldDecoration:
+				marker.build_visual()
 	else:
 		var signs := get_node_or_null("Signs") as Node2D
 		if signs != null:

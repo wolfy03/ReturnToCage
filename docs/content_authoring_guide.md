@@ -72,3 +72,5 @@ Polygon2D 외곽을 함께 편집한다. 일반 지형의 layer와 mask는 1이�
   런타임 Actor나 EscapePoint2D는 팔레트에서 직접 배치하지 않는다.
 
 검증은 씬을 트리에 붙이기 전에 수행하므로 편집과 검증에서 시뮬레이션이 시작되지 않는다.
+
+GUI에서 씬 배치를 편집하는 방법은 [Field Editor 사용법](field_editor.md)을 참고한다.

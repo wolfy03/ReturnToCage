@@ -1,3 +1,4 @@
+@tool
 class_name FieldGatherPoint
 extends Marker2D
 

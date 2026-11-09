@@ -1,3 +1,4 @@
+@tool
 class_name RegionPoint
 extends Marker2D
 

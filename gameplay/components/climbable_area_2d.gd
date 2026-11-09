@@ -1,3 +1,4 @@
+@tool
 class_name ClimbableArea2D
 extends Area2D
 
@@ -6,8 +7,9 @@ extends Area2D
 @export var bottom_marker: Marker2D
 
 func _ready() -> void:
-	body_entered.connect(_on_entered)
-	body_exited.connect(_on_exited)
+	if not Engine.is_editor_hint():
+		body_entered.connect(_on_entered)
+		body_exited.connect(_on_exited)
 	queue_redraw()
 
 func _on_entered(body: Node2D) -> void:

@@ -406,6 +406,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
   고정 숫자를 적지 않는다. 판단 기준은 전체 suite 와 멀티플레이 E2E 의 통과 여부다.
 - `tools/check_project.py` — 엔진 버전 핀 확인 → editor import → 콘텐츠 검증 →
   테스트 러너 → restart-write/read → 60프레임 부팅. 각 단계 120초 제한, 경고도 실패.
+- `tools/test_field_editor.py` — 격리된 Godot 에디터에서 배치, Undo/Redo, 저장과 런타임 사용을 검사한다.
 - `tools/test_multiplayer_*.py` — 실제 ENet + 분리된 OS 프로세스. restart(재접속/세이브),
   worlds(개별 월드 라우팅), world_runtime(서버 런타임·전투·전리품·채집).
 - `.github/workflows/godot.yml` — push 시 같은 검사를 리눅스 Godot 4.7.2 로 실행.
@@ -415,7 +416,7 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 | 영역 | 현황 |
 |---|---|
 | 아트 | Player presentation/animation pipeline 과 semantic presenter 에 production 햄스터 `SpriteFrames`가 활성화됐다. 12 semantic을 제공하며 `climb_idle`, `attack_2`, `attack_3`은 명시적인 임시 texture alias다. Polygon은 fallback으로만 남는다. 적·NPC·시설·아이템 art 는 여전히 placeholder. 배경은 실제 텍스처 |
-| 레벨 | TileMap 없음. 지형을 `WorldHelpers` 로 코드 생성. 지역 1개 |
+| 레벨 | 하수구는 씬 기반 지형과 마커를 쓰며 [Field Editor](field_editor.md)로 배치한다. 정착지 지형은 `WorldHelpers`로 구성한다. |
 | 전투 | 스태미나(소유·복제·HUD), 공격 타임라인/geometry, 권위 넉백, Player HURT·hit-stun·attack interruption, 서버 권위 Dodge + i-frame, 3-step combo, authoritative single-slot input buffer, authored chain/dodge cancel window, combat presentation 연동까지 완료. 남은 것: boss 전용 전투, 공중/혼합 mode 전투, 추가 weapon profile, client prediction/reconciliation |
 | 주민 | `ResidentAgent` 는 랜덤 왕복 3상태. `ResidentDefinition` 레지스트리 없음, 직업·대사·생활 행동 없음 |
 | 정착지 발전 | 시설 레벨 데이터는 있으나 외형/기능 변화는 색·크기뿐. 장식·배치 시스템 없음 |
