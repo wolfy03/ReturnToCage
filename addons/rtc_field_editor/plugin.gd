@@ -419,14 +419,22 @@ func _validate() -> void:
 	if root == null:
 		_status.text = "Open an AdventureRegion scene."
 		return
-	var region: RegionDefinition
-	for definition in _catalog.definitions.values():
-		if definition is RegionDefinition and definition.scene_path == root.scene_file_path:
-			region = definition
-			break
+	var matches: Array[RegionDefinition] = []
+	for definition in _catalog.regions:
+		if definition.scene_path == root.scene_file_path:
+			matches.append(definition)
+	var region: RegionDefinition = matches[0] if matches.size() == 1 else null
 	var issues := RegionDefinition.validate_field_nodes(region, root, _catalog)
-	if region == null:
+	if matches.size() > 1:
+		var paths := PackedStringArray()
+		for match_region in matches:
+			paths.append(match_region.resource_path)
+		paths.sort()
+		issues.insert(0, "Multiple RegionDefinitions point to this scene: " + ", ".join(paths))
+	elif region == null:
 		issues.insert(0, "No RegionDefinition points to this scene. Save it and set scene_path and point IDs explicitly.")
+	elif _catalog.duplicates.has(region.id):
+		issues.insert(0, "Duplicate content ID: " + String(region.id))
 	else:
 		if not region.environment_path.is_empty() and (not ResourceLoader.exists(region.environment_path) or not ResourceLoader.load(region.environment_path) is EnvironmentDefinition):
 			issues.append("Invalid EnvironmentDefinition: " + region.environment_path)

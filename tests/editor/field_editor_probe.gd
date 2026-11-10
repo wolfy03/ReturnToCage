@@ -704,6 +704,22 @@ func _exercise_step5() -> void:
 	if root == null or root == original:
 		_check(false, "open generated field")
 		return
+	var previous_regions := _catalog.regions.duplicate()
+	var previous_duplicates := _catalog.duplicates.duplicate()
+	var linked := ResourceLoader.load(resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	var ambiguous := linked.duplicate() as RegionDefinition
+	ambiguous.id = &"step5_ambiguous"
+	ambiguous.take_over_path("res://data/content/regions/step5_ambiguous.tres")
+	_catalog.regions = [linked, ambiguous]
+	_validate()
+	_check(_status.text.contains("Multiple RegionDefinitions") and _status.text.contains(ambiguous.resource_path) and _status.text.contains(resource_path)
+		and not _status.text.contains("content links passed"), "preview rejects ambiguous scene links and names both files")
+	_catalog.regions = [linked]
+	_catalog.duplicates[linked.id] = true
+	_validate()
+	_check(_status.text.contains("Duplicate content ID") and not _status.text.contains("content links passed"), "preview rejects a duplicated region ID")
+	_catalog.regions = previous_regions
+	_catalog.duplicates = previous_duplicates
 	var target_parent := root.get_node("GatherPoints") as Node2D
 	target_parent.transform = Transform2D(-0.19, Vector2(-0.9, 1.2), 0.18, Vector2(10, 12))
 	if DisplayServer.get_name() == "headless":
