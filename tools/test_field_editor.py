@@ -62,8 +62,18 @@ def main():
                                  errors="replace", timeout=45)
         output = runtime.stdout + runtime.stderr
         print(output)
-        return int(runtime.returncode != 0 or "AUTHORED FIELD RUNTIME PASS" not in output
-                   or "ERROR:" in output or "ObjectDB instances leaked" in output)
+        if runtime.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
+            return 1
+        playtest = subprocess.run(
+            [args.godot, "--headless", "--path", str(project),
+             "res://tests/editor/field_runtime_probe.tscn", "--", "--region", "step5_flat"],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
+        )
+        output = playtest.stdout + playtest.stderr
+        print(output)
+        return int(playtest.returncode != 0 or "AUTHORED FIELD RUNTIME PASS" not in output
+                   or "isolated temporary exit" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output)
+
 
 
 if __name__ == "__main__":

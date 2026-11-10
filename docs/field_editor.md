@@ -176,3 +176,35 @@ Sync Region Points의 Undo/Redo는 마지막 저장 해시와 메모리의 지�
 외부 수정이나 Inspector의 미저장 값이 감지되면 파일을 보존하고 이력을 복구한다.
 외부 수정은 에디터에서 리소스를 다시 읽고, 미저장 값은 검토해 저장하거나 취소한 뒤
 Sync Region Points를 다시 연다.
+
+## STEP 6: Region Design
+
+**Region Design** works on the open AdventureRegion. In **Region Connections**,
+select a region and settlement exit, choose an ENTRY and review the change before saving.
+A single exit uses the same ENTRY ID for every region it connects. Both the
+declarations and the saved scenes must contain that ENTRY. To remove only the
+selected region, use **Review unlink selected region**. Existing development locks,
+required flags, facilities and unlocks stay as configured.
+
+**Entry & Escape** selects a marker in the editor and shows world coordinates,
+declaration status, landing requirements and references in current content.
+Use **Sync Region Points** to update the declaration after editing markers.
+Previously saved games can contain escape IDs even when current content does not reference them.
+
+**Spawn Safety & Diagnostics** runs the authored collision check used by travel
+preflight. It also compares the player body against terrain and other authored
+slots, and distinguishes errors, warnings and informational results. **Visualize**
+can show preflight clearance, the body bounds and warnings from the latest check.
+Run diagnostics again after editing terrain or spawn markers. Live collision and
+reachability depend on runtime conditions and are not inferred from the overlay.
+
+**Environment** searches presets and shows their fallback color, reference size
+and layer count. Review the path change before applying it. Connection and
+environment edits use the open scene's Undo/Redo history and refuse to replace a
+changed or read-only resource. Environment information is a static preview.
+
+**Playtest** copies a command for the saved region. Save the scene, then run the
+command from the project root. It uses isolated user data and the normal
+GameSession and SceneRouter entry path, with an in-memory exit when no usable
+settlement link is available. The probe prints spawn, terrain, enemy, gather
+and escape results, and then exits.

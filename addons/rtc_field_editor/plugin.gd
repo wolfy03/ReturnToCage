@@ -14,6 +14,8 @@ const Maintenance := preload("field_maintenance.gd")
 const Wizard := preload("region_wizard.gd")
 const Presets := preload("preset_tools.gd")
 const Visualization := preload("field_visualization.gd")
+const RegionDesignDialog := preload("level_design_dialog.gd")
+const RegionDesign := preload("level_design.gd")
 
 var _catalog := Catalog.new()
 var _export_filter := ExportFilter.new()
@@ -59,6 +61,8 @@ var _flip: CheckBox
 var _avoid: CheckBox
 var _maintenance := Maintenance.new()
 var _wizard: Wizard
+var _region_design: RegionDesignDialog
+var _overlay_region: RegionDefinition
 var _visualization := Visualization.new()
 var _preset_dialog: ConfirmationDialog
 var _preset_name: LineEdit
@@ -100,6 +104,16 @@ func _enter_tree() -> void:
 	_add_terrain_controls()
 	_add_maintenance_controls()
 	_add_creation_controls()
+	_region_design = RegionDesignDialog.new()
+	_region_design.editor = self
+	_region_design.catalog = _catalog
+	_region_design.maintenance = _maintenance
+	_region_design.analyze_requested = _show_spawn_results
+	_dock.add_child(_region_design)
+	var design := Button.new()
+	design.text = "Region Design"
+	design.pressed.connect(func() -> void: _region_design.show_region(_field_root()))
+	_dock.add_child(design)
 	var validate := Button.new()
 	validate.text = "Validate field"
 	validate.pressed.connect(_validate)
@@ -150,6 +164,7 @@ func _rebuild() -> void:
 	if not is_instance_valid(_dock):
 		return
 	_catalog.rebuild(_filesystem.get_filesystem())
+	_overlay_region = RegionDesign.region_for(_field_root(), _catalog)
 	_populate()
 	_validate_created_region.call_deferred()
 
@@ -172,6 +187,10 @@ func _populate() -> void:
 		item.set_metadata(0, entry)
 
 func _scene_changed(root: Node) -> void:
+	_region_design.hide()
+	_region_design.root = null
+	_visualization.spawn_results.clear()
+	_overlay_region = RegionDesign.region_for(root as Node2D, _catalog)
 	_cancel_drag()
 	_cancel_stroke()
 	_maintenance_dialog.hide()
@@ -282,9 +301,13 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and (_stroke != null or _resize != null):
 		_cancel_stroke()
 
+func _show_spawn_results(results: Array[Dictionary]) -> void:
+	_visualization.spawn_results = results
+	update_overlays()
+
 func _forward_canvas_force_draw_over_viewport(overlay: Control) -> void:
 	_canvas_overlay = overlay
-	_visualization.draw(_field_root(), overlay, EditorInterface.get_editor_viewport_2d().global_canvas_transform, _layers.hidden)
+	_visualization.draw(_field_root(), overlay, EditorInterface.get_editor_viewport_2d().global_canvas_transform, _layers.hidden, _overlay_region)
 	if not is_instance_valid(_tool_surface):
 		_install_tool_surface.call_deferred(overlay)
 	if _drag.is_empty():
@@ -448,7 +471,12 @@ func _validate() -> void:
 	issues.append_array(RegionDefinition.FieldSceneChecks.spawn_warnings(root))
 	if root.find_children("*", "StaticBody2D", true, false).is_empty():
 		issues.append("No static terrain found. Add a safe spawn surface before play.")
-	issues.append("Editor preview does not run gameplay.")
+	var spawn_results := RegionDesign.analyze(root)
+	for item in spawn_results:
+		if item.severity != "Info":
+			issues.append("%s | %s | %s" % [item.severity, root.get_path_to(item.node), item.message])
+	_show_spawn_results(spawn_results)
+	issues.append("Editor preview does not run gameplay. Reachability: Not evaluated.")
 	_status.text = "\n".join(issues)
 
 # Canvas input forwarding depends on the editor's current object selection.
@@ -1011,7 +1039,7 @@ func _add_creation_controls() -> void:
 	_dock.add_child(recover)
 	recover.pressed.connect(_show_region_recovery)
 	if not Wizard.Recovery.journal_paths().is_empty() or Wizard.Recovery.lock_state() != "none":
-		_status.text = "Region publication needs review. Open Recover Region Creation."
+		_announce_pending_region.call_deferred()
 
 	var preset := Button.new()
 	preset.text = "Save Preset"
@@ -1038,6 +1066,10 @@ func _add_creation_controls() -> void:
 		_visualization.enabled[index] = not _visualization.enabled[index]
 		menu.set_item_checked(index, _visualization.enabled[index])
 		update_overlays())
+
+func _announce_pending_region() -> void:
+	if is_instance_valid(_status):
+		_status.text = "Region publication needs review. Open Recover Region Creation."
 
 func _show_region_recovery() -> void:
 	var dialog := ConfirmationDialog.new()

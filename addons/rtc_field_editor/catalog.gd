@@ -5,6 +5,7 @@ const Preset := preload("placement_preset.gd")
 const PRESET_FOLDER := "res://addons/rtc_field_editor/presets"
 
 var regions: Array[RegionDefinition] = []
+var environments := PackedStringArray()
 var entries: Array[Dictionary] = []
 var definitions: Dictionary[StringName, ContentDefinition] = {}
 var duplicates: Dictionary[StringName, bool] = {}
@@ -14,6 +15,7 @@ func get_definition(id: StringName) -> ContentDefinition:
 
 func rebuild(directory: EditorFileSystemDirectory) -> void:
 	regions.clear()
+	environments.clear()
 	entries.clear()
 	definitions.clear()
 	duplicates.clear()
@@ -47,6 +49,11 @@ func _scan(directory: EditorFileSystemDirectory) -> void:
 				_add("Gather", definition.display_name, "gather", path, definition.id)
 			elif definition is ClimbableDefinition:
 				_add("Climbables", definition.display_name, "climb", path, definition.id)
+		elif path.begins_with("res://world/environment/") and path.get_extension() in ["tres", "res"]:
+			for dependency in ResourceLoader.get_dependencies(path):
+				if dependency.ends_with("res://world/environment/environment_definition.gd"):
+					environments.append(path)
+					break
 		elif not path.begins_with("res://tests/") and not path.begins_with("res://addons/"):
 			if ClassDB.is_parent_class(type, "Texture2D"):
 				_add("Decorations", path.get_file().get_basename(), "texture", path)

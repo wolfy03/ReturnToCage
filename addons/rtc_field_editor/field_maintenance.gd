@@ -2,6 +2,7 @@
 extends RefCounted
 
 const Placement := preload("placement.gd")
+const Recovery := preload("region_recovery.gd")
 
 var recovery_pending := false
 var _reversing := false
@@ -204,14 +205,82 @@ static func _report(notice: Callable, message: String, failed: bool = false) -> 
 		push_warning(message)
 
 
-static func disk_matches(region: RegionDefinition) -> bool:
+static func disk_matches(region: ContentDefinition) -> bool:
 	if not FileAccess.file_exists(region.resource_path):
 		return false
-	var disk := ResourceLoader.load(region.resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
-	if disk == null:
+	var disk := ResourceLoader.load(region.resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as ContentDefinition
+	if disk == null or disk.get_script() != region.get_script():
 		return false
 	for property in region.get_property_list():
 		if property.usage & PROPERTY_USAGE_STORAGE and property.name != "script":
 			if region.get(property.name) != disk.get(property.name):
 				return false
 	return region.resource_name == disk.resource_name
+
+## Write one existing Resource. The owning scene is the Undo history context.
+func apply_fields(root: Node2D, resource: ContentDefinition, proposed: Dictionary, expected_hash: String,
+		undo: EditorUndoRedoManager, notice: Callable) -> bool:
+	if recovery_pending:
+		_report(notice, "Wait for history recovery.")
+		return false
+	var before := {}
+	for key in proposed:
+		before[key] = resource.get(key)
+	if before == proposed:
+		_report(notice, "No changes.")
+		return false
+	var error := _save_fields(resource, proposed, expected_hash)
+	if error != OK:
+		_report(notice, "Save failed: %s. Reload and review before retrying." % error_string(error))
+		return false
+	var state := {"before": expected_hash, "after": FileAccess.get_sha256(resource.resource_path)}
+	var id := undo.get_object_history_id(root)
+	undo.create_action("Edit region authoring resource", UndoRedo.MERGE_DISABLE, root)
+	undo.add_do_method(self, "_fields_history", resource, proposed, undo, id, false, notice, state)
+	undo.add_undo_method(self, "_fields_history", resource, before, undo, id, true, notice, state)
+	undo.commit_action(false)
+	_report(notice, "Saved " + resource.resource_path)
+	return true
+
+func _fields_history(resource: ContentDefinition, fields: Dictionary, undo: EditorUndoRedoManager, id: int,
+		undoing: bool, notice: Callable, state: Dictionary) -> void:
+	if _reversing:
+		return
+	var error := _save_fields(resource, fields, state.after if undoing else state.before)
+	if error == OK:
+		state["before" if undoing else "after"] = FileAccess.get_sha256(resource.resource_path)
+		_report(notice, "Saved " + resource.resource_path)
+		return
+	var history := undo.get_history_undo_redo(id)
+	var action := history.get_current_action() - (1 if undoing else 0)
+	var version := history.get_version() + (-1 if undoing else 1)
+	recovery_pending = true
+	_restore_cursor.call_deferred(undo, id, action, version, undoing, notice,
+		"Resource history write failed: %s. Reload and review before retrying." % error_string(error))
+
+static func _save_fields(resource: ContentDefinition, fields: Dictionary, expected_hash: String) -> Error:
+	var destination := resource.resource_path
+	if not destination.begins_with("res://data/content/") or not Recovery.safe_path(destination) or not FileAccess.file_exists(destination):
+		return ERR_FILE_NOT_FOUND
+	if read_only(destination):
+		return ERR_FILE_NO_PERMISSION
+	if expected_hash.is_empty() or FileAccess.get_sha256(destination) != expected_hash or not disk_matches(resource):
+		return ERR_BUSY
+	var staged := stage_path(destination.get_extension())
+	if staged.is_empty():
+		return ERR_CANT_CREATE
+	var copy := resource.duplicate()
+	for key in fields:
+		copy.set(key, fields[key])
+	var error := ResourceSaver.save(copy, staged)
+	var uid := ResourceLoader.get_resource_uid(destination)
+	if error == OK and uid != ResourceUID.INVALID_ID:
+		error = ResourceSaver.set_uid(staged, uid)
+	if error == OK:
+		error = replace_file(staged, destination) if FileAccess.get_sha256(destination) == expected_hash and disk_matches(resource) else ERR_BUSY
+	discard(staged)
+	if error == OK:
+		for key in fields:
+			resource.set(key, fields[key])
+		resource.emit_changed()
+	return error

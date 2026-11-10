@@ -416,3 +416,12 @@ STEP 5 에디터 프로브는 템플릿 3종, 게시 실패 복구, 프리셋 �
 충돌을 검사한다. 이어 별도 게임 프로세스에서 생성된 콘텐츠를 자동 등록하고,
 테스트 전용 출구를 연결한 후 신규 필드의 플레이어 스폰, 적, 채집, 충돌과
 표시 전용 장식을 검증한다.
+
+STEP 6 extends the Field Editor probe with shared ENTRY validation, resource
+save/reload and undo conflicts, region marker selection, authored spawn
+diagnostics and environment selection. The same harness runs the saved new
+region through the isolated playtest probe. To run that probe for a saved region:
+
+```sh
+python tools/playtest_region.py --godot godot --region sewer_region
+```

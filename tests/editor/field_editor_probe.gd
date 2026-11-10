@@ -779,6 +779,120 @@ func _exercise_step5() -> void:
 		and restored_climb.get_node("CollisionShape2D").owner == restored, "reloaded preset preserves affine basis, marker paths and ownership")
 	restored.free()
 
+	await _exercise_step6(root, resource_path)
+
+func _exercise_step6(root: Node2D, resource_path: String) -> void:
+	var region := ResourceLoader.load(resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	var second := ResourceLoader.load("res://data/content/regions/step5_platform.tres", "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
+	var previous_regions := _catalog.regions.duplicate()
+	var previous_definitions := _catalog.definitions.duplicate()
+	_catalog.regions = [region, second]
+	_catalog.definitions[region.id] = region
+	_catalog.definitions[second.id] = second
+	var exit := SettlementExitDefinition.new()
+	exit.id = &"step6_probe_exit"
+	exit.connected_region_ids = [second.id]
+	exit.entry_point_id = &"step5_entry"
+	exit.development_locked = true
+	exit.required_flags = [&"probe_flag"]
+	var exit_path := "res://data/content/regions/step6_probe_exit.tres"
+	_check(ResourceSaver.save(exit, exit_path) == OK, "save isolated exit fixture")
+	exit = ResourceLoader.load(exit_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	_catalog.definitions[exit.id] = exit
+	_region_design.show_region(root)
+	_check(_region_design.visible and _region_design.region == region, "Region Design opens for new region")
+	var plan := RegionDesign.connections(exit, region, &"step5_entry", true, _catalog, root)
+	_check(plan.get("connected_region_ids") == [second.id, region.id], "connection keeps other regions")
+	_check(RegionDesign.connections(exit, region, &"wrong_entry", true, _catalog, root).has("error"), "invalid shared entry rejected")
+	var entry := root.get_node("RegionPoints/Entry") as RegionPoint
+	entry.point_id = &"different_marker"
+	_check(RegionDesign.connections(exit, region, &"step5_entry", true, _catalog, root).has("error"), "declared but absent ENTRY rejected")
+	entry.point_id = &"step5_entry"
+	var exit_picker := _region_design.body.get_child(2) as OptionButton
+	for index in exit_picker.item_count:
+		if exit_picker.get_item_metadata(index) == exit:
+			exit_picker.select(index)
+			exit_picker.item_selected.emit(index)
+	(_region_design.body.get_child(5) as Button).pressed.emit()
+	_check(_region_design._review.visible and _region_design._review.dialog_text.contains(exit_path), "connection dialog previews exit resource")
+	_region_design._review.confirmed.emit()
+	_region_design._review.hide()
+	var loaded := ResourceLoader.load(exit_path, "", ResourceLoader.CACHE_MODE_IGNORE) as SettlementExitDefinition
+	_check(loaded.connected_region_ids == [second.id, region.id] and loaded.development_locked and loaded.required_flags == [&"probe_flag"], "link persists and preserves flags and lock")
+	var undo := get_undo_redo()
+	var history := undo.get_history_undo_redo(undo.get_object_history_id(root))
+	_check(history.undo() and exit.connected_region_ids == [second.id], "undo connection")
+	_check(history.redo() and exit.connected_region_ids == [second.id, region.id], "redo connection")
+
+	_region_design.page.select(1)
+	_region_design.page.item_selected.emit(1)
+	var points := _region_design.body.get_child(1) as ItemList
+	for index in points.item_count:
+		points.item_selected.emit(index)
+		_check(EditorInterface.get_selection().get_selected_nodes().has(points.get_item_metadata(index))
+			and points.get_item_text(index).contains(str(points.get_item_metadata(index).global_position)), "region point list selects marker and displays world position")
+	var spawn := root.get_node("PlayerSpawnPoint0") as PlayerSpawnPoint
+	var original_position := spawn.position
+	_region_design.page.select(2)
+	spawn.position.y -= 10
+	_region_design.page.item_selected.emit(2)
+	_check(_spawn_issue(spawn).severity == "Info", "authored spawn clearance passes")
+	spawn.position = Vector2(150, 565)
+	_region_design.page.item_selected.emit(2)
+	_check(_spawn_issue(spawn).message == "BLOCKED", "spawn inside terrain blocked")
+	spawn.position = Vector2(-200, -200)
+	_region_design.page.item_selected.emit(2)
+	_check(_spawn_issue(spawn).message == "NO_WALKABLE_SUPPORT", "spawn with no support warns")
+	spawn.position = root.get_node("PlayerSpawnPoint1").position
+	_region_design.page.item_selected.emit(2)
+	_check(_spawn_issue(spawn).message.contains("overlaps"), "overlapping player bodies warn")
+	spawn.position = original_position
+	spawn.scale = Vector2(0, 1)
+	_region_design.page.item_selected.emit(2)
+	_check(_spawn_issue(spawn).severity == "Error", "singular spawn rejected")
+	spawn.scale = Vector2.ONE
+	spawn.spawn_index = 1
+	_region_design.page.item_selected.emit(2)
+	_check(_spawn_issue(spawn).severity == "Error" and _visualization.spawn_results.any(func(item: Dictionary) -> bool: return item.message.contains("authored spawn slots")), "duplicate index and missing valid slots reported")
+	spawn.spawn_index = 0
+
+	_region_design.page.select(3)
+	_region_design.page.item_selected.emit(3)
+	var chooser := _region_design.body.get_child(3) as OptionButton
+	var environment := "res://world/environment/presets/sewer_environment.tres"
+	for index in chooser.item_count:
+		if chooser.get_item_metadata(index) == environment:
+			chooser.select(index)
+			chooser.item_selected.emit(index)
+	_check(chooser.get_item_metadata(chooser.selected) == environment, "environment chooser finds preset (selected=%s, metadata=%s, catalog=%s)" % [chooser.selected, chooser.get_item_metadata(chooser.selected), _catalog.environments])
+	(_region_design.body.get_child(-1) as Button).pressed.emit()
+	_region_design._review.confirmed.emit()
+	_region_design._review.hide()
+	_check(region.environment_path == environment and (ResourceLoader.load(resource_path, "", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition).environment_path == environment, "environment change persists")
+	_check(history.undo() and region.environment_path.is_empty(), "undo environment")
+	_check(history.redo() and region.environment_path == environment, "redo environment")
+	var external := region.duplicate() as RegionDefinition
+	external.description += " external step6 edit"
+	_check(ResourceSaver.save(external, resource_path) == OK, "simulate external edit")
+	var hash := FileAccess.get_sha256(resource_path)
+	var action := history.get_current_action()
+	history.undo()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(history.get_current_action() == action and FileAccess.get_sha256(resource_path) == hash, "environment history refuses external overwrite and restores cursor")
+	_check(RegionDesignDialog.environment_plan("res://data/content/items/berry.tres").has("error"), "wrong environment resource rejected")
+	_check(RegionDesignDialog.environment_plan("res://world/environment/missing.tres").has("error"), "missing environment rejected")
+	_region_design.hide()
+	_catalog.regions = previous_regions
+	_catalog.definitions = previous_definitions
+	DirAccess.remove_absolute(exit_path)
+
+func _spawn_issue(spawn: PlayerSpawnPoint) -> Dictionary:
+	for result in _visualization.spawn_results:
+		if result.node == spawn:
+			return result
+	return {"severity": "", "message": ""}
+
 func _exercise_region_recovery(source: String, region: RegionDefinition, scene: String, resource: String) -> void:
 	var recovery := Wizard.Recovery
 	_check(recovery.acquire(), "recovery fixture obtains publication lock")

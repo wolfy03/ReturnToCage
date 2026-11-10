@@ -301,7 +301,7 @@ func _position_issue(position: Vector2, preflight: bool = false, excluded: Array
 	if preflight:
 		# A new World2D has not had a broadphase tick yet. Test the same authored
 		# collision shapes directly; do not accept an empty physics query as safe.
-		return _authored_geometry_issue(world_root, position)
+		return authored_spawn_issue(world_root, position, clearance_radius, support_distance, spawn_validation_collision_mask)
 	var space: PhysicsDirectSpaceState2D = world_root.get_world_2d().direct_space_state
 	var clearance := CircleShape2D.new()
 	clearance.radius = clearance_radius
@@ -325,7 +325,13 @@ func _position_issue(position: Vector2, preflight: bool = false, excluded: Array
 		return "NO_WALKABLE_SUPPORT"
 	return ""
 
-func _authored_geometry_issue(world_root: Node2D, position: Vector2) -> String:
+## Shared geometry check for travel preflight and detached editor diagnostics.
+static func authored_spawn_issue(world_root: Node2D, position: Vector2, clearance_radius: float,
+		support_distance: float, collision_mask: int) -> String:
+	if not position.is_finite():
+		return "NON_FINITE"
+	if collision_mask == 0:
+		return "INVALID_COLLISION_MASK"
 	var clearance := CircleShape2D.new()
 	clearance.radius = clearance_radius
 	var support := RectangleShape2D.new()
@@ -336,7 +342,7 @@ func _authored_geometry_issue(world_root: Node2D, position: Vector2) -> String:
 	for node in shapes:
 		var shape := node as CollisionShape2D
 		var body := shape.get_parent() as PhysicsBody2D
-		if body == null or shape.disabled or shape.shape == null or body.collision_layer & spawn_validation_collision_mask == 0:
+		if body == null or shape.disabled or shape.shape == null or body.collision_layer & collision_mask == 0:
 			continue
 		if clearance.collide(Transform2D(0.0, origin), shape.shape, shape.global_transform):
 			return "BLOCKED"
