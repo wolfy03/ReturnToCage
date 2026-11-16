@@ -1,5 +1,6 @@
 """Run the Field Editor in an isolated Godot project and save a disposable field."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -50,6 +51,7 @@ def main():
                                 text=True, encoding="utf-8", errors="replace", timeout=90)
         output = result.stdout + result.stderr
         print(output)
+        print(f"FIELD EDITOR PROCESS exit={result.returncode}")
         if result.returncode or "FIELD EDITOR PROBE PASS" not in output or "ERROR:" in output:
             return 1
         config = project / "project.godot"
@@ -62,6 +64,7 @@ def main():
                                  errors="replace", timeout=45)
         output = runtime.stdout + runtime.stderr
         print(output)
+        print(f"AUTHORED RUNTIME PROCESS exit={runtime.returncode}")
         if runtime.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
             return 1
         playtest = subprocess.run(
@@ -71,8 +74,42 @@ def main():
         )
         output = playtest.stdout + playtest.stderr
         print(output)
-        return int(playtest.returncode != 0 or "AUTHORED FIELD RUNTIME PASS" not in output
-                   or "isolated temporary exit" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output)
+        print(f"REGION PLAYTEST PROCESS exit={playtest.returncode}")
+        if playtest.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or "isolated temporary exit" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
+            return 1
+        for fixture in ("normal", "warn", "blocked", "slot"):
+            result = subprocess.run(
+                [args.godot, "--headless", "--path", str(project),
+                 "res://tests/editor/region_report_probe.tscn", "--", fixture],
+                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
+            )
+            output = result.stdout + result.stderr
+            print(output)
+            print(f"REGION REPORT PROCESS {fixture} exit={result.returncode}")
+            if result.returncode or f"REGION REPORT FIXTURE {fixture} PASS" not in output or "ERROR:" in output:
+                return 1
+            summaries = [line.removeprefix("REGION_PLAYTEST_JSON ") for line in output.splitlines()
+                         if line.startswith("REGION_PLAYTEST_JSON ")]
+            if len(summaries) != 1:
+                return 1
+            summary = json.loads(summaries[0])
+            if summary["overall"] != ("PASS" if fixture == "normal" else "PASS_WITH_WARNINGS" if fixture == "warn" else "FAIL"):
+                return 1
+            if fixture == "warn" and not any(item["stage"] == "Spawn Capacity" and item["status"] == "WARN"
+                                             for item in summary["results"]):
+                return 1
+        if args.rendered:
+            result = subprocess.run(
+                [args.godot, "--path", str(project), "--rendering-method", "gl_compatibility",
+                 "res://tests/editor/region_interactive.tscn", "--", "--region", "sewer_region", "--smoke"],
+                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
+            )
+            output = result.stdout + result.stderr
+            print(output)
+            print(f"INTERACTIVE REGION PROCESS exit={result.returncode}")
+            if result.returncode or "INTERACTIVE REGION SMOKE PASS" not in output or "ERROR:" in output:
+                return 1
+        return 0
 
 
 

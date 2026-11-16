@@ -1,6 +1,8 @@
 class_name PlayerSpawnManager
 extends Node
 
+signal authoritative_spawn_created(peer_id: int, assignment: PlayerSpawnAssignment)
+
 const PLAYER_SCENE := preload("res://gameplay/actors/player/player.tscn")
 
 @export var settlement_spawn_policy: bool = false
@@ -222,6 +224,7 @@ func _prepare_authoritative_spawn(peer_id: int, returning: bool) -> PlayerSpawnA
 			return _failed_assignment("Cannot register the authoritative spawn assignment")
 	if settlement_spawn_policy and NetworkManager.is_authoritative_simulation():
 		GameSession.update_player_last_safe_position(peer_id, assignment.position)
+	authoritative_spawn_created.emit(peer_id, assignment)
 	return assignment
 
 func _on_player_unregistered(peer_id: int) -> void:
@@ -328,27 +331,68 @@ func _position_issue(position: Vector2, preflight: bool = false, excluded: Array
 ## Shared geometry check for travel preflight and detached editor diagnostics.
 static func authored_spawn_issue(world_root: Node2D, position: Vector2, clearance_radius: float,
 		support_distance: float, collision_mask: int) -> String:
-	if not position.is_finite():
-		return "NON_FINITE"
+	return analyze_authored_spawn(world_root, position, clearance_radius, support_distance, collision_mask).issue
+
+## The runtime wrapper retains its filter and ordering. Diagnostics can explicitly
+## exclude an already attached actor, just like the live space query.
+static func analyze_authored_spawn(world_root: Node2D, position: Vector2, clearance_radius: float,
+		support_distance: float, collision_mask: int, excluded: Array[RID] = [],
+		clearance_shape: Shape2D = null, clearance_offset: Transform2D = Transform2D.IDENTITY) -> Dictionary:
+	var result := {"issue": "", "clearance": "NOT_EVALUATED", "support": "NOT_EVALUATED",
+		"position": position, "radius": clearance_radius, "mask": collision_mask, "candidates": [],
+		"limitations": "Authored CollisionShape2D only. Polygon/tile collision and live activation require runtime physics; one-way shapes use geometric overlap."}
+	if world_root == null or not position.is_finite() or not world_root.global_transform.is_finite() or is_zero_approx(world_root.global_transform.determinant()):
+		result.issue = "NON_FINITE"
+		return result
 	if collision_mask == 0:
-		return "INVALID_COLLISION_MASK"
-	var clearance := CircleShape2D.new()
-	clearance.radius = clearance_radius
+		result.issue = "INVALID_COLLISION_MASK"
+		return result
+	if not is_finite(clearance_radius) or not is_finite(support_distance) or clearance_radius <= 0 or support_distance <= 0 or not clearance_offset.is_finite() or is_zero_approx(clearance_offset.determinant()):
+		result.issue = "INVALID_QUERY"
+		return result
+	var clearance: Shape2D = clearance_shape
+	if clearance == null:
+		var circle := CircleShape2D.new()
+		circle.radius = clearance_radius
+		clearance = circle
 	var support := RectangleShape2D.new()
 	support.size = Vector2(0.01, support_distance)
 	var origin := world_root.to_global(position)
+	result.position = origin
 	var supported := false
-	var shapes := world_root.find_children("*", "CollisionShape2D", true, false)
-	for node in shapes:
+	var blocked := false
+	for node in world_root.find_children("*", "CollisionShape2D", true, false):
 		var shape := node as CollisionShape2D
 		var body := shape.get_parent() as PhysicsBody2D
-		if body == null or shape.disabled or shape.shape == null or body.collision_layer & collision_mask == 0:
+		if body == null or shape.disabled or shape.shape == null or body.collision_layer & collision_mask == 0 or body.get_rid() in excluded:
 			continue
-		if clearance.collide(Transform2D(0.0, origin), shape.shape, shape.global_transform):
-			return "BLOCKED"
-		if body is StaticBody2D and support.collide(Transform2D(0.0, origin + Vector2.DOWN * support_distance * 0.5), shape.shape, shape.global_transform):
-			supported = true
-	return "" if supported else "NO_WALKABLE_SUPPORT"
+		var effective_shape := authored_collision_shape(shape)
+		var query_transform := Transform2D(0.0, origin) * clearance_offset
+		var overlaps := clearance.collide(query_transform, effective_shape, shape.global_transform)
+		var supports := body is StaticBody2D and support.collide(Transform2D(0.0, origin + Vector2.DOWN * support_distance * 0.5), effective_shape, shape.global_transform)
+		if overlaps or supports:
+			result.candidates.append({"body": body, "shape": shape, "body_path": String(world_root.get_path_to(body)),
+				"shape_path": String(world_root.get_path_to(shape)), "body_type": body.get_class(), "layer": body.collision_layer,
+				"mask": collision_mask, "shape_type": shape.shape.get_class(), "transform": shape.global_transform,
+				"position": origin, "radius": clearance_radius, "query_shape": clearance.get_class(), "query_transform": query_transform, "overlap": overlaps, "support": supports,
+				"one_way": body.one_way if body is FieldPlatform and not body.is_node_ready() else shape.one_way_collision,
+				"in_tree": body.is_inside_tree(), "process_mode": body.process_mode, "disable_mode": body.disable_mode})
+		blocked = blocked or overlaps
+		supported = supported or supports
+	result.clearance = "FAIL" if blocked else "PASS"
+	result.support = "PASS" if supported else "FAIL"
+	result.issue = "BLOCKED" if blocked else ("" if supported else "NO_WALKABLE_SUPPORT")
+	return result
+
+## Resolve the private rectangle that a detached FieldPlatform will build on ready.
+static func authored_collision_shape(collision: CollisionShape2D) -> Shape2D:
+	var body := collision.get_parent()
+	if body is FieldPlatform and not body.is_node_ready() and collision.name == &"CollisionShape2D":
+		var rectangle := RectangleShape2D.new()
+		rectangle.size = body.size
+		return rectangle
+	return collision.shape
+
 
 func _spawn_local(peer_id: int, spawn_position: Vector2) -> bool:
 	if _actors.has(peer_id) or not GameSession.has_player(peer_id) or not spawn_position.is_finite() \

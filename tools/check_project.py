@@ -17,7 +17,7 @@ def run(executable, arguments, expected=None):
     output = result.stdout + result.stderr
     print(output, flush=True)
     if result.returncode or ERRORS.search(output) or (expected and expected not in output):
-        raise RuntimeError("Godot check failed: " + " ".join(arguments))
+        raise RuntimeError(f"Godot check failed (exit={result.returncode}): " + " ".join(arguments))
 
 
 def main():

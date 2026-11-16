@@ -1,5 +1,7 @@
 extends Node
 
+var _playtest_results: Array[Dictionary] = []
+
 func _ready() -> void:
 	call_deferred("_run")
 
@@ -120,33 +122,16 @@ func _generated_region() -> bool:
 
 func _playtest_region(id: StringName) -> bool:
 	var region := ContentRegistry.get_definition(id) as RegionDefinition
-	if region == null or region.entry_point_ids.is_empty() or not region.validate_definition(ContentRegistry).is_empty():
-		print("PLAYTEST: missing or invalid region ", id)
-		return false
-	GameSession.start_new_game()
-	var context: AdventureContext
-	for definition in ContentRegistry.all_definitions():
-		if definition is SettlementExitDefinition and id in definition.connected_region_ids and GameSession.can_use_exit(definition.id, id).success:
-			context = GameSession.request_adventure_from_exit(definition.id, id)
-			break
+	var definition_errors := region.validate_definition(ContentRegistry) if region != null else PackedStringArray(["RegionDefinition missing"])
+	if region == null or region.entry_point_ids.is_empty() or not definition_errors.is_empty():
+		_result("RegionDefinition", "FAIL", "%s | %s" % [id, definition_errors])
+		return _print_results(id)
+	_result("RegionDefinition", "PASS", String(id))
+	var context := _create_context(region)
 	if context == null:
-		var exit := SettlementExitDefinition.new()
-		exit.id = &"rtc_editor_playtest_exit"
-		if ContentRegistry.has_id(exit.id):
-			return false
-		exit.connected_region_ids = [id]
-		exit.entry_point_id = region.entry_point_ids[0]
-		ContentRegistry._definitions[exit.id] = exit
-		if not id in GameSession.progression.unlocked_regions:
-			GameSession.progression.unlocked_regions.append(id)
-		GameSession.progression.unlocked_exits.append(exit.id)
-		context = GameSession.request_adventure_from_exit(exit.id, id)
-		ContentRegistry._definitions.erase(exit.id)
-		GameSession.progression.unlocked_exits.erase(exit.id)
-		print("PLAYTEST: isolated temporary exit")
-	if context == null:
-		print("PLAYTEST: entry rejected")
-		return false
+		_result("ENTRY Reference", "FAIL", GameSession.last_message)
+		return _print_results(id)
+	_result("ENTRY Reference", "PASS", String(context.entry_point_id))
 	var layer := Node2D.new()
 	add_child(layer)
 	SceneRouter.register_world_layer(layer)
@@ -155,6 +140,8 @@ func _playtest_region(id: StringName) -> bool:
 	var valid := loaded and SceneRouter.current_world_id() == world_id
 	if valid:
 		valid = layer.get_child(0).get_node_or_null("EnvironmentPresenter") is EnvironmentPresenter
+	_result("SceneRouter", "PASS" if loaded else "FAIL", String(world_id))
+	var presentation_environment := valid
 	print("PLAYTEST: SceneRouter ", "PASS" if valid else "FAIL", " | ENTRY ", context.entry_point_id)
 	SceneRouter.clear_presented_world()
 	SceneRouter.register_world_layer(null)
@@ -162,12 +149,51 @@ func _playtest_region(id: StringName) -> bool:
 	await get_tree().process_frame
 	var packed := load(region.scene_path) as PackedScene
 	var authority := packed.instantiate()
+	var manager := authority.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	var markers: Array[RegionPoint] = []
+	RegionPoint.collect(authority, markers)
+	var anchor: RegionPoint
+	for marker in markers:
+		if marker.kind == RegionPoint.Kind.ENTRY and marker.point_id == context.entry_point_id:
+			anchor = marker
+	var preflight := {"issue": "NO_ENTRY", "candidates": [], "clearance": "NOT_EVALUATED", "support": "NOT_EVALUATED"}
+	if anchor != null:
+		preflight = PlayerSpawnManager.analyze_authored_spawn(authority, authority.to_local(anchor.global_position), manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask)
+	_result("ENTRY Physical Anchor", "PASS" if preflight.issue.is_empty() else "FAIL", _diagnostic_text(preflight))
+	var slots: Array[PlayerSpawnPoint] = []
+	for node in authority.get_children():
+		if node is PlayerSpawnPoint:
+			slots.append(node)
+	for slot in slots:
+		var check := PlayerSpawnManager.analyze_authored_spawn(authority, slot.position, manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask)
+		_result("Player Spawn Slot %d" % slot.spawn_index, "PASS" if check.issue.is_empty() else "FAIL", "%s | %s" % [authority.get_path_to(slot), _diagnostic_text(check)])
+	var player_template := PlayerSpawnManager.PLAYER_SCENE.instantiate()
+	var collision := player_template.get_node("CollisionShape2D") as CollisionShape2D
+	var body_shape := collision.shape
+	var body_offset := collision.transform
+	player_template.free()
+	for slot in slots:
+		var detail := PlayerSpawnManager.analyze_authored_spawn(authority, slot.position, manager.clearance_radius,
+			manager.support_distance, manager.spawn_validation_collision_mask, [], body_shape, body_offset)
+		var sources := PackedStringArray()
+		for candidate in detail.candidates:
+			if candidate.overlap:
+				sources.append(candidate.shape_path)
+		for other in slots:
+			if other != slot and body_shape.collide(Transform2D(0, slot.global_position) * body_offset, body_shape, Transform2D(0, other.global_position) * body_offset):
+				sources.append(String(authority.get_path_to(other)))
+		_result("Player Body Clearance / slot %d" % slot.spawn_index, "WARN" if not sources.is_empty() else "PASS",
+			"Nominal capsule | preflight radius=%s | overlap sources=%s" % [manager.clearance_radius, sources])
+	_result("Spawn Capacity", "PASS" if slots.size() >= NetworkManager.MAX_PLAYERS else "WARN", "%d/%d authored slots; actual assignment checked separately" % [slots.size(), NetworkManager.MAX_PLAYERS])
+	var observed_assignments: Array[PlayerSpawnAssignment] = []
+	manager.authoritative_spawn_created.connect(func(peer_id: int, assignment: PlayerSpawnAssignment) -> void:
+		if peer_id == GameSession.get_local_peer_id():
+			observed_assignments.append(assignment))
 	authority.configure_server_runtime(world_id, id)
 	add_child(authority)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var peer := GameSession.get_local_peer_id()
-	var manager := authority.get_node("PlayerSpawnManager") as PlayerSpawnManager
 	var actor := manager.get_actor(peer)
 	var has_actor := actor != null
 	var expected_gather := 0
@@ -178,24 +204,48 @@ func _playtest_region(id: StringName) -> bool:
 	for node in authority.get_children():
 		if node is EscapePoint2D:
 			escape_targets += 1
-	var markers: Array[RegionPoint] = []
-	RegionPoint.collect(authority, markers)
-	var preflight := "NO_ENTRY"
-	for marker in markers:
-		if marker.kind == RegionPoint.Kind.ENTRY and marker.point_id == context.entry_point_id:
-			preflight = PlayerSpawnManager.authored_spawn_issue(authority, authority.to_local(marker.global_position), manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask)
-			break
+	# Reproduce the former post-attachment scan, then explicitly exclude the actor.
+	if anchor != null and actor != null:
+		var raw := PlayerSpawnManager.analyze_authored_spawn(authority, authority.to_local(anchor.global_position), manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask)
+		for candidate in raw.candidates:
+			if candidate.overlap:
+				print("SPAWN TRACE after attachment | ", _candidate_text(candidate))
+		var excluding: Array[RID] = [actor.get_rid()]
+		var filtered := PlayerSpawnManager.analyze_authored_spawn(authority, authority.to_local(anchor.global_position), manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask, excluding)
+		_result("ENTRY Clearance excluding local actor", "PASS" if filtered.issue.is_empty() else "WARN", _diagnostic_text(filtered))
+		var live_issue := manager._position_issue(authority.to_local(anchor.global_position), false, excluding)
+		_result("ENTRY Live Physics", "PASS" if live_issue.is_empty() else "WARN", "local PlayerActor RID excluded | issue=" + live_issue)
+		var assignment: PlayerSpawnAssignment = observed_assignments[0] if not observed_assignments.is_empty() else null
+		_result("Player Spawn Assignment", "PASS" if assignment != null and assignment.error_message.is_empty() else "FAIL",
+			"%s | position=%s | reason=%s" % [assignment.error_message, assignment.position, assignment.reason] if assignment != null else "No assignment")
+	else:
+		_result("Player Spawn Assignment", "FAIL", "No ENTRY or no actual actor")
+	_result("Player Actor", "PASS" if has_actor else "FAIL", str(actor.global_position) if has_actor else "No authoritative PlayerActor")
 	var ground := false
+	var terrain_hit := false
+	var ground_detail := "No actor available for the live support query"
 	if has_actor:
 		var ray := PhysicsRayQueryParameters2D.create(actor.global_position, actor.global_position + Vector2.DOWN * manager.support_distance, manager.spawn_validation_collision_mask, [actor.get_rid()])
-		ground = not actor.get_world_2d().direct_space_state.intersect_ray(ray).is_empty()
+		var hit := actor.get_world_2d().direct_space_state.intersect_ray(ray)
+		ground = not hit.is_empty()
+		var source: Node = hit.get("collider")
+		terrain_hit = source is StaticBody2D or source is TileMapLayer
+		ground_detail = "query=%s mask=%s support=%s source=%s | local actor excluded" % [actor.global_position,
+			manager.spawn_validation_collision_mask, hit.get("position", "none"),
+			String(authority.get_path_to(source)) if source != null and authority.is_ancestor_of(source) else str(source)]
 	var enemies: int = authority.get_node("EnemySpawnManager")._enemies.size()
 	var expected_enemies := 0
 	for node in authority.find_children("*", "Marker2D", true, false):
 		if node is FieldEnemySpawnPoint and node.enabled:
 			expected_enemies += 1
-	print("PLAYTEST: spawn=", has_actor, " terrain=", ground, " authored=", preflight, " enemies=", enemies, "/", expected_enemies,
+	print("PLAYTEST: spawn=", has_actor, " terrain=", ground, " authored=", preflight.issue, " enemies=", enemies, "/", expected_enemies,
 		" gather=", authority._gather_targets.size(), "/", expected_gather, " escapes=", escape_targets)
+	_result("Ground Support", "PASS" if ground else "FAIL", ground_detail)
+	_result("Terrain Physics", "PASS" if terrain_hit else "FAIL", "Expected authored terrain collider | " + ground_detail)
+	_result("Enemy Spawn", "PASS" if enemies == expected_enemies else "FAIL", "%d/%d" % [enemies, expected_enemies])
+	_result("GatherPoint Configuration", "PASS" if authority._gather_targets.size() == expected_gather else "FAIL", "%d/%d" % [authority._gather_targets.size(), expected_gather])
+	_result("EscapePoint", "PASS" if escape_targets == region.escape_point_ids.size() else "FAIL", "%d/%d" % [escape_targets, region.escape_point_ids.size()])
+	_result("Environment Separation", "PASS" if presentation_environment and authority.get_node_or_null("EnvironmentPresenter") == null else "FAIL", "Presenter in visible world only")
 	valid = valid and has_actor and ground and enemies == expected_enemies and authority._gather_targets.size() == expected_gather and escape_targets == region.escape_point_ids.size()
 	valid = valid and authority.get_node_or_null("EnvironmentPresenter") == null
 	if has_actor and not authority._gather_targets.is_empty():
@@ -203,13 +253,18 @@ func _playtest_region(id: StringName) -> bool:
 		actor.global_position = authority._gather_targets[gather_id].global_position
 		var gathered: bool = authority._try_gather(peer, gather_id) and not authority._try_gather(peer, gather_id)
 		print("PLAYTEST: authoritative gather ", "PASS" if gathered else "FAIL")
+		_result("GatherPoint Request", "PASS" if gathered else "FAIL", "First server request succeeds and repeated request is rejected")
 		valid = valid and gathered
+	else:
+		_result("GatherPoint Request", "NOT_EVALUATED", "No enabled gather point or actor")
 	authority.queue_free()
 	await get_tree().process_frame
 	var settlement_return := await _playtest_escape(context)
 	print("PLAYTEST: escape interaction ", "PASS" if settlement_return else "FAIL")
+	_result("Settlement Return", "PASS" if settlement_return else "FAIL", "EscapePoint interaction through existing NetworkManager")
 	GameSession.start_new_game()
-	return valid and settlement_return
+	_result("Runtime Flow", "PASS" if valid and settlement_return else "FAIL", String(id))
+	return _print_results(id)
 
 func _playtest_escape(context: AdventureContext) -> bool:
 	var layer := Node2D.new()
@@ -233,6 +288,59 @@ func _playtest_escape(context: AdventureContext) -> bool:
 	layer.queue_free()
 	await get_tree().process_frame
 	return escaped
+
+func _create_context(region: RegionDefinition) -> AdventureContext:
+	var id := region.id
+	GameSession.start_new_game()
+	var context: AdventureContext
+	for definition in ContentRegistry.all_definitions():
+		if definition is SettlementExitDefinition and id in definition.connected_region_ids and GameSession.can_use_exit(definition.id, id).success:
+			context = GameSession.request_adventure_from_exit(definition.id, id)
+			break
+	if context == null:
+		var exit := SettlementExitDefinition.new()
+		exit.id = &"rtc_editor_playtest_exit"
+		if ContentRegistry.has_id(exit.id):
+			return null
+		exit.connected_region_ids = [id]
+		exit.entry_point_id = region.entry_point_ids[0]
+		ContentRegistry._definitions[exit.id] = exit
+		if not id in GameSession.progression.unlocked_regions:
+			GameSession.progression.unlocked_regions.append(id)
+		GameSession.progression.unlocked_exits.append(exit.id)
+		context = GameSession.request_adventure_from_exit(exit.id, id)
+		ContentRegistry._definitions.erase(exit.id)
+		GameSession.progression.unlocked_exits.erase(exit.id)
+		print("PLAYTEST: isolated temporary exit")
+	return context
+
+func _result(stage: String, status: String, detail: String) -> void:
+	_playtest_results.append({"stage": stage, "status": status, "detail": detail})
+
+func _print_results(id: StringName) -> bool:
+	var overall := "PASS"
+	print("REGION PLAYTEST RESULT | ", id)
+	for item in _playtest_results:
+		print(item.stage, " | ", item.status, " | ", item.detail)
+		if item.status == "FAIL":
+			overall = "FAIL"
+		elif overall != "FAIL" and item.status in ["WARN", "NOT_EVALUATED"]:
+			overall = "PASS_WITH_WARNINGS"
+	print("Overall | ", overall)
+	print("REGION_PLAYTEST_JSON ", JSON.stringify({"region": id, "overall": overall, "results": _playtest_results}))
+	return overall != "FAIL"
+
+func _candidate_text(candidate: Dictionary) -> String:
+	return "body=%s type=%s shape=%s type=%s layer=%s mask=%s transform=%s query=%s radius=%s overlap=%s support=%s one_way=%s" % [
+		candidate.body_path, candidate.body_type, candidate.shape_path, candidate.shape_type, candidate.layer, candidate.mask,
+		candidate.transform, candidate.position, candidate.radius, candidate.overlap, candidate.support, candidate.one_way]
+
+func _diagnostic_text(detail: Dictionary) -> String:
+	var message := "clearance=%s support=%s issue=%s | query=%s radius=%s mask=%s" % [detail.clearance, detail.support, detail.issue, detail.get("position", "unavailable"), detail.get("radius", "unavailable"), detail.get("mask", "unavailable")]
+	for candidate in detail.candidates:
+		if candidate.overlap:
+			message += " | " + _candidate_text(candidate)
+	return message
 
 func _finish(valid: bool) -> void:
 	print("AUTHORED FIELD RUNTIME ", "PASS" if valid else "FAIL")

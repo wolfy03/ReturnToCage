@@ -425,3 +425,23 @@ region through the isolated playtest probe. To run that probe for a saved region
 ```sh
 python tools/playtest_region.py --godot godot --region sewer_region
 ```
+
+
+STEP 6 stabilization adds a sewer clearance regression that identifies an
+attached player's capsule as the post-spawn blocker and checks RID exclusion,
+disabled/layer filters, support, singular transforms and detached prefab Size.
+Editor probes check Collision Source selection. Runtime report fixtures require
+PASS_WITH_WARNINGS for limited capacity, FAIL for a blocked ENTRY and FAIL for
+duplicate slots. The rendered harness also opens an interactive game and
+injects move, jump, climb and escape input. Climb/escape fixture positioning is
+synthetic. This is separate from a physical mouse/keyboard manual playthrough.
+
+
+During STEP 6 stabilization on Windows, Godot 4.7.2 sometimes terminated after
+a success marker with native exception 0xC0000005 (3221225477). The same shutdown
+failure reproduced in an isolated checkout of the unmodified 4c39e64 baseline
+after FIELD EDITOR PROBE PASS. Windows Application events named the Godot module
+at offset 0x547f2c. A sprite-pipeline process also printed PASS before a failed
+shutdown. Functional success and process success must be recorded separately.
+The editor runner now prints each child return code and continues to fail on
+abnormal exits. An editor shutdown also reported CowData modified during destruction with exit 0, which the runner correctly rejects because of the engine error. The native root cause remains unconfirmed.

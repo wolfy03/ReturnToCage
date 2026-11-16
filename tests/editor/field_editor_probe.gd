@@ -108,6 +108,7 @@ func _run() -> void:
 		var reopened := _field_root()
 		_check(reopened != null and reopened != root and reopened.get_node("SpawnPoints").get_child_count() == 2, "reopen saved field tab")
 	await _exercise_step5()
+	await _finish_dependency_scan()
 	print("FIELD EDITOR PROBE ", "PASS" if _failures == 0 else "FAIL", " failures=", _failures)
 	get_tree().quit(0 if _failures == 0 else 1)
 
@@ -188,7 +189,7 @@ func _exercise_step4_transactions(root: Node2D) -> void:
 	var region := template.duplicate() as RegionDefinition
 	region.scene_path = root.scene_file_path
 	var path := "res://tests/editor/probe_region.tres"
-	_check(ResourceSaver.save(region, path) == OK, "create disposable region")
+	_check(_save_probe_resource(region, path) == OK, "create disposable region")
 	region = ResourceLoader.load(path, "Resource", ResourceLoader.CACHE_MODE_IGNORE) as RegionDefinition
 	_check(Maintenance.sync_plan(root, [region], _catalog).changes.size() == 2, "sync previews added ENTRY and ESCAPE")
 	_check(Maintenance.sync_plan(root, [], _catalog).has("error") and Maintenance.sync_plan(root, [region, region], _catalog).has("error"), "missing and ambiguous region rejected")
@@ -275,7 +276,34 @@ func _exercise_step4_transactions(root: Node2D) -> void:
 func _save_probe_scene(root: Node2D) -> Error:
 	var scene := PackedScene.new()
 	var error := scene.pack(root)
-	return ResourceSaver.save(scene, root.scene_file_path) if error == OK else error
+	return _save_probe_resource(scene, root.scene_file_path) if error == OK else error
+
+func _save_probe_resource(resource: Resource, path: String) -> Error:
+	var stage := Maintenance.stage_path(path.get_extension())
+	var error := ResourceSaver.save(resource, stage)
+	var uid := ResourceLoader.get_resource_uid(path) if FileAccess.file_exists(path) else ResourceUID.INVALID_ID
+	if error == OK and uid != ResourceUID.INVALID_ID:
+		error = ResourceSaver.set_uid(stage, uid)
+	if error == OK:
+		error = Maintenance.replace_file(stage, path)
+	Maintenance.discard(stage)
+	return error
+
+func _write_probe_bytes(path: String, bytes: PackedByteArray) -> void:
+	var stage := Maintenance.stage_path(path.get_extension())
+	var file := FileAccess.open(stage, FileAccess.WRITE)
+	_check(file != null, "open atomic external edit fixture")
+	if file == null:
+		return
+	file.store_buffer(bytes)
+	file.close()
+	_check(Maintenance.replace_file(stage, path) == OK, "publish external edit fixture")
+	Maintenance.discard(stage)
+
+func _finish_dependency_scan() -> void:
+	await get_tree().process_frame
+	while _filesystem.is_scanning():
+		await get_tree().process_frame
 
 func _set_probe_read_only(path: String, read_only: bool) -> void:
 	if OS.get_name() == "Windows":
@@ -286,16 +314,22 @@ func _set_probe_read_only(path: String, read_only: bool) -> void:
 func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, resource_path: String) -> void:
 	var scene_path := root.scene_file_path
 	var scene_hash := FileAccess.get_sha256(scene_path)
+	# Truncate a shadow file under .godot, away from dependency scanners.
+	# Rollback still restores real damaged bytes through the same save method.
+	var failure_scene := Maintenance.stage_path("tscn")
+	_check(DirAccess.copy_absolute(ProjectSettings.globalize_path(scene_path), ProjectSettings.globalize_path(failure_scene)) == OK, "prepare isolated scene write failure fixture")
 	var region_hash := FileAccess.get_sha256(resource_path)
 	var action := history.get_current_action()
 	var region: RegionDefinition = plan.region
 	var entries := region.entry_point_ids.duplicate()
 	var escapes := region.escape_point_ids.duplicate()
+	root.scene_file_path = failure_scene
 	_check(not _apply_region_plan(root, plan, func() -> Error:
-		FileAccess.open(scene_path, FileAccess.WRITE).store_string("simulated partial scene save")
+		FileAccess.open(failure_scene, FileAccess.WRITE).store_string("simulated partial scene save")
 		return ERR_CANT_CREATE
 	), "scene save failure rejected")
-	_check(FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "scene save failure restores bytes and preserves history")
+	root.scene_file_path = scene_path
+	_check(FileAccess.get_sha256(failure_scene) == scene_hash and FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "scene save failure restores bytes and preserves history")
 
 	var parked := ProjectSettings.globalize_path(resource_path + ".parked")
 	var actual := ProjectSettings.globalize_path(resource_path)
@@ -321,11 +355,15 @@ func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, 
 	_set_probe_read_only(resource_path, false)
 	_check(history.redo(), "retry sync redo")
 	region_hash = FileAccess.get_sha256(resource_path)
+	root.scene_file_path = failure_scene
 	_check(not _apply_region_plan(root, plan, func() -> Error:
-		FileAccess.open(scene_path, FileAccess.WRITE).store_string("simulated new scene bytes")
+		FileAccess.open(failure_scene, FileAccess.WRITE).store_string("simulated new scene bytes")
 		_set_probe_read_only(resource_path, true)
 		return OK
 	), "late resource publish failure rejected")
+	root.scene_file_path = scene_path
+	_check(FileAccess.get_sha256(failure_scene) == scene_hash, "late failure restores truncated shadow scene bytes")
+	Maintenance.discard(failure_scene)
 	_set_probe_read_only(resource_path, false)
 	_check(FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "late resource failure rolls back scene without history action")
 	EditorInterface.open_scene_from_path("res://core/boot.tscn")
@@ -337,13 +375,13 @@ func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, 
 	var bytes := FileAccess.get_file_as_bytes(resource_path)
 	var external := region.duplicate() as RegionDefinition
 	external.description += " external edit"
-	_check(ResourceSaver.save(external, resource_path) == OK, "write external resource change")
+	_check(_save_probe_resource(external, resource_path) == OK, "write external resource change")
 	var external_hash := FileAccess.get_sha256(resource_path)
 	_check(history.undo(), "engine dispatched stale sync undo")
 	await get_tree().process_frame
 	_check(history.get_current_action() == action and FileAccess.get_sha256(resource_path) == external_hash and region.entry_point_ids == entries, "external file change blocks undo and restores cursor")
 	_check(not _apply_region_plan(root, plan), "cache-disk conflict blocks sync until reviewed")
-	FileAccess.open(resource_path, FileAccess.WRITE).store_buffer(bytes)
+	_write_probe_bytes(resource_path, bytes)
 	region.description += " unsaved inspector edit"
 	_check(history.undo(), "engine dispatched cache-conflicted undo")
 	await get_tree().process_frame
@@ -353,12 +391,12 @@ func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, 
 	var before_bytes := FileAccess.get_file_as_bytes(resource_path)
 	external = region.duplicate() as RegionDefinition
 	external.description += " external edit before redo"
-	_check(ResourceSaver.save(external, resource_path) == OK, "write external change before redo")
+	_check(_save_probe_resource(external, resource_path) == OK, "write external change before redo")
 	external_hash = FileAccess.get_sha256(resource_path)
 	_check(history.redo(), "engine dispatched stale redo")
 	await get_tree().process_frame
 	_check(history.get_current_action() == action - 1 and FileAccess.get_sha256(resource_path) == external_hash, "external file change blocks redo and preserves bytes")
-	FileAccess.open(resource_path, FileAccess.WRITE).store_buffer(before_bytes)
+	_write_probe_bytes(resource_path, before_bytes)
 	_check(history.redo(), "redo after disk reconciled")
 
 func _exercise_step4_gui(root: Node2D) -> void:
@@ -692,7 +730,7 @@ func _exercise_step5() -> void:
 	_check(platform_preset != null and platform_preset.objects.size() == 1, "capture single platform preset")
 	var path := "res://addons/rtc_field_editor/presets/probe_kit.tres"
 	DirAccess.make_dir_recursive_absolute(Presets.FOLDER)
-	_check(ResourceSaver.save(preset, path) == OK, "save preset resource")
+	_check(_save_probe_resource(preset, path) == OK, "save preset resource")
 	_filesystem.scan()
 	_rebuild()
 	EditorInterface.open_scene_from_path(scene_path)
@@ -796,7 +834,7 @@ func _exercise_step6(root: Node2D, resource_path: String) -> void:
 	exit.development_locked = true
 	exit.required_flags = [&"probe_flag"]
 	var exit_path := "res://data/content/regions/step6_probe_exit.tres"
-	_check(ResourceSaver.save(exit, exit_path) == OK, "save isolated exit fixture")
+	_check(_save_probe_resource(exit, exit_path) == OK, "save isolated exit fixture")
 	exit = ResourceLoader.load(exit_path, "", ResourceLoader.CACHE_MODE_IGNORE)
 	_catalog.definitions[exit.id] = exit
 	_region_design.show_region(root)
@@ -840,6 +878,21 @@ func _exercise_step6(root: Node2D, resource_path: String) -> void:
 	spawn.position = Vector2(150, 565)
 	_region_design.page.item_selected.emit(2)
 	_check(_spawn_issue(spawn).message == "BLOCKED", "spawn inside terrain blocked")
+	var source_list := _region_design.body.get_child(1) as ItemList
+	var found_source := false
+	for index in source_list.item_count:
+		if source_list.get_item_text(index).begins_with("Collision Source"):
+			var source: Node = source_list.get_item_metadata(index)
+			source_list.item_selected.emit(index)
+			found_source = found_source or (source is CollisionShape2D or source is PhysicsBody2D) and EditorInterface.get_selection().get_selected_nodes().has(source)
+	_check(found_source and _spawn_issue(spawn).detail.clearance == "FAIL" and _spawn_issue(spawn).role == "Player Spawn Slot", "collision source rows select owned terrain and retain separate slot clearance status")
+	_check(_visualization.spawn_results.any(func(item: Dictionary) -> bool: return item.get("role") == "ENTRY Physical Anchor"), "ENTRY anchor and slot roles remain distinct")
+	_visualization.enabled.resize(8)
+	_visualization.enabled[6] = true
+	_visualization.enabled[7] = true
+	_select_nodes([spawn])
+	update_overlays()
+	await get_tree().process_frame
 	spawn.position = Vector2(-200, -200)
 	_region_design.page.item_selected.emit(2)
 	_check(_spawn_issue(spawn).message == "NO_WALKABLE_SUPPORT", "spawn with no support warns")
@@ -873,7 +926,7 @@ func _exercise_step6(root: Node2D, resource_path: String) -> void:
 	_check(history.redo() and region.environment_path == environment, "redo environment")
 	var external := region.duplicate() as RegionDefinition
 	external.description += " external step6 edit"
-	_check(ResourceSaver.save(external, resource_path) == OK, "simulate external edit")
+	_check(_save_probe_resource(external, resource_path) == OK, "simulate external edit")
 	var hash := FileAccess.get_sha256(resource_path)
 	var action := history.get_current_action()
 	history.undo()
@@ -885,7 +938,8 @@ func _exercise_step6(root: Node2D, resource_path: String) -> void:
 	_region_design.hide()
 	_catalog.regions = previous_regions
 	_catalog.definitions = previous_definitions
-	DirAccess.remove_absolute(exit_path)
+	# Keep this valid fixture until the disposable project is removed. The
+	# EditorFileSystem may still be resolving its dependencies asynchronously.
 
 func _spawn_issue(spawn: PlayerSpawnPoint) -> Dictionary:
 	for result in _visualization.spawn_results:

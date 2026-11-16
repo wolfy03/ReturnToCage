@@ -70,12 +70,17 @@ static func _rect(overlay: Control, transform: Transform2D, box: Rect2, color: C
 
 func _draw_spawn_results(overlay: Control, canvas: Transform2D, hidden: Dictionary) -> void:
 	for result in spawn_results:
-		if not is_instance_valid(result.node) or not result.node is PlayerSpawnPoint or hidden.get("SpawnPoints", false):
+		if not is_instance_valid(result.node) or not result.has("at") or hidden.get(Layers.for_node(result.node, result.node.owner), false):
 			continue
 		var point: Vector2 = canvas * result.node.global_position
 		if not point.is_finite() or not result.node.global_position.is_equal_approx(result.at):
 			continue
 		var color := Color.SKY_BLUE if result.severity == "Info" else (Color.TOMATO if result.severity == "Error" else Color.GOLD)
+		if result.node in EditorInterface.get_selection().get_selected_nodes():
+			overlay.draw_circle(point, 12, color, false, 2)
+			for candidate in result.get("detail", {}).get("candidates", []):
+				if candidate.overlap and is_instance_valid(candidate.shape) and candidate.shape.shape != null:
+					_rect(overlay, canvas * candidate.shape.global_transform, candidate.shape.shape.get_rect(), Color.TOMATO)
 		if enabled[6]:
 			overlay.draw_arc(point, result.radius * canvas.x.length(), 0, TAU, 24, color, 1)
 			_rect(overlay, canvas * Transform2D(0, result.node.global_position) * result.offset, result.body, color)

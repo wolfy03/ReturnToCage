@@ -147,8 +147,23 @@ func _diagnostics() -> void:
 	var results := Design.analyze(root)
 	analyze_requested.call(results)
 	for item in results:
-		_add_item(list, "%s | %s | %s" % [item.severity, root.get_path_to(item.node), item.message], item.node)
+		if item.node is RegionPoint and item.node.kind == RegionPoint.Kind.ENTRY:
+			var declared: bool = region != null and item.node.point_id in region.entry_point_ids
+			_add_item(list, "%s | ENTRY Reference | %s | declared=%s | references=%s" % [
+				"Info" if declared else "Error", root.get_path_to(item.node), declared, Design.references(item.node, region, catalog)], item.node)
+		_add_item(list, "%s | %s | %s | %s" % [item.severity, item.get("role", "Spawn Configuration"), root.get_path_to(item.node), item.message], item.node,
+			"World: %s | Clearance: %s | Support: %s | Slot: %s" % [item.node.global_position, item.get("detail", {}).get("clearance", "NOT_EVALUATED"), item.get("detail", {}).get("support", "NOT_EVALUATED"), item.node.spawn_index if item.node is PlayerSpawnPoint else "anchor"])
+		for candidate in item.get("detail", {}).get("candidates", []):
+			if candidate.overlap or candidate.support:
+				var source: Node = candidate.shape if _editable_source(candidate.shape) else candidate.body
+				if _editable_source(source):
+					_add_item(list, ("Collision Source | " if candidate.overlap else "Ground Support Source | ") + candidate.shape_path, source, str(candidate))
+		for key in ["body_overlap", "slot_overlap"]:
+			var source: Node = item.get(key)
+			if _editable_source(source):
+				_add_item(list, "Overlap Source | " + String(root.get_path_to(source)), source)
 	_add_item(list, "Info | Movement reachability and live actor collisions: Not evaluated", root)
+	_add_item(list, "Info | Authored shape checks do not model tile/polygon collision, inherited activation or one-way motion. Compare live physics in Playtest.", root)
 
 func _environment() -> void:
 	if region == null:
@@ -204,6 +219,8 @@ func _playtest() -> void:
 	_label(body, "Save the scene, then run this isolated runtime probe from the project directory. It uses GameSession and SceneRouter and exits with the result.")
 	_label(body, command)
 	_button(body, "Copy playtest command").pressed.connect(func() -> void: DisplayServer.clipboard_set(command))
+	_label(body, "Interactive mode opens a playable game window with isolated user data. Save the scene first. Close the game window to finish.")
+	_button(body, "Copy Run Region Interactively command").pressed.connect(func() -> void: DisplayServer.clipboard_set(command + " --interactive"))
 
 func _review_fields(resource: ContentDefinition, plan: Dictionary, recheck: Callable) -> void:
 	if plan.has("error"):
@@ -236,13 +253,16 @@ func _list() -> ItemList:
 	body.add_child(list)
 	list.item_selected.connect(func(index: int) -> void:
 		var node: Node = list.get_item_metadata(index)
-		if is_instance_valid(node) and node.is_inside_tree():
+		if _editable_source(node) and node.is_inside_tree():
 			var selection := EditorInterface.get_selection()
 			selection.clear()
 			selection.add_node(node)
 			EditorInterface.inspect_object(node)
 		report.text = list.get_item_tooltip(index))
 	return list
+
+func _editable_source(node: Node) -> bool:
+	return is_instance_valid(root) and is_instance_valid(node) and (node == root or root.is_ancestor_of(node) and node.owner == root)
 
 func _add_item(list: ItemList, text: String, node: Node, tip := "") -> void:
 	list.add_item(text)

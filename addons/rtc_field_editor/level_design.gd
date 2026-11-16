@@ -101,6 +101,10 @@ static func analyze(root: Node2D) -> Array[Dictionary]:
 		var transform := marker.global_transform
 		var severity := "Info"
 		var message := "Authored clearance and support passed"
+		var role := "Player Spawn Slot" if marker is PlayerSpawnPoint else ("ENTRY Physical Anchor" if marker.kind == RegionPoint.Kind.ENTRY else "ESCAPE Interaction Anchor")
+		var detail := {"clearance": "NOT_EVALUATED", "support": "NOT_EVALUATED", "candidates": []}
+		var body_overlap: Node
+		var slot_overlap: Node
 		if not transform.is_finite() or is_zero_approx(transform.determinant()) or is_zero_approx(root.global_transform.determinant()):
 			severity = "Error"
 			message = "Non-finite or non-invertible transform"
@@ -108,7 +112,8 @@ static func analyze(root: Node2D) -> Array[Dictionary]:
 			severity = "Error"
 			message = "Slot must be unique, in range, and directly under the region"
 		else:
-			var issue := PlayerSpawnManager.authored_spawn_issue(root, root.to_local(marker.global_position), manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask)
+			detail = PlayerSpawnManager.analyze_authored_spawn(root, root.to_local(marker.global_position), manager.clearance_radius, manager.support_distance, manager.spawn_validation_collision_mask)
+			var issue: String = detail.issue
 			if issue == "BLOCKED" or issue == "INVALID_COLLISION_MASK":
 				severity = "Error"
 				message = issue
@@ -119,17 +124,22 @@ static func analyze(root: Node2D) -> Array[Dictionary]:
 				var body := Transform2D(0, marker.global_position) * offset
 				if severity == "Info":
 					for obstacle in terrain:
-						if shape.collide(body, obstacle.shape, obstacle.global_transform):
+						if shape.collide(body, PlayerSpawnManager.authored_collision_shape(obstacle), obstacle.global_transform):
 							severity = "Warning"
 							message = "Player body overlaps authored terrain despite preflight clearance"
+							body_overlap = obstacle
 							break
 				for other in markers:
 					if other != marker and other.global_position.is_finite() and shape.collide(Transform2D(0, marker.global_position) * offset, shape, Transform2D(0, other.global_position) * offset):
 						if severity != "Error":
 							severity = "Warning"
 							message = "Player body overlaps another authored spawn slot"
+							slot_overlap = other
 						break
-		results.append({"node": marker, "severity": severity, "message": message, "radius": manager.clearance_radius, "body": shape.get_rect() if shape != null else Rect2(), "offset": offset, "at": marker.global_position})
+		if marker is RegionPoint and marker.kind == RegionPoint.Kind.ESCAPE and severity == "Error" and detail.clearance == "FAIL":
+			severity = "Warning"
+			message += " (interaction anchor; not a player spawn)"
+		results.append({"role": role, "detail": detail, "body_overlap": body_overlap, "slot_overlap": slot_overlap, "node": marker, "severity": severity, "message": message, "radius": manager.clearance_radius, "body": shape.get_rect() if shape != null else Rect2(), "offset": offset, "at": marker.global_position})
 	var valid_slots := 0
 	for index in NetworkManager.MAX_PLAYERS:
 		if slots.get(index, 0) == 1 and markers.any(func(node: Node) -> bool: return node.spawn_index == index and node.get_parent() == root):

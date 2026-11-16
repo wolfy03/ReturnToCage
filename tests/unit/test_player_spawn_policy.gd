@@ -5,6 +5,7 @@ const PLAYER_B := &"player_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 const PLAYER_C := &"player_cccccccccccccccccccccccccccccccc"
 
 func run(t: Node) -> void:
+	_test_authored_diagnostics(t)
 	_test_assignment_validation(t)
 	_test_policy_decisions(t)
 	_test_attach_rollback(t)
@@ -133,3 +134,64 @@ func _test_safe_position_authority(t: Node) -> void:
 	state.last_safe_position = Vector2(999, 999)
 	t.assert_equal(state.last_safe_position, Vector2(222, 500), "client-side direct safe-position mutation is blocked")
 	NetworkManager.state = NetworkManager.ConnectionState.OFFLINE
+
+func _test_authored_diagnostics(t: Node) -> void:
+	var scene := load("res://world/adventure/sewer_region.tscn") as PackedScene
+	var root := scene.instantiate() as Node2D
+	var at := Vector2(150, 520)
+	var clean := PlayerSpawnManager.analyze_authored_spawn(root, at, 8, 100, 1)
+	t.assert_true(clean.issue.is_empty() and clean.clearance == "PASS" and clean.support == "PASS",
+		"sewer entry clearance passes before actors are attached; floor starts at 535")
+	var floor_contact := false
+	for candidate in clean.candidates:
+		floor_contact = floor_contact or candidate.shape_path == "Terrain/Floor/CollisionShape2D" and candidate.support and not candidate.overlap
+	t.assert_true(floor_contact, "detailed support result identifies the sewer floor without inventing an overlap")
+	var nominal_body := CapsuleShape2D.new()
+	nominal_body.radius = 14
+	nominal_body.height = 34
+	var nominal := PlayerSpawnManager.analyze_authored_spawn(root, at, 8, 100, 1, [], nominal_body)
+	t.assert_true(nominal.clearance == "FAIL" and nominal.candidates.any(func(item: Dictionary) -> bool:
+		return item.shape_path == "Terrain/Floor/CollisionShape2D" and item.overlap),
+		"nominal full capsule warning identifies floor separately from the passing preflight circle")
+	var actor := CharacterBody2D.new()
+	actor.name = "DiagnosticPlayer"
+	actor.position = at
+	actor.collision_layer = 1
+	var capsule := CollisionShape2D.new()
+	capsule.name = "CollisionShape2D"
+	var shape := CapsuleShape2D.new()
+	shape.radius = 14
+	shape.height = 34
+	capsule.shape = shape
+	actor.add_child(capsule)
+	root.add_child(actor)
+	var occupied := PlayerSpawnManager.analyze_authored_spawn(root, at, 8, 100, 1)
+	var blocker: Dictionary = {}
+	for candidate in occupied.candidates:
+		if candidate.overlap:
+			blocker = candidate
+	t.assert_true(occupied.issue == "BLOCKED" and blocker.get("shape_path") == "DiagnosticPlayer/CollisionShape2D"
+		and blocker.get("body_type") == "CharacterBody2D" and blocker.get("mask") == 1 and blocker.get("radius") == 8,
+		"post-attachment BLOCKED reports actual player capsule and query parameters")
+	var excluded: Array[RID] = [actor.get_rid()]
+	t.assert_true(PlayerSpawnManager.analyze_authored_spawn(root, at, 8, 100, 1, excluded).issue.is_empty(),
+		"excluding the attached actor restores authored and physics query parity")
+	capsule.disabled = true
+	t.assert_true(PlayerSpawnManager.authored_spawn_issue(root, at, 8, 100, 1).is_empty(), "disabled source is ignored")
+	capsule.disabled = false
+	actor.collision_layer = 2
+	t.assert_true(PlayerSpawnManager.authored_spawn_issue(root, at, 8, 100, 1).is_empty(), "source outside collision mask is ignored")
+	t.assert_true(PlayerSpawnManager.authored_spawn_issue(root, at, 8, 100, 0) == "INVALID_COLLISION_MASK", "zero collision mask rejected")
+	t.assert_true(PlayerSpawnManager.authored_spawn_issue(root, Vector2(-200, -200), 8, 100, 1) == "NO_WALKABLE_SUPPORT", "unsupported position reported independently")
+	var prefab := load("res://world/adventure/field_platform.tscn") as PackedScene
+	var platform := prefab.instantiate() as FieldPlatform
+	platform.position = Vector2(-400, 565)
+	platform.size = Vector2(1200, 60)
+	root.add_child(platform)
+	var original_shape: Shape2D = platform.get_node("CollisionShape2D").shape
+	t.assert_true(PlayerSpawnManager.analyze_authored_spawn(root, Vector2(-800, 520), 8, 100, 1).support == "PASS"
+		and platform.get_node("CollisionShape2D").shape == original_shape,
+		"detached FieldPlatform uses authored dimensions without mutating prefab or collision resources")
+	root.scale.x = 0
+	t.assert_true(PlayerSpawnManager.authored_spawn_issue(root, at, 8, 100, 1) == "NON_FINITE", "singular world transform rejected before inverse")
+	root.free()

@@ -208,3 +208,62 @@ command from the project root. It uses isolated user data and the normal
 GameSession and SceneRouter entry path, with an in-memory exit when no usable
 settlement link is available. The probe prints spawn, terrain, enemy, gather
 and escape results, and then exits.
+
+
+### STEP 6 spawn diagnostics and interactive playtest
+
+ENTRY is a physical travel anchor. For an adventure transition the runtime adds
+the difference between each PlayerSpawnPoint and the first slot to the selected
+ENTRY. Fresh actor attachment separately validates the authored slots through
+PlayerSpawnPolicy. The panel labels ENTRY anchors and player slots separately.
+ESCAPE is an interaction anchor and its clearance is advisory.
+
+Spawn diagnostics include clearance, support, query position/radius/mask and
+the body and CollisionShape2D paths that overlap the query. Select a Collision
+Source row to inspect its editable shape or owning body. Selecting a failed
+marker highlights its source shapes in the overlay when spawn visualization
+is enabled. Run diagnostics again after changing terrain.
+
+The earlier sewer ENTRY BLOCKED log came from scanning after PlayerActor was
+created. Player/CollisionShape2D overlapped the 8-unit clearance at (150,520).
+The floor starts at Y=535 and does not overlap that circle. The playtest now
+checks the anchor before attachment and also compares authored and live queries
+after excluding the local actor RID. This exclusion is explicit in the probe.
+Runtime spawn checks continue to see other actors.
+
+Authored checks inspect enabled CollisionShape2D children on matching body
+layers. Detached FieldPlatform instances use the authored Size that becomes
+their private rectangle on ready. One-way surfaces are tested as geometry.
+CollisionPolygon2D, tiles, inherited activation and live dynamic contacts require
+the runtime physics check. Geometric support is not a reachability guarantee.
+
+The report prints PASS, WARN, FAIL or NOT_EVALUATED for each stage, then Overall
+and REGION_PLAYTEST_JSON. Any required failure makes Overall FAIL. Warnings and
+unperformed checks remain visible as PASS_WITH_WARNINGS. The legacy
+AUTHORED FIELD RUNTIME PASS/FAIL line is retained for test runners.
+
+To play with actual keyboard input, save the scene and use **Playtest → Copy
+Run Region Interactively command**, or run:
+
+    python tools/playtest_region.py --godot godot --region sewer_region --interactive
+
+The game window uses the normal actor, camera and input components. A/D moves,
+Space jumps, W/S climbs and E interacts. Closing the window ends the isolated
+session and removes its temporary user-data directory. The command runner must
+remain open while playing. No test save or temporary exit is written to project
+content. The automatic rendered smoke injects those inputs. It positions the
+actor at climb and escape fixtures before testing those interactions.
+
+
+The official [EditorInterface play_custom_scene API](https://docs.godotengine.org/en/stable/classes/class_editorinterface.html#class-editorinterface-method-play-custom-scene)
+accepts a scene path. The command runner starts a separate Godot process so it
+can supply the region argument and isolated user-data environment per launch
+without changing project-wide editor run settings.
+
+
+The sewer markers at Y=520 also produce a separate nominal-body warning.
+The capsule height is 34 and the floor top is Y=535, leaving a 2-unit overlap
+at the saved marker position, although the 8-unit preflight circle is clear.
+The live actor settles near Y=518.19. That body warning remains in the report,
+so the default sewer playtest returns PASS_WITH_WARNINGS. It is distinct from
+the former BLOCKED caused by testing against the already attached actor.
