@@ -22,7 +22,8 @@ def main():
         project = Path(directory) / "project"
         for name in sorted(set(filter(None, paths))):
             source = root / name
-            if source.is_file() and name != "tests/field_editor_gui_probe.tscn":
+            if source.is_file() and name not in ("tests/field_editor_gui_probe.tscn",
+                    "world/adventure/test_region.tscn", "data/content/regions/test_region.tres"):
                 target = project / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, target)

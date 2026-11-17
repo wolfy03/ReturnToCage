@@ -1,0 +1,19 @@
+diff --git a/modules/gdscript/gdscript.cpp b/modules/gdscript/gdscript.cpp
+index f9f9567..76809b0 100644
+--- a/modules/gdscript/gdscript.cpp
++++ b/modules/gdscript/gdscript.cpp
+@@ -2261,6 +2261,14 @@ void GDScriptLanguage::finish() {
+ 			scr->clear();
+ 		}
+ 		s = s->next();
++		ObjectID next_id = s ? s->self()->get_instance_id() : ObjectID();
++		String current_path = scr.is_valid() ? scr->get_path() : String();
++		String next_path = s ? s->self()->get_path() : String();
++		scr.unref();
++		if (s && !ObjectDB::get_instance(next_id)) {
++			print_error("RTC_FINISH_DANGLING_NEXT current=" + current_path + " released_next=" + next_path);
++			CRASH_NOW_MSG("RTC: finish iterator invalidated by current script destruction");
++		}
+ 	}
+ 	script_list.clear();
+ 	function_list.clear();

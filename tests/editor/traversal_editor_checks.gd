@@ -127,7 +127,13 @@ static func _click(window: Window, button: Control, local := Vector2.INF) -> voi
 		window.grab_focus()
 		await window.get_tree().create_timer(0.15).timeout
 		var at := button.get_global_rect().get_center() if not local.is_finite() else button.global_position + local
+		# Native Windows keep a separate OS mouse-enter target. A synthetic
+		# InputEvent with window_id does not initialize that target. Cross the
+		# client boundary and drain native events before injecting button input.
+		window.warp_mouse(Vector2(-1, -1))
+		DisplayServer.process_events()
 		window.warp_mouse(at)
+		DisplayServer.process_events()
 		await window.get_tree().process_frame
 		var motion := InputEventMouseMotion.new()
 		motion.window_id = window.get_window_id()
@@ -137,7 +143,12 @@ static func _click(window: Window, button: Control, local := Vector2.INF) -> voi
 		await window.get_tree().process_frame
 		var hovered: Variant = window.call("gui_get_hovered_control") if window.has_method("gui_get_hovered_control") else null
 		print("TRAVERSAL GUI INPUT target=", button.get_class(), " rect=", button.get_global_rect(), " at=", at,
-			" window=", window.size, " id=", window.get_window_id(), " visible=", window.visible, " focus=", window.has_focus(), " mouse=", window.get_mouse_position(), " transform=", window.get_final_transform(), " hovered=", hovered)
+			" window=", window.size, " id=", window.get_window_id(), " position=", window.position,
+			" embedded=", window.is_embedded(), " scale=", window.content_scale_factor,
+			" visible=", window.visible, " focus=", window.has_focus(), " mouse=", window.get_mouse_position(), " transform=", window.get_final_transform(), " hovered=", hovered)
+		if hovered == null or (hovered != button and not button.is_ancestor_of(hovered)):
+			push_error("Traversal GUI input did not reach the target Control; no callback fallback is permitted.")
+			return
 		for pressed in [true, false]:
 			var event := InputEventMouseButton.new()
 			event.window_id = window.get_window_id()

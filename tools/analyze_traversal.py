@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 from traversal_process import ProcessScope
+from traversal_jobs import identity, attest, prune
 
 
 def atomic_json(path, value):
@@ -72,6 +73,12 @@ def main():
         command = []
         try:
             scope = ProcessScope(args.owner_pid, own_worker=True)
+            owner_identity = None
+            if args.owner_pid is not None:
+                try:
+                    owner_identity = identity(args.owner_pid)
+                except (OSError, ValueError):
+                    pass  # Unknown ownership disables retention, never verification.
             log = (directory / "godot.log").open("w", encoding="utf-8")
             command = [args.godot, "--headless", "--path", str(root), "--fixed-fps", str(request["fps"]),
                        "res://tests/editor/traversal_physics.tscn", "--", folder + "/request.json"]
@@ -130,6 +137,11 @@ def main():
                             "owner_pid": args.owner_pid, "command": command, "error": failure, "engine_error": engine_error,
                             "wall_ms": round((time.monotonic() - started) * 1000)})
         print(f"TRAVERSAL PROCESS state={state} exit={code}")
+        if state == "complete" and attest(directory, request, owner_identity):
+            try:
+                prune(base, protected={token})
+            except OSError as error:
+                print(f"TRAVERSAL RETENTION skipped: {error}")
         return int(state != "complete")
 
 

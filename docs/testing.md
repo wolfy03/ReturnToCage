@@ -455,3 +455,10 @@ STEP 7의 단위/격리 물리/렌더링 입력 검증은 기존 `tools/test_fie
 STEP 7 안정화의 반복 실행, Windows dump 조사와 프로세스 소유권/취소 검사는
 [step7_stability.md](step7_stability.md)를 참고한다. `tools/repeat_stability.py`는 성공 마커와
 정상 종료를 따로 기록하고 실패 로그도 보존한다. 네이티브 종료 문제는 미해결이다.
+
+2차 조사에서 확인한 엔진 종료 iterator 수명 결함, 일치 소스/PDB 덤프,
+GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 결과는
+[step7_stability_round2.md](step7_stability_round2.md)에 기록한다.
+작업 보관 안전성은 `python tools/test_traversal_jobs.py`, worker 생명주기는
+`python tools/test_traversal_process.py`로 별도 검사한다. 커스텀 엔진 패치의
+검증과 공식 엔진의 반복 안정성은 동일한 결과로 취급하지 않는다.

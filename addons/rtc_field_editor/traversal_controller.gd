@@ -80,7 +80,7 @@ func analyze(scene: Node2D, definition: RegionDefinition) -> void:
 		_initialization_failed("Cannot write traversal request.")
 		return
 	file.store_string(JSON.stringify({"region": String(region.id), "token": token, "fingerprint": _snapshot_expected,
-		"scene": _job.path_join("scene.tscn"), "output": _job.path_join("result.json"), "fps": report.model.physics_fps}))
+		"scene": _job.path_join("scene.tscn"), "output": _job.path_join("result.json"), "fps": report.model.physics_fps, "origin": "rtc_field_editor"}))
 	var write_error := file.get_error()
 	file.close()
 	if write_error != OK:
@@ -177,6 +177,13 @@ func cancel() -> void:
 func clear() -> void:
 	if running:
 		cancel()
+	elif _job.get_base_dir() == BASE and _job.get_file().length() == 32 and _job.get_file().is_valid_hex_number(false) and Recovery.safe_path(_job.path_join("released")):
+		# Release the editor's evidence lease, not its files. A later worker may
+		# prune only attested, normally completed jobs after both processes exit.
+		var release := FileAccess.open(_job.path_join("released"), FileAccess.WRITE)
+		if release != null:
+			release.store_string(_job.get_file())
+			release.close()
 	for object in _watched:
 		if is_instance_valid(object) and object.item_rect_changed.is_connected(invalidate):
 			object.item_rect_changed.disconnect(invalidate)

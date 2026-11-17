@@ -1,0 +1,25 @@
+--- a/modules/gdscript/gdscript.cpp
++++ b/modules/gdscript/gdscript.cpp
+@@ -2231,6 +2231,14 @@
+ 	}
+ 	finishing = true;
+ 
++	// Destruction of one script may release its base or other dependencies,
++	// including the next SelfList element. Keep every script alive until the
++	// dependency-breaking pass has finished; a temporary current Ref is not enough.
++	List<Ref<GDScript>> keep_alive;
++	for (SelfList<GDScript> *element = script_list.first(); element; element = element->next()) {
++		keep_alive.push_back(Ref<GDScript>(element->self()));
++	}
++
+ 	// Clear the cache before parsing the script_list
+ 	GDScriptCache::clear();
+ 
+@@ -2264,6 +2272,7 @@
+ 	}
+ 	script_list.clear();
+ 	function_list.clear();
++	keep_alive.clear();
+ 
+ 	finishing = false;
+ }
