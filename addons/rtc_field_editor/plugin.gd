@@ -16,6 +16,7 @@ const Presets := preload("preset_tools.gd")
 const Visualization := preload("field_visualization.gd")
 const RegionDesignDialog := preload("level_design_dialog.gd")
 const RegionDesign := preload("level_design.gd")
+const Traversal := preload("traversal_controller.gd")
 
 var _catalog := Catalog.new()
 var _export_filter := ExportFilter.new()
@@ -62,6 +63,7 @@ var _avoid: CheckBox
 var _maintenance := Maintenance.new()
 var _wizard: Wizard
 var _region_design: RegionDesignDialog
+var _traversal: Traversal
 var _overlay_region: RegionDefinition
 var _visualization := Visualization.new()
 var _preset_dialog: ConfirmationDialog
@@ -104,12 +106,25 @@ func _enter_tree() -> void:
 	_add_terrain_controls()
 	_add_maintenance_controls()
 	_add_creation_controls()
+	_traversal = Traversal.new()
+	add_child(_traversal)
 	_region_design = RegionDesignDialog.new()
+	_region_design.traversal = _traversal
+	_region_design.traversal_edge_selected.connect(func(index: int) -> void:
+		_visualization.selected_edge = index
+		update_overlays())
 	_region_design.editor = self
 	_region_design.catalog = _catalog
 	_region_design.maintenance = _maintenance
 	_region_design.analyze_requested = _show_spawn_results
 	_dock.add_child(_region_design)
+	_traversal.changed.connect(func() -> void:
+		_visualization.traversal = _traversal.report
+		update_overlays()
+		if _region_design.visible and _region_design.page.selected == 5:
+			_region_design._refresh(5))
+	get_undo_redo().version_changed.connect(_traversal.invalidate)
+	EditorInterface.get_inspector().property_edited.connect(_traversal_property_edited)
 	var design := Button.new()
 	design.text = "Region Design"
 	design.pressed.connect(func() -> void: _region_design.show_region(_field_root()))
@@ -138,6 +153,10 @@ func _enter_tree() -> void:
 	_rebuild.call_deferred()
 
 func _exit_tree() -> void:
+	get_undo_redo().version_changed.disconnect(_traversal.invalidate)
+	EditorInterface.get_inspector().property_edited.disconnect(_traversal_property_edited)
+	_traversal.clear()
+	_traversal.queue_free()
 	_cancel_drag()
 	_cancel_stroke()
 	_layers.restore()
@@ -161,6 +180,7 @@ func _toggle(label: String, initial: bool) -> CheckButton:
 	return button
 
 func _rebuild() -> void:
+	_traversal.invalidate()
 	if not is_instance_valid(_dock):
 		return
 	_catalog.rebuild(_filesystem.get_filesystem())
@@ -187,6 +207,7 @@ func _populate() -> void:
 		item.set_metadata(0, entry)
 
 func _scene_changed(root: Node) -> void:
+	_traversal.clear()
 	_region_design.hide()
 	_region_design.root = null
 	_visualization.spawn_results.clear()
@@ -300,6 +321,9 @@ func _cancel_if_current(stroke: Stroke) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and (_stroke != null or _resize != null):
 		_cancel_stroke()
+
+func _traversal_property_edited(_property: String) -> void:
+	_traversal.invalidate()
 
 func _show_spawn_results(results: Array[Dictionary]) -> void:
 	_visualization.spawn_results = results
@@ -557,6 +581,8 @@ func _set_layer_locked(locked: bool) -> void:
 	_layers.locked[_layers.active] = locked
 
 func _layer_tree_changed(_node: Node) -> void:
+	if is_instance_valid(_traversal) and is_instance_valid(_traversal.root) and _node is Node2D and _node.owner == _traversal.root:
+		_traversal.invalidate()
 	if not _preview_pending and _layers.hidden.values().has(true):
 		_preview_pending = true
 		_refresh_layers.call_deferred()

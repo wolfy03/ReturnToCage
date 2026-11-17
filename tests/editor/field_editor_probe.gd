@@ -109,6 +109,7 @@ func _run() -> void:
 		_check(reopened != null and reopened != root and reopened.get_node("SpawnPoints").get_child_count() == 2, "reopen saved field tab")
 	await _exercise_step5()
 	await _finish_dependency_scan()
+	await preload("res://tests/editor/traversal_editor_checks.gd").run(self)
 	print("FIELD EDITOR PROBE ", "PASS" if _failures == 0 else "FAIL", " failures=", _failures)
 	get_tree().quit(0 if _failures == 0 else 1)
 
@@ -331,11 +332,19 @@ func _exercise_sync_failures(root: Node2D, plan: Dictionary, history: UndoRedo, 
 	root.scene_file_path = scene_path
 	_check(FileAccess.get_sha256(failure_scene) == scene_hash and FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "scene save failure restores bytes and preserves history")
 
-	var parked := ProjectSettings.globalize_path(resource_path + ".parked")
-	var actual := ProjectSettings.globalize_path(resource_path)
-	_check(DirAccess.rename_absolute(actual, parked) == OK, "park resource for missing-file failure")
-	_check(not _apply_region_plan(root, plan, _save_probe_scene.bind(root)), "missing resource fails before writing scene")
-	_check(DirAccess.rename_absolute(parked, actual) == OK and FileAccess.get_sha256(scene_path) == scene_hash, "missing resource failure preserves scene")
+	# Do not transiently remove an indexed resource while EditorFileSystem may
+	# read dependencies. Inject the identical missing-file boundary with a copy.
+	var missing_region := region.duplicate() as RegionDefinition
+	missing_region.resource_path = "res://.godot/rtc_missing_sync_%s.tres" % Crypto.new().generate_random_bytes(8).hex_encode()
+	var missing_plan := plan.duplicate()
+	missing_plan.region = missing_region
+	var missing_save_calls: Array[bool] = []
+	_check(not FileAccess.file_exists(missing_region.resource_path), "prepare missing resource failure")
+	_check(not _apply_region_plan(root, missing_plan, func() -> Error:
+		missing_save_calls.append(true)
+		return OK
+	) and missing_save_calls.is_empty(), "missing resource fails before writing scene")
+	_check(FileAccess.get_sha256(scene_path) == scene_hash and FileAccess.get_sha256(resource_path) == region_hash and history.get_current_action() == action, "missing resource failure preserves scene and resource")
 	_set_probe_read_only(resource_path, true)
 	var called: Array[bool] = []
 	_check(not _apply_region_plan(root, plan, func() -> Error:

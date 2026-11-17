@@ -1,5 +1,7 @@
 # ReturnToCage Field Editor
 
+STEP 7의 실제 물리 기반 동선 분석은 [Traversal & Reachability 가이드](traversal_analysis.md)를 참고한다.
+
 Godot 4.7.2에서 프로젝트를 열고 **Project → Project Settings → Plugins**에서
 **ReturnToCage Field Editor**를 활성화한다. 저장소 기본 설정은 활성화 상태다.
 `world/adventure/sewer_region.tscn`을 열고 **2D** 화면과 왼쪽 **Field Editor** Dock을 선택한다.

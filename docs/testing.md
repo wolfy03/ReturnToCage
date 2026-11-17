@@ -445,3 +445,9 @@ at offset 0x547f2c. A sprite-pipeline process also printed PASS before a failed
 shutdown. Functional success and process success must be recorded separately.
 The editor runner now prints each child return code and continues to fail on
 abnormal exits. An editor shutdown also reported CowData modified during destruction with exit 0, which the runner correctly rejects because of the engine error. The native root cause remains unconfirmed.
+
+## Field Editor traversal verification
+
+STEP 7의 단위/격리 물리/렌더링 입력 검증은 기존 `tools/test_field_editor.py`에 포함된다.
+실제 PlayerActor 입력, 연속 경로 재생, 제한된 분석 범위와 네이티브 종료 코드 판정은
+[traversal_analysis.md](traversal_analysis.md)의 테스트·제한사항을 참고한다.

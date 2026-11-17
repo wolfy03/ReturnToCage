@@ -407,6 +407,8 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 - `tools/check_project.py` — 엔진 버전 핀 확인 → editor import → 콘텐츠 검증 →
   테스트 러너 → restart-write/read → 60프레임 부팅. 각 단계 120초 제한, 경고도 실패.
 - `tools/test_field_editor.py` — 격리된 Godot 에디터에서 배치, Undo/Redo, 저장과 런타임 사용을 검사한다.
+- `addons/rtc_field_editor/traversal_analysis.gd`, `traversal_controller.gd` — 이동 표면/방향 그래프 후보와 비동기 물리 검증을 관리한다.
+- `tests/editor/traversal_physics.gd`, `tools/analyze_traversal.py` — 실제 PlayerActor 입력을 별도 프로세스에서 검증한다. [STEP 7 가이드](traversal_analysis.md) 참조.
 - `tools/test_multiplayer_*.py` — 실제 ENet + 분리된 OS 프로세스. restart(재접속/세이브),
   worlds(개별 월드 라우팅), world_runtime(서버 런타임·전투·전리품·채집).
 - `.github/workflows/godot.yml` — push 시 같은 검사를 리눅스 Godot 4.7.2 로 실행.

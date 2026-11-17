@@ -47,11 +47,24 @@ def main():
             print(imported.stdout + imported.stderr)
             return 1
         plugin.write_text(probe_config, encoding="utf-8")
-        result = subprocess.run(command + mode + ["--quit-after", "1800", "res://tests/field_editor_probe_scene.tscn"], env=env, capture_output=True,
+        # External verification waits on wall time, not editor render frames.
+        # Keep the 90-second deadline and require the complete probe marker.
+        result = subprocess.run(command + mode + ["res://tests/field_editor_probe_scene.tscn"], env=env, capture_output=True,
                                 text=True, encoding="utf-8", errors="replace", timeout=90)
         output = result.stdout + result.stderr
         print(output)
         print(f"FIELD EDITOR PROCESS exit={result.returncode}")
+        jobs = project / ".godot" / "rtc_traversal"
+        if jobs.exists():
+            retained = Path(tempfile.mkdtemp(prefix="rtc-traversal-editor-logs-"))
+            shutil.copytree(jobs, retained, dirs_exist_ok=True)
+            print(f"TRAVERSAL EDITOR LOGS {retained}")
+            for status_path in sorted(jobs.glob("*/status.json")):
+                try:
+                    status = json.loads(status_path.read_text(encoding="utf-8"))
+                    print(f"TRAVERSAL CHILD {status_path.parent.name} state={status.get('state')} exit={status.get('return_code')}")
+                except (ValueError, OSError) as error:
+                    print(f"TRAVERSAL CHILD status unreadable: {error}")
         if result.returncode or "FIELD EDITOR PROBE PASS" not in output or "ERROR:" in output:
             return 1
         config = project / "project.godot"
@@ -98,6 +111,17 @@ def main():
             if fixture == "warn" and not any(item["stage"] == "Spawn Capacity" and item["status"] == "WARN"
                                              for item in summary["results"]):
                 return 1
+        traversal = subprocess.run(
+            [args.godot, "--headless", "--path", str(project), "res://tests/editor/traversal_tests.tscn"],
+            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=100,
+        )
+        output = traversal.stdout + traversal.stderr
+        print(output)
+        print(f"TRAVERSAL SUITE PROCESS exit={traversal.returncode}")
+        if jobs.exists():
+            shutil.copytree(jobs, retained, dirs_exist_ok=True)
+        if traversal.returncode or "TRAVERSAL TEST PASS" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
+            return 1
         if args.rendered:
             result = subprocess.run(
                 [args.godot, "--path", str(project), "--rendering-method", "gl_compatibility",

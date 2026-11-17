@@ -4,6 +4,9 @@ extends ConfirmationDialog
 const Design := preload("level_design.gd")
 const Maintenance := preload("field_maintenance.gd")
 
+signal traversal_edge_selected(index: int)
+
+var traversal: Node
 var editor: EditorPlugin
 var catalog: RefCounted
 var maintenance: RefCounted
@@ -13,6 +16,7 @@ var analyze_requested: Callable
 var report: Label
 var body: VBoxContainer
 var page: OptionButton
+var _scroll: ScrollContainer
 var _review: ConfirmationDialog
 var _pending: Callable
 
@@ -23,10 +27,16 @@ func _ready() -> void:
 	add_child(layout)
 	page = OptionButton.new()
 	layout.add_child(page)
-	for label in ["Region Connections", "Entry & Escape", "Spawn Safety & Diagnostics", "Environment", "Playtest"]:
+	for label in ["Region Connections", "Entry & Escape", "Spawn Safety & Diagnostics", "Environment", "Playtest", "Traversal & Reachability"]:
 		page.add_item(label)
+	_scroll = ScrollContainer.new()
+	_scroll.custom_minimum_size = Vector2(700, 330)
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	layout.add_child(_scroll)
 	body = VBoxContainer.new()
-	layout.add_child(body)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(body)
 	report = Label.new()
 	report.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	layout.add_child(report)
@@ -48,6 +58,7 @@ func show_region(scene: Node2D) -> void:
 	popup_centered(Vector2i(760, 490))
 
 func _refresh(index: int) -> void:
+	_scroll.scroll_vertical = 0
 	for child in body.get_children():
 		body.remove_child(child)
 		child.queue_free()
@@ -62,6 +73,7 @@ func _refresh(index: int) -> void:
 		2: _diagnostics()
 		3: _environment()
 		4: _playtest()
+		5: _traversal_page()
 
 func _connections() -> void:
 	if region == null:
@@ -221,6 +233,53 @@ func _playtest() -> void:
 	_button(body, "Copy playtest command").pressed.connect(func() -> void: DisplayServer.clipboard_set(command))
 	_label(body, "Interactive mode opens a playable game window with isolated user data. Save the scene first. Close the game window to finish.")
 	_button(body, "Copy Run Region Interactively command").pressed.connect(func() -> void: DisplayServer.clipboard_set(command + " --interactive"))
+
+func _traversal_page() -> void:
+	var row := HBoxContainer.new()
+	body.add_child(row)
+	var analyze := _button(row, "Cancel Analysis" if traversal.running else "Analyze Traversal")
+	analyze.pressed.connect(func() -> void:
+		if traversal.running:
+			traversal.cancel()
+		else:
+			traversal.analyze(root, region))
+	_button(row, "Clear Analysis").pressed.connect(traversal.clear)
+	_label(body, traversal.message)
+	var data: Dictionary = traversal.report
+	if data.is_empty():
+		return
+	_label(body, "Region %s | surfaces %d | climbs %d | edges %d | partial %s" % [region.id, data.surfaces.size(), data.climbs.size(), data.edges.size(), data.partial])
+	_label(body, "Fresh profile: speed %s, acceleration %s, deceleration %s, jump %s, gravity %s; physics %s Hz. %s" % [data.model.speed, data.model.acceleration, data.model.deceleration, data.model.jump_velocity, data.model.gravity, data.model.physics_fps, "Input checks: jump=%s, airborne reversal=%s, landing=%s" % [data.model.get("input_checks", {}).get("jump", "Not evaluated"), data.model.get("input_checks", {}).get("air_reverse", "Not evaluated"), data.model.get("input_checks", {}).get("landing", "Not evaluated")]])
+	var counts: Dictionary = {}
+	for kind in ["WALK", "JUMP", "DROP", "CLIMB_UP", "CLIMB_DOWN"]:
+		counts[kind] = data.edges.filter(func(edge: Dictionary) -> bool: return edge.kind == kind).size()
+	_label(body, "%s | verified %d | unverified %d | %s" % [counts, data.edges.filter(func(edge: Dictionary) -> bool: return edge.status == "Verified").size(), data.edges.filter(func(edge: Dictionary) -> bool: return edge.status != "Verified").size(), data.metrics])
+	var list := _list()
+	list.item_selected.connect(func(index: int) -> void:
+		traversal_edge_selected.emit(index - data.surfaces.size() if index >= data.surfaces.size() and index < data.surfaces.size() + data.edges.size() else -1))
+	for surface in data.surfaces:
+		_add_path_item(list, "%s Surface | %s | %s" % [surface.status, surface.get("access", "Not Evaluated"), surface.path], surface.body_path)
+	for edge in data.edges:
+		_add_path_item(list, "%s %s | %s → %s" % [edge.status, edge.kind, edge.from, edge.to],
+			data.surfaces[int(edge.to)].body_path, edge.reason)
+	for route in data.routes:
+		_add_path_item(list, "%s | %s slot %s → %s" % [route.status, route.start.kind, route.start.slot, route.escape], route.path)
+	for issue in data.issues:
+		_add_path_item(list, "%s | %s" % [issue.status, issue.reason], issue.path)
+	var contacts: Array[String] = []
+	for edge in data.edges:
+		for path in edge.get("contacts", []):
+			if path is String and not path in contacts:
+				contacts.append(path)
+	for path in contacts:
+		_add_path_item(list, "Observed collision source | " + path, path)
+	_label(body, "Independent slot tests use a fresh default actor without other players, enemy or hazard dynamics. Graph-connected surfaces are candidates until their whole route is replayed. Authored slots are checked independently; a runtime fallback does not make an unsafe authored slot safe.")
+	_label(body, "Verified reachability requires a continuous input-only route replay. No fall damage or platform drop-through is invented. Untested pairs and capped work remain Not Evaluated.")
+
+func _add_path_item(list: ItemList, text: String, path: String, detail := "") -> void:
+	var node := root.get_node_or_null(NodePath(path))
+	if node != null and (node == root or root.is_ancestor_of(node)):
+		_add_item(list, text, node, detail if not detail.is_empty() else text)
 
 func _review_fields(resource: ContentDefinition, plan: Dictionary, recheck: Callable) -> void:
 	if plan.has("error"):
