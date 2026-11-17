@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from process_diagnostics import run_logged, engine_error
 
 
 def main():
@@ -41,15 +42,15 @@ def main():
         # The probe starts only after the imported project is ready.
         probe_config = plugin.read_text(encoding="utf-8")
         plugin.write_text(probe_config.replace('script="probe.gd"', 'script="plugin.gd"'), encoding="utf-8")
-        imported = subprocess.run(command + ["--headless", "--import"], env=env,
+        imported = run_logged(command + ["--headless", "--import"], env=env,
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
-        if imported.returncode or "SCRIPT ERROR" in imported.stdout + imported.stderr:
+        if imported.returncode or engine_error(imported.stdout + imported.stderr):
             print(imported.stdout + imported.stderr)
             return 1
         plugin.write_text(probe_config, encoding="utf-8")
         # External verification waits on wall time, not editor render frames.
         # Keep the 90-second deadline and require the complete probe marker.
-        result = subprocess.run(command + mode + ["res://tests/field_editor_probe_scene.tscn"], env=env, capture_output=True,
+        result = run_logged(command + mode + ["res://tests/field_editor_probe_scene.tscn"], env=env, capture_output=True,
                                 text=True, encoding="utf-8", errors="replace", timeout=90)
         output = result.stdout + result.stderr
         print(output)
@@ -65,22 +66,22 @@ def main():
                     print(f"TRAVERSAL CHILD {status_path.parent.name} state={status.get('state')} exit={status.get('return_code')}")
                 except (ValueError, OSError) as error:
                     print(f"TRAVERSAL CHILD status unreadable: {error}")
-        if result.returncode or "FIELD EDITOR PROBE PASS" not in output or "ERROR:" in output:
+        if result.returncode or "FIELD EDITOR PROBE PASS" not in output or engine_error(output):
             return 1
         config = project / "project.godot"
         config.write_text(config.read_text(encoding="utf-8").replace(
             'enabled=PackedStringArray("res://addons/rtc_field_editor/plugin.cfg")',
             'enabled=PackedStringArray()'), encoding="utf-8")
-        runtime = subprocess.run([args.godot, "--headless", "--path", str(project),
+        runtime = run_logged([args.godot, "--headless", "--path", str(project),
                                   "res://tests/editor/field_runtime_probe.tscn"],
                                  env=env, capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", timeout=45)
         output = runtime.stdout + runtime.stderr
         print(output)
         print(f"AUTHORED RUNTIME PROCESS exit={runtime.returncode}")
-        if runtime.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
+        if runtime.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or engine_error(output):
             return 1
-        playtest = subprocess.run(
+        playtest = run_logged(
             [args.godot, "--headless", "--path", str(project),
              "res://tests/editor/field_runtime_probe.tscn", "--", "--region", "step5_flat"],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
@@ -88,10 +89,10 @@ def main():
         output = playtest.stdout + playtest.stderr
         print(output)
         print(f"REGION PLAYTEST PROCESS exit={playtest.returncode}")
-        if playtest.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or "isolated temporary exit" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
+        if playtest.returncode or "AUTHORED FIELD RUNTIME PASS" not in output or "isolated temporary exit" not in output or engine_error(output):
             return 1
         for fixture in ("normal", "warn", "blocked", "slot"):
-            result = subprocess.run(
+            result = run_logged(
                 [args.godot, "--headless", "--path", str(project),
                  "res://tests/editor/region_report_probe.tscn", "--", fixture],
                 env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
@@ -99,7 +100,7 @@ def main():
             output = result.stdout + result.stderr
             print(output)
             print(f"REGION REPORT PROCESS {fixture} exit={result.returncode}")
-            if result.returncode or f"REGION REPORT FIXTURE {fixture} PASS" not in output or "ERROR:" in output:
+            if result.returncode or f"REGION REPORT FIXTURE {fixture} PASS" not in output or engine_error(output):
                 return 1
             summaries = [line.removeprefix("REGION_PLAYTEST_JSON ") for line in output.splitlines()
                          if line.startswith("REGION_PLAYTEST_JSON ")]
@@ -111,7 +112,7 @@ def main():
             if fixture == "warn" and not any(item["stage"] == "Spawn Capacity" and item["status"] == "WARN"
                                              for item in summary["results"]):
                 return 1
-        traversal = subprocess.run(
+        traversal = run_logged(
             [args.godot, "--headless", "--path", str(project), "res://tests/editor/traversal_tests.tscn"],
             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=100,
         )
@@ -120,10 +121,10 @@ def main():
         print(f"TRAVERSAL SUITE PROCESS exit={traversal.returncode}")
         if jobs.exists():
             shutil.copytree(jobs, retained, dirs_exist_ok=True)
-        if traversal.returncode or "TRAVERSAL TEST PASS" not in output or "ERROR:" in output or "ObjectDB instances leaked" in output:
+        if traversal.returncode or "TRAVERSAL TEST PASS" not in output or engine_error(output):
             return 1
         if args.rendered:
-            result = subprocess.run(
+            result = run_logged(
                 [args.godot, "--path", str(project), "--rendering-method", "gl_compatibility",
                  "res://tests/editor/region_interactive.tscn", "--", "--region", "sewer_region", "--smoke"],
                 env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
@@ -131,7 +132,7 @@ def main():
             output = result.stdout + result.stderr
             print(output)
             print(f"INTERACTIVE REGION PROCESS exit={result.returncode}")
-            if result.returncode or "INTERACTIVE REGION SMOKE PASS" not in output or "ERROR:" in output:
+            if result.returncode or "INTERACTIVE REGION SMOKE PASS" not in output or engine_error(output):
                 return 1
         return 0
 

@@ -101,6 +101,22 @@ static func run(plugin: EditorPlugin) -> void:
 	dialog.hide()
 	controller.call("clear")
 	plugin.call("_check", controller.get("report").is_empty(), "clear releases editor analysis")
+	# Model the controller leaving the tree while the editor stays alive, as on
+	# plugin disable. Its child must observe cancellation without a live UI.
+	var retiring := preload("res://addons/rtc_field_editor/traversal_controller.gd").new()
+	plugin.add_child(retiring)
+	retiring.analyze(reopened, preload("res://addons/rtc_field_editor/level_design.gd").region_for(reopened, catalog))
+	var retired_job: String = retiring.get("_job")
+	var retired_pid: int = retiring.get("_pid")
+	plugin.call("_check", retiring.running, "controller teardown fixture starts owned worker")
+	retiring.queue_free()
+	await plugin.get_tree().process_frame
+	var deadline := Time.get_ticks_msec() + 7000
+	while OS.is_process_running(retired_pid) and Time.get_ticks_msec() < deadline:
+		await plugin.get_tree().create_timer(0.05).timeout
+	var retired_status: Variant = preload("res://addons/rtc_field_editor/traversal_controller.gd")._read_json(retired_job.path_join("status.json"), 65536)
+	var cancelled_cleanly: bool = retired_status is Dictionary and retired_status.get("state") == "cancelled" and retired_status.get("engine_error", true) == false and (retired_status.get("return_code") == 0 or retired_status.get("termination") == "not_started" and retired_status.get("child_pid") == null)
+	plugin.call("_check", not OS.is_process_running(retired_pid) and cancelled_cleanly, "controller exit cooperatively cancels and reaps worker without a UI callback or native crash")
 	print("TRAVERSAL EDITOR GUI ", "PASS" if plugin.get("_failures") == before_failures else "FAIL", " mode=", DisplayServer.get_name(), " input=", "injected Window mouse events" if DisplayServer.get_name() != "headless" else "button signal")
 
 static func _click(window: Window, button: Control, local := Vector2.INF) -> void:
@@ -119,6 +135,9 @@ static func _click(window: Window, button: Control, local := Vector2.INF) -> voi
 		motion.global_position = motion.position
 		Input.parse_input_event(motion)
 		await window.get_tree().process_frame
+		var hovered: Variant = window.call("gui_get_hovered_control") if window.has_method("gui_get_hovered_control") else null
+		print("TRAVERSAL GUI INPUT target=", button.get_class(), " rect=", button.get_global_rect(), " at=", at,
+			" window=", window.size, " id=", window.get_window_id(), " visible=", window.visible, " focus=", window.has_focus(), " mouse=", window.get_mouse_position(), " transform=", window.get_final_transform(), " hovered=", hovered)
 		for pressed in [true, false]:
 			var event := InputEventMouseButton.new()
 			event.window_id = window.get_window_id()

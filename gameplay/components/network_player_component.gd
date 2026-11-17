@@ -6,6 +6,8 @@ const SNAPSHOT_INTERVAL := 1.0 / 20.0
 ## lower rate on its own unreliable channel instead of riding the reliable
 ## runtime snapshot.
 const COMBAT_STATE_INTERVAL := 0.1
+## A lost final unreliable packet must not leave a mirror stale forever.
+const COMBAT_HEARTBEAT_INTERVAL := 0.5
 const INTERPOLATION_SPEED := 14.0
 const TELEPORT_DISTANCE := 500.0
 
@@ -18,6 +20,7 @@ var _snapshot_sequence: int = 0
 var _snapshot_accumulator: float = 0.0
 var _combat_sequence: int = 0
 var _combat_accumulator: float = 0.0
+var _combat_since_send: float = 0.0
 var _has_sent_combat: bool = false
 var _last_sent_stamina: float = 0.0
 var _last_sent_max_stamina: float = 0.0
@@ -105,20 +108,17 @@ func server_snapshot_tick(delta: float) -> void:
 
 ## Throttled combat mirror, driven from the same authoritative tick as the
 ## transform snapshot. A packet is only produced when the authoritative pair
-## actually moved, so a player standing at full stamina sends nothing.
+## actually moved, or the bounded heartbeat is due. The same sequenced channel
+## repairs loss even when the authoritative value has stopped changing.
 func combat_snapshot_tick(delta: float) -> bool:
 	if actor == null or not NetworkManager.is_multiplayer_active() or not NetworkManager.is_server():
 		return false
 	if not NetworkManager.is_peer_replication_ready(actor.peer_id):
 		return false
-	_combat_accumulator += delta
-	if _combat_accumulator < COMBAT_STATE_INTERVAL:
-		return false
-	_combat_accumulator = fmod(_combat_accumulator, COMBAT_STATE_INTERVAL)
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
 	if runtime == null or runtime.combat == null:
 		return false
-	if not combat_state_changed(runtime.combat.stamina, runtime.combat.max_stamina):
+	if not combat_snapshot_due(delta, runtime.combat.stamina, runtime.combat.max_stamina):
 		return false
 	_combat_sequence += 1
 	var snapshot := PlayerCombatRuntimeSnapshot.new()
@@ -130,12 +130,21 @@ func combat_snapshot_tick(delta: float) -> bool:
 	mark_combat_sent(runtime.combat.stamina, runtime.combat.max_stamina)
 	return true
 
+func combat_snapshot_due(delta: float, stamina: float, maximum: float) -> bool:
+	_combat_accumulator += delta
+	_combat_since_send += delta
+	if _combat_accumulator < COMBAT_STATE_INTERVAL:
+		return false
+	_combat_accumulator = fmod(_combat_accumulator, COMBAT_STATE_INTERVAL)
+	return combat_state_changed(stamina, maximum) or _combat_since_send >= COMBAT_HEARTBEAT_INTERVAL
+
 func combat_state_changed(stamina: float, maximum: float) -> bool:
 	return not _has_sent_combat \
 		or not is_equal_approx(stamina, _last_sent_stamina) \
 		or not is_equal_approx(maximum, _last_sent_max_stamina)
 
 func mark_combat_sent(stamina: float, maximum: float) -> void:
+	_combat_since_send = 0.0
 	_has_sent_combat = true
 	_last_sent_stamina = stamina
 	_last_sent_max_stamina = maximum

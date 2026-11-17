@@ -234,6 +234,7 @@ func _run_host_scenario() -> void:
 		return
 	var spent: Dictionary = _confirmation("REPORT_STAMINA_SPENT", b_peer)
 	var mirrored_low := float(spent.get("stamina", -1.0))
+	print("STAMINA TRACE host peer=%d world=%s server=%.6f max=%.6f mirrored_low=%.6f" % [b_peer, GameSession.get_peer_world_id(b_peer), b_combat.stamina, b_combat.max_stamina, mirrored_low])
 	if mirrored_low < 0.0 or mirrored_low >= b_combat.max_stamina \
 			or not is_equal_approx(float(spent.get("max_stamina", -1.0)), b_combat.max_stamina):
 		_fail("client stamina mirror diverged from the server: %s vs max %.2f" % [spent, b_combat.max_stamina])
@@ -800,9 +801,11 @@ func _command(command: String, value: int) -> void:
 			if not await _wait_until(func() -> bool:
 				return is_equal_approx(GameSession.get_player_stamina(peer_id), GameSession.get_player_max_stamina(peer_id))
 			, 6.0):
-				_fail("client stamina mirror did not converge back to the server maximum")
+				var runtime := GameSession.get_player_runtime(peer_id)
+				_fail("client stamina mirror did not converge back to the server maximum: peer=%d world=%s stamina=%.6f max=%.6f runtime=%s" % [peer_id, GameSession.get_peer_world_id(peer_id), GameSession.get_player_stamina(peer_id), GameSession.get_player_max_stamina(peer_id), runtime])
 				return
 			_confirm.rpc_id(1, command, {"stamina": GameSession.get_player_stamina(peer_id)})
+			print("STAMINA TRACE client peer=%d world=%s mirror=%.6f max=%.6f time_ms=%d" % [peer_id, GameSession.get_peer_world_id(peer_id), GameSession.get_player_stamina(peer_id), GameSession.get_player_max_stamina(peer_id), Time.get_ticks_msec()])
 		"REPORT_EMPTY_LOOT":
 			if not await _wait_until(func() -> bool:
 				var manager := _loot_manager()

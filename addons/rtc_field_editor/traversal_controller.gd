@@ -60,33 +60,37 @@ func analyze(scene: Node2D, definition: RegionDefinition) -> void:
 		return
 	var packed := PackedScene.new()
 	if packed.pack(root) != OK or ResourceSaver.save(packed, _job.path_join("scene.tscn")) != OK:
-		message = "Cannot serialize the analysis snapshot."
-		changed.emit()
+		_initialization_failed("Cannot serialize the analysis snapshot.")
 		return
 	# The editor may have @tool-generated child resource state that is normalized
 	# by .tscn serialization. Compare the worker with a cache-free snapshot, and
 	# separately compare the current live scene with its original fingerprint.
 	var snapshot_packed := ResourceLoader.load(_job.path_join("scene.tscn"), "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
 	if snapshot_packed == null:
-		message = "Cannot reload serialized snapshot."
-		changed.emit()
+		_initialization_failed("Cannot reload serialized snapshot.")
 		return
 	var snapshot := snapshot_packed.instantiate() as Node2D
+	if snapshot == null:
+		_initialization_failed("Serialized snapshot has no Node2D root.")
+		return
 	_snapshot_expected = Analysis.fingerprint(snapshot, region)
 	snapshot.free()
 	var file := FileAccess.open(_job.path_join("request.json"), FileAccess.WRITE)
 	if file == null:
-		message = "Cannot write traversal request."
-		changed.emit()
+		_initialization_failed("Cannot write traversal request.")
 		return
 	file.store_string(JSON.stringify({"region": String(region.id), "token": token, "fingerprint": _snapshot_expected,
 		"scene": _job.path_join("scene.tscn"), "output": _job.path_join("result.json"), "fps": report.model.physics_fps}))
+	var write_error := file.get_error()
 	file.close()
+	if write_error != OK:
+		_initialization_failed("Cannot finish writing traversal request.")
+		return
 	_pid = OS.create_process("python", PackedStringArray([ProjectSettings.globalize_path("res://tools/analyze_traversal.py"),
-		"--godot", OS.get_executable_path(), "--request", ProjectSettings.globalize_path(_job.path_join("request.json"))]), false)
+		"--godot", OS.get_executable_path(), "--request", ProjectSettings.globalize_path(_job.path_join("request.json")),
+		"--owner-pid", str(OS.get_process_id())]), false)
 	if _pid < 0:
-		message = "Could not launch Python. Verify Python is on PATH."
-		changed.emit()
+		_initialization_failed("Could not launch Python. Verify Python is on PATH.")
 		return
 	_watch(root)
 	_cancelled = false
@@ -95,7 +99,27 @@ func analyze(scene: Node2D, definition: RegionDefinition) -> void:
 	set_process(true)
 	changed.emit()
 
+func _initialization_failed(reason: String) -> void:
+	# No child was launched. Only remove this reserved token directory, never
+	# recurse through arbitrary content or an executing/linked job.
+	if not running and _pid < 0 and _job.get_base_dir() == BASE and _job.get_file().length() == 32 and _job.get_file().is_valid_hex_number(false) and Recovery.safe_path(_job):
+		var directory := DirAccess.open(_job)
+		if directory != null:
+			for name in directory.get_files():
+				if name in ["scene.tscn", "request.json", "scene.tscn.uid"] and Recovery.safe_path(_job.path_join(name)):
+					DirAccess.remove_absolute(_job.path_join(name))
+			DirAccess.remove_absolute(_job)
+	_job = ""
+	report = {}
+	root = null
+	region = null
+	message = reason
+	changed.emit()
+
 func _watch(scene: Node2D) -> void:
+	if region != null:
+		region.changed.connect(invalidate)
+		_resources.append(region)
 	for node in [scene] + scene.find_children("*", "Node2D", true, false):
 		if node is Node2D:
 			node.item_rect_changed.connect(invalidate)
@@ -166,6 +190,7 @@ func clear() -> void:
 	_resources.clear()
 	if not running:
 		set_process(false)
+		_pid = -1
 	report = {}
 	root = null
 	region = null
@@ -198,6 +223,7 @@ func _process(delta: float) -> void:
 		return
 	var status: Variant = _read_json(path, 65536)
 	if not status is Dictionary:
+		cancel()
 		running = false
 		report = {}
 		set_process(false)
@@ -338,5 +364,7 @@ static func _number(value: Variant) -> bool:
 	return (value is float or value is int) and is_finite(float(value))
 
 func _exit_tree() -> void:
+	# A retiring controller must not refresh UI that is also leaving the tree.
+	set_block_signals(true)
 	cancel()
 	clear()

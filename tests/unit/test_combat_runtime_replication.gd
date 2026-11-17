@@ -14,6 +14,7 @@ func run(t: Node) -> void:
 	_test_combat_snapshot_payload(t)
 	_test_sequence_ordering(t)
 	_test_packet_suppression(t)
+	_test_lost_final_packet(t)
 	await _test_client_mirror_and_isolation(t)
 	await _test_hud_reads_runtime_mirror(t)
 
@@ -122,13 +123,40 @@ func _test_packet_suppression(t: Node) -> void:
 		if component.combat_state_changed(100.0, 100.0):
 			sends += 1
 			component.mark_combat_sent(100.0, 100.0)
-	t.assert_equal(sends, 0, "a player resting at full stamina produces no combat packets")
+	t.assert_equal(sends, 0, "unchanged stamina is not dirty between periodic heartbeats")
 	t.assert_true(component.combat_state_changed(92.0, 100.0), "spending stamina makes the combat state dirty")
 	component.mark_combat_sent(92.0, 100.0)
 	t.assert_true(not component.combat_state_changed(92.0, 100.0), "an unchanged pair stays suppressed after sending")
 	t.assert_true(component.combat_state_changed(92.0, 120.0), "a max_stamina modifier makes the combat state dirty")
 	t.assert_true(NetworkPlayerComponent.COMBAT_STATE_INTERVAL >= 0.1, "the combat mirror is throttled well below the transform rate")
 	t.assert_true(NetworkPlayerComponent.COMBAT_STATE_INTERVAL > NetworkPlayerComponent.SNAPSHOT_INTERVAL, "stamina replicates less often than position")
+	component.free()
+
+func _test_lost_final_packet(t: Node) -> void:
+	var component := NetworkPlayerComponent.new()
+	var mirror := CombatRuntimeState.new()
+	mirror.reset(100.0)
+	mirror.apply_values(99.0, 100.0)
+	component.mark_combat_sent(99.0, 100.0)
+	t.assert_true(component.combat_snapshot_due(0.1, 100.0, 100.0), "final regeneration sample is sent")
+	component.mark_combat_sent(100.0, 100.0)
+	# Deliberately drop the final packet. The server stays at max; the receiver
+	# remains at 99 until a newer periodic sample traverses the same channel.
+	t.assert_equal(mirror.stamina, 99.0, "dropping the final sample really leaves a stale mirror")
+	var packets := 0
+	for _tick in range(10):
+		if component.combat_snapshot_due(0.1, 100.0, 100.0):
+			packets += 1
+			component.mark_combat_sent(100.0, 100.0)
+			var sample := PlayerCombatRuntimeSnapshot.new()
+			sample.peer_id = 42
+			sample.stamina = 100.0
+			sample.max_stamina = 100.0
+			sample.sequence = 2 + packets
+			t.assert_true(sample.is_valid_after(2), "repair has a newer sequence than the dropped final sample")
+			mirror.apply_values(sample.stamina, sample.max_stamina)
+	t.assert_true(packets > 0 and packets <= 2, "unchanged values repair loss at the heartbeat rate, not every frame")
+	t.assert_equal(mirror.stamina, 100.0, "lost terminal sample converges without any new server mutation")
 	component.free()
 
 func _test_client_mirror_and_isolation(t: Node) -> void:

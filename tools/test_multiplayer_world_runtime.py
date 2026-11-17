@@ -5,6 +5,8 @@ import socket
 import subprocess
 import tempfile
 import time
+import json
+from contextlib import nullcontext
 from pathlib import Path
 
 
@@ -42,7 +44,10 @@ def main() -> int:
         f"--port={port}", f"--players={args.players}",
     ]
     processes: list[tuple[str, subprocess.Popen[bytes], Path, object]] = []
-    with tempfile.TemporaryDirectory(prefix="return_to_cage_world_runtime_") as temporary:
+    # Keep failures and successful runs alike; later runs never overwrite them.
+    with nullcontext(tempfile.mkdtemp(prefix="return_to_cage_world_runtime_")) as temporary:
+        print(f"WORLD RUNTIME LOGS {temporary}", flush=True)
+        records = []
         try:
             def launch(name: str, role: str, index: int) -> None:
                 log_path = Path(temporary) / f"{name}.log"
@@ -54,6 +59,8 @@ def main() -> int:
                     stderr=subprocess.STDOUT,
                 )
                 processes.append((name, process, log_path, log_file))
+                records.append({"name": name, "pid": process.pid, "command": process.args,
+                                "started": time.time(), "forced": False})
 
             launch("host", "host", 0)
             wait_for_marker(processes[0][1], processes[0][2], "WORLD RUNTIME HOST LISTENING", 10.0)
@@ -67,6 +74,7 @@ def main() -> int:
             failures: list[str] = []
             for name, process, log_path, log_file in processes:
                 if process.poll() is None:
+                    next(record for record in records if record["name"] == name)["forced"] = True
                     process.kill()
                     failures.append(f"{name} timed out")
                 process.wait(timeout=5)
@@ -74,7 +82,7 @@ def main() -> int:
                 output = log_path.read_text(encoding="utf-8", errors="replace")
                 print(f"[{name}]\n{output}")
                 if process.returncode != 0 or "WORLD RUNTIME PROBE PASS" not in output \
-                        or "ERROR:" in output or "SCRIPT ERROR:" in output:
+                        or any(marker in output for marker in ("ERROR:", "SCRIPT ERROR:", "CowData", "ObjectDB instances leaked", "resources still in use")):
                     failures.append(f"{name} failed with exit code {process.returncode}")
             if failures:
                 raise RuntimeError("; ".join(failures))
@@ -87,12 +95,17 @@ def main() -> int:
                 print(f"[{name}]\n{log_path.read_text(encoding='utf-8', errors='replace')}")
             return 1
         finally:
-            for _, process, _, log_file in processes:
+            for name, process, _, log_file in processes:
                 if process.poll() is None:
+                    next(record for record in records if record["name"] == name)["forced"] = True
                     process.kill()
                     process.wait(timeout=5)
                 if not log_file.closed:
                     log_file.close()
+                record = next(record for record in records if record["name"] == name)
+                record.update(return_code=process.returncode, wall_seconds=round(time.time() - record["started"], 3))
+                print(f"WORLD RUNTIME EXIT {name} pid={process.pid} code={process.returncode} forced={record['forced']}")
+            (Path(temporary) / "processes.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

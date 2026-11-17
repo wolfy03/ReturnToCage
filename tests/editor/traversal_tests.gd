@@ -18,6 +18,7 @@ func _run() -> void:
 	var region := ContentRegistry.get_definition(&"sewer_region") as RegionDefinition
 	var root := (load(region.scene_path) as PackedScene).instantiate() as Node2D
 	var data := Analysis.extract(root, region)
+	_lifecycle(root, region)
 	check(data.surfaces.size() >= 5, "extract sewer rectangular terrain and landing")
 	check(data.climbs.size() == 2, "extract ladder and rope")
 	check(data.starts.size() == 8, "fresh and transition starts for all four slots")
@@ -53,6 +54,7 @@ func _run() -> void:
 	# complete sewer input routes again with a translated Scene root here.
 	root.position = Vector2(70, 32)
 	var result := _verify(root, region)
+	await _cancel_live(root, region)
 	root.free()
 	if not result.is_empty():
 		check(result.model.input_checks.jump and result.model.input_checks.air_reverse and result.model.input_checks.landing, "actual jump, airborne reversal and real floor landing")
@@ -91,7 +93,45 @@ func _run() -> void:
 	print("TRAVERSAL TEST ", "PASS" if failures == 0 else "FAIL", " assertions=", assertions)
 	get_tree().quit(0 if failures == 0 else 1)
 
-func _verify(root: Node2D, region: RegionDefinition) -> Dictionary:
+func _lifecycle(root: Node2D, region: RegionDefinition) -> void:
+	var controller := Controller.new()
+	var folder := "res://.godot/rtc_traversal/" + Crypto.new().generate_random_bytes(16).hex_encode()
+	DirAccess.make_dir_recursive_absolute(folder)
+	for name in ["scene.tscn", "request.json"]:
+		var file := FileAccess.open(folder.path_join(name), FileAccess.WRITE)
+		file.store_string("failed initialization fixture")
+		file.close()
+	controller.set("_job", folder)
+	controller.call("_initialization_failed", "injected save failure")
+	check(not DirAccess.dir_exists_absolute(folder), "pre-launch failure removes only the reserved job files")
+	check(controller.report.is_empty() and controller.get("_job") == "", "pre-launch failure clears candidate and job state")
+	var original := FileAccess.get_sha256(region.scene_path)
+	controller.set("_job", region.scene_path.get_base_dir())
+	controller.call("_initialization_failed", "invalid cleanup target")
+	check(FileAccess.get_sha256(region.scene_path) == original, "cleanup rejects a content directory outside the reserved job")
+	controller.region = region
+	controller.report = {"candidate": true}
+	controller.call("_watch", root)
+	region.emit_changed()
+	check(controller.report.is_empty(), "RegionDefinition changes invalidate live evidence without a file scan")
+	controller.clear()
+	check(not region.changed.is_connected(controller.invalidate), "clear disconnects RegionDefinition lifecycle signal")
+	DirAccess.make_dir_absolute(folder)
+	var status := FileAccess.open(folder.path_join("status.json"), FileAccess.WRITE)
+	status.store_string("{broken status")
+	status.close()
+	controller.set("_job", folder)
+	controller.running = true
+	controller.report = {"candidate": true}
+	controller.call("_process", 0.2)
+	check(not controller.running and controller.report.is_empty(), "malformed process status cannot import candidate evidence")
+	check(FileAccess.file_exists(folder.path_join("cancel")), "malformed status still signals a potentially running worker to stop")
+	DirAccess.remove_absolute(folder.path_join("cancel"))
+	DirAccess.remove_absolute(folder.path_join("status.json"))
+	DirAccess.remove_absolute(folder)
+	controller.free()
+
+func _prepare_job(root: Node2D, region: RegionDefinition) -> Dictionary:
 	var token := Crypto.new().generate_random_bytes(16).hex_encode()
 	var folder := "res://.godot/rtc_traversal/" + token
 	DirAccess.make_dir_recursive_absolute(folder)
@@ -107,6 +147,12 @@ func _verify(root: Node2D, region: RegionDefinition) -> Dictionary:
 	var file := FileAccess.open(folder.path_join("request.json"), FileAccess.WRITE)
 	file.store_string(JSON.stringify(request))
 	file.close()
+	return {"folder": folder, "hash": hash}
+
+func _verify(root: Node2D, region: RegionDefinition) -> Dictionary:
+	var job := _prepare_job(root, region)
+	var folder: String = job.folder
+	var hash: String = job.hash
 	var output: Array = []
 	var code := OS.execute("python", PackedStringArray([ProjectSettings.globalize_path("res://tools/analyze_traversal.py"),
 		"--godot", OS.get_executable_path(), "--request", ProjectSettings.globalize_path(folder.path_join("request.json"))]), output, true)
@@ -120,6 +166,30 @@ func _verify(root: Node2D, region: RegionDefinition) -> Dictionary:
 		print("TRAVERSAL BENCHMARK ", JSON.stringify(result.metrics))
 		return result
 	return {}
+
+func _cancel_live(root: Node2D, region: RegionDefinition) -> void:
+	var job := _prepare_job(root, region)
+	var folder: String = job.folder
+	var pid := OS.create_process("python", PackedStringArray([ProjectSettings.globalize_path("res://tools/analyze_traversal.py"),
+		"--godot", OS.get_executable_path(), "--request", ProjectSettings.globalize_path(folder.path_join("request.json"))]), false)
+	var deadline := Time.get_ticks_msec() + 5000
+	var live := false
+	while pid > 0 and OS.is_process_running(pid) and Time.get_ticks_msec() < deadline:
+		var log := folder.path_join("godot.log")
+		if FileAccess.file_exists(log) and FileAccess.get_file_as_string(log).contains("TRAVERSAL INPUT EVIDENCE"):
+			live = true
+			break
+		await get_tree().create_timer(0.02).timeout
+	check(live, "cancellation fixture observed a live Actor performing physics inputs")
+	var cancel := FileAccess.open(folder.path_join("cancel"), FileAccess.WRITE)
+	cancel.close()
+	deadline = Time.get_ticks_msec() + 7000
+	while pid > 0 and OS.is_process_running(pid) and Time.get_ticks_msec() < deadline:
+		await get_tree().create_timer(0.02).timeout
+	var status: Variant = Controller._read_json(folder.path_join("status.json"), 65536)
+	check(not OS.is_process_running(pid) and status is Dictionary and status.get("state") == "cancelled" and status.get("return_code") == 0 and status.get("termination") == "none" and status.get("engine_error", true) == false, "live verifier cooperatively cleans its world and exits normally without forced termination or engine errors")
+	check(not FileAccess.file_exists(folder.path_join("result.json")), "cancelled live verification does not publish partially verified results")
+	print("TRAVERSAL LIVE CANCEL ", status)
 
 func _platform(root: Node2D, name: String, at: Vector2, size: Vector2, one_way := false) -> FieldPlatform:
 	var platform := (load("res://world/adventure/field_platform.tscn") as PackedScene).instantiate() as FieldPlatform

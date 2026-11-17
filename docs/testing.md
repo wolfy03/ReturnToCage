@@ -451,3 +451,7 @@ abnormal exits. An editor shutdown also reported CowData modified during destruc
 STEP 7의 단위/격리 물리/렌더링 입력 검증은 기존 `tools/test_field_editor.py`에 포함된다.
 실제 PlayerActor 입력, 연속 경로 재생, 제한된 분석 범위와 네이티브 종료 코드 판정은
 [traversal_analysis.md](traversal_analysis.md)의 테스트·제한사항을 참고한다.
+
+STEP 7 안정화의 반복 실행, Windows dump 조사와 프로세스 소유권/취소 검사는
+[step7_stability.md](step7_stability.md)를 참고한다. `tools/repeat_stability.py`는 성공 마커와
+정상 종료를 따로 기록하고 실패 로그도 보존한다. 네이티브 종료 문제는 미해결이다.

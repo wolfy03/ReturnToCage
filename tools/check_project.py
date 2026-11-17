@@ -5,15 +5,16 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from process_diagnostics import run_logged
 
 ROOT = Path(__file__).resolve().parents[1]
-ERRORS = re.compile(r"SCRIPT ERROR:|(?:^|\n)(?:ERROR|WARNING):|Parse Error|orphan|ObjectDB instances leaked|resources still in use", re.I)
+ERRORS = re.compile(r"SCRIPT ERROR:|(?:^|\n)(?:ERROR|WARNING):|Parse Error|orphan|CowData|ObjectDB instances leaked|resources still in use", re.I)
 
 
 def run(executable, arguments, expected=None):
     command = [executable, "--headless", "--path", str(ROOT), *arguments]
     print("RUN", subprocess.list2cmdline(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    result = run_logged(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     output = result.stdout + result.stderr
     print(output, flush=True)
     if result.returncode or ERRORS.search(output) or (expected and expected not in output):

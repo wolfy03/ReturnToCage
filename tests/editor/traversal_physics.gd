@@ -31,6 +31,7 @@ var root_scene: Node2D
 var spawn_support: float
 var spawn_radius: float
 var spawn_mask: int
+var _request_folder := ""
 
 func _ready() -> void:
 	if automatically_run:
@@ -49,8 +50,13 @@ func verify_snapshot(request_path: String) -> void:
 		get_tree().quit(1)
 		return
 	var folder := request_path.get_base_dir()
+	_request_folder = folder
 	if request.scene != folder.path_join("scene.tscn") or request.output != folder.path_join("result.json"):
 		get_tree().quit(1)
+		return
+	if FileAccess.file_exists(folder.path_join("cancel")):
+		print("TRAVERSAL PHYSICS CANCELLED before world initialization")
+		get_tree().quit()
 		return
 	var definition := ContentRegistry.get_definition(StringName(request.region)) as RegionDefinition
 	var packed := ResourceLoader.load(request.scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
@@ -208,12 +214,26 @@ func verify_snapshot(request_path: String) -> void:
 		"surfaces": report.surfaces.size(), "edges": report.edges.size(),
 		"verified_edges": report.edges.filter(func(edge: Dictionary) -> bool: return edge.status == "Verified").size()}
 	_release()
+	actor.movement.exit_climb()
 	actor.queue_free()
 	await get_tree().process_frame
+	actor = null
+	interactions.clear()
+	targets.clear()
 	world.queue_free()
 	await get_tree().physics_frame
 	await get_tree().process_frame
+	world = null
+	root_scene = null
+	if FileAccess.file_exists(_request_folder.path_join("cancel")):
+		print("TRAVERSAL PHYSICS CANCELLED after world cleanup")
+		get_tree().quit()
+		return
 	var file := FileAccess.open(request.output + ".tmp", FileAccess.WRITE)
+	if file == null:
+		push_error("Cannot write traversal result: " + request.output)
+		get_tree().quit(1)
+		return
 	file.store_string(JSON.stringify(report))
 	file.close()
 	if DirAccess.rename_absolute(request.output + ".tmp", request.output) != OK:
@@ -244,7 +264,7 @@ func _sanitize(node: Node) -> void:
 			child.free()
 
 func _limited() -> bool:
-	budget_hit = budget_hit or attempts >= TRIAL_LIMIT or Time.get_ticks_msec() - started >= WALL_BUDGET_MS
+	budget_hit = budget_hit or attempts >= TRIAL_LIMIT or Time.get_ticks_msec() - started >= WALL_BUDGET_MS or FileAccess.file_exists(_request_folder.path_join("cancel"))
 	return budget_hit
 
 func _release() -> void:

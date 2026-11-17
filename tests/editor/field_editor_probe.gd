@@ -287,6 +287,8 @@ func _save_probe_resource(resource: Resource, path: String) -> Error:
 		error = ResourceSaver.set_uid(stage, uid)
 	if error == OK:
 		error = Maintenance.replace_file(stage, path)
+	if error != OK:
+		print("PROBE SAVE ERROR ", error_string(error), " stage=", stage, " destination=", path)
 	Maintenance.discard(stage)
 	return error
 
