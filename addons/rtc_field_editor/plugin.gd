@@ -1108,6 +1108,8 @@ func _show_region_recovery() -> void:
 	var options := OptionButton.new()
 	body.add_child(options)
 	var details := Label.new()
+	# Give the wrapping label a width before the dialog computes its popup size.
+	details.custom_minimum_size.x = 600
 	details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.add_child(details)
 	var records := Wizard.Recovery.journal_paths()

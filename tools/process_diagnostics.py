@@ -10,10 +10,10 @@ LOGS = Path(tempfile.mkdtemp(prefix="rtc-process-logs-"))
 _counter = 0
 
 
-def run_logged(command, **kwargs):
+def run_logged(command, *, artifact_prefix=None, **kwargs):
     global _counter
     _counter += 1
-    prefix = LOGS / f"{_counter:03}"
+    prefix = artifact_prefix or LOGS / f"{_counter:03}"
     for option in ("capture_output", "text", "encoding", "errors"):
         kwargs.pop(option, None)
     timeout = kwargs.pop("timeout", None)

@@ -24,11 +24,13 @@ def run(executable, arguments, expected=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--godot", default=os.environ.get("GODOT", "godot"))
+    parser.add_argument("--expected-version", help="Test an explicit upgrade candidate without changing the project pin")
     args = parser.parse_args()
     version = (ROOT / ".godot-version").read_text().strip()
+    expected_version = args.expected_version or version
     actual = subprocess.check_output([args.godot, "--version"], text=True, timeout=15).strip()
-    if not actual.startswith(version + "."):
-        raise RuntimeError(f"Expected Godot {version}; found {actual}")
+    if not actual.startswith(expected_version + ".") and not (args.expected_version and actual == expected_version):
+        raise RuntimeError(f"Expected Godot {expected_version}; found {actual}")
     feature = ".".join(version.split(".")[:2])
     if f'"{feature}"' not in (ROOT / "project.godot").read_text(encoding="utf-8"):
         raise RuntimeError("Engine pin does not match project.godot features")

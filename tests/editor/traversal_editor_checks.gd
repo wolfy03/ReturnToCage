@@ -145,7 +145,9 @@ static func _click(window: Window, button: Control, local := Vector2.INF) -> voi
 		print("TRAVERSAL GUI INPUT target=", button.get_class(), " rect=", button.get_global_rect(), " at=", at,
 			" window=", window.size, " id=", window.get_window_id(), " position=", window.position,
 			" embedded=", window.is_embedded(), " scale=", window.content_scale_factor,
-			" visible=", window.visible, " focus=", window.has_focus(), " mouse=", window.get_mouse_position(), " transform=", window.get_final_transform(), " hovered=", hovered)
+			" visible=", window.visible, " focus=", window.has_focus(), " mouse=", window.get_mouse_position(),
+			" native_hover_id=", DisplayServer.get_window_at_screen_position(DisplayServer.mouse_get_position()),
+			" transform=", window.get_final_transform(), " hovered=", hovered)
 		if hovered == null or (hovered != button and not button.is_ancestor_of(hovered)):
 			push_error("Traversal GUI input did not reach the target Control; no callback fallback is permitted.")
 			return
