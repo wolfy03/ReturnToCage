@@ -11,7 +11,9 @@ import subprocess
 import sys
 import tempfile
 
+from development_environment import git, worktree
 from process_diagnostics import run_logged
+from validate_project import failure_category
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = re.compile(r"(?P<release>\d+\.\d+(?:\.\d+)?\.(?:beta\d+|rc\d+|stable))\.official\.(?P<build>[0-9a-f]{7,40})")
@@ -70,6 +72,8 @@ def run_case(name, index, command, markers, timeout, output, engine, env):
     record["pass"] = (issue is None and record.get("return_code") == 0 and record.get("timeout") is False
                       and record.get("remaining_children") == 0 and not record["missing_markers"]
                       and not record["native_crash"] and not record["engine_error"])
+    record["status"] = "PASS" if record["pass"] else "FAIL"
+    record["failure_category"] = None if record["pass"] else failure_category(log, record)
     print(f"{name} {index}: {'PASS' if record['pass'] else 'FAIL'} "
           f"exit={record.get('return_code')} children={record.get('remaining_children')}", flush=True)
     return record
@@ -88,6 +92,11 @@ def main():
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("the full upgrade gate requires Windows")
+    if Path(git(Path.cwd(), "rev-parse", "--show-toplevel")).resolve() != ROOT:
+        parser.error("run this tool from its own worktree")
+    branch, is_upgrade, pinned, _ = worktree(ROOT)
+    if not is_upgrade:
+        parser.error(f"the engine-upgrade gate is unavailable in worktree branch {branch or '(detached)'}")
     worktrees = subprocess.check_output(["git", "worktree", "list", "--porcelain", "-z"], cwd=ROOT)
     primary = Path(worktrees.split(b"\0", 1)[0].decode("utf-8").removeprefix("worktree ")).resolve()
     if ROOT == primary:
@@ -99,6 +108,8 @@ def main():
     match = VERSION.fullmatch(actual)
     if not match or args.expected_version not in (actual, match["release"]):
         parser.error(f"expected official Godot {args.expected_version}; found {actual}")
+    if pinned not in (actual, match["release"]):
+        parser.error(f"expected worktree engine {pinned}; found {actual}")
     engine = {"path": str(godot), "version": actual, "build": match["build"], "sha256": sha256(godot)}
     if godot.stem.endswith("_console"):
         executable = godot.with_name(godot.stem.removesuffix("_console") + godot.suffix)
