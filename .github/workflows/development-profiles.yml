@@ -1,0 +1,121 @@
+name: Development profiles
+on:
+  push:
+    branches: ['feature/field-editor', 'feature/field-editor-**', 'upgrade/godot-4.8', 'upgrade/godot-4.8-**']
+  pull_request:
+    branches: ['feature/field-editor']
+permissions:
+  contents: read
+jobs:
+  field-editor:
+    if: github.event_name == 'pull_request' || startsWith(github.ref_name, 'feature/field-editor')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Windows editor
+        run: |
+          $version = (Get-Content .godot-version).Trim()
+          $name = "Godot_v$version-stable_win64"
+          $directory = Join-Path $env:RUNNER_TEMP godot-editor
+          $zip = Join-Path $env:RUNNER_TEMP editor.zip
+          curl.exe --fail --location --retry 3 "https://github.com/godotengine/godot-builds/releases/download/$version-stable/$name.exe.zip" --output $zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive $zip $directory
+          "GODOT=$directory/${name}_console.exe" >> $env:GITHUB_ENV
+      - name: Select Field Runtime coverage
+        id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          $baseCommit = $env:BASE
+          if (!$baseCommit -or $baseCommit -match '^0+$') {
+            $baseCommit = git merge-base origin/master HEAD
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $paths = @(git diff --name-only $baseCommit HEAD)
+          $runtime = ($LASTEXITCODE -ne 0) -or
+            [bool]($paths -match '^(autoload/|world/|gameplay/|data/|core/|persistence/|tests/(integration|unit)/|project\.godot$)')
+          "runtime=$($runtime.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          git switch -c feature/field-editor-ci
+      - name: Editor and Traversal
+        run: python tools/validate_project.py --profile editor --godot "$env:GODOT" --artifacts "$env:RUNNER_TEMP/rtc-results"
+      - name: Profile runner contract
+        if: always()
+        run: python -m unittest discover -s tools/tests -p test_development_profiles.py
+      - name: Field Runtime with 2 and 3 peers
+        if: always() && steps.scope.outputs.runtime == 'true'
+        run: python tools/validate_project.py --profile runtime --players 2 --players 3 --godot "$env:GODOT" --artifacts "$env:RUNNER_TEMP/rtc-results"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Field-Editor-validation-logs
+          path: |
+            ${{ runner.temp }}/rtc-results/**/*.json
+            ${{ runner.temp }}/rtc-results/**/*.log
+            !${{ runner.temp }}/rtc-results/**/user/**
+  engine-upgrade:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'upgrade/godot-4.8')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          path: source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare independent upgrade worktree
+        run: |
+          git -C source worktree add -b "$env:GITHUB_REF_NAME" ../candidate "$env:GITHUB_SHA"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Install pinned editor and Windows templates
+        working-directory: candidate
+        run: |
+          $expected = (Get-Content .godot-upgrade-version).Trim()
+          if ($expected -notmatch '^(?<version>\d+\.\d+(?:\.\d+)?)\.(?<flavor>beta\d+|rc\d+|stable)\.official\.[0-9a-f]+$') {
+            throw "Invalid official engine pin: $expected"
+          }
+          $version = $Matches.version
+          $flavor = $Matches.flavor
+          $zip = Join-Path $env:RUNNER_TEMP candidate-editor.zip
+          $directory = Join-Path $env:RUNNER_TEMP candidate-engine
+          $templates = Join-Path $env:RUNNER_TEMP candidate-templates
+          $templateZip = Join-Path $env:RUNNER_TEMP candidate-templates.zip
+          curl.exe --fail --location --retry 3 "https://downloads.godotengine.org/?flavor=$flavor&platform=windows.64&slug=win64.exe.zip&version=$version" --output $zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Expand-Archive $zip $directory
+          curl.exe --fail --location --retry 3 "https://downloads.godotengine.org/?flavor=$flavor&platform=templates&slug=export_templates.tpz&version=$version" --output $templateZip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -c "import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); [z.extract(n, sys.argv[2]) for n in z.namelist() if n == 'templates/version.txt' or (n.startswith('templates/windows_') and '_x86_64' in n and n.endswith('.exe'))]" $templateZip $templates
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $godot = Get-ChildItem $directory -Filter '*_console.exe' | Select-Object -First 1
+          if (!$godot) { throw 'Missing Godot console executable' }
+          "GODOT=$($godot.FullName)" >> $env:GITHUB_ENV
+          "RTC_TEMPLATES=$templates/templates" >> $env:GITHUB_ENV
+      - name: Full engine upgrade gate
+        working-directory: candidate
+        run: python tools/validate_project.py --profile engine-upgrade --godot "$env:GODOT" --templates "$env:RTC_TEMPLATES" --artifacts "$env:RUNNER_TEMP/rtc-results"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Engine-upgrade-validation-logs
+          path: |
+            ${{ runner.temp }}/rtc-results/**/*.json
+            ${{ runner.temp }}/rtc-results/**/*.log
+            !${{ runner.temp }}/rtc-results/**/user/**
+            !${{ runner.temp }}/rtc-results/**/appdata/**
+            !${{ runner.temp }}/rtc-results/**/localappdata/**
