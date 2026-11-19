@@ -1,5 +1,9 @@
 name: Godot validation
-on: [push, pull_request]
+on:
+  push:
+    branches-ignore: ['feature/field-editor', 'feature/field-editor-**', 'upgrade/godot-4.8', 'upgrade/godot-4.8-**']
+  pull_request:
+    branches: [master]
 permissions:
   contents: read
 jobs:
