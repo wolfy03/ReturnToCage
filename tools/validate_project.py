@@ -98,26 +98,34 @@ def run_case(spec, output, env):
                   nested_logs=[path.strip() for path in LOG_PATH.findall(log)] +
                   re.findall(r"^PROCESS LOG (.+?) pid=", log, re.M))
     if name == "engine-upgrade":
+        result["status"] = "FAIL"
         gate_reports = list(output.glob("rtc-upgrade-*/results.json"))
         if len(gate_reports) == 1:
             gate_path = gate_reports[0]
             gate = json.loads(gate_path.read_text(encoding="utf-8"))
             result["gate_report"] = str(gate_path)
-            result["gate_decision"] = gate["decision"]
-            if gate["decision"] == "BLOCKED":
-                result["status"] = "BLOCKED"
-            elif gate["decision"] == "NOT VERIFIED" and "Decision: NOT VERIFIED" in log:
-                result["status"] = "NOT VERIFIED"
-            elif gate["decision"] != "APPROVED":
-                result["status"] = "FAIL"
-            if gate.get("native_crash_runs"):
-                category = "ENGINE_NATIVE_FAILURE"
-            result["gate_failure_categories"] = sorted({
+            decision = gate["decision"]
+            result["gate_decision"] = decision
+            categories = {
                 row["failure_category"] for row in gate["runs"] if row.get("failure_category")
-            })
-            if category == "ENGINE_NATIVE_FAILURE" or issue or result.get("remaining_children") != 0:
-                result["status"] = "BLOCKED"
-            result["failure_category"] = None if result["status"] in ("PASS", "NOT VERIFIED") else category
+            }
+            if gate.get("native_crash_runs"):
+                categories.add("ENGINE_NATIVE_FAILURE")
+            result["gate_failure_categories"] = sorted(categories)
+            if "ENGINE_NATIVE_FAILURE" in categories:
+                category = "ENGINE_NATIVE_FAILURE"
+            elif category == "UNKNOWN" and len(categories) == 1:
+                category = next(iter(categories))
+            if (issue is None and result.get("timeout") is False and result.get("remaining_children") == 0
+                    and f"Decision: {decision}" in log.splitlines()):
+                if decision == "BLOCKED" and result.get("return_code") == 1:
+                    result["status"] = "BLOCKED"
+                elif decision == "APPROVED" and clean and not categories:
+                    result["status"] = "PASS"
+                elif (decision == "NOT VERIFIED" and result.get("return_code") == 1
+                      and not categories and category != "ENGINE_NATIVE_FAILURE" and not ERRORS.search(log)):
+                    result["status"] = "NOT VERIFIED"
+        result["failure_category"] = None if result["status"] in ("PASS", "NOT VERIFIED") else category
     print(f"{name} {result['status']} exit={result.get('return_code')} "
           f"category={result['failure_category'] or '-'}", flush=True)
     return result
@@ -167,6 +175,7 @@ def main():
         parent.mkdir(parents=True, exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix=args.profile + "-", dir=parent))
         env = user_environment(output / "user")
+        env["RTC_VALIDATION_LOG_DIR"] = str(output / "children")
         commands = profile_commands(args.profile, engine["path"], args.players, engine["version"],
                                     templates, args.upgrade_case, output)
         result = {"status": "NOT VERIFIED", "profile": args.profile, "branch": branch, "worktree": str(ROOT),

@@ -27,6 +27,8 @@
 
 ## 증거
 
+첫 호스팅 Windows 전체 게이트는 `BLOCKED`였다. Physics, PlayerActor, Traversal 및 2·3인 ENet은 각각 10/10, Headless는 3/3이었고 Release Export와 EXE Boot도 통과했다. Rendered는 세 번 모두 움직임과 클릭을 목표 Control에 전달해 GUI 성공 마커를 출력했으나, 호스트 WASAPI 초기화 오류로 후속 검사를 진행하지 못했다. 이 실행에서 beta 4 접근 위반은 관찰되지 않았다. 이후 CI에는 오디오 출력 장치가 필요 없는 `Dummy` 드라이버를 명시했다. 이전 로컬 입력 실패, 리소스 오류, 3인 이동 실패, WER 크래시는 별도 증거로 보존한다. [전체 CI 실행](https://github.com/wolfy03/ReturnToCage/actions/runs/44490052474)
+
 - 분리 검증 로그는 상위 `validation/branch-separation-20261119-172757`의 `engine-upgrade-e9wuodt2`와 `beta4-coff-stack-recheck.log`에 있다.
 - 원본 WER 덤프는 같은 상위 `validation/dumps/Godot_v4.8-beta4_win64.exe.8664.dmp`에 있다. 디버그 바이너리와 덤프는 Git 외부에 보관한다.
 - 새 beta 4 프로필의 전체 게이트는 `upgrade/godot-4.8` CI에서 실행한다. 로컬 parse/headless 확인은 `NOT VERIFIED`로 기록했다.
