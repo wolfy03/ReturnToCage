@@ -1,19 +1,31 @@
 """Captured subprocesses with durable logs and scoped descendant cleanup."""
 import json
+import os
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 from traversal_process import ProcessScope
 
-LOGS = Path(tempfile.mkdtemp(prefix="rtc-process-logs-"))
+_logs = None
 _counter = 0
 
 
+def new_log_directory(prefix):
+    parent = os.environ.get("RTC_VALIDATION_LOG_DIR")
+    if parent:
+        Path(parent).mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
+
+
 def run_logged(command, *, artifact_prefix=None, **kwargs):
-    global _counter
+    global _counter, _logs
     _counter += 1
-    prefix = artifact_prefix or LOGS / f"{_counter:03}"
+    if artifact_prefix is None:
+        if _logs is None:
+            _logs = new_log_directory("rtc-process-logs-")
+        artifact_prefix = _logs / f"{_counter:03}"
+    prefix = artifact_prefix
     for option in ("capture_output", "text", "encoding", "errors"):
         kwargs.pop(option, None)
     timeout = kwargs.pop("timeout", None)

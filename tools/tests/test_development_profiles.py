@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import sys
@@ -51,6 +52,28 @@ class DevelopmentProfileTests(unittest.TestCase):
             self.assertEqual((passed["status"], passed["return_code"]), ("PASS", 0))
             self.assertIn("success-marker", Path(failed["stdout"]).read_text())
             self.assertNotEqual(failed["stdout"], passed["stdout"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows owned-process tracking")
+    def test_upgrade_requires_the_final_report_and_expected_exit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, (decision, code, marker, expected) in enumerate((
+                (None, 0, None, "FAIL"),
+                ("APPROVED", 0, "APPROVED", "PASS"),
+                ("APPROVED", 0, None, "FAIL"),
+                ("NOT VERIFIED", 1, "NOT VERIFIED", "NOT VERIFIED"),
+                ("NOT VERIFIED", 7, "NOT VERIFIED", "FAIL"),
+                ("BLOCKED", 1, "BLOCKED", "BLOCKED"),
+            )):
+                with self.subTest(decision=decision, code=code, marker=marker):
+                    output = Path(temporary) / str(index)
+                    output.mkdir()
+                    if decision is not None:
+                        gate = output / "rtc-upgrade-fixture"
+                        gate.mkdir()
+                        (gate / "results.json").write_text(json.dumps({"decision": decision, "runs": []}))
+                    command = [sys.executable, "-c", f"print({f'Decision: {marker}'!r}); raise SystemExit({code})"]
+                    result = run_case(("engine-upgrade", command, (), 10), output, os.environ.copy())
+                    self.assertEqual(result["status"], expected)
 
 
 if __name__ == "__main__":

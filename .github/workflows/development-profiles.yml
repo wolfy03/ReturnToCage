@@ -47,6 +47,8 @@ jobs:
           "runtime=$($runtime.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           git switch -c feature/field-editor-ci
       - name: Editor and Traversal
+        env:
+          RTC_VALIDATION_AUDIO_DRIVER: Dummy
         run: python tools/validate_project.py --profile editor --godot "$env:GODOT" --artifacts "$env:RUNNER_TEMP/rtc-results"
       - name: Profile runner contract
         if: always()
@@ -108,6 +110,8 @@ jobs:
           "RTC_TEMPLATES=$templates/templates" >> $env:GITHUB_ENV
       - name: Full engine upgrade gate
         working-directory: candidate
+        env:
+          RTC_VALIDATION_AUDIO_DRIVER: Dummy
         run: python tools/validate_project.py --profile engine-upgrade --godot "$env:GODOT" --templates "$env:RTC_TEMPLATES" --artifacts "$env:RUNNER_TEMP/rtc-results"
       - uses: actions/upload-artifact@v4
         if: always()
