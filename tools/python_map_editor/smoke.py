@@ -21,7 +21,7 @@ def schedule_smoke(app, report):
     report.parent.mkdir(parents=True, exist_ok=True)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     with tempfile.TemporaryDirectory(prefix="rtc-map-smoke-") as temporary:
-        folder = Path(temporary)
+        folder = Path(temporary).resolve()
         settings = QSettings(str(folder / "settings.ini"), QSettings.Format.IniFormat)
         window = MainWindow(settings)
         window.show()
@@ -57,8 +57,7 @@ def schedule_smoke(app, report):
                     if not isinstance(dialog, QFileDialog):
                         app.exit(1)
                         return
-                    dialog.setDirectory(str(path.parent))
-                    dialog.selectFile(path.name)
+                    dialog.selectFile(str(path))
                     answer_message(answer)
                     box = dialog.findChild(QDialogButtonBox)
                     QTest.mouseClick(box.button(QDialogButtonBox.StandardButton.Save), Qt.MouseButton.LeftButton)
@@ -132,12 +131,16 @@ def schedule_smoke(app, report):
                 require(not window._save_as_path(target) and window.path == path
                         and settings.value("file/folder") == str(path.parent)
                         and read_document(target)[0] == external, "Save As rejects a change during confirmation")
-                require(choose_save_as(target, QMessageBox.StandardButton.Yes) and window.path == target
-                        and settings.value("file/folder") == str(other)
-                        and read_document(target)[0].region_id == "fixture01",
-                        "Save As explicit overwrite updates the path and recent folder")
+                saved_as = choose_save_as(target, QMessageBox.StandardButton.Yes)
+                recent = Path(settings.value("file/folder"))
+                target_id = read_document(target)[0].region_id
+                require(saved_as and window.path.samefile(target) and recent.samefile(other) and target_id == "fixture01",
+                        "Save As explicit overwrite updates the path and recent folder "
+                        f"(saved={saved_as}, path={window.path}, recent={recent}, target ID={target_id})")
 
                 window.height_field.setValue(940)
+                window.activateWindow()
+                view.setFocus()
                 QTest.keyClick(view, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
                 require(not window.dirty and read_document(target)[0].height == 940,
                         "Save shortcut updates the open revision")
