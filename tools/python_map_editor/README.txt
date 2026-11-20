@@ -9,8 +9,13 @@ F: 맵 영역에 맞추기
 Ctrl+N / Ctrl+O / Ctrl+S: 새 맵 / 열기 / 저장
 
 .rtcmap은 독립 편집용 JSON 초안입니다. 지역 ID, 표시 이름, 크기를 저장합니다.
+다른 이름으로 저장에서 기존 파일을 선택하면 덮어쓰기 확인이 열립니다.
+다른 편집기에서 저장 중이거나 확인 후 대상이 바뀌면 다시 열거나 다른 경로를 선택하세요.
 이 단계는 Godot 없이 실행됩니다. 객체 편집, Godot Scene/Resource 변환,
 런타임 플레이테스트 및 실제 물리 검증은 다음 단계의 범위입니다.
+
+공식 소스와 빌드 워크플로: https://github.com/wolfy03/ReturnToCage
+소스 위치: tools/python_map_editor/ (feature/python-map-editor)
 
 동봉 구성요소의 라이선스는 licenses 폴더를 참조하세요.
 Qt 6.11.3 및 Qt for Python 6.11.3 소스와 구성요소 안내:

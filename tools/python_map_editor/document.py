@@ -1,11 +1,14 @@
 """Versioned editing data and atomic draft I/O, independent of Qt and Godot."""
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 
 SUFFIX = ".rtcmap"
@@ -73,9 +76,51 @@ def decode(payload):
 
 
 def _draft_path(path):
-    if path.suffix.lower() != SUFFIX or path.is_symlink():
+    path = path.absolute()
+    if path.suffix.lower() != SUFFIX:
         raise DocumentError("choose a regular .rtcmap file")
+    for parent in path.parents:
+        if parent.is_symlink() or parent.is_junction():
+            raise DocumentError("draft directory must not be a symbolic link or junction")
+    _file_state(path)
     return path
+
+
+def _file_state(path):
+    try:
+        state = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(state.st_mode) or (
+            getattr(state, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+        raise DocumentError("choose a regular file without symbolic links or reparse points")
+    return state
+
+
+@contextmanager
+def _save_lock(path):
+    # Keep a stable sidecar so concurrent processes always lock the same file,
+    # even across replacement of the document. Closing the handle releases it.
+    sidecar = path.with_name(f".{path.name}.lock")
+    _file_state(sidecar)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    with os.fdopen(os.open(sidecar, flags, 0o600), "r+b") as stream:
+        if _file_state(sidecar) is None or not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise DocumentError("invalid document lock file")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise DocumentConflict("another editor is saving this file") from error
+            raise
+        yield
 
 
 def _read(path):
@@ -91,10 +136,24 @@ def read_document(path):
     return decode(payload), hashlib.sha256(payload).hexdigest()
 
 
+def document_revision(path):
+    """Snapshot existing bytes before showing an overwrite confirmation."""
+    try:
+        return hashlib.sha256(_read(_draft_path(path))).hexdigest()
+    except FileNotFoundError:
+        return None
+
+
 def write_document(path, document, expected_hash=None):
     """Publish a new file exclusively or replace the previously opened revision."""
     path = _draft_path(path)
     payload = encode(document)
+    with _save_lock(path):
+        _publish_document(path, payload, expected_hash)
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _publish_document(path, payload, expected_hash):
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".rtcmap-", delete=False) as stream:
         temporary = Path(stream.name)
         try:
@@ -111,14 +170,13 @@ def write_document(path, document, expected_hash=None):
                 except FileExistsError as error:
                     raise DocumentConflict("a file already exists at this location") from error
             else:
-                try:
-                    actual_hash = hashlib.sha256(_read(_draft_path(path))).hexdigest()
-                except FileNotFoundError:
-                    actual_hash = None
+                state = _file_state(_draft_path(path))
+                if state is not None and not state.st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+                    raise PermissionError(f"document is read-only: {path}")
+                actual_hash = document_revision(path)
                 if actual_hash != expected_hash:
                     raise DocumentConflict("the file changed on disk")
                 os.replace(temporary, path)
         finally:
             stream.close()
             temporary.unlink(missing_ok=True)
-    return hashlib.sha256(payload).hexdigest()

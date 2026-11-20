@@ -4,6 +4,7 @@
 | --- | --- | --- | --- |
 | `master` | `return-to-cage` | 4.7.2 stable | 검증된 게임 및 Field Editor 변경 통합 |
 | `feature/field-editor` | `return-to-cage-editor` | 4.7.2 stable | Field Editor STEP 7 개선과 이후 편집 기능 개발 |
+| `feature/python-map-editor` | `return-to-cage-python-editor` | GUI·EXE는 독립 실행 · 향후 연동은 4.7.2 | ReturnToCage 내부 Python Map Editor |
 | `upgrade/godot-4.8` | `return-to-cage-godot48` | 4.8 beta 4 | 엔진 호환성 및 전체 회귀 검증 |
 | `test/godot-4.8-beta4` | `return-to-cage-4.8` | 4.8 beta 4 | 최초 beta 4 검증과 커밋 `3c029cd`의 보존 |
 
@@ -37,6 +38,8 @@ python tools/launch_editor.py --worktree ../return-to-cage
 런처와 러너는 절대 실행 경로, `--version`, 공식 빌드 식별자, SHA-256을 출력하며 PATH에서 Godot를 검색하지 않는다. master와 Field Editor는 `.godot-version`의 안정 버전을 사용한다. 업그레이드는 별도 `.godot-upgrade-version`의 후보 빌드를 확인한다. 이 파일은 검증 입력으로 쓰이며 프로젝트의 공용 엔진 pin은 승인 후에 바꾼다.
 
 ## 검증 프로필과 CI
+
+독립 Python Map Editor의 소스는 이 저장소의 `tools/python_map_editor/`에 있다. Python 테스트, Qt GUI, Windows EXE 빌드와 실행은 경로 기반 [PY 전용 CI](../.github/workflows/python-map-editor.yml)에서 검사한다. 기능 브랜치 푸시는 이 CI를 사용한다. 향후 Godot 통합 코드가 함께 변경된 경우 master 대상 PR의 게임 검증과 관련 4.7.2 통합 검사를 실행한다. 설치·빌드·기존 별도 저장소의 이전 사항은 [Python Map Editor 가이드](python_map_editor.md)를 참조한다.
 
 | 프로필 | 명령 | 검사 범위 |
 | --- | --- | --- |

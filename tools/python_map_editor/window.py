@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 
 from document import (
     MAX_EXTENT, MIN_EXTENT, SUFFIX, DocumentConflict, DocumentError,
-    MapDocument, read_document, write_document,
+    MapDocument, document_revision, read_document, write_document,
 )
 from strings import tr
 from viewport import MapView
@@ -244,6 +244,7 @@ class MainWindow(QMainWindow):
                 self._report_error(error)
 
     def open_document(self, path):
+        path = path.absolute()
         draft, disk_hash = read_document(path)
         self._install_draft(draft, path, disk_hash)
         self.settings.setValue("file/folder", str(path.parent))
@@ -252,7 +253,7 @@ class MainWindow(QMainWindow):
     def save(self):
         if self.path is None:
             return self.save_as()
-        return self._save_with_feedback(self.path)
+        return self._save_with_feedback(self.path, self.disk_hash)
 
     def save_as(self):
         dialog = QFileDialog(self, tr("save_as"), self._last_folder(), tr("document_filter"))
@@ -261,24 +262,40 @@ class MainWindow(QMainWindow):
         dialog.setOption(QFileDialog.Option.DontConfirmOverwrite)
         dialog.selectFile(f"{self.draft.region_id}{SUFFIX}")
         if dialog.exec():
-            return self._save_with_feedback(Path(dialog.selectedFiles()[0]), create_only=True)
+            return self._save_as_path(Path(dialog.selectedFiles()[0]))
         return False
+
+    def _save_as_path(self, path):
+        path = path.absolute()
+        try:
+            revision = document_revision(path)
+            if path == self.path and revision != self.disk_hash:
+                raise DocumentConflict("the open file changed on disk")
+        except (OSError, DocumentError) as error:
+            self._report_error(error)
+            return False
+        if revision is not None:
+            yes, no = QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No
+            if QMessageBox.question(self, tr("overwrite_title"), tr("overwrite_body").format(path=path),
+                                    yes | no, no) != yes:
+                return False
+        return self._save_with_feedback(path, revision)
 
     def _last_folder(self):
         return self.settings.value("file/folder", str(Path.home()), type=str)
 
-    def _save_with_feedback(self, path, create_only=False):
+    def _save_with_feedback(self, path, expected_hash):
         try:
-            self.save_document(path, create_only=create_only)
+            self.save_document(path, expected_hash)
         except (OSError, DocumentError) as error:
             self._report_error(error)
             return False
         return True
 
-    def save_document(self, path, create_only=False):
+    def save_document(self, path, expected_hash=None):
+        path = path.absolute()
         draft = MapDocument(*self._values())
-        expected = self.disk_hash if not create_only and path == self.path else None
-        disk_hash = write_document(path, draft, expected)
+        disk_hash = write_document(path, draft, expected_hash)
         self.draft, self.path, self.disk_hash = draft, path, disk_hash
         self.settings.setValue("file/folder", str(path.parent))
         self._fields_changed()

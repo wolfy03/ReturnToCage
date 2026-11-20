@@ -57,7 +57,7 @@ def main():
     if args.document:
         def open_initial_document():
             try:
-                window.open_document(args.document.resolve())
+                window.open_document(args.document)
             except (OSError, DocumentError) as error:
                 logging.warning("Could not open draft: %s", error)
                 window._report_error(error)

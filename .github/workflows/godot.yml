@@ -1,9 +1,17 @@
 name: Godot validation
 on:
   push:
-    branches-ignore: ['feature/field-editor', 'feature/field-editor-**', 'upgrade/godot-4.8', 'upgrade/godot-4.8-**']
+    branches-ignore: ['feature/field-editor', 'feature/field-editor-**', 'feature/python-map-editor', 'upgrade/godot-4.8', 'upgrade/godot-4.8-**']
+    paths-ignore:
+      - 'tools/python_map_editor/**'
+      - 'docs/python_map_editor.md'
+      - '.github/workflows/python-map-editor.yml'
   pull_request:
     branches: [master]
+    paths-ignore:
+      - 'tools/python_map_editor/**'
+      - 'docs/python_map_editor.md'
+      - '.github/workflows/python-map-editor.yml'
 permissions:
   contents: read
 jobs:

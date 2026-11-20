@@ -1,5 +1,7 @@
 # ReturnToCage Map Editor
 
+Python Map Editor는 [wolfy03/ReturnToCage](https://github.com/wolfy03/ReturnToCage)의 내부 프로젝트다. 소스 위치는 `tools/python_map_editor/`, 작업 브랜치는 `feature/python-map-editor`다. 설치·빌드·배포와 개발 이력을 이 저장소에서 관리한다.
+
 PY-STEP 1은 독립 2D 문서 편집 기반이다. 한국어 다크 테마, 맵 구조와 속성 도크, 영역 경계와 32px 격자, Godot과 같은 X 오른쪽·Y 아래쪽 좌표, 커서 기준 줌, 가운데 버튼 드래그 및 이동 모드, 화면 맞춤을 제공한다. 문서의 지역 ID, 표시 이름, 너비와 높이를 바꾸고 `.rtcmap` JSON으로 저장하거나 다시 열 수 있다. 창 배치, 도크, 격자 표시, 마지막 파일 폴더를 사용자 설정에 저장한다. Godot 실행이나 프로젝트 선택 없이 사용할 수 있다.
 
 ## 기존 STEP 1~7과 이전 계획
@@ -51,7 +53,15 @@ $editorPython = "./build/python-map-editor/venv/Scripts/python.exe"
 & $editorPython tools/python_map_editor/verify_windows_package.py "<빌드 ZIP>" --artifacts build/python-map-editor/qa
 ```
 
-`.rtcmap` 초안은 임시 파일에서 게시하며 외부 변경 시 해당 저장을 거부한다. 동시 쓰기의 완전한 트랜잭션과 백업 저널은 PY-STEP 3에서 구현한다.
+`.rtcmap` 초안은 같은 폴더에 임시 파일을 쓰고 flush 후 원자적으로 게시한다. 작성자는 대상 옆의 `.<filename>.lock` 파일에 OS 잠금을 잡고 저장 직전에 문서 revision을 다시 확인한다. 빈 잠금 파일은 다음 작성자와 같은 파일을 사용하기 위해 남기며 OS 잠금은 프로세스 종료 시 해제된다. 이 규약을 사용하는 작성자 간에 협력적으로 보호한다. 외부 프로그램이 잠금을 사용하지 않으면 마지막 해시 확인과 교체 사이의 좁은 구간에 파일을 바꿀 수 있다. 정상 예외 경로는 임시 파일을 정리하며, 프로세스를 강제로 종료하면 임시 파일이 남을 수 있다. 백업 저널은 PY-STEP 3의 범위다.
+
+다른 이름으로 저장은 선택한 기존 파일의 revision을 기록하고 덮어쓰기 확인을 표시한다. 사용자가 승인한 후 대상이 이동·삭제·수정되면 저장을 차단한다. 실패와 취소 시 열린 문서 경로와 최근 폴더가 유지된다. 읽기 전용 파일 및 심볼릭 링크·정션 경로를 보호한다.
+
+GitHub Actions의 **Python Map Editor** 워크플로는 경로 변경을 감지해 문서 테스트, 150% Qt 스모크, OneDir 빌드와 압축을 푼 EXE 실행을 수행한다. 통과한 ZIP과 검증 로그는 Actions Artifacts에서 받을 수 있다. 게임 배포와 Python 에디터 배포는 별도 자산이다.
+
+## 별도 저장소 이전
+
+이전 공개 저장소는 [wolfy03/ReturnToCageMapEditor](https://github.com/wolfy03/ReturnToCageMapEditor)다. 사용을 중단하고 이 저장소의 기능 브랜치에서 계속 개발한다. 해당 저장소의 `main` 끝 `6b7ad1bda7be312641f69e8b8b7ee7be804b96c8`에는 단일 초기 커밋이 있다. 에디터 소스, 테스트, 문서, 빌드와 라이선스 파일은 원본 `fd59f9f`와 동일했다. 별도 저장소 전용 README의 실행 절차를 이 문서에 반영했고, 그 초기 커밋은 기능 브랜치 이력에 보존한다. 별도 저장소에서 태그, Releases, Actions 워크플로·아티팩트, Issues, Pull Requests, LFS 항목은 발견되지 않았다. 전체 Git 번들, 메타데이터, 기존 로컬 배포 ZIP과 SHA-256 기록은 상위 `validation/python-map-editor-consolidation`에 있다. 별도 저장소 삭제는 승인 대기 상태다.
 
 ## PY-STEP 1 검증 기록
 
