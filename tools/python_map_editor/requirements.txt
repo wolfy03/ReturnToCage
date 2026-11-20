@@ -1,0 +1,15 @@
+PySide6-Essentials==6.11.3
+PyInstaller==6.22.3
+pytest==9.2.0
+# Transitive dependencies for the Windows x64 / Python 3.14.5 build.
+altgraph==0.17.5
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pefile==2024.8.26
+pluggy==1.7.0
+Pygments==2.21.0
+pyinstaller-hooks-contrib==2026.10
+pywin32-ctypes==0.2.3
+setuptools==84.2.1
+shiboken6==6.11.3

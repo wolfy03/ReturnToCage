@@ -1,0 +1,301 @@
+"""Main window for creating, viewing and reopening standalone map drafts."""
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import (
+    QDockWidget, QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow,
+    QMessageBox, QPlainTextEdit, QSpinBox, QToolBar, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget,
+)
+
+from document import (
+    MAX_EXTENT, MIN_EXTENT, SUFFIX, DocumentConflict, DocumentError,
+    MapDocument, read_document, write_document,
+)
+from strings import tr
+from viewport import MapView
+
+APP_NAME = "ReturnToCage Map Editor"
+UI_STYLE = """
+QMainWindow { background: #20252f; }
+QMenuBar, QToolBar, QStatusBar { background: #242a35; }
+QToolBar { border: none; border-bottom: 1px solid #394253; padding: 5px; spacing: 5px; }
+QToolBar QToolButton { padding: 6px 10px; border-radius: 4px; }
+QToolBar QToolButton:hover, QToolBar QToolButton:checked { background: #354756; }
+QDockWidget::title { background: #2b3443; padding: 8px 10px; }
+QTreeWidget, QPlainTextEdit { background: #1e2430; border: 1px solid #373f4e; }
+QTreeWidget::item { padding: 4px 0; }
+QLineEdit, QSpinBox { background: #181e28; border: 1px solid #465367; border-radius: 3px; padding: 5px; }
+QLineEdit:focus, QSpinBox:focus { border-color: #78cebc; }
+QLabel#panelTitle { color: #9de1d0; font-weight: bold; }
+QLabel#viewportHint { color: #bec9d7; padding: 3px 10px; }
+QGraphicsView#mapViewport { border: 1px solid #384052; }
+"""
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+        self.draft = MapDocument(display_name=tr("default_name"))
+        self.path = None
+        self.disk_hash = None
+        self.resize(1200, 780)
+        self.setMinimumSize(760, 510)
+        self.setStyleSheet(UI_STYLE)
+        self.view = MapView()
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(4, 4, 4, 3)
+        layout.addWidget(self.view, 1)
+        hint = QLabel(tr("quick_help"))
+        hint.setObjectName("viewportHint")
+        layout.addWidget(hint)
+        self.setCentralWidget(content)
+        self._build_docks()
+        self._build_actions()
+        self.region_status = QLabel()
+        self.cursor_status = QLabel("x 0 · y 0")
+        self.zoom_status = QLabel()
+        self.draft_status = QLabel()
+        for label in (self.region_status, self.cursor_status, self.zoom_status, self.draft_status):
+            label.setContentsMargins(8, 0, 8, 0)
+            self.statusBar().addPermanentWidget(label)
+        self.view.zoom_changed.connect(self._show_zoom)
+        self.view.world_position_changed.connect(
+            lambda point: self.cursor_status.setText(f"x {point.x():.0f} · y {point.y():.0f}")
+        )
+        if geometry := settings.value("window/geometry"):
+            self.restoreGeometry(geometry)
+        if state := settings.value("window/docks"):
+            self.restoreState(state)
+        self._install_draft(self.draft)
+        QTimer.singleShot(0, self.view.fit_map)
+
+    def _dock(self, key, widget, area):
+        dock = QDockWidget(tr(key), self)
+        dock.setObjectName(f"{key}Dock")
+        dock.setWidget(widget)
+        self.addDockWidget(area, dock)
+        return dock
+
+    def _build_docks(self):
+        self.structure = QTreeWidget()
+        self.structure.setHeaderHidden(True)
+        self.tree_region = QTreeWidgetItem(self.structure)
+        self.tree_bounds = QTreeWidgetItem(self.tree_region, [tr("bounds")])
+        self.tree_region.setExpanded(True)
+        self.structure.itemDoubleClicked.connect(lambda *_: self.view.fit_map())
+        self.structure_dock = self._dock("structure", self.structure, Qt.DockWidgetArea.LeftDockWidgetArea)
+
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 12)
+        heading = QLabel(tr("document"))
+        heading.setObjectName("panelTitle")
+        layout.addWidget(heading)
+        form = QFormLayout()
+        self.region_id = QLineEdit()
+        self.region_id.setMaxLength(64)
+        self.region_id.setPlaceholderText("new_region")
+        self.display_name = QLineEdit()
+        self.display_name.setMaxLength(120)
+        self.width_field = QSpinBox()
+        self.height_field = QSpinBox()
+        for spin in (self.width_field, self.height_field):
+            spin.setRange(MIN_EXTENT, MAX_EXTENT)
+            spin.setSuffix(tr("unit"))
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(self._fields_changed)
+        for label, field in (("region_id", self.region_id), ("display_name", self.display_name),
+                             ("width", self.width_field), ("height", self.height_field)):
+            form.addRow(tr(label), field)
+        self.region_id.textChanged.connect(self._fields_changed)
+        self.display_name.textChanged.connect(self._fields_changed)
+        layout.addLayout(form)
+        layout.addStretch()
+        self.inspector_dock = self._dock("inspector", panel, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumBlockCount(200)
+        self.output_dock = self._dock("output", self.output, Qt.DockWidgetArea.BottomDockWidgetArea)
+        self.resizeDocks([self.structure_dock, self.inspector_dock], [195, 268], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.output_dock], [95], Qt.Orientation.Vertical)
+
+    def _action(self, key, callback, shortcut=None, checked=None):
+        action = QAction(tr(key), self)
+        if shortcut:
+            action.setShortcut(shortcut)
+        if checked is None:
+            action.triggered.connect(callback)
+        else:
+            action.setCheckable(True)
+            action.setChecked(checked)
+            action.toggled.connect(callback)
+        return action
+
+    def _build_actions(self):
+        toolbar = QToolBar(tr("document"))
+        toolbar.setObjectName("editorToolbar")
+        self.addToolBar(toolbar)
+        file_menu = self.menuBar().addMenu(tr("file"))
+        for key, callback, shortcut, on_toolbar in (
+            ("new", self.new_document, QKeySequence.StandardKey.New, True),
+            ("open", self.open_dialog, QKeySequence.StandardKey.Open, True),
+            ("save", self.save, QKeySequence.StandardKey.Save, True),
+            ("save_as", self.save_as, QKeySequence.StandardKey.SaveAs, False),
+            ("exit", self.close, QKeySequence.StandardKey.Quit, False),
+        ):
+            action = self._action(key, callback, shortcut)
+            file_menu.addAction(action)
+            if on_toolbar:
+                toolbar.addAction(action)
+        toolbar.addSeparator()
+        view_menu = self.menuBar().addMenu(tr("view"))
+        for key, callback, shortcut in (
+            ("fit", self.view.fit_map, "F"),
+            ("actual", lambda: self.view.set_zoom(1.0), "1"),
+            ("zoom_in", lambda: self.view.set_zoom(self.view.zoom * 1.15), "Ctrl+="),
+            ("zoom_out", lambda: self.view.set_zoom(self.view.zoom / 1.15), "Ctrl+-"),
+        ):
+            action = self._action(key, callback, shortcut)
+            view_menu.addAction(action)
+            if key in ("fit", "actual"):
+                toolbar.addAction(action)
+        toolbar.addSeparator()
+        grid = self._action("grid", self.view.set_grid_visible, "G",
+                            checked=self.settings.value("view/grid", True, type=bool))
+        self.view.set_grid_visible(grid.isChecked())
+        toolbar.addAction(grid)
+        view_menu.addAction(grid)
+        pan = self._action("pan", self.view.set_pan_mode, "H", checked=False)
+        pan.setToolTip(tr("pan_tip"))
+        toolbar.addAction(pan)
+        view_menu.addAction(pan)
+        view_menu.addSeparator()
+        for dock in (self.structure_dock, self.inspector_dock, self.output_dock):
+            view_menu.addAction(dock.toggleViewAction())
+        help_menu = self.menuBar().addMenu(tr("help"))
+        help_menu.addAction(self._action("about", lambda: QMessageBox.information(self, APP_NAME, tr("about_body"))))
+
+    def _values(self):
+        return self.region_id.text(), self.display_name.text(), self.width_field.value(), self.height_field.value()
+
+    @property
+    def dirty(self):
+        draft = self.draft
+        return self._values() != (draft.region_id, draft.display_name, draft.width, draft.height)
+
+    def _fields_changed(self, _=None):
+        region_id, name, width, height = self._values()
+        if (width, height) != (self.view.map_scene.bounds.width(), self.view.map_scene.bounds.height()):
+            self.view.set_bounds(width, height)
+        label = name or region_id or tr("default_name")
+        self.tree_region.setText(0, label)
+        self.region_status.setText(f"{tr('region')} · {label}")
+        self.draft_status.setText(tr("dirty") if self.dirty else tr("saved" if self.path else "draft"))
+        self.setWindowTitle(f"{label}{' *' if self.dirty else ''} — {APP_NAME}")
+
+    def _show_zoom(self, value):
+        grid = self.view.map_scene.grid_size
+        self.zoom_status.setText(f"{value:.0%}   ·   {tr('grid')} {grid}")
+
+    def _install_draft(self, document, path=None, disk_hash=None):
+        self.draft, self.path, self.disk_hash = document, path, disk_hash
+        for widget, setter, value in (
+            (self.region_id, self.region_id.setText, document.region_id),
+            (self.display_name, self.display_name.setText, document.display_name),
+            (self.width_field, self.width_field.setValue, document.width),
+            (self.height_field, self.height_field.setValue, document.height),
+        ):
+            blocked = widget.blockSignals(True)
+            setter(value)
+            widget.blockSignals(blocked)
+        self._fields_changed()
+        self.view.fit_map()
+
+    def _confirm_changes(self):
+        if not self.dirty:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("confirm_title"))
+        box.setText(tr("confirm_body"))
+        save = box.addButton(tr("save"), QMessageBox.ButtonRole.AcceptRole)
+        discard = box.addButton(tr("discard"), QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(tr("cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(save)
+        box.setEscapeButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        return clicked == discard or (clicked == save and self.save())
+
+    def new_document(self):
+        if self._confirm_changes():
+            self._install_draft(MapDocument(display_name=tr("default_name")))
+
+    def open_dialog(self):
+        name, _ = QFileDialog.getOpenFileName(self, tr("open"), self._last_folder(), tr("document_filter"))
+        if name and self._confirm_changes():
+            try:
+                self.open_document(Path(name))
+            except (OSError, DocumentError) as error:
+                self._report_error(error)
+
+    def open_document(self, path):
+        draft, disk_hash = read_document(path)
+        self._install_draft(draft, path, disk_hash)
+        self.settings.setValue("file/folder", str(path.parent))
+        self.output.appendPlainText(tr("opened").format(path=path))
+
+    def save(self):
+        if self.path is None:
+            return self.save_as()
+        return self._save_with_feedback(self.path)
+
+    def save_as(self):
+        dialog = QFileDialog(self, tr("save_as"), self._last_folder(), tr("document_filter"))
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setDefaultSuffix(SUFFIX[1:])
+        dialog.setOption(QFileDialog.Option.DontConfirmOverwrite)
+        dialog.selectFile(f"{self.draft.region_id}{SUFFIX}")
+        if dialog.exec():
+            return self._save_with_feedback(Path(dialog.selectedFiles()[0]), create_only=True)
+        return False
+
+    def _last_folder(self):
+        return self.settings.value("file/folder", str(Path.home()), type=str)
+
+    def _save_with_feedback(self, path, create_only=False):
+        try:
+            self.save_document(path, create_only=create_only)
+        except (OSError, DocumentError) as error:
+            self._report_error(error)
+            return False
+        return True
+
+    def save_document(self, path, create_only=False):
+        draft = MapDocument(*self._values())
+        expected = self.disk_hash if not create_only and path == self.path else None
+        disk_hash = write_document(path, draft, expected)
+        self.draft, self.path, self.disk_hash = draft, path, disk_hash
+        self.settings.setValue("file/folder", str(path.parent))
+        self._fields_changed()
+        self.output.appendPlainText(tr("written").format(path=path))
+
+    def _report_error(self, error):
+        conflict = isinstance(error, DocumentConflict)
+        title = tr("conflict" if conflict else "invalid")
+        self.output.appendPlainText(f"{title} · {error}")
+        QMessageBox.warning(self, title, tr("conflict_detail") if conflict else str(error))
+
+    def closeEvent(self, event):
+        if not self._confirm_changes():
+            event.ignore()
+            return
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/docks", self.saveState())
+        self.settings.setValue("view/grid", self.view.map_scene.show_grid)
+        self.settings.sync()
+        super().closeEvent(event)
