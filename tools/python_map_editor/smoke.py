@@ -97,9 +97,12 @@ def schedule_smoke(app, report):
                 require(not window.dirty and window.draft.region_id == "fixture01" and window.draft.width == 1800,
                         "draft saved, reopened and clean")
                 original_width = window.width()
-                window.resize(original_width - 48, window.height())
+                target_width = max(window.minimumWidth(), original_width - 48)
+                if target_width == original_width:  # Small hosted desktops may start at the minimum.
+                    target_width += 48
+                window.resize(target_width, window.height())
                 app.processEvents()
-                require(window.width() == original_width - 48 and viewport.isVisible()
+                require(window.width() == target_width and viewport.isVisible()
                         and math.isfinite(view.zoom), "window resize keeps the viewport available")
                 grid_action = next(action for action in window.findChildren(QAction)
                                    if action.text() == tr("grid"))
