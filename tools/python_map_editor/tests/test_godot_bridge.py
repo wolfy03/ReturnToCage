@@ -10,7 +10,7 @@ import pytest
 from document import DocumentError, MapDocument, decode, encode
 from godot_bridge import (
     BridgeError, GodotSession, ProjectSettings, RESULT_VERSION, file_hash, fingerprint,
-    project_manifest, response, run_child, write_json,
+    project_manifest, response, run_child, staged_import_settings, write_json,
 )
 from publish_region import publish_scene, recover_project
 from source_region import GodotSource, NodeBinding
@@ -301,3 +301,19 @@ def test_native_failure_with_complete_result_never_publishes(publication, monkey
                                lambda _: None)
     assert file_hash(session.settings.project / linked.scene_path) == linked.scene_hash
     assert file_hash(session.settings.project / linked.region_path) == linked.region_hash
+
+
+def test_isolated_import_restores_project_and_override_on_error(project_settings):
+    project_file = project_settings.project / "project.godot"
+    override = project_settings.project / "override.cfg"
+    override.write_bytes(b"[application]\nconfig/name=Fixture\n")
+    original_project = project_file.read_bytes()
+    original_override = override.read_bytes()
+    with pytest.raises(RuntimeError, match="engine failure"):
+        with staged_import_settings(project_settings.project):
+            assert b"import_guard/plugin.cfg" in project_file.read_bytes()
+            assert b"import_guard/plugin.cfg" in override.read_bytes()
+            project_file.write_bytes(b"rewritten by staged editor")
+            raise RuntimeError("engine failure")
+    assert project_file.read_bytes() == original_project
+    assert override.read_bytes() == original_override

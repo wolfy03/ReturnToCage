@@ -49,3 +49,7 @@ python tools/python_map_editor/verify_windows_package.py "<ZIP>" --artifacts "<l
 ```
 
 기본 Push CI를 유지했다. 별도의 workflow-dispatch 안정성 작업에서 단계별 30회, 전체 `validate_export` 50회, 무편집·편집 왕복 각 10회, 새 프로젝트 사본에서 배포 EXE 게시 10회를 순차 검증한다. 실패 증거를 보존하며 결과 JSON·종료 코드와 별도로 로그를 수집한다. Microsoft 서명 ProcDump가 제공되면 최초 접근 위반 뒤 프로젝트 사본에서 별도의 덤프 캡처를 시도한다. 이 캡처에 쓰는 Child 환경은 시스템·격리 경로 변수만 전달한다.
+
+### Cold import 분리
+
+첫 가드 적용 후 정상 실행에서 `validate_export` 50회가 연속 통과했지만 CI 배포 검증에서는 검증 직전 **리소스 가져오기용 별도 editor**가 `0xC0000005`로 종료했다. 이 프로세스는 기존 `--editor --recovery-mode --import`로 실행되어 Bridge 가드가 없었다. 임시 사본에서 가져오기 전용 빈 Scene과 전용 EditorPlugin을 사용해 같은 가드를 editor 종료에서도 적용한다. 해당 작업은 원래 프로젝트에서 EditorPlugin을 실행하지 않는다. 임시로 바꾼 사본의 `project.godot`와 기존 `override.cfg`는 정상·실패·취소 모두에서 원래 바이트를 복원한다. 임시 EditorPlugin의 실제 종료 호출을 확인하지 못하면 작업이 실패한다.

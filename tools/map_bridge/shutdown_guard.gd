@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## Bridge-owned processes on official 4.7.2 need cached script bases to outlive
 ## GDScriptLanguage::finish(). That engine's iterator snapshots the next

@@ -75,6 +75,13 @@ def schedule_smoke(app, report, reopen=None):
                     return
                 require(not window.godot_import_action.isEnabled() and not window.godot_export_action.isEnabled(),
                         "standalone mode needs no Godot runtime")
+                legacy = folder / "legacy.rtcmap"
+                legacy_data = b'{"schema_version":1,"region_id":"legacy","display_name":"Old","width":640,"height":480}'
+                legacy.write_bytes(legacy_data)
+                window.open_document(legacy)
+                require(window.draft == MapDocument("legacy", "Old", 640, 480) and legacy.read_bytes() == legacy_data,
+                        "V1 opens and migrates in memory without rewriting the original")
+                window.new_document()
                 viewport = window.view.viewport()
                 require(window.isVisible() and viewport.isVisible() and window.inspector_dock.isVisible()
                         and window.structure_dock.isVisible(), "native window and editing panels visible")

@@ -1,5 +1,6 @@
 """Run the bundled bridge using an explicit Godot executable and an isolated project."""
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
@@ -178,6 +179,23 @@ class ProjectSettings:
         return ProjectSettings(project, godot, work)
 
 
+@contextmanager
+def staged_import_settings(project):
+    # The editor itself may rewrite project.godot when it loads plugins. These
+    # files belong to the disposable copy and their original bytes are restored
+    # before any runtime validation, fingerprint, or Export As can consume them.
+    setting = b'\n[editor_plugins]\nenabled=PackedStringArray("res://tools/map_bridge/import_guard/plugin.cfg")\n'
+    paths = [project / "project.godot", project / "override.cfg"]
+    originals = {path: path.read_bytes() for path in paths if path.exists()}
+    try:
+        for path, content in originals.items():
+            path.write_bytes(content + setting)
+        yield
+    finally:
+        for path, content in originals.items():
+            path.write_bytes(content)
+
+
 def run_child(command, cwd, env, evidence, label, cancel, timeout):
     check_cancelled(cancel)
     logs = [evidence / f"{label}.{stream}.log" for stream in ("stdout", "stderr")]
@@ -284,11 +302,21 @@ class GodotSession:
             source = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "map_bridge"
             shutil.copytree(source, self.stage / "tools/map_bridge", ignore=shutil.ignore_patterns("__pycache__", ".git"))
             self.progress("Godot 리소스 읽기")
-            self._run("prepare", ["--editor", "--recovery-mode", "--import"], timeout=180)
+            self._prepare_resources()
             return self
         except BaseException:
             self.temp.cleanup()
             raise
+
+    def _prepare_resources(self):
+        if os.name != "nt":
+            self._run("prepare", ["--editor", "--recovery-mode", "--import"], timeout=180)
+            return
+        with staged_import_settings(self.stage):
+            _, logs = self._run("prepare", ["--editor", "--import", "--scene",
+                                            "res://tools/map_bridge/import_only.tscn"], timeout=180)
+        if "RTC_BRIDGE EDITOR_IMPORT_CLEANUP" not in logs:
+            raise BridgeError("INVALID_RESPONSE", "Isolated Godot import did not run the shutdown guard")
 
     def __exit__(self, *_):
         self.temp.cleanup()
