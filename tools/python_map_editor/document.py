@@ -11,15 +11,13 @@ import re
 import stat
 import tempfile
 
+from objects import DEFAULT_LAYERS, MAX_OBJECTS, DocumentError, MapLayer, MapObject
+
 SUFFIX = ".rtcmap"
-SCHEMA_VERSION = 1
-MAX_FILE_BYTES = 64 * 1024
+SCHEMA_VERSION = 2
+MAX_FILE_BYTES = 32 * 1024 * 1024
 MIN_EXTENT = 64
 MAX_EXTENT = 32768
-
-
-class DocumentError(ValueError):
-    pass
 
 
 class DocumentConflict(DocumentError):
@@ -32,6 +30,8 @@ class MapDocument:
     display_name: str = ""
     width: int = 1600
     height: int = 900
+    layers: tuple[MapLayer, ...] = DEFAULT_LAYERS
+    objects: tuple[MapObject, ...] = ()
 
     def __post_init__(self):
         if (not isinstance(self.region_id, str) or len(self.region_id) > 64
@@ -44,10 +44,27 @@ class MapDocument:
                for value in (self.width, self.height)):
             raise DocumentError(f"map extents must be integers between {MIN_EXTENT} and {MAX_EXTENT}")
 
+        if (not isinstance(self.layers, tuple) or not 1 <= len(self.layers) <= 128
+                or not all(isinstance(layer, MapLayer) for layer in self.layers)):
+            raise DocumentError("invalid layers")
+        layer_ids = {layer.id for layer in self.layers}
+        if len(layer_ids) != len(self.layers):
+            raise DocumentError("duplicate layer ID")
+        if (not isinstance(self.objects, tuple) or len(self.objects) > MAX_OBJECTS
+                or not all(isinstance(item, MapObject) for item in self.objects)):
+            raise DocumentError("invalid objects or object count")
+        if len({item.id for item in self.objects}) != len(self.objects):
+            raise DocumentError("duplicate object ID")
+        if any(item.layer_id not in layer_ids for item in self.objects):
+            raise DocumentError("object references an unknown layer")
+
 
 def encode(document):
     data = {"schema_version": SCHEMA_VERSION, **asdict(document)}
-    return (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    payload = (json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > MAX_FILE_BYTES:
+        raise DocumentError("draft exceeds the schema's size limit")
+    return payload
 
 
 def _unique_fields(pairs):
@@ -59,19 +76,38 @@ def _unique_fields(pairs):
     return data
 
 
+def _invalid_constant(value):
+    raise DocumentError(f"invalid JSON constant: {value}")
+
+
 def decode(payload):
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("draft exceeds the schema's size limit")
     try:
-        data = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_fields)
-    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        data = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_fields,
+                          parse_constant=_invalid_constant)
+    except (UnicodeError, ValueError, RecursionError) as error:
         raise DocumentError("invalid UTF-8 JSON draft") from error
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
         raise DocumentError("missing or invalid schema_version")
-    if data.pop("schema_version") != SCHEMA_VERSION:
+    version = data.pop("schema_version")
+    if version == 1:
+        if data.keys() != {"region_id", "display_name", "width", "height"}:
+            raise DocumentError("unrecognized or missing V1 draft fields")
+        return MapDocument(**data)
+    if version != SCHEMA_VERSION:
         raise DocumentError("unsupported draft version")
     if data.keys() != MapDocument.__dataclass_fields__.keys():
-        raise DocumentError("unrecognized or missing draft fields")
+        raise DocumentError("unrecognized or missing V2 draft fields")
+    layers, objects = data["layers"], data["objects"]
+    if (not isinstance(layers, list) or not 1 <= len(layers) <= 128
+            or not isinstance(objects, list) or len(objects) > MAX_OBJECTS):
+        raise DocumentError("invalid layer or object count")
+    try:
+        data["layers"] = tuple(MapLayer(**layer) for layer in layers)
+        data["objects"] = tuple(MapObject.from_data(item) for item in objects)
+    except TypeError as error:
+        raise DocumentError("invalid layer or object fields") from error
     return MapDocument(**data)
 
 
