@@ -16,6 +16,7 @@ from document import (
     MapDocument, document_revision, read_document, write_document,
 )
 from editing import EditingMixin, MetadataEdit
+from godot_ui import GodotMixin
 from strings import tr
 from viewport import MapView
 
@@ -37,7 +38,7 @@ QGraphicsView#mapViewport { border: 1px solid #384052; }
 """
 
 
-class MainWindow(EditingMixin, QMainWindow):
+class MainWindow(GodotMixin, EditingMixin, QMainWindow):
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
@@ -161,6 +162,7 @@ class MainWindow(EditingMixin, QMainWindow):
             file_menu.addAction(action)
             if on_toolbar:
                 toolbar.addAction(action)
+        self._build_godot_actions(file_menu)
         toolbar.addSeparator()
         view_menu = self.menuBar().addMenu(tr("view"))
         self._build_editing_actions(toolbar, view_menu)
@@ -190,7 +192,7 @@ class MainWindow(EditingMixin, QMainWindow):
 
     @property
     def dirty(self):
-        return not self.undo.isClean()
+        return not self.undo.isClean() or self.draft.source != self.saved_source
 
     def _fields_changed(self, _=None):
         values = self._values()
@@ -229,9 +231,11 @@ class MainWindow(EditingMixin, QMainWindow):
 
     def _install_draft(self, document, path=None, disk_hash=None):
         self.draft, self.path, self.disk_hash = document, path, disk_hash
+        self.saved_source = document.source
         self.undo.clear()
         self._apply_metadata((document.region_id, document.display_name, document.width, document.height))
         self._sync_objects()
+        self._refresh_godot_actions()
         self.view.fit_map()
 
     def _confirm_changes(self):
@@ -318,6 +322,7 @@ class MainWindow(EditingMixin, QMainWindow):
         draft = replace(self.draft, region_id=region_id, display_name=name, width=width, height=height)
         disk_hash = write_document(path, draft, expected_hash)
         self.draft, self.path, self.disk_hash = draft, path, disk_hash
+        self.saved_source = draft.source
         self.settings.setValue("file/folder", str(path.parent))
         self.undo.setClean()
         self._update_document_status()
@@ -330,6 +335,11 @@ class MainWindow(EditingMixin, QMainWindow):
         QMessageBox.warning(self, title, tr("conflict_detail") if conflict else str(error))
 
     def closeEvent(self, event):
+        if self._bridge_thread is not None:
+            self._bridge_close = True
+            self._cancel_godot()
+            event.ignore()
+            return
         if not self._confirm_changes():
             event.ignore()
             return

@@ -3,7 +3,8 @@ from pathlib import Path
 source = Path(SPECPATH)
 analysis = Analysis(
     [str(source / "main.py")],
-    pathex=[str(source)],
+    pathex=[str(source), str(source.parent)],
+    datas=[(str(source.parent / "map_bridge"), "map_bridge")],
 )
 # Qt6Core uses Windows' unsuffixed ICU exports. A vendor ICU DLL collected
 # from the build machine can shadow the OS DLL with incompatible exports.

@@ -3,12 +3,12 @@
 from collections import Counter
 from dataclasses import asdict, replace
 import json
-import os
 from pathlib import Path
-from threading import Event
+import sys
+import tempfile
 from uuid import uuid4
 
-from PySide6.QtCore import QMimeData, QObject, QRunnable, QThreadPool, Qt, Signal
+from PySide6.QtCore import QMimeData, QProcess, Qt
 from PySide6.QtGui import QActionGroup, QKeySequence, QUndoCommand, QUndoStack
 from PySide6.QtWidgets import QApplication, QFileDialog
 
@@ -20,7 +20,6 @@ from strings import tr
 CLIPBOARD_MIME = "application/x-rtc-objects"
 DEFAULT_SIZE = {"platform": (192, 24), "decoration": (64, 64)}
 DEFAULT_LAYER = {"platform": "terrain", "decoration": "decorations"}
-MAX_LIBRARY_IMAGES = 5000
 
 
 class MapEdit(QUndoCommand):
@@ -61,40 +60,6 @@ class MetadataEdit(QUndoCommand):
         self.window._apply_metadata(self.before)
 
 
-class ScanResult(QObject):
-    ready = Signal(object, object)
-
-
-class TextureScan(QRunnable):
-    def __init__(self, root):
-        super().__init__()
-        self.root = root
-        self.result = ScanResult()
-        self.cancelled = Event()
-
-    def run(self):
-        paths = []
-        for folder, dirs, names in os.walk(self.root):
-            if self.cancelled.is_set():
-                return
-            dirs[:] = sorted(name for name in dirs if not name.startswith(".")
-                             and name not in ("build", "venv", "node_modules")
-                             and not (Path(folder) / name).is_symlink()
-                             and not (Path(folder) / name).is_junction())
-            for name in sorted(names):
-                if not name.lower().endswith(".png"):
-                    continue
-                try:
-                    paths.append(Asset("decoration", (Path(folder) / name).relative_to(self.root).as_posix()).path)
-                except DocumentError:
-                    continue
-                if len(paths) == MAX_LIBRARY_IMAGES:
-                    self.result.ready.emit(self.root, paths)
-                    return
-        if not self.cancelled.is_set():
-            self.result.ready.emit(self.root, paths)
-
-
 class EditingMixin:
     def _build_editing_docks(self, inspector_layout):
         self.undo = QUndoStack(self)
@@ -118,8 +83,7 @@ class EditingMixin:
         self.library.tree.itemDoubleClicked.connect(self._place_at_center)
         self.library.tree.verticalScrollBar().valueChanged.connect(self.library.refresh_icons)
         self.library_scan = None
-        self.texture_pool = QThreadPool(self)
-        self.texture_pool.setMaxThreadCount(1)
+        self.library_generation = 0
 
     def _build_editing_actions(self, toolbar, view_menu):
         menu = self.menuBar().addMenu(tr("edit"))
@@ -171,30 +135,49 @@ class EditingMixin:
             self._set_project_root(Path(name))
 
     def _set_project_root(self, root):
-        try:
-            root = root.resolve(strict=True)
-        except (OSError, RuntimeError):
-            return
-        if not root.is_dir():
-            return
+        root = root.absolute()
+        self._stop_texture_scan()
         self.settings.setValue("library/root", str(root))
         self.view.textures.root = root
         self.view.textures.images.clear()
         self.library.set_paths(())
         self.view.viewport().update()
-        self._stop_texture_scan()
-        scan = self.library_scan = TextureScan(root)
-        scan.result.ready.connect(self._install_library)
-        self.texture_pool.start(scan)
+        generation = self.library_generation
+        directory = tempfile.TemporaryDirectory(prefix="rtc-textures-")
+        output = Path(directory.name) / "textures.json"
+        process = QProcess(self)
+        self.library_scan = process, directory
+        prefix = [] if getattr(sys, "frozen", False) else [str(Path(__file__).with_name("main.py"))]
+        process.finished.connect(lambda code, status: self._install_library(generation, output, code, status))
+        process.errorOccurred.connect(lambda error: self._scan_error(generation, error))
+        process.start(sys.executable, [*prefix, "--scan-textures", str(root), str(output)])
 
     def _stop_texture_scan(self):
+        self.library_generation += 1
         if self.library_scan is not None:
-            self.library_scan.cancelled.set()
-            self.texture_pool.clear()
+            process, directory = self.library_scan
+            self.library_scan = None
+            if process.state() != QProcess.ProcessState.NotRunning:
+                process.kill()
+                process.waitForFinished(500)
+            directory.cleanup()
+            process.deleteLater()
 
-    def _install_library(self, root, paths):
-        if root == self.view.textures.root:
-            self.library.set_paths(paths)
+    def _scan_error(self, generation, error):
+        if generation == self.library_generation and error == QProcess.ProcessError.FailedToStart:
+            self._stop_texture_scan()
+
+    def _install_library(self, generation, output, code, status):
+        if generation != self.library_generation:
+            return
+        try:
+            if code == 0 and status == QProcess.ExitStatus.NormalExit:
+                paths = json.loads(output.read_text(encoding="utf-8"))
+                self.library.set_paths(paths)
+        except (OSError, ValueError) as error:
+            self._edit_error(error)
+        finally:
+            self._stop_texture_scan()
 
     def _commit(self, label, objects=None, layers=None, selection=None):
         current = self.draft
@@ -384,4 +367,3 @@ class EditingMixin:
     def _edit_error(self, error):
         self.output.appendPlainText(f"{tr('invalid')} · {error}")
         self.statusBar().showMessage(str(error), 5000)
-

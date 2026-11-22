@@ -40,13 +40,28 @@ def main():
     parser.add_argument("document", nargs="?", type=Path)
     parser.add_argument("--smoke-report", type=Path, help="Run the windowed deployment smoke check.")
     parser.add_argument("--smoke-reopen", type=Path, help="Reopen a deployment smoke fixture in a fresh process.")
+    parser.add_argument("--smoke-bridge", type=Path, help="Run Godot GUI smoke against a disposable copy.")
+    parser.add_argument("--bridge-project", type=Path)
+    parser.add_argument("--bridge-godot", type=Path)
+    parser.add_argument("--scan-textures", nargs=2, type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.scan_textures:
+        from asset_scan import scan_textures
+
+        return scan_textures(*args.scan_textures)
+    if args.smoke_bridge and not (args.bridge_project and args.bridge_godot):
+        parser.error("--smoke-bridge requires --bridge-project and --bridge-godot")
     if args.smoke_reopen and not args.smoke_report:
         parser.error("--smoke-reopen requires --smoke-report")
     app = QApplication([sys.argv[0]])
     app.setOrganizationName("ReturnToCage")
     app.setApplicationName(APP_NAME)
     configure_appearance(app)
+    if args.smoke_bridge:
+        from bridge_smoke import schedule_bridge_smoke
+
+        return schedule_bridge_smoke(app, args.smoke_bridge.resolve(), args.bridge_project.resolve(),
+                                     args.bridge_godot.resolve())
     if args.smoke_report:
         from smoke import schedule_smoke
 
