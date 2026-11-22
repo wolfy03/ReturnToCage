@@ -1,12 +1,13 @@
 """Main window for creating, viewing and reopening standalone map drafts."""
 
+from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget, QFileDialog, QFormLayout, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QPlainTextEdit, QSpinBox, QToolBar, QTreeWidget, QTreeWidgetItem,
+    QMessageBox, QPlainTextEdit, QScrollArea, QSpinBox, QToolBar, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -14,6 +15,7 @@ from document import (
     MAX_EXTENT, MIN_EXTENT, SUFFIX, DocumentConflict, DocumentError,
     MapDocument, document_revision, read_document, write_document,
 )
+from editing import EditingMixin, MetadataEdit
 from strings import tr
 from viewport import MapView
 
@@ -35,7 +37,7 @@ QGraphicsView#mapViewport { border: 1px solid #384052; }
 """
 
 
-class MainWindow(QMainWindow):
+class MainWindow(EditingMixin, QMainWindow):
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
@@ -60,7 +62,8 @@ class MainWindow(QMainWindow):
         self.cursor_status = QLabel("x 0 · y 0")
         self.zoom_status = QLabel()
         self.draft_status = QLabel()
-        for label in (self.region_status, self.cursor_status, self.zoom_status, self.draft_status):
+        self.tool_status = QLabel(tr("select"))
+        for label in (self.region_status, self.cursor_status, self.zoom_status, self.tool_status, self.draft_status):
             label.setContentsMargins(8, 0, 8, 0)
             self.statusBar().addPermanentWidget(label)
         self.view.zoom_changed.connect(self._show_zoom)
@@ -72,6 +75,8 @@ class MainWindow(QMainWindow):
         if state := settings.value("window/docks"):
             self.restoreState(state)
         self._install_draft(self.draft)
+        if root := self.settings.value("library/root", type=str):
+            self._set_project_root(Path(root))
         QTimer.singleShot(0, self.view.fit_map)
 
     def _dock(self, key, widget, area):
@@ -87,8 +92,8 @@ class MainWindow(QMainWindow):
         self.tree_region = QTreeWidgetItem(self.structure)
         self.tree_bounds = QTreeWidgetItem(self.tree_region, [tr("bounds")])
         self.tree_region.setExpanded(True)
-        self.structure.itemDoubleClicked.connect(lambda *_: self.view.fit_map())
         self.structure_dock = self._dock("structure", self.structure, Qt.DockWidgetArea.LeftDockWidgetArea)
+        self.structure.itemDoubleClicked.connect(lambda *_: self.view.fit_map())
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -115,13 +120,17 @@ class MainWindow(QMainWindow):
         self.region_id.textChanged.connect(self._fields_changed)
         self.display_name.textChanged.connect(self._fields_changed)
         layout.addLayout(form)
+        self._build_editing_docks(layout)
         layout.addStretch()
-        self.inspector_dock = self._dock("inspector", panel, Qt.DockWidgetArea.RightDockWidgetArea)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(panel)
+        self.inspector_dock = self._dock("inspector", scroll, Qt.DockWidgetArea.RightDockWidgetArea)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setMaximumBlockCount(200)
         self.output_dock = self._dock("output", self.output, Qt.DockWidgetArea.BottomDockWidgetArea)
-        self.resizeDocks([self.structure_dock, self.inspector_dock], [195, 268], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.library_dock, self.inspector_dock], [210, 228], Qt.Orientation.Horizontal)
         self.resizeDocks([self.output_dock], [95], Qt.Orientation.Vertical)
 
     def _action(self, key, callback, shortcut=None, checked=None):
@@ -154,6 +163,8 @@ class MainWindow(QMainWindow):
                 toolbar.addAction(action)
         toolbar.addSeparator()
         view_menu = self.menuBar().addMenu(tr("view"))
+        self._build_editing_actions(toolbar, view_menu)
+        toolbar.addSeparator()
         for key, callback, shortcut in (
             ("fit", self.view.fit_map, "F"),
             ("actual", lambda: self.view.set_zoom(1.0), "1"),
@@ -162,20 +173,14 @@ class MainWindow(QMainWindow):
         ):
             action = self._action(key, callback, shortcut)
             view_menu.addAction(action)
-            if key in ("fit", "actual"):
-                toolbar.addAction(action)
+
         toolbar.addSeparator()
         grid = self._action("grid", self.view.set_grid_visible, "G",
                             checked=self.settings.value("view/grid", True, type=bool))
         self.view.set_grid_visible(grid.isChecked())
-        toolbar.addAction(grid)
         view_menu.addAction(grid)
-        pan = self._action("pan", self.view.set_pan_mode, "H", checked=False)
-        pan.setToolTip(tr("pan_tip"))
-        toolbar.addAction(pan)
-        view_menu.addAction(pan)
         view_menu.addSeparator()
-        for dock in (self.structure_dock, self.inspector_dock, self.output_dock):
+        for dock in (self.library_dock, self.layers_dock, self.structure_dock, self.inspector_dock, self.output_dock):
             view_menu.addAction(dock.toggleViewAction())
         help_menu = self.menuBar().addMenu(tr("help"))
         help_menu.addAction(self._action("about", lambda: QMessageBox.information(self, APP_NAME, tr("about_body"))))
@@ -185,10 +190,30 @@ class MainWindow(QMainWindow):
 
     @property
     def dirty(self):
-        draft = self.draft
-        return self._values() != (draft.region_id, draft.display_name, draft.width, draft.height)
+        return not self.undo.isClean()
 
     def _fields_changed(self, _=None):
+        values = self._values()
+        if values != self._metadata:
+            field = next(index for index, value in enumerate(values) if value != self._metadata[index])
+            self.undo.push(MetadataEdit(self, self._metadata, values, field))
+
+    def _apply_metadata(self, values):
+        self._metadata = values
+        for widget, setter, value in zip(
+            (self.region_id, self.display_name, self.width_field, self.height_field),
+            (self.region_id.setText, self.display_name.setText, self.width_field.setValue, self.height_field.setValue),
+            values,
+        ):
+            with QSignalBlocker(widget):
+                if widget in (self.region_id, self.display_name):
+                    if widget.text() != value:
+                        setter(value)
+                elif widget.value() != value:
+                    setter(value)
+        self._update_document_status()
+
+    def _update_document_status(self):
         region_id, name, width, height = self._values()
         if (width, height) != (self.view.map_scene.bounds.width(), self.view.map_scene.bounds.height()):
             self.view.set_bounds(width, height)
@@ -204,16 +229,9 @@ class MainWindow(QMainWindow):
 
     def _install_draft(self, document, path=None, disk_hash=None):
         self.draft, self.path, self.disk_hash = document, path, disk_hash
-        for widget, setter, value in (
-            (self.region_id, self.region_id.setText, document.region_id),
-            (self.display_name, self.display_name.setText, document.display_name),
-            (self.width_field, self.width_field.setValue, document.width),
-            (self.height_field, self.height_field.setValue, document.height),
-        ):
-            blocked = widget.blockSignals(True)
-            setter(value)
-            widget.blockSignals(blocked)
-        self._fields_changed()
+        self.undo.clear()
+        self._apply_metadata((document.region_id, document.display_name, document.width, document.height))
+        self._sync_objects()
         self.view.fit_map()
 
     def _confirm_changes(self):
@@ -260,7 +278,9 @@ class MainWindow(QMainWindow):
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
         dialog.setDefaultSuffix(SUFFIX[1:])
         dialog.setOption(QFileDialog.Option.DontConfirmOverwrite)
-        dialog.selectFile(f"{self.draft.region_id}{SUFFIX}")
+        region_id = self.region_id.text()
+        suggested = region_id if region_id.isascii() and region_id.isidentifier() else self.draft.region_id
+        dialog.selectFile(f"{suggested}{SUFFIX}")
         if dialog.exec():
             return self._save_as_path(Path(dialog.selectedFiles()[0]))
         return False
@@ -294,11 +314,13 @@ class MainWindow(QMainWindow):
 
     def save_document(self, path, expected_hash=None):
         path = path.absolute()
-        draft = MapDocument(*self._values())
+        region_id, name, width, height = self._values()
+        draft = replace(self.draft, region_id=region_id, display_name=name, width=width, height=height)
         disk_hash = write_document(path, draft, expected_hash)
         self.draft, self.path, self.disk_hash = draft, path, disk_hash
         self.settings.setValue("file/folder", str(path.parent))
-        self._fields_changed()
+        self.undo.setClean()
+        self._update_document_status()
         self.output.appendPlainText(tr("written").format(path=path))
 
     def _report_error(self, error):
@@ -314,5 +336,6 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/docks", self.saveState())
         self.settings.setValue("view/grid", self.view.map_scene.show_grid)
+        self.settings.setValue("view/snap", self.view.snap_enabled)
         self.settings.sync()
         super().closeEvent(event)

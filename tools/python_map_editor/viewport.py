@@ -1,10 +1,14 @@
 """Godot-style 2D coordinates rendered by Qt Graphics View."""
 
+from dataclasses import replace
 import math
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
+
+from graphics import ObjectItem, TextureCache
+from objects import HANDLES, MAX_OBJECTS, MIN_SIZE, rotate, snap
 
 
 class MapScene(QGraphicsScene):
@@ -43,7 +47,7 @@ class MapScene(QGraphicsScene):
         painter.drawLine(QLineF(0, -12, 0, 12))
 
 
-class MapView(QGraphicsView):
+class CanvasView(QGraphicsView):
     zoom_changed = Signal(float)
     world_position_changed = Signal(QPointF)
     MIN_ZOOM = 0.02
@@ -134,3 +138,266 @@ class MapView(QGraphicsView):
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+
+LIBRARY_MIME = "application/x-rtc-library"
+
+
+class MapView(CanvasView):
+    gesture_finished = Signal(str, object)
+    preview_changed = Signal()
+    asset_dropped = Signal(object, QPointF)
+
+    def __init__(self):
+        super().__init__()
+        self.textures = TextureCache()
+        self.objects = {}
+        self.tool = "select"
+        self.snap_enabled = True
+        self.brush_spacing = 32
+        self.gesture = None
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.map_scene.selectionChanged.connect(self.viewport().update)
+
+    def sync_document(self, document, selection):
+        self.cancel_gesture()
+        scene = self.map_scene
+        old = scene.blockSignals(True)
+        try:
+            objects = {model.id: model for model in document.objects}
+            layers = {layer.id: (index, layer) for index, layer in enumerate(document.layers)}
+            for key in self.objects.keys() - objects.keys():
+                scene.removeItem(self.objects.pop(key))
+            for key, model in objects.items():
+                item = self.objects.get(key)
+                order, layer = layers[model.layer_id]
+                if item is None:
+                    item = self.objects[key] = ObjectItem(model, self.textures)
+                    scene.addItem(item)
+                item.set_model(model)
+                item.set_layer(layer, order)
+                item.setSelected(key in selection and layer.visible and not layer.locked)
+        finally:
+            scene.blockSignals(old)
+        self.viewport().update()
+
+    def selected_ids(self):
+        return frozenset(item.model.id for item in self.map_scene.selectedItems() if isinstance(item, ObjectItem))
+
+    def set_tool(self, tool):
+        self.cancel_gesture()
+        self.tool = tool
+        self.set_pan_mode(tool == "pan")
+
+    def snapped(self, point, stride=None):
+        stride = self.map_scene.grid_size if stride is None and self.snap_enabled else stride
+        return QPointF(snap(point.x(), stride), snap(point.y(), stride))
+
+    def hit_object(self, position):
+        flag = QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        return next((item for item in self.items(position) if isinstance(item, ObjectItem)
+                     and item.flags() & flag), None)
+
+    def _handles(self):
+        items = self.map_scene.selectedItems()
+        if self.tool == "select" and len(items) == 1 and items[0].model.type == "platform":
+            return items[0], HANDLES
+        return None, ()
+
+    def drawForeground(self, painter, rect):
+        item, handles = self._handles()
+        radius = 4 / self.zoom
+        painter.setPen(QPen(QColor("#17232a"), 0))
+        painter.setBrush(QColor("#a3f0df"))
+        for direction in handles:
+            point = item.handle_point(direction)
+            painter.drawRect(QRectF(point.x() - radius, point.y() - radius, radius * 2, radius * 2))
+        if self.gesture and self.gesture["mode"] in ("rectangle", "box"):
+            g = self.gesture
+            painter.setPen(QPen(QColor("#a3f0df"), 0, Qt.PenStyle.DashLine))
+            painter.setBrush(QColor(99, 193, 171, 45))
+            painter.drawRect(QRectF(g["anchor"], g["current"]).normalized())
+        if self.gesture and self.gesture["mode"] == "paint":
+            for x, y in self.gesture["points"]:
+                painter.drawEllipse(QPointF(x, y), radius, radius)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton or self.tool == "pan":
+            if event.button() == Qt.MouseButton.MiddleButton:
+                self.cancel_gesture()
+            super().mousePressEvent(event)
+            return
+        self.setFocus()
+        position = event.position().toPoint()
+        point = self.mapToScene(position)
+        mode = self.tool
+        data = {}
+        if mode == "select":
+            item, handles = self._handles()
+            direction = None
+            if item is not None:
+                inner = item.rect().adjusted(item.rect().width() / 4, item.rect().height() / 4,
+                                             -item.rect().width() / 4, -item.rect().height() / 4)
+                if not inner.contains(item.mapFromScene(point)):
+                    distances = [(self.mapFromScene(item.handle_point(handle)) - position).manhattanLength()
+                                 for handle in handles]
+                    closest = min(range(len(handles)), key=distances.__getitem__)
+                    if distances[closest] <= 9:
+                        direction = handles[closest]
+            if direction:
+                mode = "resize"
+                data = {"before": {item.model.id: item.model}, "direction": direction,
+                        "offset": item.handle_point(direction) - point}
+            else:
+                item = self.hit_object(position)
+                extend = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+                if item is None:
+                    mode = "box"
+                    if not extend:
+                        self.map_scene.clearSelection()
+                else:
+                    if extend:
+                        item.setSelected(not item.isSelected())
+                    elif not item.isSelected():
+                        self.map_scene.clearSelection()
+                        item.setSelected(True)
+                    if not item.isSelected():
+                        event.accept()
+                        return
+                    mode = "move"
+                    data = {"before": {key: self.objects[key].model for key in self.selected_ids()},
+                            "primary": item.model.id}
+        anchor = self.snapped(point) if mode == "rectangle" else point
+        self.gesture = {"mode": mode, "start": position, "anchor": anchor, "current": anchor,
+                        "active": False, "points": {}, "removed": set(), **data}
+        if mode in ("paint", "erase"):
+            self._update_gesture(position)
+        event.accept()
+
+    def _update_gesture(self, position):
+        g = self.gesture
+        point = self.mapToScene(position)
+        mode = g["mode"]
+        if mode in ("move", "resize", "box") and not g["active"]:
+            if (position - g["start"]).manhattanLength() < 4:
+                return
+            g["active"] = True
+        if mode == "move":
+            primary = QPointF(*g["before"][g["primary"]].position)
+            delta = self.snapped(primary + point - g["anchor"]) - primary
+            for key, obj in g["before"].items():
+                self.objects[key].setPos(QPointF(*obj.position) + delta)
+            self.preview_changed.emit()
+        elif mode == "resize":
+            obj, = g["before"].values()
+            local = rotate(((point + g["offset"]) - QPointF(*obj.position)).toTuple(), -obj.rotation)
+            size = list(obj.size)
+            center = [0.0, 0.0]
+            for axis, direction in enumerate(g["direction"]):
+                if direction:
+                    fixed = -direction * size[axis] / 2
+                    stride = self.map_scene.grid_size if self.snap_enabled else None
+                    size[axis] = max(MIN_SIZE, snap(direction * (local[axis] - fixed), stride))
+                    center[axis] = fixed + direction * size[axis] / 2
+            dx, dy = rotate(center, obj.rotation)
+            item = self.objects[obj.id]
+            item.setRect(-size[0] / 2, -size[1] / 2, *size)
+            item.setPos(obj.position[0] + dx, obj.position[1] + dy)
+            self.preview_changed.emit()
+        elif mode in ("paint", "erase"):
+            # Sample fast moves as well as discrete mouse events, including the release.
+            previous = g["current"]
+            stride = self.map_scene.grid_size if self.snap_enabled else self.brush_spacing
+            delta = point - previous
+            spacing = stride / 2 if mode == "paint" else 4 / self.zoom
+            count = max(1, math.ceil(math.hypot(delta.x(), delta.y()) / spacing))
+            for index in range(1, count + 1):
+                sample = previous + delta * (index / count)
+                if mode == "paint":
+                    if len(g["points"]) < MAX_OBJECTS:
+                        g["points"][self.snapped(sample, stride).toTuple()] = None
+                else:
+                    item = self.hit_object(self.mapFromScene(sample))
+                    if item and item.model.id not in g["removed"]:
+                        g["removed"].add(item.model.id)
+                        item.setOpacity(0.24)
+        g["current"] = self.snapped(point) if mode == "rectangle" else point
+        self.viewport().update()
+
+    def mouseMoveEvent(self, event):
+        if self.gesture and not self._drag_button:
+            position = event.position().toPoint()
+            if event.buttons() & Qt.MouseButton.LeftButton:
+                self._update_gesture(position)
+            self.world_position_changed.emit(self.mapToScene(position))
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if not self.gesture or event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        self._update_gesture(event.position().toPoint())
+        g = self.gesture
+        mode = g["mode"]
+        payload = None
+        if mode in ("move", "resize") and g["active"]:
+            payload = {}
+            for key in g["before"]:
+                item = self.objects[key]
+                payload[key] = (item.pos().toTuple(), (item.rect().width(), item.rect().height()))
+        elif mode == "rectangle":
+            rect = QRectF(g["anchor"], g["current"]).normalized()
+            if (event.position().toPoint() - g["start"]).manhattanLength() >= 4:
+                payload = rect.center().toTuple(), (max(MIN_SIZE, rect.width()), max(MIN_SIZE, rect.height()))
+        elif mode == "paint":
+            payload = tuple(g["points"])
+        elif mode == "erase":
+            payload = g["removed"]
+        elif mode == "box" and g["active"]:
+            rect = QRectF(g["anchor"], g["current"]).normalized()
+            for item in self.map_scene.items(rect):
+                if isinstance(item, ObjectItem):
+                    item.setSelected(True)
+        self.cancel_gesture()
+        if payload:
+            self.gesture_finished.emit(mode, payload)
+        event.accept()
+
+    def cancel_gesture(self):
+        if self.gesture is None:
+            return
+        g, self.gesture = self.gesture, None
+        for key, model in g.get("before", {}).items():
+            item = self.objects[key]
+            item.model = None
+            item.set_model(model)
+        for key in g["removed"]:
+            self.objects[key].setOpacity(1)
+        self.preview_changed.emit()
+        self.viewport().update()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.gesture:
+                self.cancel_gesture()
+            else:
+                self.map_scene.clearSelection()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(LIBRARY_MIME):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(LIBRARY_MIME):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat(LIBRARY_MIME):
+            self.asset_dropped.emit(bytes(event.mimeData().data(LIBRARY_MIME)),
+                                    self.snapped(self.mapToScene(event.position().toPoint())))
+            event.acceptProposedAction()

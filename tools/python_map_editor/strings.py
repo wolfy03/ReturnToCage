@@ -19,10 +19,27 @@ KO = {
     "confirm_body": "현재 맵의 변경 내용을 저장하시겠습니까?",
     "discard": "변경 버리기", "cancel": "취소",
     "pan": "화면 이동", "pan_tip": "이동 모드 또는 마우스 가운데 버튼을 누르고 드래그",
-    "quick_help": "휠로 확대·축소 · 가운데 버튼으로 이동",
+    "quick_help": "휠로 확대·축소 · 가운데 버튼으로 이동 · Ctrl/Shift로 여러 개 선택",
+    "library": "오브젝트 라이브러리", "layers": "레이어", "layer": "레이어",
+    "platform": "기본 플랫폼", "decoration": "기본 장식",
+    "platform_group": "플랫폼", "decoration_group": "장식",
+    "layer_terrain": "지형", "layer_decorations": "장식", "visible": "표시", "locked": "잠금",
+    "asset_search": "이름·유형·경로 검색", "project_location": "리소스 프로젝트 폴더…",
+    "undo": "실행 취소", "redo": "다시 실행", "select": "선택", "rectangle": "사각형",
+    "paint": "배치", "erase": "지우기", "snap": "격자 맞춤",
+    "select_tip": "선택 및 이동 (V) · Ctrl/Shift로 여러 개 선택",
+    "rectangle_tip": "드래그하여 플랫폼 만들기 (R)", "paint_tip": "라이브러리 항목 연속 배치 (B)",
+    "erase_tip": "클릭하거나 드래그하여 지우기 (E)",
+    "move": "객체 이동", "resize": "크기 조절", "add": "객체 추가",
+    "delete": "삭제", "copy": "복사", "paste": "붙여넣기", "duplicate": "복제",
+    "edit_layer": "레이어 설정", "edit_metadata": "지역 정보 편집", "property": "속성 편집",
+    "object_id": "객체 ID", "x": "위치 X", "y": "위치 Y", "object_width": "객체 너비",
+    "object_height": "객체 높이", "rotation": "회전 (°)", "scale_x": "배율 X", "scale_y": "배율 Y",
+    "texture": "PNG 경로", "one_way": "충돌", "solid": "양방향", "one_way_enabled": "단방향",
+    "mixed": "여러 값", "locked_layer": "표시되고 잠금 해제된 레이어를 선택하세요.",
     "about_body": "마우스 휠로 커서 위치를 확대·축소합니다.\n가운데 버튼 또는 이동 모드에서 드래그하여 화면을 이동합니다.\nF 키를 누르면 영역 경계가 화면에 맞춰집니다.\n맵 문서는 .rtcmap JSON 파일로 저장됩니다.",
 }
 
 
-def tr(key):
-    return KO[key]
+def tr(key, fallback=None):
+    return KO[key] if fallback is None else KO.get(key, fallback)
