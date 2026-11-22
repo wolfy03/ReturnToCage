@@ -77,7 +77,7 @@ def test_decode_rejects_nonfinite_json(constant):
 
 def test_future_version_is_rejected():
     with pytest.raises(DocumentError, match="unsupported"):
-        decode(encode(sample()).replace(b'"schema_version":2', b'"schema_version":3'))
+        decode(encode(sample()).replace(b'"schema_version":2', b'"schema_version":4'))
 
 
 def test_minimal_properties_and_wrong_object_properties():
@@ -101,4 +101,3 @@ def test_godot_angle_and_grid_conventions():
     assert rotate((20, 0), 90) == pytest.approx((0, 20))
     assert rotate(rotate((10, 4), 35), -35) == pytest.approx((10, 4))
     assert [snap(value, 32) for value in (-48, -1, 0, 15, 16)] == [-32, 0, 0, 0, 32]
-

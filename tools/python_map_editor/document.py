@@ -12,9 +12,10 @@ import stat
 import tempfile
 
 from objects import DEFAULT_LAYERS, MAX_OBJECTS, DocumentError, MapLayer, MapObject
+from source_region import GodotSource
 
 SUFFIX = ".rtcmap"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MIN_EXTENT = 64
 MAX_EXTENT = 32768
@@ -32,6 +33,7 @@ class MapDocument:
     height: int = 900
     layers: tuple[MapLayer, ...] = DEFAULT_LAYERS
     objects: tuple[MapObject, ...] = ()
+    source: GodotSource | None = None
 
     def __post_init__(self):
         if (not isinstance(self.region_id, str) or len(self.region_id) > 64
@@ -57,10 +59,14 @@ class MapDocument:
             raise DocumentError("duplicate object ID")
         if any(item.layer_id not in layer_ids for item in self.objects):
             raise DocumentError("object references an unknown layer")
+        if self.source is not None and not isinstance(self.source, GodotSource):
+            raise DocumentError("invalid Godot source")
 
 
 def encode(document):
-    data = {"schema_version": SCHEMA_VERSION, **asdict(document)}
+    data = {"schema_version": SCHEMA_VERSION if document.source else 2, **asdict(document)}
+    if document.source is None:
+        del data["source"]
     payload = (json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("draft exceeds the schema's size limit")
@@ -95,10 +101,15 @@ def decode(payload):
         if data.keys() != {"region_id", "display_name", "width", "height"}:
             raise DocumentError("unrecognized or missing V1 draft fields")
         return MapDocument(**data)
-    if version != SCHEMA_VERSION:
+    if version not in (2, SCHEMA_VERSION):
         raise DocumentError("unsupported draft version")
-    if data.keys() != MapDocument.__dataclass_fields__.keys():
-        raise DocumentError("unrecognized or missing V2 draft fields")
+    expected = set(MapDocument.__dataclass_fields__)
+    if version == 2:
+        expected.remove("source")
+    if data.keys() != expected:
+        raise DocumentError("unrecognized or missing draft fields")
+    if version == SCHEMA_VERSION:
+        data["source"] = GodotSource.from_data(data["source"])
     layers, objects = data["layers"], data["objects"]
     if (not isinstance(layers, list) or not 1 <= len(layers) <= 128
             or not isinstance(objects, list) or len(objects) > MAX_OBJECTS):
