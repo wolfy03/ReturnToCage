@@ -59,3 +59,11 @@ python tools/python_map_editor/verify_windows_package.py "<배포 ZIP>" --artifa
 통합 fixture는 별도 복사본에서 하수구를 가져오고 무편집·편집 왕복, UID가 있는 중첩 장식, 반전 장식 보존, 새 플랫폼, PNG 누락 차단과 게시·복구를 검사한다. Traversal 회귀는 기존 실제 PlayerActor 검증기를 사용한다. 기존 EditorPlugin과 달리 이 단계의 Python GUI는 지역 생성, 연결, ENTRY/ESCAPE, 스폰 편집 및 Traversal/Playtest UI를 제공하지 않는다.
 
 [Scene 호환성](python_map_editor_scene_compatibility.md) · [설치 및 편집](python_map_editor.md)
+
+### Windows 검증 기록
+
+- 공식 Godot 4.7.2에서 하수구 원본과 무편집 결과 모두 46개 노드였고, 기존 Traversal 결과는 표면 5개·후보 간선 25개·검증 간선 11개였다. WestPlatform을 옮기고 넓힌 별도 실행에서는 46개 노드를 유지했고 변경은 해당 플랫폼·CollisionShape2D·Visual에 한정됐다. 편집 후 실제 Traversal 결과는 5·26·14였다.
+- UID를 붙인 추가 fixture에서 50개 노드를 유지했다. 중첩 PNG 장식, 반전 장식 보존, 기존 플랫폼 삭제 및 새 FieldPlatform 추가, 두 UID와 RegionDefinition 해시 유지, 누락 PNG 게시 차단을 검증했다.
+- 로컬 Windows pytest는 69개 통과, 심볼릭 링크 생성 권한이 필요한 기존 1개 검사는 건너뛰었다. 소스와 OneDir 배포본에서 Qt 100%·150%·200%의 독립 편집 검사 71개를 각각 통과했다. 시스템 전용 PATH에서 실행한 배포 EXE는 별도 한글 경로 프로젝트의 Godot 연동 검사 13개와 종료 코드 0을 기록했다. Python 미설치 별도 PC는 사용하지 않았다.
+- 1,000개 객체를 대상으로 각 측정을 3회 수행했다. 배포본 150%의 중앙값/최대값(ms)은 fixture 생성 5.16/6.84, 읽기 12.23/13.07, 디코딩 10.68/20.07, Qt Scene 구성 61.64/72.65, 선택 29.15/41.89, 줌 21.72/24.89, Pan 18.28/21.73, 저장 18.84/19.19, 재열기 97.73/112.38이었다.
+- 공식 Godot에서 별도 검증 실행의 Bridge 종료와 Traversal fixture 준비 종료에 `0xC0000005`가 발생했다. 해당 실행은 실패로 기록했고 게시를 차단했다. 정상 실행과 비정상 실행의 요청, 결과, Godot 로그 및 종료 코드는 상위 `validation/python-map-editor-step3`에 각각 보존했다. 성공 시나리오를 확인했으며 반복 네이티브 안정성은 BLOCKED다.
