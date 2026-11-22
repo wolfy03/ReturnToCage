@@ -2,6 +2,7 @@
 
 import json
 import math
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -12,12 +13,13 @@ from PySide6.QtGui import QAction, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QFileDialog, QDialogButtonBox, QMessageBox
 
+from editing_smoke import benchmark, edit_map, restart_checks
 from document import MapDocument, read_document, write_document
 from strings import tr
 from window import MainWindow
 
 
-def schedule_smoke(app, report):
+def schedule_smoke(app, report, reopen=None):
     report.parent.mkdir(parents=True, exist_ok=True)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     with tempfile.TemporaryDirectory(prefix="rtc-map-smoke-") as temporary:
@@ -66,6 +68,11 @@ def schedule_smoke(app, report):
                 return window.save_as()
 
             try:
+                if reopen is not None:
+                    result["draft_sha256"] = restart_checks(window, reopen)
+                    result["checks"].append("fresh process rebuilt the saved V2 scene")
+                    result["passed"] = True
+                    return
                 viewport = window.view.viewport()
                 require(window.isVisible() and viewport.isVisible() and window.inspector_dock.isVisible()
                         and window.structure_dock.isVisible(), "native window and editing panels visible")
@@ -164,6 +171,12 @@ def schedule_smoke(app, report):
                 require(not window.close() and window.isVisible() and window.dirty,
                         "closing a dirty draft can be cancelled")
                 window.open_document(target)
+                fixture_dir = report.with_name(f"{report.stem}-fixture")
+                fixture_dir.mkdir(exist_ok=True)
+                fixture = fixture_dir / "재열기.rtcmap"
+                fixture.write_bytes(edit_map(window, target, result, require))
+                shutil.copyfile(target.parent / "장식.png", fixture_dir / "장식.png")
+                result["fixture"] = str(fixture)
                 screenshot = report.with_suffix(".png")
                 require(window.grab().save(str(screenshot)), "window capture saved")
                 result["screenshot"] = str(screenshot)
@@ -174,6 +187,9 @@ def schedule_smoke(app, report):
                 require(not reopened.view.map_scene.show_grid and reopened.output_dock.isHidden()
                         and settings.contains("window/docks"),
                         "grid and dock settings persisted")
+                reopened.show()
+                result["benchmark_ms"] = benchmark(reopened, folder)
+                require(reopened.close(), "1,000-object selection, zoom, pan, save, reopen and window close")
                 result["passed"] = True
             except Exception:
                 result["error"] = traceback.format_exc()

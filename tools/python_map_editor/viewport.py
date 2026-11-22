@@ -4,7 +4,7 @@ from dataclasses import replace
 import math
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
 from graphics import ObjectItem, TextureCache
@@ -21,9 +21,13 @@ class MapScene(QGraphicsScene):
 
     def set_bounds(self, width, height):
         self.bounds = QRectF(0, 0, width, height)
-        margin = max(width, height, 1024)
-        self.setSceneRect(self.bounds.adjusted(-margin, -margin, margin, margin))
+        self.refresh_world_rect()
         self.invalidate()
+
+    def refresh_world_rect(self):
+        margin = max(self.bounds.width(), self.bounds.height(), 1024)
+        surrounding = self.bounds.adjusted(-margin, -margin, margin, margin)
+        self.setSceneRect(surrounding.united(self.itemsBoundingRect()))
 
     def drawBackground(self, painter, rect):
         painter.fillRect(rect, QColor("#171b24"))
@@ -179,6 +183,7 @@ class MapView(CanvasView):
                 item.setSelected(key in selection and layer.visible and not layer.locked)
         finally:
             scene.blockSignals(old)
+        scene.refresh_world_rect()
         self.viewport().update()
 
     def selected_ids(self):
@@ -356,10 +361,10 @@ class MapView(CanvasView):
         elif mode == "erase":
             payload = g["removed"]
         elif mode == "box" and g["active"]:
-            rect = QRectF(g["anchor"], g["current"]).normalized()
-            for item in self.map_scene.items(rect):
-                if isinstance(item, ObjectItem):
-                    item.setSelected(True)
+            path = QPainterPath()
+            path.addRect(QRectF(g["anchor"], g["current"]).normalized())
+            self.map_scene.setSelectionArea(path, Qt.ItemSelectionOperation.AddToSelection,
+                                            Qt.ItemSelectionMode.IntersectsItemShape)
         self.cancel_gesture()
         if payload:
             self.gesture_finished.emit(mode, payload)

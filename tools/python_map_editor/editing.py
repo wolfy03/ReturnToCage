@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 import json
 import os
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 from PySide6.QtCore import QMimeData, QObject, QRunnable, QThreadPool, Qt, Signal
@@ -69,10 +70,13 @@ class TextureScan(QRunnable):
         super().__init__()
         self.root = root
         self.result = ScanResult()
+        self.cancelled = Event()
 
     def run(self):
         paths = []
         for folder, dirs, names in os.walk(self.root):
+            if self.cancelled.is_set():
+                return
             dirs[:] = sorted(name for name in dirs if not name.startswith(".")
                              and name not in ("build", "venv", "node_modules")
                              and not (Path(folder) / name).is_symlink()
@@ -87,7 +91,8 @@ class TextureScan(QRunnable):
                 if len(paths) == MAX_LIBRARY_IMAGES:
                     self.result.ready.emit(self.root, paths)
                     return
-        self.result.ready.emit(self.root, paths)
+        if not self.cancelled.is_set():
+            self.result.ready.emit(self.root, paths)
 
 
 class EditingMixin:
@@ -177,10 +182,15 @@ class EditingMixin:
         self.view.textures.images.clear()
         self.library.set_paths(())
         self.view.viewport().update()
-        self.texture_pool.clear()
+        self._stop_texture_scan()
         scan = self.library_scan = TextureScan(root)
         scan.result.ready.connect(self._install_library)
         self.texture_pool.start(scan)
+
+    def _stop_texture_scan(self):
+        if self.library_scan is not None:
+            self.library_scan.cancelled.set()
+            self.texture_pool.clear()
 
     def _install_library(self, root, paths):
         if root == self.view.textures.root:

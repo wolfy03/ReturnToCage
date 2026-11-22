@@ -49,22 +49,25 @@ jobs:
         run: python -m pip install -r tools/python_map_editor/requirements.txt
       - name: Document regression tests
         run: python -m pytest tools/python_map_editor/tests -q -rs -p no:cacheprovider
-      - name: Qt source smoke at 150% scale
-        env:
-          QT_SCALE_FACTOR: '1.5'
-        run: python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-smoke.json"
+      - name: Qt source smoke at 100%, 150% and 200% scale
+        run: |
+          foreach ($scale in @('1', '1.5', '2')) {
+            $env:QT_SCALE_FACTOR = $scale
+            python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-smoke-$scale.json"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Build Windows OneDir and ZIP
         run: |
           & ./tools/python_map_editor/build_windows.ps1 -Python (Get-Command python).Source -OutputRoot build/map-editor-ci
       - name: Run the packaged EXE on Windows
         run: |
-          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP1-win-x64.zip')
+          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP2-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
           python -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-qa
       - uses: actions/upload-artifact@v4
         with:
           name: ReturnToCageMapEditor-win-x64
-          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP1-win-x64.zip
+          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP2-win-x64.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

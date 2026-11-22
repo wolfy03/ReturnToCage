@@ -333,6 +333,7 @@ class MainWindow(EditingMixin, QMainWindow):
         if not self._confirm_changes():
             event.ignore()
             return
+        self._stop_texture_scan()
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/docks", self.saveState())
         self.settings.setValue("view/grid", self.view.map_scene.show_grid)

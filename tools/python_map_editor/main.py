@@ -39,7 +39,10 @@ def main():
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("document", nargs="?", type=Path)
     parser.add_argument("--smoke-report", type=Path, help="Run the windowed deployment smoke check.")
+    parser.add_argument("--smoke-reopen", type=Path, help="Reopen a deployment smoke fixture in a fresh process.")
     args = parser.parse_args()
+    if args.smoke_reopen and not args.smoke_report:
+        parser.error("--smoke-reopen requires --smoke-report")
     app = QApplication([sys.argv[0]])
     app.setOrganizationName("ReturnToCage")
     app.setApplicationName(APP_NAME)
@@ -47,7 +50,7 @@ def main():
     if args.smoke_report:
         from smoke import schedule_smoke
 
-        return schedule_smoke(app, args.smoke_report.resolve())
+        return schedule_smoke(app, args.smoke_report.resolve(), args.smoke_reopen)
     log_directory = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
     log_directory.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=log_directory / "editor.log", encoding="utf-8",

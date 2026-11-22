@@ -27,7 +27,32 @@ def pe_subsystem(executable):
         return value
 
 
-def verify(archive, output):
+def run_smoke(executable, cwd, env, evidence, scale):
+    env = {**env, "QT_SCALE_FACTOR": scale}
+    run = {"scale": float(scale), "passed": False}
+    stem = f"qt-smoke-{scale}"
+    for name, extra in (("edit", []), ("reopen", ["--smoke-reopen"])):
+        report = evidence / f"{stem}-{name}.json"
+        if extra:
+            fixture = Path(run["edit"]["fixture"])
+            extra.append(str(fixture))
+        try:
+            completed = subprocess.run([str(executable), "--smoke-report", str(report), *extra],
+                                       cwd=cwd, env=env, timeout=45, check=False)
+        except subprocess.TimeoutExpired:
+            run[f"{name}_timeout"] = True
+            return run
+        run[f"{name}_exit_code"] = completed.returncode
+        qt = run[name] = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
+        if (completed.returncode != 0 or qt.get("passed") is not True or qt.get("frozen") is not True
+                or qt.get("platform") != "windows" or Path(qt["executable"]).resolve() != executable.resolve()
+                or qt.get("device_pixel_ratio", 0) < float(scale)):
+            return run
+    run["passed"] = run["reopen"]["draft_sha256"] == hashlib.sha256(fixture.read_bytes()).hexdigest()
+    return run
+
+
+def verify(archive, output, scales):
     output.mkdir(parents=True, exist_ok=True)
     evidence = Path(tempfile.mkdtemp(prefix="rtc-exe-", dir=output))
     result = {"archive": str(archive), "platform": sys.platform, "passed": False}
@@ -59,16 +84,8 @@ def verify(archive, output):
             if result["external_python_on_path"]:
                 raise ValueError("unexpected external Python in the smoke environment")
 
-            report = evidence / "qt-smoke.json"
-            completed = subprocess.run([str(executable), "--smoke-report", str(report)], cwd=cwd,
-                                       env=env, timeout=45, check=False)
-            result["exit_code"] = completed.returncode
-            if report.exists():
-                result["qt"] = json.loads(report.read_text(encoding="utf-8"))
-            qt = result.get("qt", {})
-            result["passed"] = (completed.returncode == 0 and qt.get("passed") is True
-                                and qt.get("frozen") is True and qt.get("platform") == "windows"
-                                and Path(qt["executable"]).resolve() == executable.resolve())
+            result["runs"] = [run_smoke(executable, cwd, env, evidence, scale) for scale in scales]
+            result["passed"] = all(run["passed"] for run in result["runs"])
     finally:
         (evidence / "package-verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(f"PACKAGE EVIDENCE {evidence}")
@@ -79,10 +96,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--artifacts", required=True, type=Path)
+    parser.add_argument("--scales", nargs="+", choices=("1", "1.5", "2"), default=("1", "1.5", "2"))
     args = parser.parse_args()
     if sys.platform != "win32":
         parser.error("Windows with an interactive desktop is required")
-    return verify(args.archive.resolve(strict=True), args.artifacts.resolve())
+    return verify(args.archive.resolve(strict=True), args.artifacts.resolve(), args.scales)
 
 
 if __name__ == "__main__":
