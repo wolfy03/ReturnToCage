@@ -4,12 +4,14 @@ on:
   push:
     paths:
       - 'tools/python_map_editor/**'
-      - 'docs/python_map_editor.md'
+      - 'tools/map_bridge/**'
+      - 'docs/python_map_editor*.md'
       - '.github/workflows/python-map-editor.yml'
   pull_request:
     paths:
       - 'tools/python_map_editor/**'
-      - 'docs/python_map_editor.md'
+      - 'tools/map_bridge/**'
+      - 'docs/python_map_editor*.md'
       - '.github/workflows/python-map-editor.yml'
   workflow_dispatch:
 
@@ -56,18 +58,37 @@ jobs:
             python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-smoke-$scale.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Obtain and verify official Godot 4.7.2
+        run: |
+          $download = Join-Path $env:RUNNER_TEMP 'godot-rtc-4.7.2.zip'
+          $engine = Join-Path $env:RUNNER_TEMP 'godot-rtc-4.7.2'
+          Invoke-WebRequest 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile $download
+          if ((Get-FileHash -LiteralPath $download).Hash -ne '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953') {
+            throw 'Godot Windows ZIP checksum mismatch'
+          }
+          Expand-Archive -LiteralPath $download -DestinationPath $engine
+          $godot = Join-Path $engine 'Godot_v4.7.2-stable_win64.exe'
+          "RTC_VALIDATION_GODOT=$godot" >> $env:GITHUB_ENV
+      - name: Sewer scene, resources, and traversal round-trips
+        run: python -u -X utf8 tools/python_map_editor/check_scene_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence"
+      - name: Copy scene integration logs
+        if: always()
+        run: |
+          if (Test-Path "$env:RUNNER_TEMP/rtc-map-evidence") {
+            Copy-Item "$env:RUNNER_TEMP/rtc-map-evidence" build/map-editor-qa/bridge-integration -Recurse
+          }
       - name: Build Windows OneDir and ZIP
         run: |
           & ./tools/python_map_editor/build_windows.ps1 -Python (Get-Command python).Source -OutputRoot build/map-editor-ci
       - name: Run the packaged EXE on Windows
         run: |
-          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP2-win-x64.zip')
+          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP3-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
-          python -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-qa
+          python -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT
       - uses: actions/upload-artifact@v4
         with:
           name: ReturnToCageMapEditor-win-x64
-          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP2-win-x64.zip
+          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP3-win-x64.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

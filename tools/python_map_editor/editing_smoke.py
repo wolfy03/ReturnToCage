@@ -1,13 +1,14 @@
 """Qt event regression and the 1,000-object viewport benchmark."""
 
 import hashlib
+from statistics import median
 from time import perf_counter
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QDragEnterEvent, QDragMoveEvent, QDropEvent, QImage
 from PySide6.QtTest import QTest
 
-from document import MapDocument, encode, read_document, write_document
+from document import MapDocument, decode, encode, read_document, write_document
 from objects import MapObject
 from panels import ROLE
 
@@ -103,12 +104,24 @@ def edit_map(window, target, result, require):
     require(item.model == current and item.pos().toTuple() == current.position
             and window.undo.index() == before + 1, "escape cancels resize without a command")
 
+    selected = window.draft.objects
+    before = window.undo.index()
+    for field, invalid in (("x", "invalid"), ("x", "nan"), ("y", "inf"),
+                           ("object_height", "-2"), ("rotation", "1000001")):
+        input_value(field, invalid)
+        require(window.draft.objects == selected and window.undo.index() == before
+                and window.object_inspector.fields[field].text() != invalid,
+                f"invalid inspector field restored without history ({field}: {invalid})")
+
     project = target.parent
     image_path = project / "장식.png"
     image = QImage(40, 48, QImage.Format.Format_ARGB32)
     image.fill(QColor("#d89ad9"))
     require(image.save(str(image_path)), "fixture PNG created")
+    window._set_project_root(project / "cancelled-scan")
+    generation = window.library_generation
     window._set_project_root(project)
+    require(window.library_generation > generation, "switching projects invalidates the prior texture scan")
     for _ in range(100):
         if any(asset.path == "장식.png" for asset in window.library.assets):
             break
@@ -136,6 +149,10 @@ def edit_map(window, target, result, require):
     require(decoration.layer_id == "decorations" and decoration.size == (40, 48)
             and decoration.properties.texture_path == "장식.png", "decoration restores PNG dimensions and reference")
 
+    before = window.undo.index()
+    input_value("texture", "../invalid.png")
+    require(window.undo.index() == before and window.object_inspector.fields["texture"].text() == "장식.png",
+            "invalid texture path restores the committed input")
     input_value("scale_x", "1.5")
     require(view.objects[decoration.id].model.size == (60, 48), "decoration scale updates its viewport geometry")
     window.object_inspector.fields["layer"].setFocus()
@@ -222,46 +239,57 @@ def edit_map(window, target, result, require):
 
 
 def benchmark(window, folder):
-    objects = tuple(MapObject(f"platform_{index}", "platform", "terrain",
-                              (40 + (index % 40) * 38, 30 + (index // 40) * 32), (26, 14))
-                    for index in range(1000))
-    document = MapDocument("benchmark", "Benchmark", objects=objects)
-    path = folder / "benchmark.rtcmap"
-    result = {}
+    samples = {}
 
-    def elapsed(key, callback):
+    def elapsed(key, callback, repaint=False):
         start = perf_counter()
-        callback()
-        QTest.qWait(1)
-        result[key] = round((perf_counter() - start) * 1000, 2)
+        result = callback()
+        if repaint:
+            QTest.qWait(1)
+        samples.setdefault(key, []).append((perf_counter() - start) * 1000)
+        return result
 
-    elapsed("load_ms", lambda: (write_document(path, document), window.open_document(path)))
-    # Measure parsing and scene construction independently of generating the fixture.
-    window._install_draft(MapDocument())
-    elapsed("open_ms", lambda: window.open_document(path))
-    view = window.view
-    viewport = view.viewport()
-    target = view.mapFromScene(QPointF(*objects[500].position))
-    elapsed("select_ms", lambda: QTest.mouseClick(viewport, LEFT, pos=target))
-    assert view.selected_ids() == {objects[500].id}
-    zoom = view.zoom
-    elapsed("zoom_ms", lambda: view.set_zoom(zoom * 1.15))
-    assert view.zoom > zoom
-    center = viewport.rect().center()
-    before = view.horizontalScrollBar().value()
+    for index in range(3):
+        path = folder / f"benchmark-{index}.rtcmap"
 
-    def pan():
-        QTest.mousePress(viewport, MIDDLE, pos=center)
-        QTest.mouseMove(viewport, center + type(center)(48, 25))
-        QTest.mouseRelease(viewport, MIDDLE, pos=center + type(center)(48, 25))
+        def make_fixture():
+            models = tuple(MapObject(f"platform_{number}", "platform", "terrain",
+                                     (40 + (number % 40) * 38, 30 + (number // 40) * 32), (26, 14))
+                           for number in range(1000))
+            return MapDocument("benchmark", "Benchmark", objects=models)
 
-    elapsed("pan_ms", pan)
-    assert view.horizontalScrollBar().value() < before
-    elapsed("save_ms", lambda: window.save_document(path, window.disk_hash))
-    window._install_draft(MapDocument())
-    elapsed("reopen_ms", lambda: window.open_document(path))
-    assert window.draft == document and len(view.objects) == 1000
-    return result
+        document = elapsed("fixture_ms", make_fixture)
+        write_document(path, document)
+        raw = elapsed("read_ms", path.read_bytes)
+        decoded = elapsed("decode_ms", lambda: decode(raw))
+        window._install_draft(MapDocument())
+        elapsed("scene_ms", lambda: window._install_draft(decoded), repaint=True)
+        window.open_document(path)
+        view = window.view
+        viewport = view.viewport()
+        obj = document.objects[500]
+        target = view.mapFromScene(QPointF(*obj.position))
+        elapsed("select_ms", lambda: QTest.mouseClick(viewport, LEFT, pos=target), repaint=True)
+        assert view.selected_ids() == {obj.id}
+        zoom = view.zoom
+        elapsed("zoom_ms", lambda: view.set_zoom(zoom * 1.15), repaint=True)
+        assert view.zoom > zoom
+        center = viewport.rect().center()
+        before = view.horizontalScrollBar().value()
+
+        def pan():
+            QTest.mousePress(viewport, MIDDLE, pos=center)
+            QTest.mouseMove(viewport, center + type(center)(48, 25))
+            QTest.mouseRelease(viewport, MIDDLE, pos=center + type(center)(48, 25))
+
+        elapsed("pan_ms", pan, repaint=True)
+        assert view.horizontalScrollBar().value() < before
+        elapsed("save_ms", lambda: window.save_document(path, window.disk_hash))
+        window._install_draft(MapDocument())
+        elapsed("reopen_ms", lambda: window.open_document(path), repaint=True)
+        assert window.draft == document and len(view.objects) == 1000
+    return {name: {"median": round(median(values), 2), "max": round(max(values), 2)}
+            for name, values in samples.items()}
 
 
 def restart_checks(window, path):
@@ -279,4 +307,3 @@ def restart_checks(window, path):
     assert not window.dirty and not window.undo.canUndo()
     assert window.close()
     return expected
-

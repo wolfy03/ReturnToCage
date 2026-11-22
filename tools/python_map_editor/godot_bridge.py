@@ -154,6 +154,8 @@ class ProjectSettings:
         except OSError as error:
             raise BridgeError("INVALID_PROJECT", str(error)) from error
         for name in ("project.godot", "autoload/content_registry.gd", "data/definitions/region_definition.gd"):
+            if not regular(project / name):
+                raise BridgeError("INVALID_PROJECT", f"missing ReturnToCage project file: {name}")
             safe_child(project, name, Path(name).suffix)
         try:
             godot = self.godot.resolve(strict=True)
@@ -186,8 +188,18 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
         with logs[0].open("wb") as stdout, logs[1].open("wb") as stderr:
             process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                        stdout=stdout, stderr=stderr, **kwargs)
-            scope.attach(process)
             write_json(evidence / f"{label}.process.json", {"argv": command, "pid": process.pid})
+            try:
+                scope.attach(process)
+            except OSError as error:
+                # The official GUI binary may finish --version before Windows
+                # can assign it. An active or non-version child must be owned.
+                if label != "version" or getattr(error, "winerror", None) != 5:
+                    raise
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    raise error from None
             deadline = time.monotonic() + timeout
             while process.poll() is None:
                 if cancel.wait(min(0.05, max(0, deadline - time.monotonic()))):
@@ -225,8 +237,9 @@ def response(path, operation, request_id, exit_code, output):
             or result.get("godot_version") != RESULT_VERSION or not isinstance(result.get("warnings"), list)):
         raise BridgeError("INVALID_RESPONSE", f"{operation}: result identity/version mismatch")
     if exit_code != 0 or result.get("status") != "PASS":
-        raise BridgeError(result.get("error_code") or "EXPORT_FAILED",
-                          result.get("message") or f"{operation}: exit {exit_code}")
+        code = result.get("error_code") or "EXPORT_FAILED"
+        message = result.get("message") or f"{operation}: exit {exit_code}"
+        raise BridgeError(code, message.removeprefix(code + ": "))
     if not isinstance(result.get("data"), dict) or ENGINE_ERROR.search(output):
         raise BridgeError("PROCESS_CRASH", f"{operation}: Godot logged errors or leaked resources")
     return result
@@ -330,13 +343,10 @@ class GodotSession:
         if self.manifest.get("project.godot") != source.project_id or fingerprint(self.manifest) != source.fingerprint:
             raise BridgeError("SOURCE_MODIFIED", f"프로젝트 또는 리소스가 Import 이후 변경되었습니다. {source.scene_path}")
         region_path = "res://" + source.region_path
-        original = self.call("inspect_region", region_path=region_path)
-        if self._source(original, self.manifest) != source:
-            code = "UID_CONFLICT" if (source.region_uid, source.scene_uid) != (
-                original["region_uid"], original["scene_uid"]) else "SOURCE_MODIFIED"
-            raise BridgeError(code, "가져온 Scene 또는 객체 바인딩이 변경되었습니다.")
         expected = self.call("export_region", region_path=region_path, region_id=document.region_id,
                              display_name=document.display_name, objects=[asdict(item) for item in document.objects],
+                             source={key: getattr(source, key) for key in ("scene_hash", "region_hash", "scene_path",
+                                                                          "scene_uid", "region_uid")},
                              bindings={item.id: item.as_bridge_data() for item in source.bindings})
         if expected["source_hash"] != source.scene_hash or expected["scene_path"] != source.scene_path:
             raise BridgeError("INVALID_RESPONSE", "Bridge staged an unexpected scene")
@@ -359,6 +369,7 @@ class GodotSession:
         receipt = {key: expected[key] for key in ("source_hash", "output_hash", "region_hash", "scene_uid",
                                                   "region_uid", "before_count", "node_count", "scene_path")}
         receipt["runtime"] = json.loads(next(iter(runtime)))
+        receipt["scene_state"] = verified["scene_state"]
         receipt["warnings"] = verified["warnings"]
         write_json(self.evidence / "verified-export.json", receipt)
         return fresh, receipt

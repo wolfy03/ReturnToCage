@@ -5,3 +5,7 @@
 __pycache__/
 /ReturnToCage*.exe
 /ReturnToCage*.zip
+
+# Map Editor publication backups and journals
+.rtc-map-publish/
+.rtc-publish-*.part

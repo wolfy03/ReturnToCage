@@ -31,9 +31,11 @@ def _flush_directory(path):
             os.close(descriptor)
 
 
-def _replace(source, target, expected):
+def _replace(source, target, expected, stage=None):
     """Stage next to target for a same-volume atomic replace."""
-    with tempfile.NamedTemporaryFile(prefix=".rtc-publish-", dir=target.parent, delete=False) as stream:
+    handle = (stage.open("xb") if stage else
+              tempfile.NamedTemporaryFile(prefix=".rtc-publish-", dir=target.parent, delete=False))
+    with handle as stream:
         temporary = Path(stream.name)
         try:
             with source.open("rb") as data:
@@ -93,6 +95,10 @@ def _terminal(tx, name, record):
     _flush_directory(tx)
 
 
+def _scene_stage(scene, tx):
+    return scene.with_name(f".rtc-publish-{tx.name}.part")
+
+
 def _recover(project, journal):
     events = []
     for tx in sorted(journal.glob("scene-*")):
@@ -106,6 +112,9 @@ def _recover(project, journal):
         current = file_hash(scene)
         if file_hash(region) != record["region_hash"] or current not in (record["before"], record["after"]):
             raise BridgeError("SOURCE_MODIFIED", f"publication recovery requires review: {tx}")
+        temporary = _scene_stage(scene, tx)
+        if regular(temporary):
+            temporary.unlink()
         state = "committed" if current == record["after"] else "rolled-back"
         _terminal(tx, state, record)
         events.append(f"{record['scene']} · {state}")
@@ -157,7 +166,7 @@ def _publish_scene(session, source, receipt, journal):
         check_cancelled(session.cancel)
         if file_hash(region) != record["region_hash"]:
             raise BridgeError("SOURCE_MODIFIED", str(region))
-        _replace(approved, target, record["before"])
+        _replace(approved, target, record["before"], _scene_stage(target, tx))
         if file_hash(target) != record["after"] or file_hash(region) != record["region_hash"]:
             raise BridgeError("SOURCE_MODIFIED", f"publication changed during verification: {target}")
         _terminal(tx, "committed", record)
@@ -165,7 +174,7 @@ def _publish_scene(session, source, receipt, journal):
         if regular(target):
             current = file_hash(target)
             if current == record["after"]:
-                _replace(backup, target, record["after"])
+                _replace(backup, target, record["after"], _scene_stage(target, tx))
                 current = file_hash(target)
             if current == record["before"]:
                 _terminal(tx, "rolled-back", record)

@@ -73,6 +73,8 @@ def schedule_smoke(app, report, reopen=None):
                     result["checks"].append("fresh process rebuilt the saved V2 scene")
                     result["passed"] = True
                     return
+                require(not window.godot_import_action.isEnabled() and not window.godot_export_action.isEnabled(),
+                        "standalone mode needs no Godot runtime")
                 viewport = window.view.viewport()
                 require(window.isVisible() and viewport.isVisible() and window.inspector_dock.isVisible()
                         and window.structure_dock.isVisible(), "native window and editing panels visible")

@@ -4,7 +4,7 @@ import json
 import sys
 import traceback
 
-from PySide6.QtCore import QPointF, QSettings, Qt, QTimer
+from PySide6.QtCore import QEventLoop, QPointF, QSettings, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QInputDialog, QMessageBox
 
@@ -59,13 +59,25 @@ def schedule_bridge_smoke(app, report, project, godot):
     modal_timer.timeout.connect(modal)
     modal_timer.start(50)
 
-    def wait_job():
-        for _ in range(1500):
-            # Tests pump Qt while the background bridge owns the engine.
+    def wait_job(timeout=75000):
+        loop = QEventLoop()
+        watchdog = QTimer()
+        watchdog.setSingleShot(True)
+        watchdog.timeout.connect(loop.quit)
+        poll = QTimer()
+
+        def completed():
             if window._bridge_thread is None and app.activeModalWidget() is None:
-                return
-            QTest.qWait(50)
-        raise TimeoutError("Godot Qt worker did not complete")
+                loop.quit()
+
+        poll.timeout.connect(completed)
+        poll.start(20)
+        watchdog.start(timeout)
+        loop.exec()
+        poll.stop()
+        if not watchdog.isActive():
+            raise TimeoutError("Godot Qt worker did not complete")
+        watchdog.stop()
 
     def edit(key, text):
         field = window.object_inspector.fields[key]
@@ -123,6 +135,12 @@ def schedule_bridge_smoke(app, report, project, godot):
             evidence["error"] = traceback.format_exc()
             evidence["dialogs"] = errors
         finally:
+            if window._bridge_thread is not None:
+                window._cancel_godot()
+                try:
+                    wait_job(10000)
+                except TimeoutError:
+                    evidence["cleanup_timeout"] = True
             modal_timer.stop()
             report.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
             app.exit(0 if evidence["passed"] else 1)

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from threading import Event
 import shutil
 import struct
 import subprocess
@@ -52,7 +53,23 @@ def run_smoke(executable, cwd, env, evidence, scale):
     return run
 
 
-def verify(archive, output, scales):
+def run_bridge_smoke(executable, cwd, env, evidence, project, godot):
+    from godot_bridge import project_manifest
+
+    fixture = cwd / "하수구 임시 프로젝트"
+    fixture.mkdir()
+    (fixture / ".rtc-smoke-fixture").touch()
+    original = project_manifest(project, Event(), fixture)
+    report = evidence / "godot-qt-smoke.json"
+    code = subprocess.run([str(executable), "--smoke-bridge", str(report),
+                           "--bridge-project", str(fixture), "--bridge-godot", str(godot)],
+                          cwd=cwd, env=env, timeout=240, check=False).returncode
+    results = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
+    return {"exit_code": code, "qt": results, "passed": code == 0 and results.get("passed") is True
+            and results.get("frozen") is True and project_manifest(project, Event()) == original}
+
+
+def verify(archive, output, scales, project=None, godot=None):
     output.mkdir(parents=True, exist_ok=True)
     evidence = Path(tempfile.mkdtemp(prefix="rtc-exe-", dir=output))
     result = {"archive": str(archive), "platform": sys.platform, "passed": False}
@@ -85,7 +102,9 @@ def verify(archive, output, scales):
                 raise ValueError("unexpected external Python in the smoke environment")
 
             result["runs"] = [run_smoke(executable, cwd, env, evidence, scale) for scale in scales]
-            result["passed"] = all(run["passed"] for run in result["runs"])
+            if project is not None:
+                result["bridge"] = run_bridge_smoke(executable, cwd, env, evidence, project, godot)
+            result["passed"] = all(run["passed"] for run in result["runs"]) and result.get("bridge", {}).get("passed", True)
     finally:
         (evidence / "package-verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(f"PACKAGE EVIDENCE {evidence}")
@@ -97,10 +116,16 @@ def main():
     parser.add_argument("archive", type=Path)
     parser.add_argument("--artifacts", required=True, type=Path)
     parser.add_argument("--scales", nargs="+", choices=("1", "1.5", "2"), default=("1", "1.5", "2"))
+    parser.add_argument("--bridge-project", type=Path)
+    parser.add_argument("--godot", type=Path)
     args = parser.parse_args()
+    if (args.bridge_project is None) != (args.godot is None):
+        parser.error("--bridge-project and --godot must be used together")
     if sys.platform != "win32":
         parser.error("Windows with an interactive desktop is required")
-    return verify(args.archive.resolve(strict=True), args.artifacts.resolve(), args.scales)
+    return verify(args.archive.resolve(strict=True), args.artifacts.resolve(), args.scales,
+                  args.bridge_project.resolve(strict=True) if args.bridge_project else None,
+                  args.godot.resolve(strict=True) if args.godot else None)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-ReturnToCage Map Editor — PY-STEP 2 (Windows x64)
+ReturnToCage Map Editor — PY-STEP 3 (Windows x64)
 
 ZIP 전체를 풀고 ReturnToCageMapEditor.exe를 실행하세요.
 _internal 폴더를 실행 파일과 같은 위치에 두세요.
@@ -21,7 +21,10 @@ Ctrl+N / Ctrl+O / Ctrl+S: 새 맵 / 열기 / 저장
 다른 편집기에서 저장 중이거나 확인 후 대상이 바뀌면 다시 열거나 다른 경로를 선택하세요.
 
 독립 초안 편집에는 외부 Python이나 Godot가 필요하지 않습니다.
-Godot Scene 변환, 런타임 플레이테스트 및 물리 검증은 후속 단계입니다.
+기존 Godot 지역을 열거나 내보낼 때 파일 메뉴에서 ReturnToCage 프로젝트와
+공식 Godot 4.7.2를 설정하세요. 내보내기 검증과 새 프로젝트 폴더로 내보내기를
+사용하면 원본 Scene에 쓰기 전에 실제 런타임에서 검사할 수 있습니다.
+Region Wizard, Traversal 및 Runtime Playtest 화면은 후속 단계입니다.
 
 공식 소스와 빌드 워크플로: https://github.com/wolfy03/ReturnToCage
 소스 위치: tools/python_map_editor/ (feature/python-map-editor)

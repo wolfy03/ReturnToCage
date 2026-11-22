@@ -80,6 +80,14 @@ func _run() -> void:
 			var collision_issue := await _runtime_collision()
 			_finish(summary, collision_issue)
 		_:
+			var source_pin: Variant = request.get("source")
+			if (not source_pin is Dictionary or source_pin.get("region_hash") != summary.region_hash
+					or source_pin.get("scene_hash") != summary.scene_hash or source_pin.get("scene_path") != summary.scene_path):
+				_finish({}, "SOURCE_MODIFIED: loaded files do not match the imported source")
+				return
+			if source_pin.get("scene_uid") != summary.scene_uid or source_pin.get("region_uid") != summary.region_uid:
+				_finish({}, "UID_CONFLICT: loaded resource UID does not match the imported source")
+				return
 			var issue := _apply_document(data, signal_links)
 			if not issue.is_empty():
 				_finish({}, issue)

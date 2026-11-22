@@ -3,6 +3,7 @@
 from dataclasses import replace
 from pathlib import Path
 import tempfile
+import traceback
 from threading import Event
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
@@ -44,6 +45,8 @@ def run_operation(settings, cancel, operation, payload, progress):
             error.evidence = session.evidence
         raise
     except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        if session is not None:
+            (session.evidence / "bridge-exception.log").write_text(traceback.format_exc(), encoding="utf-8")
         raise BridgeError("EXPORT_FAILED", str(error), session.evidence if session else None) from error
 
 
@@ -127,7 +130,7 @@ class GodotMixin:
         self._bridge_worker = None
         self._bridge_completion = None
         self._bridge_close = False
-        self.bridge_menu = menu
+        self._regions = None
         self.godot_import_action = self._action("godot_import", self._choose_region)
         self.godot_export_action = self._action("godot_export", self._export_godot)
         self.godot_export_as_action = self._action("godot_export_as", self._export_godot_as)
@@ -180,6 +183,7 @@ class GodotMixin:
         self.settings.setValue("godot/recent", [path, *[item for item in recent if item != path]][:8])
         for key in ("project", "godot", "work"):
             self.settings.setValue(f"godot/{key}", str(getattr(settings, key)))
+        self._regions = result["regions"]
         self.settings.setValue("godot/version", result["version"])
         self.settings.sync()
         self._set_project_root(settings.project)
@@ -188,10 +192,13 @@ class GodotMixin:
         self._refresh_godot_actions()
 
     def _choose_region(self):
-        self._start_godot("inspect_project", None, self._select_import)
+        if self._regions is None:
+            self._start_godot("inspect_project", None, self._select_import)
+        else:
+            self._select_import({"regions": self._regions, "recovered": []})
 
     def _select_import(self, result):
-        regions = result["regions"]
+        regions = self._regions = result["regions"]
         for event in result["recovered"]:
             self.output.appendPlainText(event)
         labels = [f"{item['name']} · {item['id']} · {item['definition']}" for item in regions]
