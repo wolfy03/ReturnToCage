@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://tests/editor/field_runtime_probe.tscn" id="1"]
+[ext_resource type="Script" path="res://tools/map_bridge/shutdown_guard.gd" id="2"]
+
+[node name="FieldRuntimeProbe" instance=ExtResource("1")]
+
+[node name="BridgeShutdownGuard" type="Node" parent="."]
+script = ExtResource("2")

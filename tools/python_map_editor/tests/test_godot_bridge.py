@@ -189,3 +189,115 @@ def test_manifest_detects_external_texture_change(project_settings):
     before = fingerprint(project_manifest(project, Event()))
     texture.write_bytes(b"later")
     assert fingerprint(project_manifest(project, Event())) != before
+
+def test_cancel_at_publication_keeps_original(publication):
+    session, linked, receipt = publication
+    session.cancel.set()
+    with pytest.raises(BridgeError, match="CANCELLED"):
+        publish_scene(session, linked, receipt)
+    assert file_hash(session.settings.project / linked.scene_path) == linked.scene_hash
+    assert file_hash(session.settings.project / linked.region_path) == linked.region_hash
+
+
+def test_recovery_does_not_overwrite_an_unrecognized_file(publication, monkeypatch):
+    session, linked, receipt = publication
+    import publish_region
+
+    scene = session.settings.project / linked.scene_path
+    replace = publish_region._replace
+
+    def interrupt(source_path, target, expected, stage=None):
+        if target == scene:
+            raise SystemExit(23)
+        replace(source_path, target, expected, stage)
+
+    with monkeypatch.context() as inject:
+        inject.setattr(publish_region, "_replace", interrupt)
+        with pytest.raises(SystemExit):
+            publish_scene(session, linked, receipt)
+    scene.write_bytes(b"external change after the journal was written")
+    before = scene.read_bytes()
+    with pytest.raises(BridgeError, match="SOURCE_MODIFIED"):
+        recover_project(session.settings.project)
+    assert scene.read_bytes() == before
+    assert file_hash(session.settings.project / linked.region_path) == linked.region_hash
+
+
+@pytest.mark.parametrize("after_replace", [False, True])
+def test_hard_process_exit_recovers_before_and_after_scene_replace(publication, tmp_path, after_replace):
+    session, linked, receipt = publication
+    from dataclasses import asdict
+
+    state = tmp_path / "publish.json"
+    write_json(state, {"source": asdict(linked), "receipt": receipt, "project": str(session.settings.project),
+                       "stage": str(session.stage), "after": after_replace})
+    program = """
+from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+import os, sys
+import publish_region as publisher
+from godot_bridge import read_json
+from source_region import GodotSource
+state = read_json(Path(sys.argv[1]))
+project = Path(state["project"])
+linked = GodotSource.from_data(state["source"])
+target = project / linked.scene_path
+replace = publisher._replace
+def cut(source, destination, digest, temporary=None):
+    if destination != target or state["after"]:
+        replace(source, destination, digest, temporary)
+    if destination == target:
+        if not state["after"]:
+            temporary.write_bytes(b"partial data")
+        os._exit(97)
+publisher._replace = cut
+job = SimpleNamespace(settings=SimpleNamespace(project=project), stage=Path(state["stage"]),
+                      cancel=Event(), assert_source_unchanged=lambda: None)
+publisher.publish_scene(job, linked, state["receipt"])
+"""
+    child = subprocess.run([sys.executable, "-c", program, str(state)], cwd=Path(__file__).resolve().parents[1],
+                           capture_output=True, timeout=15)
+    assert child.returncode == 97, child.stderr.decode(errors="replace")
+    outcome = "committed" if after_replace else "rolled-back"
+    assert recover_project(session.settings.project) == [f"{linked.scene_path} · {outcome}"]
+    scene = session.settings.project / linked.scene_path
+    assert file_hash(scene) == (receipt["output_hash"] if after_replace else linked.scene_hash)
+    assert not list(scene.parent.glob(".rtc-publish-*"))
+
+
+def test_native_failure_with_complete_result_never_publishes(publication, monkeypatch):
+    pytest.importorskip("PySide6")
+    import godot_ui
+
+    session, linked, _ = publication
+    reply = session.stage.parent / "valid-result.json"
+    write_json(reply, {"protocol": 1, "request_id": "fixture", "operation": "validate_export",
+                       "godot_version": RESULT_VERSION, "status": "PASS", "warnings": [], "data": {}})
+
+    class FailingSession:
+        settings = session.settings
+        evidence = reply.parent
+
+        def __init__(self, *_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def stage_export(self, _document):
+            response(reply, "validate_export", "fixture", 0xc0000005, "")
+
+    def reject_publish(*_):
+        pytest.fail("failed stage reached publication")
+
+    monkeypatch.setattr(godot_ui, "GodotSession", FailingSession)
+    monkeypatch.setattr(godot_ui, "publish_scene", reject_publish)
+    with pytest.raises(BridgeError, match="PROCESS_CRASH"):
+        godot_ui.run_operation(session.settings, session.cancel, "export_region", (MapDocument(source=linked), None),
+                               lambda _: None)
+    assert file_hash(session.settings.project / linked.scene_path) == linked.scene_hash
+    assert file_hash(session.settings.project / linked.region_path) == linked.region_hash

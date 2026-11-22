@@ -1,5 +1,6 @@
 extends Node
 ## Runs exclusively in cloned integration test projects.
+const ShutdownGuard := preload("res://tools/map_bridge/shutdown_guard.gd")
 const Analysis := preload("res://addons/rtc_field_editor/traversal_analysis.gd")
 const FIXTURE_SCENE := "res://world/adventure/sewer_region.tscn"
 const FIXTURE_REGION := "res://data/content/regions/sewer_region.tres"
@@ -20,6 +21,7 @@ func _run() -> void:
 		ok = _prepare_traversal(source, field)
 	else:
 		ok = _decorate(field)
+	ShutdownGuard.retain_scripts()
 	field.free()
 	get_tree().quit(0 if ok else 1)
 

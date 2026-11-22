@@ -1,6 +1,7 @@
 """Run the bundled bridge using an explicit Godot executable and an isolated project."""
 
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -182,13 +183,14 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
     logs = [evidence / f"{label}.{stream}.log" for stream in ("stdout", "stderr")]
     scope = ProcessScope()
     process = None
+    remaining = None
+    started = datetime.now(timezone.utc).isoformat()
     kwargs = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
               else {"start_new_session": True})
     try:
         with logs[0].open("wb") as stdout, logs[1].open("wb") as stderr:
             process = subprocess.Popen(command, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                        stdout=stdout, stderr=stderr, **kwargs)
-            write_json(evidence / f"{label}.process.json", {"argv": command, "pid": process.pid})
             try:
                 scope.attach(process)
             except OSError as error:
@@ -200,6 +202,8 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
                     process.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
                     raise error from None
+            write_json(evidence / f"{label}.process.json", {"argv": command, "pid": process.pid, "cwd": str(cwd),
+                                                           "started_utc": started})
             deadline = time.monotonic() + timeout
             while process.poll() is None:
                 if cancel.wait(min(0.05, max(0, deadline - time.monotonic()))):
@@ -223,7 +227,9 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
         if process is not None:
             process.wait(timeout=10)
             write_json(evidence / f"{label}.exit.json", {
-                "exit_code": process.returncode, "pid": process.pid})
+                "exit_code": process.returncode, "pid": process.pid,
+                "started_utc": started, "exited_utc": datetime.now(timezone.utc).isoformat(),
+                "job_active_at_exit": remaining})
 
 
 def response(path, operation, request_id, exit_code, output):
@@ -356,7 +362,7 @@ class GodotSession:
         verified = self.call("validate_export", region_path=region_path, expected=expected)
         _verify_objects(document.objects, verified["objects"], verified["bindings"])
         self.progress("게임 런타임 검사")
-        _, logs = self._run("runtime", ["--scene", "res://tests/editor/field_runtime_probe.tscn",
+        _, logs = self._run("runtime", ["--scene", "res://tools/map_bridge/runtime_validation.tscn",
                                        "--", "--region", document.region_id], timeout=60)
         runtime = {line.removeprefix("REGION_PLAYTEST_JSON ") for line in logs.splitlines()
                    if line.startswith("REGION_PLAYTEST_JSON ")}

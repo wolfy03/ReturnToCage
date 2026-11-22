@@ -1,5 +1,6 @@
 extends Node
 
+const ShutdownGuard := preload("res://tools/map_bridge/shutdown_guard.gd")
 const Contract := preload("res://tools/map_bridge/scene_contract.gd")
 const PROTOCOL := 1
 const COMMANDS := ["inspect_project", "inspect_region", "import_region", "validate_document", "export_region", "validate_export"]
@@ -21,6 +22,7 @@ func _run() -> void:
 		get_tree().quit(2)
 		return
 	request = parsed
+	print("RTC_BRIDGE VALIDATION_STARTED ", request.get("operation"))
 	if request.get("protocol") != PROTOCOL or not request.get("request_id") is String or request.get("operation") not in COMMANDS:
 		_finish({}, "INVALID_DOCUMENT: invalid protocol or operation")
 		return
@@ -52,6 +54,7 @@ func _run() -> void:
 		_finish({}, "UNSUPPORTED_NODE: expected a Node2D region root")
 		return
 	scene_root = node
+	print("RTC_BRIDGE SCENE_LOADED")
 	var failures := region.validate_definition(ContentRegistry)
 	if not failures.is_empty():
 		_finish({}, "RUNTIME_LOAD_FAILED: " + "\n".join(failures))
@@ -77,6 +80,7 @@ func _run() -> void:
 			if expected.get("region_hash") != summary.region_hash or expected.get("output_hash") != summary.scene_hash:
 				_finish({}, "SOURCE_MODIFIED: staged Scene or RegionDefinition bytes changed")
 				return
+			print("RTC_BRIDGE CONTRACT_PASS")
 			var collision_issue := await _runtime_collision()
 			_finish(summary, collision_issue)
 		_:
@@ -242,16 +246,26 @@ func _runtime_collision() -> String:
 		if actual == null or not Contract.polygon_is_rectangle(visual.polygon, actual.size) \
 				or collider.one_way_collision != data.properties.one_way:
 			errors.append("Collision size or one-way differs at %s" % scene_root.get_path_to(item))
+	if errors.is_empty():
+		print("RTC_BRIDGE COLLISION_PASS")
+	var instance_id := scene_root.get_instance_id()
 	scene_root.queue_free()
 	scene_root = null
 	await get_tree().process_frame
+	if is_instance_id_valid(instance_id):
+		errors.append("Collision probe Scene remained alive after queued deletion")
 	GameSession.start_new_game()
 	return "RUNTIME_LOAD_FAILED: " + "\n".join(errors) if not errors.is_empty() else ""
 
 func _finish(data: Dictionary, error: String = "") -> void:
+	print("RTC_BRIDGE CLEANUP_STARTED")
+	ShutdownGuard.retain_scripts()
 	if is_instance_valid(scene_root):
 		scene_root.free()
 		scene_root = null
+	scene = null
+	region = null
+	print("RTC_BRIDGE CLEANUP_COMPLETE")
 	var result := {"protocol": PROTOCOL, "request_id": request.get("request_id"), "operation": request.get("operation"),
 		"status": "PASS" if error.is_empty() else "FAIL", "error_code": error.get_slice(":", 0),
 		"message": error, "godot_version": Engine.get_version_info().string,
@@ -262,4 +276,6 @@ func _finish(data: Dictionary, error: String = "") -> void:
 		return
 	file.store_string(JSON.stringify(result, "", true, true))
 	file.close()
+	print("RTC_BRIDGE RESULT_WRITTEN")
+	print("RTC_BRIDGE ENGINE_EXIT_REQUESTED")
 	get_tree().quit(0 if error.is_empty() else 1)

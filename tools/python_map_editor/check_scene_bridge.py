@@ -24,7 +24,7 @@ def traversal(session, label):
                                                "traversal"])
     request = read_json(session.stage / TRAVERSAL_FOLDER[6:] / "request.json")
     _, logs = session._run(f"traversal-{label}", ["--fixed-fps", str(request["fps"]), "--scene",
-                              "res://tests/editor/traversal_physics.tscn", "--", TRAVERSAL_FOLDER + "/request.json"])
+                              "res://tools/map_bridge/traversal_validation.tscn", "--", TRAVERSAL_FOLDER + "/request.json"])
     result = read_json(session.stage / TRAVERSAL_FOLDER[6:] / "result.json")
     assert "TRAVERSAL PHYSICS PASS" in logs and result["fingerprint"] == request["fingerprint"]
     assert not result["partial"] and all(route["trace"] for route in result["routes"]
@@ -112,6 +112,7 @@ def check(project, executable, work, transformations=True):
                 binding = next(item for item in updated.source.bindings if item.id == west.id)
                 assert binding.world_transform[-2:] == (452, 440)
                 metrics = traversal(session, "edited")
+                assert metrics == [5, 26, 14], metrics
                 copy = publish_copy(session, directory / "하수구 게시 복사본", document.source, receipt)
                 assert file_hash(copy / SCENE) == receipt["output_hash"] and file_hash(copy / REGION) == receipt["region_hash"]
                 assert project_manifest(fixture, cancel) == original
