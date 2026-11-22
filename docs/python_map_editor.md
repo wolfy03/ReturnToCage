@@ -55,7 +55,7 @@ $editorPython = "./build/python-map-editor/venv/Scripts/python.exe"
 
 빌드 스크립트가 고유 폴더에 EXE, `_internal`, README, 라이선스 안내 및 ZIP을 생성한다. 배포 ZIP 전체를 풀고 `ReturnToCageMapEditor.exe`를 시작한다. 일반 편집에는 외부 Python이나 Godot이 필요하지 않다.
 
-`--smoke-report <path.json>`는 실제 Qt 창을 열어 Qt 마우스·키보드·드롭 이벤트를 보내 편집 도구, 저장·재열기 및 설정 복원을 검사하고 1,000개 객체 측정값과 스크린샷을 기록한다. 레이어와 일부 설정 검사는 위젯 상태를 직접 변경한다. EXE 검증은 별도 위치에서 배포본을 풀고 Python·Qt 환경 변수와 외부 Python이 PATH에 없는 환경에서 수행한다. Qt 배율 100%, 150%, 200%에서 편집 후 EXE를 종료한 다음, 별도 EXE 프로세스로 V2 문서와 PNG를 다시 읽는다.
+`--smoke-report <path.json>`는 실제 Qt 창을 열어 Qt 마우스·키보드·드롭 이벤트를 보내 편집 도구, 저장·재열기 및 설정 복원을 검사하고 1,000개 객체 측정값과 스크린샷을 기록한다. 레이어와 일부 설정 검사는 위젯 상태를 직접 변경한다. EXE 검증은 배포본을 별도 폴더에 풀고 Python·Qt 환경 변수를 제거한 뒤 시스템 전용 PATH로 실행한다. Qt 배율 100%, 150%, 200%에서 편집 후 EXE를 종료한 다음, 별도 EXE 프로세스로 V2 문서와 PNG를 다시 읽는다.
 
 ```powershell
 & $editorPython tools/python_map_editor/verify_windows_package.py "<빌드 ZIP>" --artifacts build/python-map-editor/qa
@@ -65,7 +65,7 @@ $editorPython = "./build/python-map-editor/venv/Scripts/python.exe"
 
 다른 이름으로 저장은 선택한 기존 파일의 revision을 기록하고 덮어쓰기 확인을 표시한다. 사용자가 승인한 후 대상이 이동·삭제·수정되면 저장을 차단한다. 실패와 취소 시 열린 문서 경로와 최근 폴더가 유지된다. 읽기 전용 파일 및 심볼릭 링크·정션 경로를 보호한다.
 
-GitHub Actions의 **Python Map Editor** 워크플로는 경로 변경을 감지해 문서 테스트, 150% Qt 스모크, OneDir 빌드와 압축을 푼 EXE 실행을 수행한다. 통과한 ZIP과 검증 로그는 Actions Artifacts에서 받을 수 있다. 게임 배포와 Python 에디터 배포는 별도 자산이다.
+GitHub Actions의 **Python Map Editor** 워크플로는 경로 변경을 감지해 문서 테스트, 100%·150%·200% Qt 스모크, OneDir 빌드와 압축을 푼 EXE 편집·재실행을 수행한다. 통과한 ZIP과 검증 로그는 Actions Artifacts에서 받을 수 있다. 게임 배포와 Python 에디터 배포는 별도 자산이다.
 
 ## 별도 저장소 이전
 
@@ -77,3 +77,15 @@ GitHub Actions의 **Python Map Editor** 워크플로는 경로 변경을 감지�
 - 초기 OneDir 실행은 호스트의 다른 도구에서 유입된 ICU DLL이 QtCore의 unsuffixed import를 제공하지 못해 실패했다. 빌드 경로를 제한하고 spec에서 OS ICU와 충돌하는 번들 파일을 제외했다. 기존 실패 자료는 상위 `validation/python-map-editor-step1/package-qa`에 별도로 보존했다.
 - 수정한 EXE의 Windows Qt 스모크는 배포 ZIP을 저장소 밖에 풀고 별도 작업 디렉터리·사용자 데이터 및 시스템 전용 PATH로 실행했다. 번들 Python과 windowed PE 서브시스템을 확인했다. 실제 Windows 입력 검사에서는 일반 실행의 격자 켜기·끄기, 100% 줌과 창 닫기를 확인했다. 물리적으로 Python이 설치되지 않은 별도 PC 검증은 수행하지 않았다.
 - Qt 라이선스 본문은 [Qt 6.11.3 소스의 LICENSES](https://github.com/qt/qtbase/tree/v6.11.3/LICENSES)에서 가져왔다.
+
+## PY-STEP 2 검증 기록
+
+Windows 11 x64에서 pytest 52개 중 51개가 통과했다. Windows 심볼릭 링크 생성 권한이 필요한 기존 검사 한 건은 로컬에서 건너뛰며 Ubuntu CI에서 실행된다. Qt 100%·150%·200% 각 환경에서 소스와 배포 EXE가 각각 63개 검사를 통과했다. 배포 EXE는 각 배율에서 편집·저장 후 종료 코드 0으로 닫혔고, 새 프로세스가 한글 경로의 문서와 PNG를 읽은 후 종료 코드 0을 반환했다. Windows PE의 GUI 서브시스템과 포함된 Python 런타임도 확인했다. Python 미설치 별도 PC 검증은 수행하지 않았다.
+
+1,000개 플랫폼을 담은 테스트 문서의 Windows 배포본 측정값이다. 각 수치는 작업을 한 번 실행하고 Qt 이벤트를 처리한 결과이며 단위는 ms다.
+
+| Qt 배율 | 로드 | 선택 | 줌 | 화면 이동 | 저장 | 재열기 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100% | 54.19 | 15.84 | 15.09 | 14.69 | 24.04 | 58.85 |
+| 150% | 57.49 | 18.50 | 17.60 | 16.33 | 23.85 | 59.21 |
+| 200% | 57.49 | 18.45 | 18.60 | 15.00 | 29.67 | 56.35 |
