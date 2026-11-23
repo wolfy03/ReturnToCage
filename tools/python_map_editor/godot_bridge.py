@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from document import MapDocument
 from objects import DocumentError, MapObject
+from region_design import RegionDesign
 from source_region import GodotSource, NodeBinding, relative_path
 from strings import tr
 
@@ -350,13 +351,14 @@ class GodotSession:
         if project_manifest(self.settings.project, self.cancel) != self.manifest:
             raise BridgeError("SOURCE_MODIFIED", "프로젝트 원본 또는 리소스가 작업 중 변경되었습니다.")
 
-    def import_region(self, definition):
+    def import_region(self, definition, *, design=False):
         relative_path(definition, ".tres")
-        data = self.call("import_region", region_path="res://" + definition)
+        data = self.call("import_v4_region" if design else "import_region", region_path="res://" + definition)
         self.assert_source_unchanged()
         source = self._source(data, self.manifest)
         document = MapDocument(data["region_id"], data["display_name"], *data["extent"],
-                               objects=tuple(MapObject.from_data(item) for item in data["objects"]), source=source)
+                               objects=tuple(MapObject.from_data(item) for item in data["objects"]), source=source,
+                               design=RegionDesign.from_data(data["design"]) if design else None)
         return document, data
 
     def _source(self, data, manifest):
@@ -411,6 +413,82 @@ class GodotSession:
         receipt["warnings"] = verified["warnings"]
         write_json(self.evidence / "verified-export.json", receipt)
         return fresh, receipt
+
+    def stage_design(self, document):
+        source = document.source
+        design = document.design
+        if design is None or source is None:
+            raise BridgeError("INVALID_DOCUMENT", "Choose a linked V4 design to stage.")
+        if design.connections:
+            raise BridgeError("UNSUPPORTED_NODE", "Remove the unsupported ESCAPE routes before converting this document.")
+        if self.manifest.get("project.godot") != source.project_id or fingerprint(self.manifest) != source.fingerprint:
+            raise BridgeError("SOURCE_MODIFIED", "Project, Scene or RegionDefinition changed after import.")
+        region_path = "res://" + source.region_path
+        expected = self.call("stage_v4_export", region_path=region_path, region_id=document.region_id,
+                             display_name=document.display_name, objects=[asdict(item) for item in document.objects],
+                             source={key: getattr(source, key) for key in ("scene_path", "region_path", "scene_hash",
+                                                                          "region_hash", "scene_uid", "region_uid")},
+                             bindings={item.id: item.as_bridge_data() for item in source.bindings}, design=asdict(design))
+        return self._verify_staged_design(document, expected, source.scene_path, source.region_path)
+
+    def _verify_staged_design(self, document, expected, scene_path, region_path):
+        if expected["scene_path"] != scene_path or expected["region_path"] != region_path:
+            raise BridgeError("INVALID_RESPONSE", "Bridge staged unexpected destinations.")
+        if document.source and (expected["scene_uid"], expected["region_uid"]) != (
+                document.source.scene_uid, document.source.region_uid):
+            raise BridgeError("UID_CONFLICT", "Staged pair changed an original UID.")
+        manifest = dict(self.manifest)
+        for path, hash_key in ((scene_path, "scene_hash"), (region_path, "region_hash")):
+            output = safe_child(self.stage, path, Path(path).suffix)
+            digest = file_hash(output)
+            if digest != expected[hash_key]:
+                raise BridgeError("SOURCE_MODIFIED", f"staged file hash mismatch: {path}")
+            manifest[path] = digest
+        contract_keys = ("scene_hash", "region_hash", "scene_uid", "region_uid", "scene_state", "definition_state")
+        verified = self.call("validate_v4_export", region_path="res://" + region_path,
+                             expected={key: expected[key] for key in contract_keys})
+        marker_ids = {item.id for item in (*document.design.region_points, *document.design.spawn_points)}
+        object_bindings = {key: value for key, value in verified["bindings"].items() if key not in marker_ids}
+        _verify_objects(document.objects, verified["objects"], object_bindings)
+        resulting_design = RegionDesign.from_data(verified["design"])
+        _verify_design(document.design, resulting_design)
+        self.progress(tr("runtime_running"))
+        serial = uuid4().hex
+        _, logs = self._run(f"design-runtime-{serial}", ["--scene", "res://tools/map_bridge/runtime_validation.tscn",
+                                     "--", "--region", document.region_id], timeout=60)
+        results = {line.removeprefix("REGION_PLAYTEST_JSON ") for line in logs.splitlines()
+                   if line.startswith("REGION_PLAYTEST_JSON ")}
+        if "AUTHORED FIELD RUNTIME PASS" not in logs or len(results) != 1:
+            raise BridgeError("RUNTIME_LOAD_FAILED", "Godot did not complete the authored region runtime probe.")
+        runtime = json.loads(next(iter(results)))
+        if runtime.get("overall") not in ("PASS", "PASS_WITH_WARNINGS"):
+            raise BridgeError("RUNTIME_LOAD_FAILED", "Region runtime or live spawn safety failed.")
+        self.progress(tr("runtime_validated"))
+        self.assert_source_unchanged()
+        fresh = replace(document, source=self._source(verified, manifest), design=resulting_design)
+        receipt = {key: verified[key] for key in (*contract_keys, "scene_path", "region_path", "node_count", "warnings")}
+        receipt["runtime"] = runtime
+        write_json(self.evidence / f"verified-v4-export-{serial}.json", receipt)
+        return fresh, receipt
+
+
+def _verify_design(expected, actual):
+    for desired, loaded in ((expected.region_points, actual.region_points), (expected.spawn_points, actual.spawn_points)):
+        rows = {item.id: item for item in loaded}
+        if set(rows) != {item.id for item in desired}:
+            raise BridgeError("EXPORT_FAILED", "Reloaded marker identities differ from the draft.")
+        for marker in desired:
+            other = rows[marker.id]
+            if replace(marker, position=other.position) != other or any(
+                    abs(a - b) > max(0.0002, abs(a) * 0.000001) for a, b in zip(marker.position, other.position)):
+                raise BridgeError("EXPORT_FAILED", f"Reloaded marker differs: {marker.id}")
+    env = expected.environment
+    observed = actual.environment
+    color = env.loading_color + ("ff" if len(env.loading_color) == 7 else "")
+    if observed.path != env.path or (env.uid and observed.uid != env.uid) or observed.loading_color != color:
+        raise BridgeError("EXPORT_FAILED", "Reloaded environment differs from the draft.")
+    if expected.template_ladder != actual.template_ladder:
+        raise BridgeError("EXPORT_FAILED", "Reloaded template ladder differs from the draft.")
 
 
 def _verify_objects(expected, actual, bindings):

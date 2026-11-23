@@ -2,8 +2,10 @@ extends Node
 
 const ShutdownGuard := preload("res://tools/map_bridge/shutdown_guard.gd")
 const Contract := preload("res://tools/map_bridge/scene_contract.gd")
+const Design := preload("res://tools/map_bridge/region_design_contract.gd")
 const PROTOCOL := 1
-const COMMANDS := ["inspect_project", "inspect_region", "import_region", "validate_document", "export_region", "validate_export"]
+const COMMANDS := ["inspect_project", "inspect_region", "import_region", "validate_document", "export_region", "validate_export",
+	"import_v4_region", "stage_v4_export", "validate_v4_export"]
 var request: Dictionary
 var region: RegionDefinition
 var scene: PackedScene
@@ -65,6 +67,9 @@ func _run() -> void:
 		return
 	var signal_links := Contract.connections(scene, scene_root)
 	var summary := _summary(data, signal_links)
+	if request.operation in ["import_v4_region", "stage_v4_export", "validate_v4_export"]:
+		await _design_operation(data, signal_links, summary)
+		return
 	match request.operation:
 		"inspect_region", "import_region":
 			_finish(summary)
@@ -142,13 +147,13 @@ func _summary(data: Dictionary, links: Array) -> Dictionary:
 		"scene_state": snapshot, "node_count": snapshot.nodes.size(),
 		"objects": data.objects, "bindings": data.bindings, "extent": data.extent, "warnings": data.warnings}
 
-func _apply_document(data: Dictionary, links: Array) -> String:
+func _apply_document(data: Dictionary, links: Array, verify_bindings: bool = true) -> String:
 	var objects: Variant = request.get("objects")
 	if not objects is Array or objects.size() > 50000:
 		return "INVALID_DOCUMENT: expected at most 50,000 objects"
 	if request.get("region_id") != String(region.id) or request.get("display_name") != region.display_name:
 		return "INVALID_DOCUMENT: RegionDefinition metadata is read-only"
-	if not _same_json(request.get("bindings"), data.bindings):
+	if verify_bindings and not _same_json(request.get("bindings"), data.bindings):
 		return "SOURCE_MODIFIED: source node identity or transform differs from the imported binding"
 	if scene.get_state().get_base_scene_state() != null:
 		return "UNSUPPORTED_NODE: inherited root scene export is unavailable"
@@ -182,6 +187,97 @@ func _apply_document(data: Dictionary, links: Array) -> String:
 				return issue
 			victim.free()
 	return ""
+
+func _design_summary(base: Dictionary, design: Dictionary) -> Dictionary:
+	var bindings: Dictionary = base.bindings.duplicate()
+	for key: String in design.bindings:
+		if bindings.has(key):
+			return {"error": "INVALID_DOCUMENT: marker and object share ID %s" % key}
+		bindings[key] = design.bindings[key]
+	return base.merged({"bindings": bindings, "design": design.design, "definition_state": design.definition_state}, true)
+
+func _design_operation(objects: Dictionary, links: Array, summary: Dictionary) -> void:
+	var design := Design.inventory(scene_root, region)
+	if design.has("error"):
+		_finish({}, design.error)
+		return
+	var initial := _design_summary(summary, design)
+	if initial.has("error"):
+		_finish({}, initial.error)
+		return
+	if request.operation == "import_v4_region":
+		_finish(initial)
+		return
+	if request.operation == "validate_v4_export":
+		var expected: Variant = request.get("expected")
+		if not expected is Dictionary:
+			_finish({}, "INVALID_DOCUMENT: missing verified pair receipt")
+			return
+		for field: String in ["scene_uid", "region_uid"]:
+			if expected.get(field) != initial.get(field):
+				_finish({}, "UID_CONFLICT: staged %s did not match on reload" % field)
+				return
+		for field: String in ["scene_hash", "region_hash", "scene_state", "definition_state"]:
+			if not _same_json(expected.get(field), initial.get(field)):
+				_finish({}, "EXPORT_FAILED: staged %s did not match on reload" % field)
+				return
+		print("RTC_BRIDGE CONTRACT_PASS")
+		var issue := await _runtime_collision()
+		_finish(initial, issue)
+		return
+	var source: Variant = request.get("source")
+	if not source is Dictionary or not _same_json(initial.bindings, request.get("bindings")):
+		_finish({}, "SOURCE_MODIFIED: marker or object identity is stale")
+		return
+	for field: String in ["scene_path", "region_path", "scene_hash", "region_hash", "scene_uid", "region_uid"]:
+		if source.get(field) != initial.get(field):
+			_finish({}, "SOURCE_MODIFIED: source %s is stale" % field)
+			return
+	if not request.get("design") is Dictionary or request.design.get("template_ladder") != null:
+		_finish({}, "UNSUPPORTED_NODE: template ladder editing in a linked region is unavailable")
+		return
+	var error := Design.apply(scene_root, region, design, request.design, links)
+	if error.is_empty():
+		error = _apply_document(objects, links, false)
+	if error.is_empty():
+		var errors := RegionDefinition.validate_field_nodes(region, scene_root, ContentRegistry)
+		if not errors.is_empty():
+			error = "INVALID_DOCUMENT: " + "\n".join(errors)
+	if not error.is_empty():
+		_finish({}, error)
+		return
+	_save_design(initial, links)
+
+func _save_design(initial: Dictionary, links: Array) -> void:
+	var objects := Contract.inventory(scene_root, String(region.id))
+	var design := Design.inventory(scene_root, region)
+	if objects.has("error") or design.has("error"):
+		_finish({}, "INVALID_DOCUMENT: " + objects.get("error", design.get("error", "")))
+		return
+	var updated := _design_summary(_summary(objects, links), design)
+	if updated.has("error"):
+		_finish({}, updated.error)
+		return
+	if not _same_json(initial.scene_state, updated.scene_state):
+		var packed := PackedScene.new()
+		if packed.pack(scene_root) != OK or not _save_resource(packed, region.scene_path, initial.scene_uid):
+			_finish({}, "EXPORT_FAILED: cannot stage edited Scene")
+			return
+	if not _same_json(initial.definition_state, updated.definition_state):
+		if not _save_resource(region, region.resource_path, initial.region_uid):
+			_finish({}, "EXPORT_FAILED: cannot stage RegionDefinition")
+			return
+	updated.scene_hash = FileAccess.get_sha256(region.scene_path)
+	updated.region_hash = FileAccess.get_sha256(region.resource_path)
+	_finish(updated)
+
+func _save_resource(resource: Resource, path: String, uid: String) -> bool:
+	var staged := path.get_basename() + ".rtc-stage." + path.get_extension()
+	if FileAccess.file_exists(staged) or ResourceSaver.save(resource, staged) != OK:
+		return false
+	if not uid.is_empty() and ResourceSaver.set_uid(staged, ResourceUID.text_to_id(uid)) != OK:
+		return false
+	return DirAccess.rename_absolute(staged, path) == OK
 
 func _same_json(a: Variant, b: Variant) -> bool:
 	if a is Dictionary and b is Dictionary:
