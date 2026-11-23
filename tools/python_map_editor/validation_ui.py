@@ -32,6 +32,7 @@ class ValidationMixin:
         self._validation_context = None
         self._python_state = self._external_state = self._physics_state = NOT_EVALUATED
         self._export_state = self._runtime_state = NOT_EVALUATED
+        self._scene_state = self._publish_state = NOT_EVALUATED
         self._show_validation_status()
 
     def _validation_key(self):
@@ -45,6 +46,7 @@ class ValidationMixin:
         self._validation_context = None
         self._python_state = self._external_state = self._physics_state = NOT_EVALUATED
         self._export_state = self._runtime_state = NOT_EVALUATED
+        self._scene_state = self._publish_state = NOT_EVALUATED
         self.validation_list.clear()
         self.view.issue_position = None
         for item in self.view.markers.values():
@@ -58,7 +60,8 @@ class ValidationMixin:
 
     def _show_validation_status(self):
         states = ((STATIC, self._python_state), (EXTERNAL, self._external_state),
-                  (RUNTIME, self._runtime_state), (PHYSICS, self._physics_state), ("export", self._export_state))
+                  ("godot_scene", self._scene_state), (RUNTIME, self._runtime_state), (PHYSICS, self._physics_state),
+                  ("export", self._export_state), ("publish", self._publish_state))
         self._overall_state = summarize(state for _, state in states)
         self.validation_status.setText("  |  ".join(f"{tr(f'{domain}_state')} · {state}"
                                                        for domain, state in (*states, ("overall", self._overall_state))))
@@ -76,7 +79,6 @@ class ValidationMixin:
             findings = [Finding(FAIL, "invalid_document", str(error))]
         self._python_state = summarize(item.status for item in findings if item.domain == STATIC)
         self._external_state = summarize(item.status for item in findings if item.domain == EXTERNAL)
-        self._physics_state = summarize(item.status for item in findings if item.domain == PHYSICS)
         self._show_validation_status()
         self.validation_list.clear()
         self.view.issue_position = None
@@ -85,6 +87,8 @@ class ValidationMixin:
             marker.update()
         for finding in findings:
             if finding.domain == RUNTIME and finding.status == NOT_EVALUATED and self._runtime_state == PASS:
+                continue
+            if finding.code == "physics_clearance_check" and self._physics_state != NOT_EVALUATED:
                 continue
             text = f"{tr(f'{finding.domain}_state')} · {finding.status} · {tr(finding.code, finding.code)}"
             if finding.detail:
@@ -130,22 +134,43 @@ class ValidationMixin:
             self.statusBar().showMessage(tr("validation_target_missing"), 5000)
         self.view.viewport().update()
 
-    def _record_godot_validation(self, error=None, phase="stage"):
+    def _record_godot_validation(self, error=None, phase="stage", *, result=None, publishing=False):
         self._invalidate_validation()
         self._validation_context = self._validation_key()
+        self._physics_state = self._publish_state = NOT_EVALUATED
         if error is None:
-            self._export_state = self._runtime_state = PASS
+            self._scene_state = self._export_state = self._runtime_state = PASS
+            if result and result.get("target"):
+                self._publish_state = PASS
+            if result and result["document"].design is not None:
+                receipt = result["result"]
+                if receipt.get("unmapped_connections"):
+                    self._export_state = NOT_EVALUATED
+                runtime_rows = receipt.get("runtime", {}).get("results", ())
+                physical = {"ENTRY Physical Anchor", "ENTRY Clearance excluding local actor", "ENTRY Live Physics",
+                            "Player Spawn Assignment", "Ground Support", "Terrain Physics", "Player Actor"}
+                rows = [row for row in runtime_rows if row.get("stage") in physical
+                        or row.get("stage", "").startswith(("Player Spawn Slot ", "Player Body Clearance / slot "))]
+                if physical.issubset({row["stage"] for row in rows}):
+                    self._physics_state = summarize(WARNING if row["status"] == "WARN" else row["status"].replace("_", " ")
+                                                    for row in rows)
         elif error.code == "CANCELLED":
-            self._export_state = self._runtime_state = NOT_EVALUATED
-        elif phase == "runtime_passed":
+            self._scene_state = self._export_state = self._runtime_state = NOT_EVALUATED
+        elif phase in ("runtime_passed", "publishing"):
+            self._scene_state = PASS
             self._export_state, self._runtime_state = FAIL, PASS
+            if publishing and phase == "publishing":
+                self._publish_state = FAIL
         elif phase == "runtime":
+            self._scene_state = PASS
             self._export_state, self._runtime_state = PASS, FAIL
         else:
-            self._export_state, self._runtime_state = FAIL, NOT_EVALUATED
+            self._scene_state = self._export_state = FAIL
+            self._runtime_state = NOT_EVALUATED
         if self._runtime_state == PASS:
             for row in reversed(range(self.validation_list.count())):
                 finding = self.validation_list.item(row).data(Qt.ItemDataRole.UserRole)
-                if finding.domain == RUNTIME and finding.status == NOT_EVALUATED:
+                if (finding.domain == RUNTIME and finding.status == NOT_EVALUATED
+                        or finding.code == "physics_clearance_check" and self._physics_state != NOT_EVALUATED):
                     self.validation_list.takeItem(row)
         self._show_validation_status()

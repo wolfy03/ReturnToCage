@@ -12,11 +12,13 @@ from PySide6.QtWidgets import QComboBox, QInputDialog, QMessageBox
 from document import read_document
 from godot_bridge import file_hash
 from godot_ui import GodotSettingsDialog
+from region_design import RegionEnvironment
+from region_wizard import create_region
 from strings import tr
 from window import MainWindow
 
 
-def schedule_bridge_smoke(app, report, project, godot):
+def schedule_bridge_smoke(app, report, project, godot, include_design=False):
     if not (project / ".rtc-smoke-fixture").is_file():
         raise ValueError("Godot GUI smoke refuses to publish outside a prepared disposable fixture")
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -29,6 +31,8 @@ def schedule_bridge_smoke(app, report, project, godot):
     region = project / "data/content/regions/sewer_region.tres"
     original_scene = file_hash(scene)
     original_region = file_hash(region)
+    new_scene = project / "world/adventure/v4_packaged.tscn"
+    new_region = project / "data/content/regions/v4_packaged.tres"
     evidence = {"passed": False, "frozen": getattr(sys, "frozen", False), "checks": checks,
                 "godot": str(godot), "project": str(project), "initial_scene": original_scene,
                 "definition_hash": original_region}
@@ -55,7 +59,11 @@ def schedule_bridge_smoke(app, report, project, godot):
             combo.setCurrentIndex(index)
             widget.accept()
         elif isinstance(widget, QMessageBox):
-            if widget.windowTitle() == tr("godot_export"):
+            if widget.windowTitle() == tr("godot_publish_design"):
+                if new_scene.exists() or new_region.exists():
+                    errors.append("new destination written before approval")
+                widget.button(QMessageBox.StandardButton.Yes).click()
+            elif widget.windowTitle() == tr("godot_export"):
                 widget.button(QMessageBox.StandardButton.Yes).click()
             else:
                 errors.append(widget.text())
@@ -91,6 +99,41 @@ def schedule_bridge_smoke(app, report, project, godot):
         field.selectAll()
         QTest.keyClicks(field, text)
         QTest.keyClick(field, Qt.Key.Key_Return)
+
+    def verify_design():
+        from region_validation import NOT_EVALUATED, PASS, WARNING
+
+        checkpoint("packaged V4 import requested")
+        window.godot_import_design_action.trigger()
+        wait_job()
+        require(not errors and len(window.draft.design.region_points) == 3 and len(window.draft.design.spawn_points) == 4,
+                "frozen V4 import restored Sewer markers and slots")
+        entry = window.draft.design.region_points[0]
+        window._move_marker(entry.id, (152, 520))
+        window.environment_color.setText("#203456")
+        window._save_environment()
+        original = file_hash(scene), file_hash(region)
+        checkpoint("packaged V4 revalidation requested")
+        window.godot_validate_action.trigger()
+        wait_job()
+        require(not errors and window._scene_state == window._runtime_state == PASS
+                and window._physics_state in (PASS, WARNING) and window._publish_state == NOT_EVALUATED
+                and (file_hash(scene), file_hash(region)) == original,
+                "V4 validation measured spawn physics without publishing")
+        draft = create_region("v4_packaged", "Packaged fixture", 1200, 600, "flat", 4, RegionEnvironment())
+        window._install_draft(draft)
+        checkpoint("packaged V4 pair publication requested")
+        window.godot_export_action.trigger()
+        wait_job()
+        require(not errors and window._publish_state == PASS and window.draft.source is not None
+                and file_hash(new_scene) == window.draft.source.scene_hash
+                and file_hash(new_region) == window.draft.source.region_hash,
+                "confirmed V4 publication produced both verified files")
+        path = report.parent / "새 지역 게시.rtcmap"
+        window.save_document(path)
+        window.open_document(path)
+        require(window.draft.source.scene_uid and window.draft.source.region_uid
+                and window.draft.design == draft.design, "published V4 draft reopened with both resource UIDs")
 
     def run():
         try:
@@ -134,6 +177,8 @@ def schedule_bridge_smoke(app, report, project, godot):
             actual = next(item for item in window.draft.objects if item.id == west.id)
             require(actual.position == (452, 440) and actual.size == (256, 22)
                     and window.draft.source.scene_hash == file_hash(scene), "V3 reload kept edits and new source hash")
+            if include_design:
+                verify_design()
             window._start_godot("inspect_project", None, lambda _: errors.append("cancel completed as success"))
             QTest.qWait(150)
             window.godot_cancel.click()

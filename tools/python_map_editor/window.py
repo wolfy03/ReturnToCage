@@ -212,6 +212,8 @@ class MainWindow(GodotMixin, ValidationMixin, RegionMixin, EditingMixin, QMainWi
             self.undo.push(MetadataEdit(self, self._metadata, values, field))
 
     def _apply_metadata(self, values):
+        if self.draft.source is not None:
+            values = (self.draft.region_id, self.draft.display_name, *values[2:])
         renamed = hasattr(self, "_metadata") and self._metadata[0] != values[0]
         self._metadata = values
         for widget, setter, value in zip(

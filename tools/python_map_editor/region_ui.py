@@ -191,8 +191,8 @@ class RegionMixin:
         for field, value in ((self.environment_path, design.environment.path), (self.environment_uid, design.environment.uid),
                              (self.environment_color, design.environment.loading_color)):
             field.setText(value)
-        self.design_notice.setText(tr("design_export_unsupported") if self.draft.design is not None else
-                                   tr("design_import_preserved") if self.draft.source else "")
+        self.design_notice.setText(tr("design_connections_unsupported" if design.connections else "design_export_ready")
+                                   if self.draft.design is not None else tr("design_import_preserved") if self.draft.source else "")
         self.design_notice.setVisible(bool(self.design_notice.text()))
         self._refresh_region_choices()
         self.view.sync_markers(self.draft.design, selection)

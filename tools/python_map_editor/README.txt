@@ -1,4 +1,4 @@
-ReturnToCage Map Editor — PY-STEP 4 (Windows x64)
+ReturnToCage Map Editor — PY-STEP 5 (Windows x64)
 
 ZIP 전체를 풀고 ReturnToCageMapEditor.exe를 실행하세요.
 _internal 폴더를 실행 파일과 같은 위치에 두세요.
@@ -27,8 +27,12 @@ Ctrl+N / Ctrl+O / Ctrl+S: 새 맵 / 열기 / 저장
 지역 메뉴의 마법사로 빈 지역, 평지, 플랫폼 템플릿을 만들 수 있습니다.
 ENTRY / ESCAPE와 스폰을 배치하고, 지역 설계 패널에서 연결과 환경을
 편집하세요. 보기 메뉴의 Python 문서 검증은 Godot 없이 실행됩니다.
-V4 설계는 .rtcmap으로 저장하고 재열 수 있습니다. V4의 Godot 게시는
-아직 지원하지 않습니다. 기존 가져온 V3의 플랫폼·장식 게시는 유지됩니다.
+Godot 지역 설계 가져오기(V4)는 마커, 스폰과 환경을 가져옵니다.
+공식 Godot 4.7.2를 설정한 뒤 Godot 내보내기를 선택하면 Scene과
+RegionDefinition을 격리 사본에서 검증한 뒤 게시 승인을 묻습니다.
+신규 지역의 정착지 출구와 해금은 기존 게임 도구로 별도 구성하세요.
+ESCAPE에서 다른 지역으로 연결하는 초안은 .rtcmap에 남으며 게시가 차단됩니다.
+기존 V3 플랫폼·장식 게시는 유지됩니다.
 
 공식 소스와 빌드 워크플로: https://github.com/wolfy03/ReturnToCage
 소스 위치: tools/python_map_editor/ (feature/python-map-editor)

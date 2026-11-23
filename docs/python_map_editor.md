@@ -2,7 +2,7 @@
 
 Python Map Editor는 [wolfy03/ReturnToCage](https://github.com/wolfy03/ReturnToCage)의 내부 프로젝트다. 소스 위치는 `tools/python_map_editor/`, 작업 브랜치는 `feature/python-map-editor`다. 설치·빌드·배포와 개발 이력을 이 저장소에서 관리한다.
 
-PY-STEP 4는 기존 독립 2D 맵 편집과 Godot 지역 가져오기·검증·게시를 유지하며 지역 설계를 추가한다. V1/V2 초안, Godot에 연결된 V3 초안, 지역 설계가 추가된 V4 초안을 열 수 있다.
+PY-STEP 5는 Python의 독립 편집을 유지하며 V4 지역 설계를 공식 Godot 4.7.2의 Scene과 RegionDefinition으로 변환한다. V1/V2 초안, V3 원본 바인딩 및 V4 지역 설계를 열 수 있다.
 
 ## 맵 편집
 
@@ -24,13 +24,15 @@ PY-STEP 4는 기존 독립 2D 맵 편집과 Godot 지역 가져오기·검증·�
 - **배치 프리셋**에서 선택한 플랫폼·장식의 상대 좌표, 기하, 레이어와 속성을 사용자 설정에 저장하고 화면 중앙에 다시 배치한다. 배치 한 번은 한 Undo 명령이다. 기존 Godot `.tres` 프리셋은 원래 Godot 플러그인에서 사용한다.
 - **보기 → Python 문서 검증**은 구조, 참조, 좌표, 슬롯 및 플랫폼 내부의 스폰 기준점 등 정적 문제를 보고한다. 결과를 클릭하면 관련 마커·객체·연결을 표시한다. 문서나 인덱스 변경으로 기존 결과는 무효화된다. Python Static, 외부 지역, Godot 런타임, 물리 및 내보내기 판정을 각각 표시한다. 전체 PASS에는 모든 영역의 검증이 필요하다. 기존 V3 Bridge Runtime 검증은 맵 전체의 물리·접근 가능성 검증을 완료하지 않으므로 물리 판정은 `NOT EVALUATED`로 유지한다.
 
-V4 문서의 `design`에는 마커, 정착지 출구 연결, 스폰, 환경 및 선택적인 사다리 앵커가 저장된다. 이 편집 타입의 Godot 왕복 변환은 지원 범위 밖이라 V4 검증·게시·Export As를 차단한다. 기존 Godot 지역에 연결된 문서를 V4로 편집해도 원본 연결·UID·Transform은 파일에 남는다. V3 가져오기, 플랫폼·PNG 장식 편집 및 검증·게시 작업은 사용할 수 있다.
+V4의 `design`은 마커, 지역 연결 초안, 스폰, 환경 및 선택적인 사다리 앵커를 담는다. 기존 지역에서는 **Godot 지역 설계 가져오기 (V4)**로 원본의 마커·스폰·환경과 바인딩을 함께 가져온다. 기존 V3 문서에서 마커를 편집하려면 원본을 V4로 다시 가져온다. 불완전한 마커 목록으로 원본을 대체하지 않도록 V3 바인딩에 설계만 추가한 문서는 Godot가 거부한다.
+
+새 V4 문서의 **Godot로 내보내기**는 공식 Scaffold를 기반으로 `world/adventure/<region_id>.tscn`과 `data/content/regions/<region_id>.tres`를 생성한다. Scene 재로드, 실제 스폰과 런타임 검증 결과를 확인한 뒤 두 파일의 게시 승인을 요청한다. 빈 템플릿은 물리 바닥을 배치해야 게시할 수 있다. ESCAPE 지역 연결이 포함된 문서는 연결 외 필드를 미리 검증할 수 있으며, 게임 게시 전에는 미지원 연결을 제거해야 한다. 신규 지역에 실제 정착지 진입 경로를 연결하고 지역을 해금하는 작업은 기존 게임 도구에서 수행한다.
 
 ## Godot 지역 작업
 
 파일 메뉴에서 ReturnToCage 프로젝트 폴더, 공식 Godot 4.7.2 및 외부 작업 폴더를 설정한다. 경로 설정에는 엔진 실행이 필요 없다. **Godot 지역 가져오기**에서 등록된 지역을 선택하고 플랫폼 또는 PNG 장식을 편집한다. **Godot 내보내기 검증**으로 독립 스냅샷의 Scene 재로드 및 실제 런타임을 검사할 수 있다. **새 프로젝트 폴더로 내보내기**는 다른 위치에서 결과를 열 수 있는 프로젝트 사본을 만든다. 기존 Scene에 게시하려면 대상 경로를 확인한 뒤 **Godot로 내보내기**를 선택한다.
 
-지원 노드와 원본 보존 정책은 [Scene 호환성](python_map_editor_scene_compatibility.md)과 [Godot Bridge, 게시 및 복구](python_map_editor_bridge.md)에 정리했다.
+지원 노드와 원본 보존 정책은 [PY-STEP 5 Godot 계약](python_map_editor_step5_contract.md), [Scene 호환성](python_map_editor_scene_compatibility.md), [Godot Bridge, 게시 및 복구](python_map_editor_bridge.md)에 정리했다.
 
 ## 기존 STEP 1~7과 이전 계획
 
@@ -42,7 +44,7 @@ V4 문서의 `design`에는 마커, 정착지 출구 연결, 스폰, 환경 및 
 | STEP 4 · 크기·텍스처와 저장 | `platform_resize.gd`는 핸들 위치를 Platform 로컬 transform으로 계산한다. `FieldPlatform`은 크기와 실제 Collider를 함께 관리한다. `decoration_stroke.gd`는 간격·seed·각도·scale을 기록한다. `field_maintenance.gd`는 staging, 외부 변경 감지, UID 및 Undo 충돌을 처리한다. | PY-STEP 2의 핸들·스냅은 같은 좌표 변환을 사용한다. Godot Bridge가 스테이징·재검증 및 기존 파일 보호를 담당한다. |
 | STEP 5 · Wizard와 Preset | `region_wizard.gd`, `region_scaffold.tscn`, `region_recovery.gd`, `placement_preset.gd`, `preset_tools.gd`, `field_visualization.gd`. 현재 템플릿은 Empty, Flat, Platform이고 Platform은 ladder 정의에 의존한다. | 세 템플릿의 `.rtcmap` 초안과 플랫폼·장식 상대 배치 프리셋을 지원한다. |
 | STEP 6 · Region Design | `level_design_dialog.gd`, `level_design.gd`, `field_maintenance.gd`, `RegionDefinition`, `SettlementExitDefinition`, `RegionPoint`, `PlayerSpawnPoint`. | Viewport와 패널에서 표식·연결·환경을 편집하고 Python에서 정적 참조를 검사한다. 실제 런타임 검증은 지원되는 V3 문서에서 실행할 수 있다. |
-| STEP 7 · Traversal | `traversal_analysis.gd`가 합성된 world transform과 Collider를 읽어 후보 그래프를 만든다. `traversal_controller.gd`가 스냅샷, SHA fingerprint, 요청·취소 및 stale result를 관리한다. `tools/analyze_traversal.py`가 Job Object로 `tests/editor/traversal_physics.tscn`을 실행하며 실제 PlayerActor 입력으로 간선·슬롯·ESCAPE 경로를 검증한다. | PY-STEP 5에서 Qt worker가 Godot 변환기로 동일한 요청을 준비하고 검증기 결과를 렌더링한다. Candidate, Verified 및 Not Evaluated를 구분한다. |
+| STEP 7 · Traversal | `traversal_analysis.gd`와 `tools/analyze_traversal.py`가 Collider 및 실제 PlayerActor를 사용해 이동을 검증한다. | 기존 하수구 Traversal 회귀 수치를 검증한다. Python 편집기 내 Traversal Overlay는 후속 범위다. |
 
 ## 데이터와 Godot 연동 경계
 

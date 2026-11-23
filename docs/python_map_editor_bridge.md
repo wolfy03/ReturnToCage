@@ -6,7 +6,7 @@ ZIP을 풀고 `ReturnToCageMapEditor.exe`를 실행한다. **파일 → Godot �
 
 **Godot 지역 가져오기**에서 등록된 RegionDefinition을 선택한다. 가져온 문서의 지역 ID와 이름은 읽기 전용이다. 플랫폼과 PNG 장식을 편집한 뒤 `.rtcmap`으로 저장할 수 있다. **Godot 내보내기 검증**은 스테이징과 런타임 검사까지 수행한다. **Godot로 내보내기**는 대상 Scene 경로를 표시하고 확인을 받은 뒤 기존 프로젝트에 게시한다. **새 프로젝트 폴더로 내보내기**는 새 폴더에 검증된 게임 프로젝트 사본을 만든다. 게시한 V3 문서에서 새 원본 지문을 사용하려면 `.rtcmap`을 다시 저장한다.
 
-독립 문서는 기존 V1/V2를 읽고 V2로 저장한다. 가져온 지역은 V3이며 프로젝트 지문, 원본 Scene/RegionDefinition 경로·SHA-256·UID, 노드 ID, 상대 경로, 부모, 로컬·월드 Transform2D 및 충돌 레이어·마스크를 저장한다. 기존 노드 ID는 지역 ID, NodePath, 실제 클래스 또는 Script 경로의 조합에서 파생한다. 새 노드는 `rtc_map_object_id` 메타데이터로 ID를 유지한다. V4에서 추가한 마커, 연결, 환경 및 스폰 설계는 `.rtcmap`에 저장한다. V4 문서의 검증·게시·Export As를 요청하면 Bridge 실행 전에 `UNSUPPORTED_NODE`로 차단한다. Scene 변환을 지원하는 범위는 기존 V3 계약과 같다.
+독립 문서는 기존 V1/V2를 읽고 V2로 저장한다. V3 가져오기는 플랫폼과 장식에 대한 원래 흐름을 유지한다. **Godot 지역 설계 가져오기 (V4)**는 마커, 스폰, 환경과 바인딩을 포함한다. 프로젝트 지문, 원본 Scene/RegionDefinition의 경로·SHA-256·UID, 노드 ID·부모·로컬 및 월드 Transform2D를 유지한다. 새 노드의 ID는 `rtc_map_object_id`에 보존한다. 사용자 승인 후 게시하는 V4의 프로젝트 사본과 Scene/Resource 변환은 [PY-STEP 5 계약](python_map_editor_step5_contract.md)에 정리했다. 별도 프로젝트 폴더로 내보내기는 V3에 적용된다.
 
 ## 실행 계약
 
@@ -25,8 +25,12 @@ Godot.exe --headless --path <project-copy> --log-file <log> --scene res://tools/
 | `validate_document` | 원본 바인딩을 대조하고 편집 명령을 메모리에서 적용하여 검사 |
 | `export_region` | 복사본의 원본 기반 Scene 편집, PackedScene/ResourceSaver 스테이징, 예상 상태와 해시 |
 | `validate_export` | 새 프로세스에서 재로드하여 계층·순서·Owner·스크립트·저장 속성·연결·리소스 공유와 UID를 대조하고 초기화된 플랫폼 충돌을 확인 |
+| `import_v4_region`, `stage_v4_export` | V4 지역 설계 가져오기와 원본 기반의 Scene·RegionDefinition 편집 |
+| `stage_new_region`, `validate_v4_export` | 공식 Scaffold에 신규 쌍을 생성하고 새 프로세스에서 의미 비교와 물리 사전 검사 |
 
 Python은 요청 및 버전 일치, 종료 코드 0, 구조화된 PASS 결과와 산출물 해시를 요구한다. 게임 지역의 실제 로딩, 스폰 및 월드 흐름은 별도 기존 `field_runtime_probe.tscn`에서 확인한다. Godot 프로세스 로그와 종료 코드는 보존한다. `0xC0000005`와 같은 엔진 오류는 결과 파일이 있어도 실패이며 게시하지 않는다. 작업 취소·타임아웃에는 소유한 프로세스만 종료하며 Windows에서 Traversal의 Job Object를 사용한다. 선택한 엔진 또는 시간 한도를 자동으로 변경하지 않는다.
+
+V4 게시 저널은 `.rtc-map-publish/pair-*/`에 두 파일의 이전·이후 SHA-256과 진행 상태를 기록한다. 두 파일을 다시 확인한 뒤 완료 기록을 남긴다. 다음 명시적 Godot 작업에서 미완료 기록을 복구한다. 완료 기록 전 중단은 이전 상태를 복구하며, 완료 기록 후에는 확인된 새 쌍을 유지한다. 원래 SHA-256과 검증된 SHA-256 모두와 다른 파일을 발견하면 자동 복구를 중단한다. 다른 작성자도 작업 시 같은 잠금 규약을 사용해야 한다.
 
 ## 게시 및 복구
 

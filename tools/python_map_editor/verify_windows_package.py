@@ -65,7 +65,7 @@ def run_smoke(executable, cwd, env, evidence, scale):
     return run
 
 
-def run_bridge_smoke(executable, cwd, env, evidence, project, godot):
+def run_bridge_smoke(executable, cwd, env, evidence, project, godot, include_design=False):
     from godot_bridge import BridgeError, project_manifest, run_child
 
     fixture = cwd / "하수구 임시 프로젝트"
@@ -75,6 +75,8 @@ def run_bridge_smoke(executable, cwd, env, evidence, project, godot):
     report = evidence / "godot-qt-smoke.json"
     command = [str(executable), "--smoke-bridge", str(report),
                "--bridge-project", str(fixture), "--bridge-godot", str(godot)]
+    if include_design:
+        command.append("--include-design")
     try:
         code, _ = run_child(command, cwd, env, evidence, "package-godot", Event(), 240)
     except BridgeError as error:
@@ -84,7 +86,7 @@ def run_bridge_smoke(executable, cwd, env, evidence, project, godot):
             and results.get("frozen") is True and project_manifest(project, Event()) == original}
 
 
-def verify(archive, output, scales, project=None, godot=None, bridge_repeats=1):
+def verify(archive, output, scales, project=None, godot=None, bridge_repeats=1, include_design=False):
     output.mkdir(parents=True, exist_ok=True)
     evidence = Path(tempfile.mkdtemp(prefix="rtc-exe-", dir=output))
     result = {"archive": str(archive), "platform": sys.platform, "passed": False}
@@ -121,7 +123,7 @@ def verify(archive, output, scales, project=None, godot=None, bridge_repeats=1):
                     trial = evidence / f"godot-{index:02}"
                     trial.mkdir()
                     with tempfile.TemporaryDirectory(prefix=f"publish {index:02} ", dir=cwd) as isolated_trial:
-                        outcome = run_bridge_smoke(executable, Path(isolated_trial), env, trial, project, godot)
+                        outcome = run_bridge_smoke(executable, Path(isolated_trial), env, trial, project, godot, include_design)
                     bridge_runs.append(outcome)
                     print(f"PACKAGE GODOT {index}/{bridge_repeats}: {outcome['passed']}", flush=True)
                 result["bridge"] = bridge_runs[0]
@@ -140,6 +142,7 @@ def main():
     parser.add_argument("--bridge-project", type=Path)
     parser.add_argument("--godot", type=Path)
     parser.add_argument("--bridge-repeats", type=int, default=1)
+    parser.add_argument("--include-design", action="store_true")
     args = parser.parse_args()
     if args.bridge_repeats < 1:
         parser.error("--bridge-repeats must be positive")
@@ -149,7 +152,7 @@ def main():
         parser.error("Windows with an interactive desktop is required")
     return verify(args.archive.resolve(strict=True), args.artifacts.resolve(), args.scales,
                   args.bridge_project.resolve(strict=True) if args.bridge_project else None,
-                  args.godot.resolve(strict=True) if args.godot else None, args.bridge_repeats)
+                  args.godot.resolve(strict=True) if args.godot else None, args.bridge_repeats, args.include_design)
 
 
 if __name__ == "__main__":

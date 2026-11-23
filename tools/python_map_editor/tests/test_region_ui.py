@@ -1,5 +1,7 @@
 import pytest
 from dataclasses import replace
+from threading import Event
+from types import SimpleNamespace
 
 pytest.importorskip("PySide6", reason="Qt is installed by the Windows GUI job")
 
@@ -90,6 +92,41 @@ def test_unsupported_region_design_never_starts_a_godot_session(monkeypatch, ope
     monkeypatch.setattr(godot_ui, "GodotSession", lambda *args: pytest.fail("unsupported export started Godot"))
     with pytest.raises(BridgeError, match="UNSUPPORTED_NODE"):
         godot_ui.run_operation(None, None, operation, (MapDocument(design=RegionDesign()), None), None)
+
+
+def test_v4_publish_requires_explicit_approval_after_runtime(monkeypatch, tmp_path):
+    calls = []
+    draft = MapDocument(design=RegionDesign())
+    receipt = {"scene_path": "world/adventure/new_region.tscn", "runtime": {"overall": "PASS"}}
+
+    class Session:
+        evidence = tmp_path
+        settings = SimpleNamespace(project=tmp_path)
+
+        def __init__(self, *_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def stage_design(self, document):
+            calls.append("runtime-confirmed")
+            return document, receipt
+
+    def review(observed):
+        assert observed is receipt and calls == ["runtime-confirmed"]
+        calls.append("declined")
+        return False
+
+    monkeypatch.setattr(godot_ui, "GodotSession", Session)
+    monkeypatch.setattr(godot_ui, "recover_project", lambda _: [])
+    monkeypatch.setattr(godot_ui, "publish_pair", lambda *_: pytest.fail("declined pair was published"))
+    with pytest.raises(BridgeError, match="CANCELLED"):
+        godot_ui.run_operation(None, Event(), "publish_design", (draft, None), lambda _: None, approval=review)
+    assert calls == ["runtime-confirmed", "declined"]
 
 
 def test_source_conflict_after_runtime_evidence_keeps_the_runtime_result(tmp_path):

@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--smoke-reopen", type=Path, help="Reopen a deployment smoke fixture in a fresh process.")
     parser.add_argument("--smoke-region-reopen", type=Path, help="Reopen the offline region deployment fixture.")
     parser.add_argument("--smoke-bridge", type=Path, help="Run Godot GUI smoke against a disposable copy.")
+    parser.add_argument("--include-design", action="store_true", help="Include V4 conversion in bridge smoke.")
     parser.add_argument("--bridge-project", type=Path)
     parser.add_argument("--bridge-godot", type=Path)
     parser.add_argument("--scan-textures", nargs=2, type=Path, help=argparse.SUPPRESS)
@@ -62,7 +63,7 @@ def main():
         from bridge_smoke import schedule_bridge_smoke
 
         return schedule_bridge_smoke(app, args.smoke_bridge.resolve(), args.bridge_project.resolve(),
-                                     args.bridge_godot.resolve())
+                                     args.bridge_godot.resolve(), args.include_design)
     if args.smoke_report:
         from smoke import schedule_smoke
 
