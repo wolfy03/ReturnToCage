@@ -6,6 +6,7 @@ import pytest
 from document import MapDocument, decode, encode, read_document, write_document
 from objects import DocumentError
 from region_design import Connection, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint
+from region_wizard import create_region
 
 
 def test_region_design_save_and_reopen(tmp_path):
@@ -38,3 +39,20 @@ def test_spawn_index_matches_godot(value):
 def test_environment_is_a_project_resource(path):
     with pytest.raises(DocumentError):
         RegionEnvironment(path)
+
+
+@pytest.mark.parametrize(("template", "object_count"), [("empty", 0), ("flat", 1), ("platform", 3)])
+def test_wizard_tracks_native_template_geometry(template, object_count):
+    draft = create_region("sewer_draft", "하수구", 1200, 600, template, 4, RegionEnvironment())
+    assert len(draft.objects) == object_count
+    assert [point.position for point in draft.design.region_points] == [(150, 520), (1050, 520)]
+    assert [spawn.spawn_index for spawn in draft.design.spawn_points] == [0, 1, 2, 3]
+    if template == "platform":
+        assert draft.design.template_ladder == (490, 454)
+        assert draft.objects[1].properties.one_way
+    assert decode(encode(draft)) == draft
+
+
+def test_wizard_checks_known_region_ids():
+    with pytest.raises(DocumentError, match="draft"):
+        create_region("draft", "Draft", 1200, 600, "empty", 1, RegionEnvironment(), {"draft"})

@@ -19,6 +19,7 @@ from editing import EditingMixin, MetadataEdit
 from godot_ui import GodotMixin
 from strings import tr
 from viewport import MapView
+from wizard_ui import RegionWizard, WizardEdit
 
 APP_NAME = "ReturnToCage Map Editor"
 UI_STYLE = """
@@ -163,6 +164,8 @@ class MainWindow(GodotMixin, EditingMixin, QMainWindow):
             if on_toolbar:
                 toolbar.addAction(action)
         self._build_godot_actions(file_menu)
+        self.wizard_action = self._action("region_wizard", self._open_region_wizard)
+        file_menu.addAction(self.wizard_action)
         toolbar.addSeparator()
         view_menu = self.menuBar().addMenu(tr("view"))
         self._build_editing_actions(toolbar, view_menu)
@@ -228,6 +231,16 @@ class MainWindow(GodotMixin, EditingMixin, QMainWindow):
     def _show_zoom(self, value):
         grid = self.view.map_scene.grid_size
         self.zoom_status.setText(f"{value:.0%}   ·   {tr('grid')} {grid}")
+
+    def _open_region_wizard(self):
+        known_ids = {item["id"] for item in self._regions or ()}
+        if self.path is not None or self.draft.source is not None or self.draft.design is not None:
+            known_ids.add(self._values()[0])
+        dialog = RegionWizard(self, known_ids)
+        if dialog.exec() and self._confirm_changes():
+            edit = WizardEdit(self, dialog.document)
+            self._install_draft(edit.before)
+            self.undo.push(edit)
 
     def _install_draft(self, document, path=None, disk_hash=None):
         self.draft, self.path, self.disk_hash = document, path, disk_hash

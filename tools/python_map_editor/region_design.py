@@ -80,6 +80,7 @@ class RegionDesign:
     connections: tuple[Connection, ...] = ()
     spawn_points: tuple[SpawnPoint, ...] = ()
     environment: RegionEnvironment = RegionEnvironment()
+    template_ladder: tuple | None = None
 
     def __post_init__(self):
         for values, cls in ((self.region_points, RegionPoint), (self.connections, Connection),
@@ -92,6 +93,8 @@ class RegionDesign:
             raise DocumentError("duplicate stable marker ID")
         if not isinstance(self.environment, RegionEnvironment):
             raise DocumentError("invalid region environment")
+        if self.template_ladder is not None:
+            object.__setattr__(self, "template_ladder", validate_vector(self.template_ladder, -MAX_GEOMETRY))
 
     @classmethod
     def from_data(cls, data):
@@ -105,6 +108,7 @@ class RegionDesign:
                 if not isinstance(values, list) or len(values) > MAX_MARKERS:
                     raise DocumentError(f"invalid {name} count")
                 fields[name] = tuple(item_cls(**row) for row in values)
-            return cls(**fields, environment=RegionEnvironment(**data["environment"]))
+            return cls(**fields, environment=RegionEnvironment(**data["environment"]),
+                       template_ladder=data["template_ladder"])
         except TypeError as error:
             raise DocumentError("invalid region design record") from error

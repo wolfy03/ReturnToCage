@@ -1,6 +1,9 @@
 """Korean UI text. Stable keys allow additional translations."""
 
 KO = {
+    "region_wizard": "새 지역 마법사…", "template": "지역 템플릿",
+    "template_empty": "빈 지역", "template_flat": "평지", "template_platform": "플랫폼 지역",
+    "environment_path": "환경 리소스 (.tres)", "spawn_count": "플레이어 스폰 슬롯 수",
     "file": "파일", "edit": "편집", "view": "보기", "region": "지역", "help": "도움말",
     "new": "새 맵", "open": "열기", "save": "저장", "save_as": "다른 이름으로 저장",
     "exit": "종료", "zoom_in": "확대", "zoom_out": "축소", "fit": "화면에 맞춤",
