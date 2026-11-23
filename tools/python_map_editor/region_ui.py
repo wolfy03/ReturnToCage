@@ -90,9 +90,12 @@ class RegionMixin:
         form.addRow(_button("apply_region", self._save_environment))
         self.design_notice = QLabel()
         self.design_notice.setWordWrap(True)
-        form.addRow(self.design_notice)
         tabs.addTab(panel, tr("environment"))
-        self.region_dock = self._dock("region_design", tabs, Qt.DockWidgetArea.RightDockWidgetArea)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.addWidget(self.design_notice)
+        layout.addWidget(tabs)
+        self.region_dock = self._dock("region_design", container, Qt.DockWidgetArea.RightDockWidgetArea)
         self.tabifyDockWidget(self.inspector_dock, self.region_dock)
         self.inspector_dock.raise_()
         self.view.marker_selected.connect(self._show_marker)
@@ -184,6 +187,7 @@ class RegionMixin:
             field.setText(value)
         self.design_notice.setText(tr("design_export_unsupported") if self.draft.design is not None else
                                    tr("design_import_preserved") if self.draft.source else "")
+        self.design_notice.setVisible(bool(self.design_notice.text()))
         self._refresh_region_choices()
         self.view.sync_markers(self.draft.design, selection)
 
@@ -213,12 +217,21 @@ class RegionMixin:
         self.marker_y.setValue(row.position[1])
 
     def _place_marker(self, mode, position):
+        try:
+            self._add_marker(mode, position)
+        except DocumentError as error:
+            self._edit_error(error)
+            return
+        self.region_dock.show()
+        self.region_dock.raise_()
+        self.region_tabs.setCurrentIndex(0)
+
+    def _add_marker(self, mode, position):
         design = self._design()
         if mode == "place_spawn":
             slot = next((i for i in range(SPAWN_SLOTS) if all(row.spawn_index != i for row in design.spawn_points)), None)
             if slot is None:
-                self._edit_error(tr("no_spawn_slot"))
-                return
+                raise DocumentError(tr("no_spawn_slot"))
             row = SpawnPoint(self._new_id("spawn"), slot, position)
             design = replace(design, spawn_points=(*design.spawn_points, row))
         else:
@@ -227,9 +240,6 @@ class RegionMixin:
             row = RegionPoint(key, kind, key, position)
             design = replace(design, region_points=(*design.region_points, row))
         self._change_design(design, row.id)
-        self.region_dock.show()
-        self.region_dock.raise_()
-        self.region_tabs.setCurrentIndex(0)
 
     def _replace_marker(self, key, **values):
         row = next((row for row in self.marker_rows if row.id == key), None)

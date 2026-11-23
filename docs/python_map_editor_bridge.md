@@ -2,11 +2,11 @@
 
 ## 실행과 문서
 
-ZIP을 풀고 `ReturnToCageMapEditor.exe`를 실행한다. **파일 → Godot 프로젝트 설정**에서 전체 ReturnToCage 체크아웃, 공식 Godot `4.7.2.stable.official.ed1daf0bf` 실행 파일 및 프로젝트 외부의 작업·로그 폴더를 지정한다. GUI는 버전과 ContentRegistry를 확인한 뒤 설정을 사용자 계정에 저장한다. Windows 콘솔 런처를 선택하면 같은 폴더의 실제 엔진 바이너리를 사용한다.
+ZIP을 풀고 `ReturnToCageMapEditor.exe`를 실행한다. **파일 → Godot 프로젝트 설정**에서 전체 ReturnToCage 체크아웃, 공식 Godot `4.7.2.stable.official.ed1daf0bf` 실행 파일 및 프로젝트 외부의 작업·로그 폴더를 지정한다. 설정 화면은 경로만 검사해 저장한다. 엔진 버전과 ContentRegistry는 사용자가 가져오기를 요청하면 확인한다. Windows 콘솔 런처를 선택하면 같은 폴더의 실제 엔진 바이너리를 사용한다.
 
 **Godot 지역 가져오기**에서 등록된 RegionDefinition을 선택한다. 가져온 문서의 지역 ID와 이름은 읽기 전용이다. 플랫폼과 PNG 장식을 편집한 뒤 `.rtcmap`으로 저장할 수 있다. **Godot 내보내기 검증**은 스테이징과 런타임 검사까지 수행한다. **Godot로 내보내기**는 대상 Scene 경로를 표시하고 확인을 받은 뒤 기존 프로젝트에 게시한다. **새 프로젝트 폴더로 내보내기**는 새 폴더에 검증된 게임 프로젝트 사본을 만든다. 게시한 V3 문서에서 새 원본 지문을 사용하려면 `.rtcmap`을 다시 저장한다.
 
-독립 문서는 기존 V1/V2를 읽고 V2로 저장한다. 가져온 지역은 V3이며 프로젝트 지문, 원본 Scene/RegionDefinition 경로·SHA-256·UID, 노드 ID, 상대 경로, 부모, 로컬·월드 Transform2D 및 충돌 레이어·마스크를 저장한다. 기존 노드 ID는 지역 ID, NodePath, 실제 클래스 또는 Script 경로의 조합에서 파생한다. 새 노드는 `rtc_map_object_id` 메타데이터로 ID를 유지한다. 독립 문서를 새 Godot 지역으로 만드는 기능은 Region Wizard 단계에 속한다.
+독립 문서는 기존 V1/V2를 읽고 V2로 저장한다. 가져온 지역은 V3이며 프로젝트 지문, 원본 Scene/RegionDefinition 경로·SHA-256·UID, 노드 ID, 상대 경로, 부모, 로컬·월드 Transform2D 및 충돌 레이어·마스크를 저장한다. 기존 노드 ID는 지역 ID, NodePath, 실제 클래스 또는 Script 경로의 조합에서 파생한다. 새 노드는 `rtc_map_object_id` 메타데이터로 ID를 유지한다. V4에서 추가한 마커, 연결, 환경 및 스폰 설계는 `.rtcmap`에 저장한다. V4 문서의 검증·게시·Export As를 요청하면 Bridge 실행 전에 `UNSUPPORTED_NODE`로 차단한다. Scene 변환을 지원하는 범위는 기존 V3 계약과 같다.
 
 ## 실행 계약
 

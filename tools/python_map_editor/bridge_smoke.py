@@ -98,7 +98,8 @@ def schedule_bridge_smoke(app, report, project, godot):
                     "Godot actions are disabled without configuration")
             window.godot_settings_action.trigger()
             wait_job()
-            require(window.godot_import_action.isEnabled() and not errors, "Godot settings validated and saved")
+            require(window.godot_import_action.isEnabled() and not errors and work.is_dir() and not any(work.iterdir()),
+                    "Godot settings saved without a Bridge child")
             window.godot_import_action.trigger()
             wait_job()
             require(window.draft.source is not None and len(window.draft.objects) == 5,
@@ -120,6 +121,7 @@ def schedule_bridge_smoke(app, report, project, godot):
             window.godot_validate_action.trigger()
             wait_job()
             require(not errors and window.godot_status.text() == tr("godot_pass")
+                    and window._export_state == window._runtime_state == "PASS"
                     and file_hash(scene) == original_scene, "validation reloads and runs the stage without publication")
             checkpoint("publication requested")
             window.godot_export_action.trigger()

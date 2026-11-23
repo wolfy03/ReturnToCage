@@ -62,6 +62,10 @@ jobs:
             $env:QT_SCALE_FACTOR = $scale
             python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-smoke-$scale.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $region = (Get-Content "build/map-editor-qa/source-smoke-$scale.json" -Raw | ConvertFrom-Json).region_fixture
+            if (-not $region) { throw 'The offline smoke did not write a V4 fixture' }
+            python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-region-reopen-$scale.json" --smoke-region-reopen $region
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - name: Obtain and verify official Godot 4.7.2
         id: godot
@@ -92,14 +96,14 @@ jobs:
       - name: Run the packaged EXE on Windows
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
-          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP3-win-x64.zip')
+          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP4-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
           python -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         with:
           name: ReturnToCageMapEditor-win-x64
-          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP3-win-x64.zip
+          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP4-win-x64.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
@@ -167,7 +171,7 @@ jobs:
       - name: Ten independent packaged Godot publish runs
         if: ${{ !cancelled() && steps.stability-package.outcome == 'success' }}
         run: |
-          $archives = @(Get-ChildItem build/map-editor-stability -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP3-win-x64.zip')
+          $archives = @(Get-ChildItem build/map-editor-stability -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP4-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
           $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\ReturnToCageMapEditor.exe'
           $created = $false

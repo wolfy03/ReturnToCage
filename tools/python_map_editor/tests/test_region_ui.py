@@ -6,7 +6,10 @@ from PySide6.QtCore import QPointF, QSettings, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox
 
-from document import read_document
+import godot_ui
+from document import MapDocument, read_document
+from godot_bridge import BridgeError
+from region_design import RegionDesign
 from window import MainWindow
 from wizard_ui import RegionWizard
 
@@ -74,3 +77,10 @@ def test_offline_region_workflow_with_qt_events(monkeypatch, tmp_path):
     finally:
         window.undo.setClean()
         window.close()
+
+
+@pytest.mark.parametrize("operation", ["export_as", "export_region", "validate_export"])
+def test_unsupported_region_design_never_starts_a_godot_session(monkeypatch, operation):
+    monkeypatch.setattr(godot_ui, "GodotSession", lambda *args: pytest.fail("unsupported export started Godot"))
+    with pytest.raises(BridgeError, match="UNSUPPORTED_NODE"):
+        godot_ui.run_operation(None, None, operation, (MapDocument(design=RegionDesign()), None), None)

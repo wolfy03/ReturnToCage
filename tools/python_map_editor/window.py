@@ -249,7 +249,7 @@ class MainWindow(GodotMixin, ValidationMixin, RegionMixin, EditingMixin, QMainWi
         self.zoom_status.setText(f"{value:.0%}   ·   {tr('grid')} {grid}")
 
     def _open_region_wizard(self):
-        known_ids = {item["id"] for item in self._regions or ()}
+        known_ids = self.region_index.keys() | {item["id"] for item in self._regions or ()}
         if self.path is not None or self.draft.source is not None or self.draft.design is not None:
             known_ids.add(self._values()[0])
         dialog = RegionWizard(self, known_ids)

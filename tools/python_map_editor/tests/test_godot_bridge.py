@@ -46,6 +46,17 @@ def test_v3_binding_round_trip_and_path_escape(project_settings):
         decode(encode(draft).replace(b"world/sample.tscn", b"../out.tscn"))
 
 
+def test_v4_linked_draft_preserves_bindings_but_is_blocked_before_staging(project_settings):
+    from region_design import RegionDesign, RegionPoint
+
+    linked = source(project_settings.project, "world/sample.tscn", "data/content/sample.tres")
+    document = MapDocument(source=linked, design=RegionDesign((RegionPoint("new", "ENTRY", "gate", (0, 0)),)))
+    restored = decode(encode(document))
+    assert restored == document and restored.source == linked
+    with pytest.raises(BridgeError, match="UNSUPPORTED_NODE"):
+        GodotSession.stage_export(None, restored)
+
+
 def test_missing_godot(project_settings):
     configuration = ProjectSettings(project_settings.project, project_settings.work / "missing.exe", project_settings.work)
     with pytest.raises(BridgeError, match="INVALID_GODOT_PATH"):

@@ -2,7 +2,7 @@
 
 Python Map Editor는 [wolfy03/ReturnToCage](https://github.com/wolfy03/ReturnToCage)의 내부 프로젝트다. 소스 위치는 `tools/python_map_editor/`, 작업 브랜치는 `feature/python-map-editor`다. 설치·빌드·배포와 개발 이력을 이 저장소에서 관리한다.
 
-PY-STEP 3는 PY-STEP 2의 독립 2D 맵 편집에 기존 Godot 지역 가져오기·검증·게시를 추가한다. 독립 V1/V2 초안과 Godot에 연결된 V3 문서를 모두 열 수 있다. 기존 한국어 다크 테마, 지역 속성, 32px 격자, 커서 기준 줌, 화면 이동 및 도크 설정을 유지한다.
+PY-STEP 4는 기존 독립 2D 맵 편집과 Godot 지역 가져오기·검증·게시를 유지하며 지역 설계를 추가한다. V1/V2 초안, Godot에 연결된 V3 초안, 지역 설계가 추가된 V4 초안을 열 수 있다.
 
 ## 맵 편집
 
@@ -13,9 +13,20 @@ PY-STEP 3는 PY-STEP 2의 독립 2D 맵 편집에 기존 Godot 지역 가져오�
 - 레이어 패널에서 활성 레이어, 객체 수, 표시와 잠금을 관리한다. 잠긴 레이어는 배치·수정·삭제를 허용하지 않는다. 스키마에서 레이어 ID는 참조 키다. 이 단계의 패널에서 ID를 바꾸거나 레이어를 삭제하는 기능은 제공하지 않는다.
 - Ctrl+C/V로 복사·붙여넣기, Ctrl+D로 복제, Delete로 삭제한다. Ctrl+Z와 Ctrl+Shift+Z로 실행 취소·다시 실행한다. 레이어나 객체 속성 변경과 마우스 제스처는 각각 한 번의 실행 취소로 되돌린다. 저장한 이력 위치로 돌아오면 문서는 Clean이 된다.
 
+## 지역 설계
+
+- **지역 → 새 지역 마법사**에서 ID, 표시 이름, 너비·높이, Empty·Flat·Platform 템플릿, 환경 경로, 스폰 슬롯 1~4개를 설정한다. 플랫폼 템플릿에는 기존 `ladder_default` 위치가 설계 데이터로 표시된다. 템플릿은 Godot 원본의 1200×600 배치 좌표를 선택한 크기에 맞춰 변환한다.
+- **지역 → ENTRY 배치 / ESCAPE 배치 / 스폰 배치**를 고른 뒤 Viewport를 클릭한다. 선택 도구로 마커를 끌어 옮기고 마커 탭에서 ID, 좌표, 착지 조건 또는 슬롯을 편집한다. 슬롯 표시는 1~4이며 저장된 `spawn_index`는 Godot와 같은 0~3이다. 같은 `point_id`를 ENTRY와 ESCAPE 사이에서 공유할 수 있다. 같은 종류 안의 중복은 오류다.
+- **지역 연결**은 기존 `SettlementExitDefinition`과 같은 출구 ID, 목적 지역과 목적 ENTRY의 조합이다. 하나의 출구에 여러 지역을 연결하면 모두 같은 ENTRY ID를 사용한다. 현재 지역의 ENTRY는 문서에서 확인하고, 외부 지역은 **지역 문서 인덱스**에서 `.rtcmap` 파일을 선택해 확인한다. 현재 열린 문서와 불러온 인덱스의 지역 ID는 Wizard 중복 검사에 반영된다. 인덱스에 없는 ENTRY는 `NOT EVALUATED`다. `ESCAPE`는 지역의 탈출 표식으로 유지한다.
+- **환경**에서는 RegionDefinition의 `environment_path`와 `environment_loading_color`에 대응하는 값과 선택적인 Resource UID를 편집한다. `.tres`는 프로젝트 기준 `res://` 경로로 저장한다. 환경 리소스의 타입과 UID 검증은 Godot에 맡긴다.
+- **배치 프리셋**에서 선택한 플랫폼·장식의 상대 좌표, 기하, 레이어와 속성을 사용자 설정에 저장하고 화면 중앙에 다시 배치한다. 배치 한 번은 한 Undo 명령이다. 기존 Godot `.tres` 프리셋은 원래 Godot 플러그인에서 사용한다.
+- **보기 → Python 문서 검증**은 구조, 참조, 좌표, 슬롯 및 플랫폼 내부의 스폰 기준점 등 정적 문제를 보고한다. 결과를 클릭하면 관련 마커·객체·연결을 표시한다. 문서 편집으로 기존 결과는 무효화된다. Python 판정과 Godot 내보내기·런타임 판정을 각각 표시한다.
+
+V4 문서의 `design`에는 마커, 정착지 출구 연결, 스폰, 환경 및 선택적인 사다리 앵커가 저장된다. 이 편집 타입의 Godot 왕복 변환은 지원 범위 밖이라 V4 검증·게시·Export As를 차단한다. 기존 Godot 지역에 연결된 문서를 V4로 편집해도 원본 연결·UID·Transform은 파일에 남는다. V3 가져오기, 플랫폼·PNG 장식 편집 및 검증·게시 작업은 사용할 수 있다.
+
 ## Godot 지역 작업
 
-파일 메뉴에서 ReturnToCage 프로젝트 폴더, 공식 Godot 4.7.2 및 외부 작업 폴더를 설정한다. **Godot 지역 가져오기**에서 등록된 지역을 선택하고 플랫폼 또는 PNG 장식을 편집한다. **Godot 내보내기 검증**으로 독립 스냅샷의 Scene 재로드 및 실제 런타임을 검사할 수 있다. **새 프로젝트 폴더로 내보내기**는 다른 위치에서 결과를 열 수 있는 프로젝트 사본을 만든다. 기존 Scene에 게시하려면 대상 경로를 확인한 뒤 **Godot로 내보내기**를 선택한다.
+파일 메뉴에서 ReturnToCage 프로젝트 폴더, 공식 Godot 4.7.2 및 외부 작업 폴더를 설정한다. 경로 설정에는 엔진 실행이 필요 없다. **Godot 지역 가져오기**에서 등록된 지역을 선택하고 플랫폼 또는 PNG 장식을 편집한다. **Godot 내보내기 검증**으로 독립 스냅샷의 Scene 재로드 및 실제 런타임을 검사할 수 있다. **새 프로젝트 폴더로 내보내기**는 다른 위치에서 결과를 열 수 있는 프로젝트 사본을 만든다. 기존 Scene에 게시하려면 대상 경로를 확인한 뒤 **Godot로 내보내기**를 선택한다.
 
 지원 노드와 원본 보존 정책은 [Scene 호환성](python_map_editor_scene_compatibility.md)과 [Godot Bridge, 게시 및 복구](python_map_editor_bridge.md)에 정리했다.
 
@@ -27,21 +38,20 @@ PY-STEP 3는 PY-STEP 2의 독립 2D 맵 편집에 기존 Godot 지역 가져오�
 | STEP 2 · Dock과 배치 | `plugin.gd`, `palette_tree.gd`, `catalog.gd`, `placement.gd`. Catalog는 EditorFileSystem에서 실제 ContentDefinition, 텍스처, 장식 Scene, 프리셋을 읽고 이름·ID·경로·분류로 검색한다. Placement는 종류별 부모와 노드를 생성하고 Canvas transform을 역변환해 배치한다. | 플랫폼과 장식을 Qt 드래그 앤 드롭으로 배치하고 QUndoStack으로 편집 이력을 관리한다. 전체 카탈로그는 이후 Godot 변환기가 제공한 데이터를 이용한다. Qt에서 PNG를 캐시하고 Godot 전용 형식은 변환기가 미리보기를 내보낸다. |
 | STEP 3 · 지형 도구 | `terrain_stroke.gd`, `terrain_commands.gd`, `field_layers.gd`의 사각형·격자 페인트·지우개, 2,048 셀 제한, 충돌을 고려한 지우기와 Terrain/Decorations/SpawnPoints/GatherPoints/RegionPoints/Climbables/Background 레이어. | Select·Rectangle·Paint·Erase와 레이어 선택·잠금·표시를 제공한다. 스트로크 및 멀티 편집은 한 Undo 명령으로 묶고 기존 Qt 아이템을 재사용하고 변경된 위치와 도형을 갱신한다. |
 | STEP 4 · 크기·텍스처와 저장 | `platform_resize.gd`는 핸들 위치를 Platform 로컬 transform으로 계산한다. `FieldPlatform`은 크기와 실제 Collider를 함께 관리한다. `decoration_stroke.gd`는 간격·seed·각도·scale을 기록한다. `field_maintenance.gd`는 staging, 외부 변경 감지, UID 및 Undo 충돌을 처리한다. | PY-STEP 2의 핸들·스냅은 같은 좌표 변환을 사용한다. Godot Bridge가 스테이징·재검증 및 기존 파일 보호를 담당한다. |
-| STEP 5 · Wizard와 Preset | `region_wizard.gd`, `region_scaffold.tscn`, `region_recovery.gd`, `placement_preset.gd`, `preset_tools.gd`, `field_visualization.gd`. 현재 템플릿은 Empty, Flat, Platform이고 Platform은 ladder 정의에 의존한다. ID 중복, ENTRY/ESCAPE, 1~4 슬롯, 환경 및 양쪽 파일 경로를 검사하고 저널로 Scene/Resource 쌍을 복구한다. | PY-STEP 4 Wizard는 문서만 만든다. 공식 템플릿을 먼저 이전하고 Climbable과 Exploration은 동일한 런타임 형식과 검증을 충족하는 별도 초안 템플릿으로 추가한다. 프리셋 참조와 배치 좌표는 기존 의미를 유지한다. |
-| STEP 6 · Region Design | `level_design_dialog.gd`, `level_design.gd`, `field_maintenance.gd`. SettlementExitDefinition의 목적지 지역·ENTRY, RegionPoint의 종류·ID, PlayerSpawnPoint 인덱스, EnvironmentDefinition 경로가 서로 연결된다. `tools/playtest_region.py`와 `tests/editor/field_runtime_probe.tscn`은 실제 게임 및 물리 검증을 수행한다. | PY-STEP 4에서 Inspector/Viewport 양쪽으로 표식을 편집하고 연결 참조를 확인한다. 실제 Spawn Safety, Runtime Load와 Gameplay Playtest는 격리된 Godot 프로세스에서 실행한다. |
+| STEP 5 · Wizard와 Preset | `region_wizard.gd`, `region_scaffold.tscn`, `region_recovery.gd`, `placement_preset.gd`, `preset_tools.gd`, `field_visualization.gd`. 현재 템플릿은 Empty, Flat, Platform이고 Platform은 ladder 정의에 의존한다. | 세 템플릿의 `.rtcmap` 초안과 플랫폼·장식 상대 배치 프리셋을 지원한다. |
+| STEP 6 · Region Design | `level_design_dialog.gd`, `level_design.gd`, `field_maintenance.gd`, `RegionDefinition`, `SettlementExitDefinition`, `RegionPoint`, `PlayerSpawnPoint`. | Viewport와 패널에서 표식·연결·환경을 편집하고 Python에서 정적 참조를 검사한다. 실제 런타임 검증은 지원되는 V3 문서에서 실행할 수 있다. |
 | STEP 7 · Traversal | `traversal_analysis.gd`가 합성된 world transform과 Collider를 읽어 후보 그래프를 만든다. `traversal_controller.gd`가 스냅샷, SHA fingerprint, 요청·취소 및 stale result를 관리한다. `tools/analyze_traversal.py`가 Job Object로 `tests/editor/traversal_physics.tscn`을 실행하며 실제 PlayerActor 입력으로 간선·슬롯·ESCAPE 경로를 검증한다. | PY-STEP 5에서 Qt worker가 Godot 변환기로 동일한 요청을 준비하고 검증기 결과를 렌더링한다. Candidate, Verified 및 Not Evaluated를 구분한다. |
 
 ## 데이터와 Godot 연동 경계
 
 1. **V2 문서.** `region_id`, `display_name`, `width`, `height`, `layers`, `objects`를 담는다. 객체에는 고유 ID, 유형, 레이어 ID, 중심 좌표, 크기, 회전(도), 종류별 메타데이터가 있다. +X는 오른쪽, +Y는 아래쪽이고 양의 각도는 화면에서 시계 방향이다. 플랫폼 크기는 Godot `FieldPlatform`처럼 중심 기준 사각형이며 핸들 크기 계산은 객체 로컬 축을 사용한다. 장식 크기는 뷰포트 치수이며 배율은 원본 PNG 크기 또는 기본 장식 크기에 대한 비율이다. 최대 32 MiB, 객체 50,000개, 레이어 128개를 허용한다. 중복 ID, 끊긴 레이어 참조, 4px 미만의 크기, 비유한 수 및 지원하지 않는 형식은 거부한다.
-2. **이전과 리소스.** V1 문서를 열면 지역 메타데이터와 크기에 기본 지형·장식 레이어와 빈 객체 목록을 붙이고, 명시적으로 저장할 때 V2를 기록한다. PNG는 선택한 폴더 기준 상대 경로로 저장한다. 절대 경로와 상위 폴더 탐색은 거부하며, 링크가 루트 외부를 가리키는 PNG도 표시하지 않는다. 파일이 없거나 디코딩할 수 없으면 자리표시자를 표시한다. 프로젝트 폴더 선택은 사용자 설정이며 파일에는 기록하지 않는다. 중첩 부모 transform, 지역 연결 및 환경은 후속 스키마에서 다룬다.
+2. **이전과 리소스.** 명시적으로 저장할 때 V1은 V2로 기록한다. V2·V3는 지역 설계를 추가하면 V4로 저장된다. PNG는 선택한 폴더 기준 상대 경로로 저장한다. 절대 경로와 상위 폴더 탐색은 거부하며, 링크가 루트 외부를 가리키는 PNG도 표시하지 않는다. 파일이 없거나 디코딩할 수 없으면 자리표시자를 표시한다. 프로젝트 폴더 선택은 사용자 설정이며 파일에는 기록하지 않는다.
 3. **Godot 변환기.** Godot 4.7.2 headless 도구가 `ResourceLoader`와 `PackedScene.instantiate()`로 허용된 프로젝트의 Scene·정의를 정규화한다. 가져온 원본과 의존 파일의 hash, UID, 노드 경로를 기록한다. 기존 맵을 편집할 때 원본 스냅샷을 기반으로 지원 필드만 Godot에서 수정한다. 알 수 없는 노드와 속성의 보존을 보장할 수 없거나 원본이 바뀌면 Export를 차단한다.
 4. **게시와 검증.** 원본과 분리된 검증 사본에서 `PackedScene.pack()`과 `ResourceSaver`로 Scene·정의 쌍을 만들고 다시 읽어 `RegionDefinition`, `ContentRegistry`, 실제 Spawn 및 Runtime Load를 검증한다. 세션·SceneRouter·NetworkManager 및 서버 권위는 기존 구조를 유지한다. 최종 게시에는 대상 경로·UID·해시 검사와 기존 저널 복구 흐름을 활용한다.
 5. **Traversal 연동.** `res://.godot/rtc_traversal/<32hex>/request.json`의 token, fingerprint, FPS, Scene 및 결과 경로 계약을 유지한다. 분석 아이템은 컨트롤러의 결과 검증에서 UI 의존 부분을 분리해 요청에 대응하는 JSON만 적용한다. 취소 파일과 작업 소유권으로만 프로세스를 종료하고, 편집 또는 취소 후 도착한 결과를 폐기한다. EXE 배포에서는 사용자 Python을 호출하는 대신 동결 실행 파일의 전용 worker 진입점을 사용하도록 설계한다. 이 진입점과 Godot 버전 설정 화면은 후속 구현이다.
 
-## PY-STEP 4~6 완료 기준
+## 후속 검증 범위
 
-- **4 · 지역과 Playtest** 새 지역 Wizard, 호환 프리셋, 연결·ENTRY/ESCAPE·스폰·환경을 편집하고 실제 런타임 로드와 Spawn Safety를 검사한다.
 - **5 · Traversal** 실제 검증기의 Sewer 기준 표면 5개, 후보 간선 25개, Verified 간선 11개와 슬롯별 Reachability를 비교한다. Overlay 선택과 편집 중 stale 처리, 취소 및 Child 종료도 검사한다.
 - **6 · 배포 검증** 객체 편집과 게임 연동을 소스 및 배포된 OneDir 양쪽에서 검증한다. 가능하면 Python 미설치 Windows에서 전체 검사를 반복하고 EXE·ZIP·가이드를 제공한다.
 
@@ -60,7 +70,7 @@ $editorPython = "./build/python-map-editor/venv/Scripts/python.exe"
 
 빌드 스크립트가 고유 폴더에 EXE, `_internal`, README, 라이선스 안내 및 ZIP을 생성한다. 배포 ZIP 전체를 풀고 `ReturnToCageMapEditor.exe`를 시작한다. 일반 편집에는 외부 Python이나 Godot이 필요하지 않다.
 
-`--smoke-report <path.json>`는 실제 Qt 창을 열어 Qt 마우스·키보드·드롭 이벤트를 보내 편집 도구, 저장·재열기 및 설정 복원을 검사하고 1,000개 객체 측정값과 스크린샷을 기록한다. 레이어와 일부 설정 검사는 위젯 상태를 직접 변경한다. EXE 검증은 배포본을 별도 폴더에 풀고 Python·Qt 환경 변수를 제거한 뒤 시스템 전용 PATH로 실행한다. Qt 배율 100%, 150%, 200%에서 편집 후 EXE를 종료한 다음, 별도 EXE 프로세스로 V2 문서와 PNG를 다시 읽는다.
+`--smoke-report <path.json>`는 실제 Qt 창을 열어 Qt 마우스·키보드·드롭 이벤트를 보내 편집 도구, 저장·재열기 및 설정 복원을 검사하고 1,000개 객체 측정값과 스크린샷을 기록한다. 레이어와 일부 설정 검사는 위젯 상태를 직접 변경한다. EXE 검증은 배포본을 별도 폴더에 풀고 Python·Qt 환경 변수를 제거한 뒤 시스템 전용 PATH로 실행한다. Qt 배율 100%, 150%, 200%에서 편집 후 EXE를 종료한 다음, 별도 EXE 프로세스로 V2 문서·PNG와 V4 지역 설계 문서를 각각 다시 읽는다. V4 생성 테스트는 Godot 경로 없이 실행하며 Bridge 자식 프로세스 생성이 0회였는지 확인한다.
 
 ```powershell
 & $editorPython tools/python_map_editor/verify_windows_package.py "<빌드 ZIP>" --artifacts build/python-map-editor/qa
