@@ -1,3 +1,7 @@
+import pytest
+
+pytest.importorskip("PySide6", reason="Qt is installed by the Windows GUI job")
+
 from PySide6.QtCore import QEventLoop, QSettings, QThread, QTimer
 from PySide6.QtWidgets import QApplication
 

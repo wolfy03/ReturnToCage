@@ -53,3 +53,9 @@ python tools/python_map_editor/verify_windows_package.py "<ZIP>" --artifacts "<l
 ### Cold import 분리
 
 첫 가드 적용 후 정상 실행에서 `validate_export` 50회가 연속 통과했지만 CI 배포 검증에서는 검증 직전 **리소스 가져오기용 별도 editor**가 `0xC0000005`로 종료했다. 이 프로세스는 기존 `--editor --recovery-mode --import`로 실행되어 Bridge 가드가 없었다. 임시 사본에서 가져오기 전용 빈 Scene과 전용 EditorPlugin을 사용해 같은 가드를 editor 종료에서도 적용한다. 해당 작업은 원래 프로젝트에서 EditorPlugin을 실행하지 않는다. 임시로 바꾼 사본의 `project.godot`와 기존 `override.cfg`는 정상·실패·취소 모두에서 원래 바이트를 복원한다. 임시 EditorPlugin의 실제 종료 호출을 확인하지 못하면 작업이 실패한다.
+
+### Windows 배포 프로그램 종료
+
+`72a1e102` 안정성 CI에서 공식 Godot 자식 프로세스 548개가 코드 0으로 종료했다. 단계별 30회, 전체 `validate_export` 50회, 무편집·편집 왕복 각 10회가 모두 통과했다. 배포 프로그램 자체는 첫 회에 `0xC0000409`로 종료하여 9/10이었다. 해당 회차의 Godot 런타임 검증은 정상 종료했으며, EXE가 최종 Qt 결과 JSON을 남기지 않았다. 같은 패키지를 로컬에서 ProcDump로 실행한 두 회차 모두 통과했고 EXE 예외 스택은 확보하지 못했다. [실패 실행 및 증거](https://github.com/wolfy03/ReturnToCage/actions/runs/45017519016)
+
+Qt 브리지 작업의 완료 신호만 받아 참조를 해제하던 경로를 수정했다. GUI는 `QThread.wait(0)`이 스레드 종료를 확인할 때까지 기존 작업을 유지한다. 완료 처리에서 곧바로 새 작업을 시작하는 회귀 테스트를 추가했다. 이 수명 처리 결함과 기존 `0xC0000409` 사이의 인과관계는 확인하지 못했다. 패키지 검증기는 성공한 단계가 끝날 때마다 체크포인트를 디스크에 남긴다. 안정성 CI는 Windows Error Reporting 설정이 비어 있으면 해당 EXE용 미니덤프만 임시 설정하고 검증 후 설정을 제거한다. [Qt QThread 수명 규약](https://doc.qt.io/qtforpython-6.11/PySide6/QtCore/QThread.html)
