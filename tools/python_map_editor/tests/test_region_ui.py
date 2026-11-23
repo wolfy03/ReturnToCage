@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox
 import godot_ui
 from document import MapDocument, read_document
 from godot_bridge import BridgeError
+from objects import MapObject
 from region_design import RegionDesign
 from region_validation import FAIL, NOT_EVALUATED, PASS
 from strings import tr
@@ -102,4 +103,22 @@ def test_source_conflict_after_runtime_evidence_keeps_the_runtime_result(tmp_pat
     finally:
         window.undo.setClean()
         window.close()
+        app.processEvents()
+
+
+def test_erase_continuous_segment_hits_small_objects_between_mouse_samples():
+    from viewport import MapView
+
+    app = QApplication.instance() or QApplication([])
+    view = MapView()
+    try:
+        things = tuple(MapObject(f"tiny_{i}", "platform", "terrain", (x, 20), (4, 4))
+                       for i, x in enumerate((14, 45, 82)))
+        view.sync_document(MapDocument(objects=things), ())
+        view.set_zoom(0.15)
+        removed = set()
+        view._erase_segment(QPointF(0, 20), QPointF(100, 20), None, removed)
+        assert removed == {item.id for item in things}
+    finally:
+        view.close()
         app.processEvents()

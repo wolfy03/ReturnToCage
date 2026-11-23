@@ -197,7 +197,10 @@ def edit_map(window, target, result, require):
     require(len(window.draft.objects) == 7 and window.undo.index() == before + 1, "painting over occupied cells cannot duplicate them")
     tool(Qt.Key.Key_E, "erase")
     drag(start, end)
-    require(len(window.draft.objects) == 2 and window.undo.index() == before + 2, "erase drag is one undo command")
+    require(len(window.draft.objects) == 2 and window.undo.index() == before + 2,
+            "erase drag is one undo command "
+            f"(remaining={[(obj.type, obj.position) for obj in window.draft.objects]}, "
+            f"history={window.undo.index() - before}, zoom={view.zoom:.3f})")
     action(Qt.Key.Key_Z)
     require(len(window.draft.objects) == 7, "undo restores erased brush objects")
     action(Qt.Key.Key_Z)

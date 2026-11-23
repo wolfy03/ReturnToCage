@@ -4,7 +4,7 @@ from dataclasses import replace
 import math
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
 from graphics import ObjectItem, TextureCache
@@ -370,25 +370,35 @@ class MapView(CanvasView):
             item.setRect(-size[0] / 2, -size[1] / 2, *size)
             item.setPos(obj.position[0] + dx, obj.position[1] + dy)
             self.preview_changed.emit()
-        elif mode in ("paint", "erase"):
-            # Sample fast moves as well as discrete mouse events, including the release.
+        elif mode == "paint":
+            # Fill cells along fast moves as well as discrete mouse events.
             previous = g["current"]
             stride = self.map_scene.grid_size if self.snap_enabled else self.brush_spacing
             delta = point - previous
-            spacing = stride / 2 if mode == "paint" else 4 / self.zoom
-            count = max(1, math.ceil(math.hypot(delta.x(), delta.y()) / spacing))
+            count = max(1, math.ceil(math.hypot(delta.x(), delta.y()) / (stride / 2)))
             for index in range(1, count + 1):
                 sample = previous + delta * (index / count)
-                if mode == "paint":
-                    if len(g["points"]) < MAX_OBJECTS:
-                        g["points"][self.snapped(sample, stride).toTuple()] = None
-                else:
-                    item = self.hit_object(self.mapFromScene(sample))
-                    if item and item.model.id not in g["removed"]:
-                        g["removed"].add(item.model.id)
-                        item.setOpacity(0.24)
+                if len(g["points"]) < MAX_OBJECTS:
+                    g["points"][self.snapped(sample, stride).toTuple()] = None
+        elif mode == "erase":
+            self._erase_segment(g["current"], point, position, g["removed"])
         g["current"] = self.snapped(point) if mode == "rectangle" else point
         self.viewport().update()
+
+    def _erase_segment(self, start, end, screen_position, removed):
+        if start == end:
+            targets = (self.hit_object(screen_position),)
+        else:
+            path = QPainterPath(start)
+            path.lineTo(end)
+            stroke = QPainterPathStroker()
+            stroke.setWidth(1 / self.zoom)
+            targets = self.map_scene.items(stroke.createStroke(path), Qt.ItemSelectionMode.IntersectsItemShape)
+        selectable = QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        for item in targets:
+            if isinstance(item, ObjectItem) and item.flags() & selectable and item.model.id not in removed:
+                removed.add(item.model.id)
+                item.setOpacity(0.24)
 
     def mouseMoveEvent(self, event):
         if self.gesture and not self._drag_button:
