@@ -138,12 +138,20 @@ class ValidationMixin:
         self._invalidate_validation()
         self._validation_context = self._validation_key()
         self._physics_state = self._publish_state = NOT_EVALUATED
-        if error is None:
+        stale = getattr(error, "validation_stale", False)
+        verified = result if error is None else getattr(error, "validation", None)
+        if stale:
+            self._scene_state = self._export_state = self._runtime_state = NOT_EVALUATED
+            if publishing and phase == "publishing":
+                self._publish_state = FAIL
+        elif error is None or verified is not None:
             self._scene_state = self._export_state = self._runtime_state = PASS
-            if result and result.get("target"):
+            if error is not None and error.code != "CANCELLED" and publishing and phase == "publishing":
+                self._publish_state = FAIL
+            if error is None and result and result.get("target"):
                 self._publish_state = PASS
-            if result and result["document"].design is not None:
-                receipt = result["result"]
+            if verified and verified["document"].design is not None:
+                receipt = verified["result"]
                 if receipt.get("unmapped_connections"):
                     self._export_state = NOT_EVALUATED
                 runtime_rows = receipt.get("runtime", {}).get("results", ())
@@ -163,7 +171,7 @@ class ValidationMixin:
                 self._publish_state = FAIL
         elif phase == "runtime":
             self._scene_state = PASS
-            self._export_state, self._runtime_state = PASS, FAIL
+            self._export_state, self._runtime_state = NOT_EVALUATED, FAIL
         else:
             self._scene_state = self._export_state = FAIL
             self._runtime_state = NOT_EVALUATED

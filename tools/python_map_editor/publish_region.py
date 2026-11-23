@@ -7,11 +7,13 @@ import shutil
 import stat
 import tempfile
 
-from document import DocumentConflict, _save_lock
+from document import DocumentConflict, _save_lock, _unique_fields
 from godot_bridge import BridgeError, check_cancelled, file_hash, project_manifest, regular, safe_child
 from source_region import relative_path, sha256_text
 
 JOURNAL_NAME = ".rtc-map-publish"
+PAIR_HISTORY = 10
+PAIR_PHASES = {"before-0": 0, "after-0": 1, "before-1": 1, "after-1": 2, "verifying": 2, "committing": 2}
 
 
 def _journal_root(project):
@@ -142,6 +144,19 @@ def _optional_hash(target):
     return None
 
 
+def _hash_conflict(path, expected, actual):
+    return BridgeError("SOURCE_MODIFIED", f"{path}: expected SHA-256 {expected}; actual SHA-256 {actual or '<missing>'}")
+
+
+def _check_manifest(project, expected, cancel):
+    actual = project_manifest(project, cancel)
+    if actual == expected:
+        return
+    for path in sorted(expected.keys() | actual.keys()):
+        if expected.get(path) != actual.get(path):
+            raise _hash_conflict(project / path, expected.get(path) or "<missing>", actual.get(path))
+
+
 def _pair_part(target, tx, index):
     return target.with_name(f".rtc-{tx.name}-{index}.part")
 
@@ -168,16 +183,20 @@ def _read_pair(tx, name):
     try:
         if not regular(item) or item.stat().st_size > 65536:
             raise ValueError("missing or oversized journal")
-        record = json.loads(item.read_text(encoding="utf-8"))
+        record = json.loads(item.read_text(encoding="utf-8"), object_pairs_hook=_unique_fields)
         if (not isinstance(record, dict) or set(record) != {"version", "files", "phase", "applied"}
                 or type(record["version"]) is not int or record["version"] != 1
-                or record["phase"] not in ("before-0", "after-0", "before-1", "after-1", "verifying", "committing")
+                or record["phase"] not in PAIR_PHASES
                 or not isinstance(record["files"], list) or len(record["files"]) != 2
-                or type(record["applied"]) is not int or not 0 <= record["applied"] <= 2):
+                or type(record["applied"]) is not int or record["applied"] != PAIR_PHASES[record["phase"]]
+                or name == "committed.json" and record["phase"] != "committing"):
             raise ValueError("invalid pair transaction")
         for index, change in enumerate(record["files"]):
             if not isinstance(change, dict) or set(change) != {"path", "before", "after"}:
                 raise ValueError("invalid file entry")
+            relative_path(change["path"], (".tscn", ".tres")[index])
+            if not change["path"].startswith(("world/adventure/", "data/content/regions/")[index]):
+                raise ValueError("invalid pair destination")
             sha256_text(change["after"])
             if change["before"] is not None:
                 sha256_text(change["before"])
@@ -194,12 +213,22 @@ def _recover_pair(project, tx):
     files = record["files"]
     targets = _pair_targets(project, [change["path"] for change in files])
     current = [_optional_hash(target) for target in targets]
-    if any(digest not in (change["before"], change["after"]) for digest, change in zip(current, files)):
-        raise BridgeError("SOURCE_MODIFIED", f"pair recovery needs review; external data was preserved: {tx}")
+    for target, digest, change in zip(targets, current, files):
+        if digest not in (change["before"], change["after"]):
+            raise _hash_conflict(target, f"{change['before'] or '<missing>'} or {change['after']}", digest)
     committed = os.path.lexists(tx / "committed.json")
-    if committed and (_read_pair(tx, "committed.json") != record or current != [change["after"] for change in files]):
-        raise BridgeError("SOURCE_MODIFIED", f"completed pair no longer matches the journal: {tx}")
+    if committed:
+        if _read_pair(tx, "committed.json") != record:
+            raise BridgeError("EXPORT_FAILED", f"conflicting completion record: {tx}")
+        for target, digest, change in zip(targets, current, files):
+            if digest != change["after"]:
+                raise _hash_conflict(target, change["after"], digest)
     for index in reversed(range(len(files))):
+        targets = _pair_targets(project, [change["path"] for change in files])
+        for target, expected in zip(targets, current):
+            digest = _optional_hash(target)
+            if digest != expected:
+                raise _hash_conflict(target, expected or "<missing>", digest)
         change, target = files[index], targets[index]
         part = _pair_part(target, tx, index)
         if os.path.lexists(part):
@@ -215,6 +244,11 @@ def _recover_pair(project, tx):
             _flush_directory(target.parent)
         else:
             _replace(tx / f"before-{index}", target, change["after"], part)
+        current[index] = change["before"]
+    for target, expected in zip(_pair_targets(project, [row["path"] for row in files]), current):
+        digest = _optional_hash(target)
+        if digest != expected:
+            raise _hash_conflict(target, expected or "<missing>", digest)
     if committed:
         (tx / "pending.json").unlink()
         _flush_directory(tx)
@@ -230,7 +264,33 @@ def _recover_pairs(project, journal):
             raise BridgeError("EXPORT_FAILED", f"untrusted pair transaction: {tx}")
         if os.path.lexists(tx / "pending.json"):
             events.append(_recover_pair(project, tx))
+    _prune_pair_history(journal)
     return events
+
+
+def _prune_pair_history(journal):
+    for terminal in ("committed.json", "rolled-back.json"):
+        eligible = []
+        for tx in journal.glob("pair-*"):
+            if tx.is_symlink() or tx.is_junction() or not tx.is_dir() or os.path.lexists(tx / "pending.json"):
+                continue
+            try:
+                record = _read_pair(tx, terminal)
+                allowed = {terminal, *(f"before-{index}" for index, row in enumerate(record["files"])
+                                       if row["before"] is not None)}
+                children = list(tx.iterdir())
+                if {item.name for item in children} == allowed and all(regular(item) for item in children):
+                    eligible.append(((tx / terminal).stat().st_mtime_ns, tx, children))
+            except (BridgeError, OSError):
+                continue
+        for _, tx, children in sorted(eligible, reverse=True)[PAIR_HISTORY:]:
+            try:
+                for item in children:
+                    item.unlink()
+                tx.rmdir()
+            except OSError:
+                # Retention is best effort; a cleanup failure cannot change the publication verdict.
+                continue
 
 
 def publish_pair(session, document, receipt):
@@ -250,7 +310,7 @@ def publish_pair(session, document, receipt):
 
 def _publish_pair_locked(session, document, receipt, journal):
     project = session.settings.project
-    session.assert_source_unchanged()
+    check_cancelled(session.cancel)
     source = document.source
     paths = ((source.scene_path, source.region_path) if source else
              (f"world/adventure/{document.region_id}.tscn", f"data/content/regions/{document.region_id}.tres"))
@@ -263,9 +323,15 @@ def _publish_pair_locked(session, document, receipt, journal):
     changes = []
     for path, target, output, before, digest in zip(paths, targets, approved, expected, after):
         sha256_text(digest)
-        if session.manifest.get(path) != before or _optional_hash(target) != before or file_hash(output) != digest:
-            raise BridgeError("SOURCE_MODIFIED", f"pair input or approved output changed: {path}")
+        for location, wanted, observed in ((target, before, session.manifest.get(path)),
+                                           (target, before, _optional_hash(target)),
+                                           (output, digest, file_hash(output))):
+            if wanted != observed:
+                raise _hash_conflict(location, wanted or "<missing>", observed)
+        if before is not None and before != digest and not target.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+            raise BridgeError("EXPORT_FAILED", f"read-only publication target: {target}")
         changes.append({"path": path, "before": before, "after": digest})
+    _check_manifest(project, session.manifest, session.cancel)
     if expected == after:
         return tuple(targets)
     tx = Path(tempfile.mkdtemp(prefix="pair-", dir=journal))
@@ -283,8 +349,11 @@ def _publish_pair_locked(session, document, receipt, journal):
             record["phase"] = f"before-{index}"
             _durable_json(pending, record)
             check_cancelled(session.cancel)
-            if project_manifest(project, session.cancel) != expected_manifest or file_hash(output) != change["after"]:
-                raise BridgeError("SOURCE_MODIFIED", f"pair changed before installing {target}")
+            target = _pair_targets(project, paths)[index]
+            _check_manifest(project, expected_manifest, session.cancel)
+            digest = file_hash(output)
+            if digest != change["after"]:
+                raise _hash_conflict(output, change["after"], digest)
             part = _pair_part(target, tx, index)
             if change["before"] is None:
                 _install_new(output, target, part)
@@ -295,16 +364,17 @@ def _publish_pair_locked(session, document, receipt, journal):
             _durable_json(pending, record)
         record["phase"] = "verifying"
         _durable_json(pending, record)
-        if project_manifest(project, session.cancel) != expected_manifest:
-            raise BridgeError("SOURCE_MODIFIED", "published files or project dependencies differ from the verified pair")
-        check_cancelled(session.cancel)
         record["phase"] = "committing"
         _durable_json(pending, record)
+        _pair_targets(project, paths)
+        _check_manifest(project, expected_manifest, session.cancel)
+        check_cancelled(session.cancel)
         _terminal(tx, "committed", record)
     except (OSError, BridgeError):
         if pending.exists():
             _recover_pair(project, tx)
         raise
+    _prune_pair_history(journal)
     return tuple(targets)
 
 

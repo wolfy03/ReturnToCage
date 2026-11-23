@@ -66,12 +66,12 @@ def sewer(settings):
         print("V4 SEWER PASS", session.evidence, flush=True)
 
 
-def new_regions(settings):
+def new_regions(settings, templates=("empty", "flat", "platform"), check_unsafe=True):
     with GodotSession(settings, Event(), print) as session:
         results = {}
         env = RegionEnvironment("res://world/environment/presets/sewer_environment.tres", loading_color="#203456")
         floor = create_region("v4_floor", "Fixture", 1200, 600, "flat", 4, env).objects
-        for template in ("empty", "flat", "platform"):
+        for template in templates:
             draft = create_region(f"v4_{template}", f"V4 {template}", 1200, 600, template, 4, env)
             if template == "empty":
                 assert not draft.objects
@@ -86,16 +86,18 @@ def new_regions(settings):
             if template == "platform":
                 assert "Climbables/TemplateLadder/Top" in receipt["scene_state"]["nodes"]
             results[template] = {"nodes": receipt["node_count"], "runtime": receipt["runtime"]["overall"]}
-        unsafe = create_region("v4_no_floor", "Empty without floor", 1200, 600, "empty", 4, RegionEnvironment())
-        try:
-            session.stage_design(unsafe)
-        except BridgeError as error:
-            assert error.code == "RUNTIME_LOAD_FAILED", error
-            assert "Ground Support" in str(error) or "Player Spawn" in str(error), error
-            assert not (settings.project / "world/adventure/v4_no_floor.tscn").exists()
-        else:
-            raise AssertionError("a floorless region was approved for live spawning")
-        write_json(session.evidence / "new-v4-check.json", {**results, "floorless": "BLOCKED"})
+        if check_unsafe:
+            unsafe = create_region("v4_no_floor", "Empty without floor", 1200, 600, "empty", 4, RegionEnvironment())
+            try:
+                session.stage_design(unsafe)
+            except BridgeError as error:
+                assert error.code == "RUNTIME_LOAD_FAILED", error
+                assert "Ground Support" in str(error) or "Player Spawn" in str(error), error
+                assert not (settings.project / "world/adventure/v4_no_floor.tscn").exists()
+            else:
+                raise AssertionError("a floorless region was approved for live spawning")
+            results["floorless"] = "BLOCKED"
+        write_json(session.evidence / "new-v4-check.json", results)
         print("V4 NEW REGIONS PASS", session.evidence, flush=True)
 
 

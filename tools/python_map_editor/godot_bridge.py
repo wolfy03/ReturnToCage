@@ -204,6 +204,7 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
     scope = ProcessScope()
     process = None
     remaining = None
+    stopped = None
     started = datetime.now(timezone.utc).isoformat()
     kwargs = ({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt"
               else {"start_new_session": True})
@@ -227,8 +228,10 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
             deadline = time.monotonic() + timeout
             while process.poll() is None:
                 if cancel.wait(min(0.05, max(0, deadline - time.monotonic()))):
+                    stopped = "CANCELLED"
                     raise BridgeError("CANCELLED", label)
                 if time.monotonic() >= deadline:
+                    stopped = "TIMEOUT"
                     raise BridgeError("TIMEOUT", label)
             remaining = scope.active_processes()
             if remaining:
@@ -243,18 +246,24 @@ def run_child(command, cwd, env, evidence, label, cancel, timeout):
                     pass
             elif process.poll() is None:
                 process.kill()
-        scope.close()
-        if process is not None:
-            process.wait(timeout=10)
-            write_json(evidence / f"{label}.exit.json", {
-                "exit_code": process.returncode, "pid": process.pid,
-                "started_utc": started, "exited_utc": datetime.now(timezone.utc).isoformat(),
-                "job_active_at_exit": remaining})
+        try:
+            if process is not None:
+                process.wait(timeout=10)
+                if remaining is None and os.name == "nt":
+                    remaining = scope.active_processes()
+                write_json(evidence / f"{label}.exit.json", {
+                    "exit_code": process.returncode, "pid": process.pid,
+                    "started_utc": started, "exited_utc": datetime.now(timezone.utc).isoformat(),
+                    "job_active_at_exit": remaining, "stop_reason": stopped})
+        finally:
+            scope.close()
 
 
 def response(path, operation, request_id, exit_code, output):
     if exit_code < 0 or exit_code > 255:
         raise BridgeError("PROCESS_CRASH", f"{operation}: {exit_code} (0x{exit_code & 0xffffffff:08X})")
+    if ENGINE_ERROR.search(output):
+        raise BridgeError("PROCESS_CRASH", f"{operation}: Godot logged errors or leaked resources")
     if not regular(path):
         raise BridgeError("INVALID_RESPONSE", f"{operation}: result missing (exit {exit_code})")
     result = read_json(path)
@@ -266,7 +275,7 @@ def response(path, operation, request_id, exit_code, output):
         code = result.get("error_code") or "EXPORT_FAILED"
         message = result.get("message") or f"{operation}: exit {exit_code}"
         raise BridgeError(code, message.removeprefix(code + ": "))
-    if not isinstance(result.get("data"), dict) or ENGINE_ERROR.search(output):
+    if not isinstance(result.get("data"), dict):
         raise BridgeError("PROCESS_CRASH", f"{operation}: Godot logged errors or leaked resources")
     return result
 

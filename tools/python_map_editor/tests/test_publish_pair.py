@@ -1,4 +1,5 @@
 from pathlib import Path
+import stat
 import subprocess
 import sys
 from threading import Event
@@ -85,6 +86,7 @@ def test_pair_recovers_after_real_process_interruption(tmp_path, existing, phase
         assert not events if phase == "start" else len(events) == 1 and "rolled-back" in events[0]
         assert project_manifest(project, Event()) == session.manifest
     assert recover_project(project) == []
+    assert recover_project(project) == []
     assert not list(project.rglob("*.part"))
 
 
@@ -125,3 +127,102 @@ def test_pair_rejects_tampered_artifact_and_preview(tmp_path):
     with pytest.raises(BridgeError, match="SOURCE_MODIFIED"):
         publish_pair(session, draft, receipt)
     assert project_manifest(session.settings.project, Event()) == session.manifest
+
+
+def linked_draft(session):
+    source = SimpleNamespace(scene_path=SCENE, region_path=REGION, scene_hash=session.manifest[SCENE],
+                             region_hash=session.manifest[REGION])
+    return SimpleNamespace(region_id="new_region", design=RegionDesign(), source=source)
+
+
+@pytest.mark.parametrize(("boundary", "path"), [("approval", SCENE), ("before-0", SCENE), ("after-0", REGION),
+                                                ("committing", SCENE), ("committing", REGION)])
+def test_external_change_never_gets_overwritten(tmp_path, monkeypatch, boundary, path):
+    session, receipt = fixture(tmp_path, existing=True)
+    target = session.settings.project / path
+    original = publish_region._durable_json
+
+    def external(record_path, record):
+        original(record_path, record)
+        if record_path.name == "pending.json" and record["phase"] == boundary:
+            target.write_bytes(b"independent writer")
+
+    monkeypatch.setattr(publish_region, "_durable_json", external)
+    if boundary == "approval":
+        target.write_bytes(b"independent writer")
+    with pytest.raises(BridgeError, match="SOURCE_MODIFIED") as error:
+        publish_pair(session, linked_draft(session), receipt)
+    assert path.replace("/", "\\") in str(error.value) or path in str(error.value)
+    assert file_hash(target) in str(error.value)
+    assert target.read_bytes() == b"independent writer"
+    if boundary != "approval":
+        journal = next((session.settings.project / publish_region.JOURNAL_NAME).glob("pair-*"))
+        assert (journal / "pending.json").is_file() and (journal / "before-0").is_file()
+        assert not (journal / "committed.json").exists()
+
+
+def test_corrupt_journal_and_unknown_terminal_content_are_retained(tmp_path, monkeypatch):
+    session, receipt = fixture(tmp_path, existing=True)
+    root = session.settings.project
+    for path in (SCENE, REGION):
+        (session.stage / path).write_bytes((root / path).read_bytes())
+    same = {**receipt, "scene_hash": session.manifest[SCENE], "region_hash": session.manifest[REGION]}
+    publish_pair(session, linked_draft(session), same)
+    journal = root / publish_region.JOURNAL_NAME
+    assert not list(journal.glob("pair-*"))
+    monkeypatch.setattr(publish_region, "PAIR_HISTORY", 0)
+    for path in (SCENE, REGION):
+        (session.stage / path).write_bytes(b"verified replacement")
+    changed = {**receipt, "scene_hash": file_hash(session.stage / SCENE),
+               "region_hash": file_hash(session.stage / REGION)}
+    damaged = journal / "pair-damaged"
+    damaged.mkdir()
+    (damaged / "committed.json").write_text("invalid JSON", encoding="utf-8")
+    publish_pair(session, linked_draft(session), changed)
+    assert sorted(journal.glob("pair-*")) == [damaged]
+    pending = damaged / "pending.json"
+    pending.write_text("invalid JSON", encoding="utf-8")
+    with pytest.raises(BridgeError, match="EXPORT_FAILED"):
+        recover_project(root)
+    assert pending.is_file() and file_hash(root / SCENE) == changed["scene_hash"]
+
+
+@pytest.mark.parametrize("change", ["deleted", "read-only", "symlink"])
+def test_pair_preflight_preserves_other_file_for_unsafe_target(tmp_path, change):
+    session, receipt = fixture(tmp_path, existing=True)
+    root = session.settings.project
+    target = root / REGION
+    old = target.stat().st_mode
+    if change == "deleted":
+        target.unlink()
+    elif change == "read-only":
+        target.chmod(stat.S_IREAD)
+    else:
+        target.unlink()
+        try:
+            target.symlink_to(session.stage / REGION)
+        except OSError as error:
+            pytest.skip(f"symlinks not available: {error}")
+    try:
+        with pytest.raises(BridgeError, match="SOURCE_MODIFIED|EXPORT_FAILED|INVALID_PROJECT"):
+            publish_pair(session, linked_draft(session), receipt)
+        assert file_hash(root / SCENE) == session.manifest[SCENE]
+        assert not list((root / publish_region.JOURNAL_NAME).glob("pair-*"))
+        if change == "symlink":
+            assert target.is_symlink() and file_hash(session.stage / REGION) == receipt["region_hash"]
+    finally:
+        if change == "read-only":
+            target.chmod(old)
+
+
+def test_other_editor_lock_blocks_entire_pair(tmp_path):
+    session, receipt = fixture(tmp_path)
+    root = session.settings.project
+    journal = publish_region._journal_root(root)
+    with publish_region._save_lock(journal / "publish.lock"):
+        completed = subprocess.run([sys.executable, "-c", CRASH_SCRIPT, str(Path(publish_region.__file__).parent),
+                                    str(root), str(session.stage), "before-0"], timeout=20, check=False,
+                                   capture_output=True, text=True)
+    assert completed.returncode == 1 and "another process is publishing" in completed.stderr
+    assert not list(journal.glob("pair-*"))
+    assert project_manifest(root, Event()) == session.manifest

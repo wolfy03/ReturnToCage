@@ -190,7 +190,7 @@ jobs:
                 Write-Warning "EXE minidump capture unavailable ($($_.Exception.Message))"
               }
             }
-            python -u -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-stability-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT --bridge-repeats 10
+            python -u -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-stability-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT --bridge-repeats 10 --include-design
             $packageExit = $LASTEXITCODE
           } finally {
             if ($created) { Remove-Item -LiteralPath $key }
@@ -203,3 +203,57 @@ jobs:
           path: |
             ${{ runner.temp }}/rtc-bridge-stability/
             build/map-editor-stability-qa/
+
+  design-stability:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.stability }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [v3, v4, flat, platform, publish]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.5'
+          architecture: x64
+      - name: Verify official Godot and run independent snapshots
+        shell: pwsh
+        env:
+          RTC_PROFILE: ${{ matrix.profile }}
+        run: |
+          $download = Join-Path $env:RUNNER_TEMP 'godot-rtc-4.7.2.zip'
+          $engine = Join-Path $env:RUNNER_TEMP 'godot-rtc-4.7.2'
+          Invoke-WebRequest 'https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip' -OutFile $download
+          if ((Get-FileHash -LiteralPath $download).Hash -ne '731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953') {
+            throw 'Godot Windows ZIP checksum mismatch'
+          }
+          Expand-Archive -LiteralPath $download -DestinationPath $engine
+          $godot = Join-Path $engine 'Godot_v4.7.2-stable_win64.exe'
+          $evidence = Join-Path $env:RUNNER_TEMP 'rtc-design-evidence'
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\Godot_v4.7.2-stable_win64.exe'
+          $created = $false
+          try {
+            if (-not (Test-Path -LiteralPath $key)) {
+              try {
+                $dumps = (New-Item -ItemType Directory -Path "$evidence/dumps" -Force).FullName
+                New-Item -Path $key -Force | Out-Null
+                $created = $true
+                New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value $dumps | Out-Null
+                New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 1 | Out-Null
+              } catch {
+                Write-Warning "Godot minidump capture unavailable ($($_.Exception.Message))"
+              }
+            }
+            python -u -X utf8 tools/python_map_editor/design_stability.py --godot $godot --artifacts $evidence --profile $env:RTC_PROFILE
+            $trialExit = $LASTEXITCODE
+          } finally {
+            if ($created) { Remove-Item -LiteralPath $key }
+          }
+          exit $trialExit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Python-Map-Editor-design-stability-${{ matrix.profile }}
+          path: ${{ runner.temp }}/rtc-design-evidence/

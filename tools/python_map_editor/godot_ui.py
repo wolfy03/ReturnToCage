@@ -26,6 +26,7 @@ def run_operation(settings, cancel, operation, payload, progress, approval=None)
     if operation == "publish_design" and approval is None:
         raise BridgeError("CANCELLED", tr("design_approval_required"))
     session = None
+    validation = None
     try:
         session = GodotSession(settings, cancel, progress)
         recovered = recover_project(session.settings.project)
@@ -45,6 +46,7 @@ def run_operation(settings, cancel, operation, payload, progress, approval=None)
                 updated, result = session.stage_design(document)
             else:
                 updated, result = session.stage_export(document)
+            validation = {"document": updated, "result": result, "evidence": session.evidence, "target": None}
             target = None
             if operation == "export_region":
                 progress(tr("godot_publishing"))
@@ -61,11 +63,18 @@ def run_operation(settings, cancel, operation, payload, progress, approval=None)
     except BridgeError as error:
         if session is not None:
             error.evidence = session.evidence
+        if validation is not None:
+            error.validation = validation
+        if error.code == "SOURCE_MODIFIED":
+            error.validation = None
+            error.validation_stale = True
         raise
     except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
         if session is not None:
             (session.evidence / "bridge-exception.log").write_text(traceback.format_exc(), encoding="utf-8")
-        raise BridgeError("EXPORT_FAILED", str(error), session.evidence if session else None) from error
+        failure = BridgeError("EXPORT_FAILED", str(error), session.evidence if session else None)
+        failure.validation = validation
+        raise failure from error
 
 
 class BridgeWorker(QThread):
@@ -291,6 +300,7 @@ class GodotMixin:
         self._start_godot("export_as", (self._linked_document(), Path(parent) / name), self._show_export_as)
 
     def _validate_godot(self):
+        self._recheck_region_index()
         try:
             document = self._linked_document()
         except DocumentError as error:
@@ -301,6 +311,7 @@ class GodotMixin:
 
     def _show_export(self, result):
         published = result["document"]
+        new_region = self.draft.source is None
         if self.draft.source is None:
             self._regions = None
         self.draft = replace(self.draft, source=published.source, region_id=published.region_id,
@@ -308,6 +319,9 @@ class GodotMixin:
         self._update_document_status()
         self._refresh_godot_actions()
         self._show_export_as(result)
+        if new_region and published.design is not None:
+            self.output.appendPlainText(tr("design_published_registration"))
+            self.statusBar().showMessage(tr("design_published_registration"), 12000)
 
     def _show_export_as(self, result):
         self.output.appendPlainText(tr("godot_verified").format(count=result["result"]["node_count"]))
@@ -335,6 +349,8 @@ class GodotMixin:
         self.view.cancel_gesture()
         self._bridge_completion = completion
         self._bridge_phase = "stage"
+        if operation in ("validate_export", "export_region", "export_as", "validate_design", "publish_design"):
+            self._invalidate_validation(force=True)
         thread = self._bridge_thread = BridgeWorker(self, settings, operation, payload)
         thread.progress.connect(self._godot_progress, Qt.ConnectionType.QueuedConnection)
         thread.review.connect(self._review_design_publish, Qt.ConnectionType.QueuedConnection)
@@ -349,7 +365,8 @@ class GodotMixin:
         if thread is None or thread.cancel.is_set():
             return
         result = QMessageBox.question(self, tr("godot_publish_design"), tr("godot_publish_design_confirm").format(
-            scene=receipt["scene_path"], region=receipt["region_path"], runtime=receipt["runtime"]["overall"]),
+            scene=receipt["scene_path"], region=receipt["region_path"], runtime=receipt["runtime"]["overall"],
+            project=thread.settings.project),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
         thread.approved = result == QMessageBox.StandardButton.Yes
         thread.review_done.set()

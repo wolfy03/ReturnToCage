@@ -33,6 +33,7 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
     original_region = file_hash(region)
     new_scene = project / "world/adventure/v4_packaged.tscn"
     new_region = project / "data/content/regions/v4_packaged.tres"
+    review_answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
     evidence = {"passed": False, "frozen": getattr(sys, "frozen", False), "checks": checks,
                 "godot": str(godot), "project": str(project), "initial_scene": original_scene,
                 "definition_hash": original_region}
@@ -62,7 +63,7 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
             if widget.windowTitle() == tr("godot_publish_design"):
                 if new_scene.exists() or new_region.exists():
                     errors.append("new destination written before approval")
-                widget.button(QMessageBox.StandardButton.Yes).click()
+                widget.button(review_answers.pop(0)).click()
             elif widget.windowTitle() == tr("godot_export"):
                 widget.button(QMessageBox.StandardButton.Yes).click()
             else:
@@ -122,6 +123,11 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
                 "V4 validation measured spawn physics without publishing")
         draft = create_region("v4_packaged", "Packaged fixture", 1200, 600, "flat", 4, RegionEnvironment())
         window._install_draft(draft)
+        window.godot_export_action.trigger()
+        wait_job()
+        require(not errors and not (new_scene.exists() or new_region.exists()) and window._runtime_state == PASS
+                and window._physics_state in (PASS, WARNING) and window._publish_state == NOT_EVALUATED,
+                "declined V4 publication kept runtime and physics without writing the pair")
         checkpoint("packaged V4 pair publication requested")
         window.godot_export_action.trigger()
         wait_job()
@@ -147,6 +153,10 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
             wait_job()
             require(window.draft.source is not None and len(window.draft.objects) == 5,
                     "ContentRegistry selection imported Sewer")
+            if include_design:
+                require((project / ".rtc-map-publish/pair-smoke/rolled-back.json").is_file()
+                        and not (project / "world/adventure/rtc_recovery_smoke.tscn").exists(),
+                        "frozen editor recovered an interrupted pair before import")
             require(window.region_id.isReadOnly() and window.display_name.isReadOnly(), "RegionDefinition metadata is read-only")
             window.view.fit_map()
             west = next(item for item in window.draft.objects if item.position == (420, 440))

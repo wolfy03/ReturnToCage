@@ -66,7 +66,7 @@ def run_smoke(executable, cwd, env, evidence, scale):
 
 
 def run_bridge_smoke(executable, cwd, env, evidence, project, godot, include_design=False):
-    from godot_bridge import BridgeError, project_manifest, run_child
+    from godot_bridge import BridgeError, file_hash, project_manifest, run_child, write_json
 
     fixture = cwd / "하수구 임시 프로젝트"
     fixture.mkdir()
@@ -77,13 +77,56 @@ def run_bridge_smoke(executable, cwd, env, evidence, project, godot, include_des
                "--bridge-project", str(fixture), "--bridge-godot", str(godot)]
     if include_design:
         command.append("--include-design")
+        # Exercise next-launch recovery using an interrupted new-pair fixture.
+        pending = fixture / ".rtc-map-publish/pair-smoke"
+        pending.mkdir(parents=True)
+        partial = fixture / "world/adventure/rtc_recovery_smoke.tscn"
+        partial.write_bytes(b"simulated unpublished scene")
+        write_json(pending / "pending.json", {"version": 1, "phase": "after-0", "applied": 1, "files": [
+            {"path": partial.relative_to(fixture).as_posix(), "before": None, "after": file_hash(partial)},
+            {"path": "data/content/regions/rtc_recovery_smoke.tres", "before": None, "after": "0" * 64},
+        ]})
     try:
         code, _ = run_child(command, cwd, env, evidence, "package-godot", Event(), 240)
     except BridgeError as error:
         return {"passed": False, "error": str(error)}
     results = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
+    audited, valid = audit_bridge_processes(evidence, include_design)
     return {"exit_code": code, "qt": results, "passed": code == 0 and results.get("passed") is True
-            and results.get("frozen") is True and project_manifest(project, Event()) == original}
+            and results.get("frozen") is True and valid and project_manifest(project, Event()) == original,
+            "processes": audited}
+
+
+def audit_bridge_processes(evidence, include_design):
+    from collections import Counter
+    from godot_bridge import ENGINE_ERROR
+
+    rows = []
+    exits = {item.with_name(item.name.removesuffix(".exit.json")) for item in evidence.rglob("*.exit.json")}
+    launches = {item.with_name(item.name.removesuffix(".process.json")) for item in evidence.rglob("*.process.json")}
+    for stem in sorted(exits):
+        row = json.loads(Path(str(stem) + ".exit.json").read_text(encoding="utf-8"))
+        reply_file = Path(str(stem) + ".result.json")
+        reply = json.loads(reply_file.read_text(encoding="utf-8")) if reply_file.is_file() else {}
+        label = reply.get("operation", stem.name)
+        code = row.get("exit_code")
+        native = type(code) is int and (code < 0 or code > 255)
+        cancelled = row.get("stop_reason") == "CANCELLED" and label == "version" and code in (0, 1)
+        logs = "".join(candidate.read_text(encoding="utf-8", errors="replace") for ending in (".stdout.log", ".stderr.log", ".godot.log")
+                       if (candidate := Path(str(stem) + ending)).is_file())
+        valid = (not native and row.get("job_active_at_exit") == 0 and row.get("started_utc")
+                 and row.get("exited_utc") and row.get("pid") and not ENGINE_ERROR.search(logs)
+                 and (cancelled or (code == 0 and not row.get("stop_reason")
+                                    and (not reply or reply.get("status") == "PASS"))))
+        rows.append({**row, "operation": label, "native_crash": native, "result_status": reply.get("status"),
+                     "status": ("EXPECTED_CANCEL" if cancelled else "PASS") if valid else "FAIL"})
+    operations = Counter(row["operation"] for row in rows)
+    required = {"inspect_project": 1, "import_region": 1, "export_region": 2, "validate_export": 2,
+                "runtime": 2, "package-godot": 1}
+    if include_design:
+        required.update(import_v4_region=1, stage_v4_export=1, validate_v4_export=3, stage_new_region=2)
+    return rows, (launches == exits and all(row["status"] != "FAIL" for row in rows)
+                  and all(operations[label] == count for label, count in required.items()))
 
 
 def verify(archive, output, scales, project=None, godot=None, bridge_repeats=1, include_design=False):
