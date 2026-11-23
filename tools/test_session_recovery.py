@@ -142,7 +142,7 @@ class LifecycleChecks(RosterController):
             self.input_key("D", "attack")
             self.authority_input("D", attack=0, attack_executed=1, ready_action=True)
             self.input_key("D", "dodge")
-            self.authority_input("D", dodge=0, dodge_executed=1)
+            self.authority_input("D", dodge=0, dodge_executed=1, ready_action=True)
 
         self.input_windows("B", bag=True, gear=True)
         self.input_windows("B", gear=True)
@@ -170,7 +170,7 @@ class LifecycleChecks(RosterController):
             self.input_key("B", "attack")
             self.authority_input("B", attack=still_neutral["attack"] + 1, attack_executed=1, ready_action=True)
             self.input_key("B", "dodge")
-            self.authority_input("B", dodge=still_neutral["dodge"] + 1, dodge_executed=1)
+            self.authority_input("B", dodge=still_neutral["dodge"] + 1, dodge_executed=1, ready_action=True)
         self.input_windows("A", bag=True, gear=True)
         self.input_windows("B", bag=True, gear=True)
 

@@ -257,11 +257,73 @@ func _run_host_scenario() -> void:
 		_fail("cross-world host pickup claimed Sewer loot")
 		return
 	var loot := runtime.loot_manager().get_loot(loot_id)
+	if loot.dropped_from_inventory:
+		_fail("enemy loot fixture was marked as a carried inventory drop")
+		return
+	# Regular field loot in a real Adventure world is unsecured until escape:
+	# it must land in B's unsecured loot only, exactly once.
+	var pickup_item := loot.stack.item_id
+	var pickup_quantity := loot.stack.quantity
+	var b_adventure := GameSession.adventure_session_for_peer(b_peer).get_player_adventure(b_peer)
+	var b_unsecured_before := b_adventure.unsecured_loot.count(pickup_item)
+	var b_inventory_before := GameSession.get_player(b_peer).inventory.to_array()
+	var c_items_before: Array = []
+	if c_peer > 0:
+		c_items_before = [
+			GameSession.get_player(c_peer).inventory.to_array(),
+			GameSession.adventure_session_for_peer(c_peer).get_player_adventure(c_peer).unsecured_loot.to_array(),
+		]
+		# C is a real same-world client but out of range: its claim is rejected
+		# by the server and leaves the entity available for B.
+		var c_actor := runtime.player_manager().get_actor(c_peer)
+		c_actor.global_position = loot.global_position + Vector2(LootSpawnManager.PICKUP_RANGE * 4.0, 0.0)
+		_send_command(c_peer, "PICKUP_EXPECT_REJECT", loot_id)
+		if not await _wait_until(func() -> bool: return _confirmed("PICKUP_EXPECT_REJECT", c_peer), 3.0) \
+				or runtime.loot_manager().get_loot(loot_id) == null:
+			_fail("server accepted an out-of-range same-world pickup")
+			return
+	var loot_removals := [0]
+	loot.tree_exiting.connect(func() -> void: loot_removals[0] += 1, CONNECT_ONE_SHOT)
 	b_actor.global_position = loot.global_position
 	_send_command(b_peer, "PICKUP", loot_id)
-	if not await _wait_until(func() -> bool: return runtime.loot_manager().get_loot(loot_id) == null, 3.0):
+	# The retired actor is queue_free()d, so its tree exit lands a frame after
+	# the manager forgets it.
+	if not await _wait_until(func() -> bool:
+		return runtime.loot_manager().get_loot(loot_id) == null and loot_removals[0] > 0
+	, 3.0):
 		_fail("same-world loot pickup did not commit")
 		return
+	var adventure_pickup_ok := func(stage: String) -> bool:
+		var failure := ""
+		if b_adventure.unsecured_loot.count(pickup_item) != b_unsecured_before + pickup_quantity:
+			failure = "Adventure pickup added %d unsecured %s, expected %d" % [
+				b_adventure.unsecured_loot.count(pickup_item) - b_unsecured_before, pickup_item, pickup_quantity]
+		elif GameSession.get_player(b_peer).inventory.to_array() != b_inventory_before:
+			failure = "Adventure field loot changed the main inventory"
+		elif c_peer > 0 and [
+				GameSession.get_player(c_peer).inventory.to_array(),
+				GameSession.adventure_session_for_peer(c_peer).get_player_adventure(c_peer).unsecured_loot.to_array(),
+			] != c_items_before:
+			failure = "B pickup changed C's inventory or unsecured loot"
+		elif loot_removals[0] != 1:
+			failure = "loot actor retired %d times" % loot_removals[0]
+		if not failure.is_empty():
+			_fail("%s (%s)" % [failure, stage])
+			return false
+		return true
+	if not adventure_pickup_ok.call("first claim"):
+		return
+	if runtime.loot_manager().server_try_pickup(b_peer, loot_id).success:
+		_fail("server accepted a duplicate Adventure pickup")
+		return
+	_send_command(b_peer, "PICKUP_REPLAY", loot_id)
+	if not await _wait_until(func() -> bool: return _confirmed("PICKUP_REPLAY", b_peer), 3.0) \
+			or int(_confirmation("PICKUP_REPLAY", b_peer).get("successes", -1)) != 0:
+		_fail("duplicate/forged Adventure pickup was not rejected")
+		return
+	if not adventure_pickup_ok.call("duplicate/forged replay"):
+		return
+	print("ADVENTURE UNSECURED LOOT PICKUP OK")
 	if c_peer > 0:
 		_send_command(c_peer, "REPORT_EMPTY_LOOT", 0)
 		if not await _wait_until(func() -> bool: return _confirmed("REPORT_EMPTY_LOOT", c_peer)):
@@ -785,6 +847,27 @@ func _command(command: String, value: int) -> void:
 		"PICKUP":
 			NetworkManager.request_loot_pickup(value)
 			_confirm.rpc_id(1, command, {"entity_id": value})
+		"PICKUP_EXPECT_REJECT", "PICKUP_REPLAY":
+			# PICKUP_REPLAY resends the retired entity and a forged ID; both must fail.
+			var requests: Array[int] = [value]
+			if command == "PICKUP_REPLAY":
+				requests.append(value + 100000)
+			var results := {"successes": 0, "failures": 0}
+			var on_result := func(success: bool, _item: StringName, _quantity: int, _message: String) -> void:
+				results["successes" if success else "failures"] += 1
+			NetworkManager.loot_pickup_result_received.connect(on_result)
+			for entity_id in requests:
+				NetworkManager.request_loot_pickup(entity_id)
+			var received := await _wait_until(func() -> bool:
+				return int(results["successes"]) + int(results["failures"]) >= requests.size()
+			, 3.0)
+			# Allow a late, wrongly accepted result to surface before reporting.
+			await get_tree().create_timer(0.15).timeout
+			NetworkManager.loot_pickup_result_received.disconnect(on_result)
+			if not received or int(results["failures"]) != requests.size():
+				_fail("%s received %s" % [command, results])
+				return
+			_confirm.rpc_id(1, command, results)
 		"REPORT_STAMINA_SPENT":
 			var peer_id := NetworkManager.local_peer_id()
 			if not await _wait_until(func() -> bool:

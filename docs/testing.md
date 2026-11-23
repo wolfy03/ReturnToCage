@@ -63,6 +63,32 @@ buffered `attack_1 → attack_2`의 sequence/combo step/key/timing, Dodge direct
 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
+### 전리품 지급 위치 (PICKUP E2E)
+
+전리품 지급 위치는 **world kind가 결정한다**: Settlement는 main inventory, Adventure의 일반
+field loot는 `unsecured_loot`, Adventure에서 기존 가방에서 드롭한 아이템의 재습득은 main
+inventory(instance_id·수량 보존)다. E2E는 각 경로를 실제 world 설정에 맞춰 검증한다.
+
+- `tools/test_multiplayer_local.py`(`multiplayer_probe.gd`)는 Sewer 씬을 **Settlement world로**
+  묶는 legacy fixture다. 따라서 PICKUP은 main inventory 증가를 기대한다. 서버 승인 후 정확한
+  수량, `unsecured_loot`·다른 player의 inventory/unsecured 불변, 서버·client 각각 LootActor
+  retire 정확히 1회, collector client의 개인 inventory snapshot 갱신, PERSONAL collect quest
+  credit 1회를 확인한다. 이어서 서버 직접 재claim, 같은 entity의 client 재요청, 위조 entity
+  ID 요청이 모두 거절되고 상태가 그대로인지 `PICKUP_REPLAY`에서 다시 검사한다.
+- `tools/test_multiplayer_world_runtime.py`는 실제 `adventure:sewer_region` runtime에서 enemy
+  loot가 B의 `unsecured_loot`에만 정확히 추가되고 main inventory와 C의 inventory/unsecured는
+  변하지 않는지, 범위 밖 C의 claim·중복·위조 요청이 거절되는지 확인한다
+  (`ADVENTURE UNSECURED LOOT PICKUP OK`). Host의 cross-world pickup 거절도 같은 probe가 본다.
+- `tools/test_multiplayer_authority.py`는 Adventure에서 드롭한 carried item을 다시 주웠을 때
+  `unsecured_loot`가 아니라 owner-private main bag으로 돌아오는지 확인한다. 단위 수준의
+  instance_id·수량 보존은 `tests/integration/test_inventory_drop.gd`가 검사한다.
+
+`test_multiplayer_disconnect.py`와 `test_session_recovery.py`는 `::1` IPv6 loopback join을
+포함하므로 IPv6가 없는 환경(일부 컨테이너)에서는 해당 단계에서 실패한다. GitHub runner는
+IPv6 loopback을 지원한다. lifecycle 입력 검사에서 dodge 이후 정지 판정은 attack과 같이
+`ready_action`(CombatAction IDLE + 접지)을 기다린다. dodge 실행 tick에는 속도가 아직 적용되지
+않아, 그 전에 정지를 판정하면 이어지는 dodge 이동을 위반으로 오판한다.
+
 러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리로 같은 project check, 2-player valid/invalid 및 3-player valid process-restart E2E, 2/3-player individual-world E2E, 2/3-player world-runtime E2E를 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
 
 ## 테스트 구성

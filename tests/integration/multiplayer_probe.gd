@@ -1,6 +1,6 @@
 extends Node
 
-enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, ITEM_EQUIP, ITEM_USE, ITEM_DEPOSIT, ITEM_WITHDRAW, ITEM_RACE, PENDING_OVERFLOW, PENDING_CLAIM, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
+enum ProbeState { WAITING, SETTLEMENT_UPGRADE, SETTLEMENT_CRAFT, ITEM_EQUIP, ITEM_USE, ITEM_DEPOSIT, ITEM_WITHDRAW, ITEM_RACE, PENDING_OVERFLOW, PENDING_CLAIM, HORIZONTAL, JUMPING, PREPARE_CLIMB, CLIMBING, COMBAT, ENEMY_DEATH, PICKUP, PICKUP_REPLAY, HEALTH, RESPAWN, CLEANUP, RECONNECT, FINISHED }
 
 var role: String = ""
 var port: int = NetworkManager.DEFAULT_PORT
@@ -56,6 +56,26 @@ var pickup_item_id: StringName
 var pickup_quantity: int = 0
 var pickup_count_before: int = 0
 var pickup_confirmations: Dictionary[int, bool] = {}
+var pickup_entity_id: int = 0
+var pickup_inventory_before: int = 0
+var pickup_unsecured_before: Array[Dictionary] = []
+var pickup_others_before: Dictionary[int, Array] = {}
+var pickup_collect_before: Dictionary[int, int] = {}
+var pickup_server_removals: int = 0
+var pickup_replay_requested: bool = false
+var pickup_replay_confirmations: Dictionary[int, bool] = {}
+# Client-side pickup observation. Despawns are counted from the replicated
+# event stream so a duplicate retire would be visible even after the actor is gone.
+var pickup_watch_entity: int = 0
+var pickup_watch_item_id: StringName = &""
+var pickup_watch_expected_count: int = -1
+var pickup_watch_is_collector: bool = false
+var pickup_watch_confirmed: bool = false
+var pickup_despawn_counts: Dictionary[int, int] = {}
+var pickup_success_count: int = 0
+var pickup_failure_count: int = 0
+var pickup_replay_failures_before: int = -1
+var pickup_replay_confirmed: bool = false
 var quest_sync_confirmation_sent: bool = false
 var quest_sync_confirmations: Dictionary[int, bool] = {}
 var expected_killer_peer: int = 0
@@ -94,6 +114,12 @@ const PROBE_PERSONAL_QUEST_ID: StringName = &"_probe_personal_kill"
 const PROBE_PARTY_QUEST_ID: StringName = &"_probe_party_kill"
 const PROBE_PERSONAL_UPGRADE_QUEST_ID: StringName = &"_probe_personal_upgrade"
 const PROBE_PARTY_UPGRADE_QUEST_ID: StringName = &"_probe_party_upgrade"
+const PROBE_PERSONAL_COLLECT_QUEST_ID: StringName = &"_probe_personal_collect"
+# Every item the Sewer beetle loot table can roll, so collect credit for the
+# randomly rolled pickup is observable without depending on the roll.
+const PROBE_COLLECT_ITEM_IDS: Array[StringName] = [&"moss_fiber", &"clean_pebble"]
+const PROBE_COLLECT_REQUIRED := 99
+const PROBE_FORGED_LOOT_OFFSET := 100000
 
 func _ready() -> void:
 	_parse_arguments()
@@ -115,6 +141,7 @@ func _ready() -> void:
 		GameSession.start_quest(PROBE_PARTY_QUEST_ID, GameSession.get_local_player_id())
 		GameSession.start_quest(PROBE_PERSONAL_UPGRADE_QUEST_ID, GameSession.get_local_player_id())
 		GameSession.start_quest(PROBE_PARTY_UPGRADE_QUEST_ID, GameSession.get_local_player_id())
+		GameSession.start_quest(PROBE_PERSONAL_COLLECT_QUEST_ID, GameSession.get_local_player_id())
 		GameSession.settlement.storage.add_item(&"rusty_scrap", 3)
 		GameSession.settlement.storage.add_item(&"berry", 2)
 		GameSession.settlement.storage.add_item(&"moss_fiber", 1)
@@ -142,6 +169,7 @@ func _process(_delta: float) -> void:
 		if not _remote_private_placeholders_are_empty():
 			_fail("client received another player's private item state")
 			return
+		_process_client_pickup_watch()
 		if settlement_upgrade_expected and not settlement_upgrade_confirmation_sent:
 			var personal_upgrade := GameSession.progression.get_personal_progression(GameSession.get_local_player_id())
 			var personal_upgrade_state: QuestState = personal_upgrade.quest_states.get(PROBE_PERSONAL_UPGRADE_QUEST_ID) if personal_upgrade != null else null
@@ -430,14 +458,47 @@ func _process(_delta: float) -> void:
 				loot.global_position = actor.global_position
 				pickup_item_id = loot.stack.item_id
 				pickup_quantity = loot.stack.quantity
-				pickup_count_before = GameSession.adventure.active_session.get_player_adventure(selected_peer).unsecured_loot.count(pickup_item_id)
-				_begin_pickup_test.rpc_id(selected_peer, loot_id)
+				if not PROBE_COLLECT_ITEM_IDS.has(pickup_item_id) or pickup_quantity <= 0 or loot.dropped_from_inventory:
+					_fail("enemy loot fixture rolled an unexpected stack %s x%d" % [pickup_item_id, pickup_quantity])
+					return
+				pickup_entity_id = loot_id
+				# This legacy fixture binds the Sewer scene to the Settlement world, so
+				# regular field loot is granted to the main bag, not to unsecured loot.
+				# Adventure unsecured loot is verified by the world-runtime E2E.
+				pickup_count_before = GameSession.get_player(selected_peer).inventory.count(pickup_item_id)
+				pickup_inventory_before = pickup_count_before
+				pickup_unsecured_before = GameSession.adventure.active_session.get_player_adventure(selected_peer).unsecured_loot.to_array()
+				pickup_others_before = _pickup_other_player_items()
+				pickup_collect_before = _pickup_collect_progress()
+				if pickup_collect_before.size() != expected_players:
+					_fail("collect quest fixture was not started for every player")
+					return
+				pickup_server_removals = 0
+				loot.tree_exiting.connect(func() -> void: pickup_server_removals += 1, CONNECT_ONE_SHOT)
+				_begin_pickup_test.rpc(loot_id, selected_peer, pickup_item_id, pickup_count_before + pickup_quantity)
+				phase_started_msec = Time.get_ticks_msec()
 				state = ProbeState.PICKUP
 		ProbeState.PICKUP:
 			var loot_manager := world.get_node("LootSpawnManager") as LootSpawnManager
-			var personal := GameSession.adventure.active_session.get_player_adventure(selected_peer)
-			if loot_manager.entity_ids().is_empty() and pickup_confirmations.has(selected_peer) \
-				and personal.unsecured_loot.count(pickup_item_id) == pickup_count_before + pickup_quantity:
+			var inventory := GameSession.get_player(selected_peer).inventory
+			if loot_manager.entity_ids().is_empty() and pickup_confirmations.size() == expected_players - 1 \
+				and pickup_confirmations.has(selected_peer) \
+				and inventory.count(pickup_item_id) == pickup_count_before + pickup_quantity:
+				if not _pickup_server_state_ok("first claim"):
+					return
+				# A replayed claim for the retired entity is rejected on the server
+				# itself and over the wire, together with a forged entity ID.
+				if loot_manager.server_try_pickup(selected_peer, pickup_entity_id).success:
+					_fail("server accepted a duplicate pickup of a retired loot entity")
+					return
+				pickup_replay_requested = true
+				_begin_pickup_replay.rpc_id(selected_peer, pickup_entity_id, pickup_entity_id + PROBE_FORGED_LOOT_OFFSET)
+				phase_started_msec = Time.get_ticks_msec()
+				state = ProbeState.PICKUP_REPLAY
+		ProbeState.PICKUP_REPLAY:
+			if pickup_replay_confirmations.has(selected_peer):
+				if not _pickup_server_state_ok("duplicate/forged replay"):
+					return
 				print("PROBE LOOT CLAIM AUTHORITY OK")
 				GameSession.get_player(selected_peer).set_health(40.0)
 				_begin_health_test.rpc(selected_peer)
@@ -562,6 +623,19 @@ func _install_probe_personal_quest() -> void:
 	party_upgrade.title = "Probe Party Upgrade"
 	party_upgrade.scope = QuestDefinition.Scope.PARTY
 	ContentRegistry._definitions[party_upgrade.id] = party_upgrade
+	var collect := QuestDefinition.new()
+	collect.id = PROBE_PERSONAL_COLLECT_QUEST_ID
+	collect.title = "Probe Personal Collect"
+	collect.scope = QuestDefinition.Scope.PERSONAL
+	var collect_objectives: Array[QuestObjectiveDefinition] = []
+	for item_id in PROBE_COLLECT_ITEM_IDS:
+		var collect_objective := QuestObjectiveDefinition.new()
+		collect_objective.type = QuestObjectiveDefinition.ObjectiveType.COLLECT_ITEM
+		collect_objective.target_id = item_id
+		collect_objective.required_amount = PROBE_COLLECT_REQUIRED
+		collect_objectives.append(collect_objective)
+	collect.objectives = collect_objectives
+	ContentRegistry._definitions[collect.id] = collect
 
 func _on_probe_peer_joined(peer_id: int) -> void:
 	var player_id := GameSession.get_player_id(peer_id)
@@ -599,6 +673,7 @@ func _on_probe_peer_joined(peer_id: int) -> void:
 	if not player_id.is_empty():
 		GameSession.start_quest(PROBE_PERSONAL_QUEST_ID, player_id)
 		GameSession.start_quest(PROBE_PERSONAL_UPGRADE_QUEST_ID, player_id)
+		GameSession.start_quest(PROBE_PERSONAL_COLLECT_QUEST_ID, player_id)
 
 func _on_probe_peer_left(peer_id: int) -> void:
 	for player_id in reconnect_old_peers:
@@ -924,6 +999,8 @@ func _build_world() -> void:
 			return
 		print("PROBE AUTHORITATIVE SPAWN %d %s" % [spawn_assignment.spawn_kind, spawn_assignment.position])
 	(world.get_node("LootSpawnManager") as LootSpawnManager).pickup_result.connect(_on_probe_pickup_result)
+	if not NetworkManager.is_server() and not NetworkManager.loot_despawn_received.is_connected(_on_probe_loot_despawn):
+		NetworkManager.loot_despawn_received.connect(_on_probe_loot_despawn)
 	for enemy in get_tree().get_nodes_in_group(&"enemy"):
 		enemy.set_physics_process(false)
 
@@ -989,7 +1066,13 @@ func _begin_attack_test() -> void:
 		actor.input._unhandled_input(event)
 
 @rpc("authority", "call_remote", "reliable")
-func _begin_pickup_test(entity_id: int) -> void:
+func _begin_pickup_test(entity_id: int, collector_peer: int, item_id: StringName, expected_count: int) -> void:
+	pickup_watch_entity = entity_id
+	pickup_watch_item_id = item_id
+	pickup_watch_expected_count = expected_count
+	pickup_watch_is_collector = collector_peer == NetworkManager.local_peer_id()
+	if not pickup_watch_is_collector:
+		return
 	var manager := world.get_node("LootSpawnManager") as LootSpawnManager
 	var attempts := 0
 	while manager.get_loot(entity_id) == null and attempts < 30:
@@ -997,9 +1080,111 @@ func _begin_pickup_test(entity_id: int) -> void:
 		attempts += 1
 	manager.request_pickup(entity_id)
 
-func _on_probe_pickup_result(success: bool, _item_id: StringName, _quantity: int, _message: String) -> void:
+@rpc("authority", "call_remote", "reliable")
+func _begin_pickup_replay(entity_id: int, forged_entity_id: int) -> void:
+	pickup_replay_failures_before = pickup_failure_count
+	var manager := world.get_node("LootSpawnManager") as LootSpawnManager
+	manager.request_pickup(entity_id)
+	manager.request_pickup(forged_entity_id)
+
+func _on_probe_pickup_result(success: bool, item_id: StringName, quantity: int, _message: String) -> void:
 	if success:
+		pickup_success_count += 1
+		if item_id != pickup_watch_item_id or quantity <= 0:
+			_fail("client pickup result reported %s x%d" % [item_id, quantity])
+	else:
+		pickup_failure_count += 1
+
+func _on_probe_loot_despawn(_world_id: StringName, entity_id: int, _collector_peer_id: int, _collector_position: Vector2) -> void:
+	pickup_despawn_counts[entity_id] = pickup_despawn_counts.get(entity_id, 0) + 1
+
+func _process_client_pickup_watch() -> void:
+	if pickup_watch_entity <= 0:
+		return
+	var manager := world.get_node("LootSpawnManager") as LootSpawnManager
+	var local_state := GameSession.get_player(NetworkManager.local_peer_id())
+	var despawns: int = pickup_despawn_counts.get(pickup_watch_entity, 0)
+	if despawns > 1:
+		_fail("client retired loot %d more than once" % pickup_watch_entity)
+		return
+	if pickup_success_count > 1:
+		_fail("client received more than one successful pickup result")
+		return
+	if not pickup_watch_is_collector and pickup_success_count != 0:
+		_fail("a non-collector client received a successful pickup result")
+		return
+	if not pickup_watch_confirmed:
+		if despawns != 1 or manager.get_loot(pickup_watch_entity) != null or not manager.entity_ids().is_empty():
+			return
+		if pickup_watch_is_collector and (pickup_success_count != 1 or local_state == null \
+				or local_state.inventory.count(pickup_watch_item_id) != pickup_watch_expected_count):
+			return
+		pickup_watch_confirmed = true
 		_confirm_pickup.rpc_id(1)
+	elif pickup_watch_is_collector and pickup_replay_failures_before >= 0 and not pickup_replay_confirmed:
+		if pickup_failure_count < pickup_replay_failures_before + 2:
+			return
+		if pickup_failure_count != pickup_replay_failures_before + 2 or pickup_success_count != 1 \
+				or local_state == null or local_state.inventory.count(pickup_watch_item_id) != pickup_watch_expected_count:
+			_fail("client snapshot changed after a rejected duplicate/forged pickup")
+			return
+		pickup_replay_confirmed = true
+		_confirm_pickup_replay.rpc_id(1)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_pickup_replay() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender) and pickup_replay_requested:
+		pickup_replay_confirmations[sender] = true
+
+func _pickup_other_player_items() -> Dictionary[int, Array]:
+	var result: Dictionary[int, Array] = {}
+	for peer_id in GameSession.players:
+		if peer_id == selected_peer:
+			continue
+		var other := GameSession.get_player(peer_id)
+		var other_adventure := GameSession.adventure.active_session.get_player_adventure(peer_id)
+		result[peer_id] = [
+			other.inventory.to_array() if other != null else [],
+			other_adventure.unsecured_loot.to_array() if other_adventure != null else [],
+		]
+	return result
+
+func _pickup_collect_progress() -> Dictionary[int, int]:
+	var result: Dictionary[int, int] = {}
+	var objective_index := PROBE_COLLECT_ITEM_IDS.find(pickup_item_id)
+	for peer_id in GameSession.players:
+		var personal := GameSession.progression.get_personal_progression(GameSession.get_player_id(peer_id))
+		var quest: QuestState = personal.quest_states.get(PROBE_PERSONAL_COLLECT_QUEST_ID) if personal != null else null
+		if quest != null and objective_index >= 0 and objective_index < quest.progress.size():
+			result[peer_id] = quest.progress[objective_index]
+	return result
+
+func _pickup_server_state_ok(stage: String) -> bool:
+	var inventory := GameSession.get_player(selected_peer).inventory
+	var unsecured := GameSession.adventure.active_session.get_player_adventure(selected_peer).unsecured_loot
+	var collect := _pickup_collect_progress()
+	var expected_collect := pickup_collect_before.duplicate()
+	expected_collect[selected_peer] = pickup_collect_before.get(selected_peer, 0) + pickup_quantity
+	var loot_manager := world.get_node("LootSpawnManager") as LootSpawnManager
+	var failure := ""
+	if inventory.count(pickup_item_id) != pickup_inventory_before + pickup_quantity:
+		failure = "Settlement pickup granted %d of %s, expected %d" % [
+			inventory.count(pickup_item_id) - pickup_inventory_before, pickup_item_id, pickup_quantity]
+	elif unsecured.to_array() != pickup_unsecured_before:
+		failure = "Settlement pickup changed unsecured Adventure loot"
+	elif _pickup_other_player_items() != pickup_others_before:
+		failure = "pickup changed another player's inventory or unsecured loot"
+	elif pickup_server_removals != 1 or loot_manager.get_loot(pickup_entity_id) != null:
+		failure = "server retired the loot actor %d times" % pickup_server_removals
+	elif collect != expected_collect:
+		failure = "collect quest credit %s, expected %s" % [collect, expected_collect]
+	if not failure.is_empty():
+		_fail("%s (%s)" % [failure, stage])
+		return false
+	return true
 
 @rpc("any_peer", "call_remote", "reliable")
 func _confirm_pickup() -> void:
