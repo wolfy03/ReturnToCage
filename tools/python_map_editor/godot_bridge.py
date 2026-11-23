@@ -439,6 +439,17 @@ class GodotSession:
                              bindings={item.id: item.as_bridge_data() for item in source.bindings})
         return self._verify_staged_design(document, expected, source.scene_path, source.region_path)
 
+    def preview_design(self, document):
+        """Verify convertible fields without certifying or discarding draft-only routes."""
+        if document.design is None or not document.design.connections:
+            return self.stage_design(document)
+        connections = document.design.connections
+        convertible = replace(document, design=replace(document.design, connections=()))
+        converted, receipt = self.stage_design(convertible)
+        result = replace(converted, design=replace(converted.design, connections=connections))
+        preview = {**receipt, "unmapped_connections": [asdict(item) for item in connections]}
+        return result, preview
+
     def _verify_staged_design(self, document, expected, scene_path, region_path):
         if expected["scene_path"] != scene_path or expected["region_path"] != region_path:
             raise BridgeError("INVALID_RESPONSE", "Bridge staged unexpected destinations.")

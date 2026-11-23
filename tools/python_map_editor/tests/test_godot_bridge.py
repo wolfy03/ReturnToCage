@@ -57,6 +57,22 @@ def test_v4_linked_draft_preserves_bindings_but_is_blocked_before_staging(projec
         GodotSession.stage_export(None, restored)
 
 
+def test_design_preview_preserves_draft_only_routes_and_has_no_publish_receipt():
+    from region_design import Connection, RegionDesign
+
+    draft = MapDocument(design=RegionDesign(connections=(Connection("exit", "destination", "entry"),)))
+
+    def stage(convertible):
+        assert convertible.design.connections == ()
+        return convertible, {"runtime": {"overall": "PASS"}}
+
+    restored, result = GodotSession.preview_design(SimpleNamespace(stage_design=stage), draft)
+    assert restored == draft
+    assert result["unmapped_connections"] == [{"exit_id": "exit", "region_id": "destination", "entry_id": "entry"}]
+    with pytest.raises(BridgeError, match="UNSUPPORTED_NODE"):
+        GodotSession.stage_design(None, draft)
+
+
 def test_missing_godot(project_settings):
     configuration = ProjectSettings(project_settings.project, project_settings.work / "missing.exe", project_settings.work)
     with pytest.raises(BridgeError, match="INVALID_GODOT_PATH"):

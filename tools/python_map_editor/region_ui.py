@@ -73,7 +73,7 @@ class RegionMixin:
         self.entry_target = QComboBox()
         self.entry_target.setEditable(True)
         self.destination_status = QLabel()
-        self.destination.currentTextChanged.connect(self._refresh_entry_choices)
+        self.destination.currentTextChanged.connect(self._connection_destination_changed)
         form.addRow(self.connection_list)
         form.addRow(tr("exit_id"), self.exit_id)
         form.addRow(tr("destination_region"), self.destination)
@@ -98,6 +98,7 @@ class RegionMixin:
         layout.addWidget(self.design_notice)
         layout.addWidget(tabs)
         self.region_dock = self._dock("region_design", container, Qt.DockWidgetArea.RightDockWidgetArea)
+        self.region_tabs.currentChanged.connect(self._connection_tab_changed)
         self.tabifyDockWidget(self.inspector_dock, self.region_dock)
         self.inspector_dock.raise_()
         self.view.marker_selected.connect(self._show_marker)
@@ -338,8 +339,17 @@ class RegionMixin:
             self.connection_list.addItem(self._connection_text(link))
         self.connection_list.setCurrentRow(selection)
 
-    def _recheck_region_index(self):
-        checked = {key: row.recheck() for key, row in self.region_index.items()}
+    def _connection_tab_changed(self, index):
+        if index == 1:
+            self._recheck_region_index()
+
+    def _connection_destination_changed(self, destination):
+        self._recheck_region_index(destination)
+        self._refresh_entry_choices(destination)
+
+    def _recheck_region_index(self, destination=None):
+        checked = {key: row.recheck() if destination is None or key == destination else row
+                   for key, row in self.region_index.items()}
         if checked != self.region_index:
             self.region_index = checked
             self._refresh_index_labels()
