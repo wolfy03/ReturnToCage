@@ -64,7 +64,7 @@ class EditingMixin:
     def _build_editing_docks(self, inspector_layout):
         self.undo = QUndoStack(self)
         self.undo.setUndoLimit(100)
-        self.undo.indexChanged.connect(lambda _: self._update_document_status())
+        self.undo.indexChanged.connect(self._undo_index_changed)
         self.library = LibraryPanel(self.view.textures)
         self.layer_panel = LayerPanel()
         self.object_inspector = ObjectInspector()
@@ -194,6 +194,8 @@ class EditingMixin:
         self._sync_objects(selection)
 
     def _sync_objects(self, selection=()):
+        if selection:
+            self.view.select_marker("")
         self.view.sync_document(self.draft, selection)
         counts = Counter(obj.layer_id for obj in self.draft.objects)
         self.layer_panel.populate(self.draft.layers, counts)
@@ -275,7 +277,10 @@ class EditingMixin:
         return f"{kind}_{uuid4().hex}"
 
     def _delete_selection(self):
-        self._delete(self.view.selected_ids(), "delete")
+        if self.view.marker_id:
+            self._delete_marker()
+        else:
+            self._delete(self.view.selected_ids(), "delete")
 
     def _delete(self, ids, label):
         allowed = self._editable_layers()

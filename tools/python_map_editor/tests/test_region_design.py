@@ -5,6 +5,7 @@ import pytest
 
 from document import MapDocument, decode, encode, read_document, write_document
 from objects import DocumentError
+from placement_presets import capture_preset, load_preset
 from region_design import Connection, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint
 from region_wizard import create_region
 
@@ -56,3 +57,12 @@ def test_wizard_tracks_native_template_geometry(template, object_count):
 def test_wizard_checks_known_region_ids():
     with pytest.raises(DocumentError, match="draft"):
         create_region("draft", "Draft", 1200, 600, "empty", 1, RegionEnvironment(), {"draft"})
+
+
+def test_preset_preserves_relative_placement():
+    draft = create_region("draft", "Draft", 1200, 600, "platform", 1, RegionEnvironment())
+    name, rows = load_preset(capture_preset("platforms", draft.objects))
+    assert name == "platforms"
+    assert rows[0].position == (0, 0)
+    assert rows[1].position == (-110, -121)
+    assert rows[1].size == draft.objects[1].size and rows[1].properties.one_way

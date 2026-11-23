@@ -12,12 +12,14 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPushButton, QToolBar, QWidget,
 )
 
-from godot_bridge import BridgeError, GodotSession, ProjectSettings, VERSION
+from godot_bridge import BridgeError, GodotSession, ProjectSettings
 from publish_region import publish_copy, publish_scene, recover_project
 from strings import tr
 
 
 def run_operation(settings, cancel, operation, payload, progress):
+    if operation in ("export_region", "export_as", "validate_export") and payload[0].design is not None:
+        raise BridgeError("UNSUPPORTED_NODE", tr("design_export_unsupported"))
     session = None
     try:
         session = GodotSession(settings, cancel, progress)
@@ -96,7 +98,7 @@ class GodotSettingsDialog(QDialog):
             layout.addWidget(browse)
             self.fields[key] = field
             form.addRow(tr(label), row)
-        form.addRow(tr("godot_version"), QLabel(parent.settings.value("godot/version", VERSION, type=str)))
+        form.addRow(tr("godot_version"), QLabel(parent.settings.value("godot/version", tr("not_evaluated"), type=str)))
         history = parent.settings.value("godot/recent", [])
         if isinstance(history, list) and history:
             button = QPushButton(tr("godot_recent"))
@@ -155,10 +157,14 @@ class GodotMixin:
     def _refresh_godot_actions(self):
         if not hasattr(self, "godot_import_action"):
             return
-        ready = self._bridge_thread is None and self._godot_settings() is not None
+        settings = self._godot_settings()
+        ready = self._bridge_thread is None and settings is not None and settings.godot.is_file()
         self.godot_import_action.setEnabled(ready)
         for action in (self.godot_export_action, self.godot_export_as_action, self.godot_validate_action):
-            action.setEnabled(ready and self.draft.source is not None)
+            action.setEnabled(ready and self.draft.source is not None and self.draft.design is None)
+            action.setToolTip(tr("design_export_unsupported") if self.draft.design is not None else
+                              tr("godot_required") if not ready else action.text())
+        self.godot_import_action.setToolTip(self.godot_import_action.text() if ready else tr("godot_required"))
         linked = self.draft.source is not None
         self.region_id.setReadOnly(linked)
         self.display_name.setReadOnly(linked)
@@ -168,26 +174,21 @@ class GodotMixin:
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            settings = dialog.settings_value()
+            settings = dialog.settings_value().checked()
         except BridgeError as error:
             self._report_godot_error(error)
             return
-        self._start_godot("inspect_project", None, self._remember_godot_settings, settings=settings)
-
-    def _remember_godot_settings(self, result):
-        settings = result["settings"]
         recent = self.settings.value("godot/recent", [])
         recent = recent if isinstance(recent, list) else []
         path = str(settings.project)
         self.settings.setValue("godot/recent", [path, *[item for item in recent if item != path]][:8])
         for key in ("project", "godot", "work"):
             self.settings.setValue(f"godot/{key}", str(getattr(settings, key)))
-        self._regions = result["regions"]
-        self.settings.setValue("godot/version", result["version"])
+        self._regions = None
+        self.settings.remove("godot/version")
         self.settings.sync()
         self._set_project_root(settings.project)
-        for event in result["recovered"]:
-            self.output.appendPlainText(event)
+        self._refresh_region_choices()
         self._refresh_godot_actions()
 
     def _choose_region(self):
@@ -198,6 +199,9 @@ class GodotMixin:
 
     def _select_import(self, result):
         regions = self._regions = result["regions"]
+        if "version" in result:
+            self.settings.setValue("godot/version", result["version"])
+        self._refresh_region_choices()
         for event in result["recovered"]:
             self.output.appendPlainText(event)
         labels = [f"{item['name']} · {item['id']} · {item['definition']}" for item in regions]
@@ -277,7 +281,7 @@ class GodotMixin:
 
     def _set_godot_busy(self, running):
         for widget in (self.centralWidget(), self.menuBar(), self.inspector_dock,
-                       self.library_dock, self.layers_dock, *self.findChildren(QToolBar)):
+                       self.library_dock, self.layers_dock, self.region_dock, *self.findChildren(QToolBar)):
             widget.setEnabled(not running)
         self.godot_cancel.setVisible(running)
         self.godot_cancel.setEnabled(running)

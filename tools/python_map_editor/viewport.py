@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
 from graphics import ObjectItem, TextureCache
+from marker_item import MarkerItem
 from objects import HANDLES, MAX_OBJECTS, MIN_SIZE, rotate, snap
 
 
@@ -150,11 +151,17 @@ class MapView(CanvasView):
     gesture_finished = Signal(str, object)
     preview_changed = Signal()
     asset_dropped = Signal(object, QPointF)
+    marker_selected = Signal(str)
+    marker_placed = Signal(str, object)
+    marker_moved = Signal(str, object)
 
     def __init__(self):
         super().__init__()
         self.textures = TextureCache()
         self.objects = {}
+        self.markers = {}
+        self.marker_id = ""
+        self.ladder = None
         self.tool = "select"
         self.snap_enabled = True
         self.brush_spacing = 32
@@ -188,6 +195,40 @@ class MapView(CanvasView):
 
     def selected_ids(self):
         return frozenset(item.model.id for item in self.map_scene.selectedItems() if isinstance(item, ObjectItem))
+
+    def sync_markers(self, design, selection=""):
+        self.cancel_gesture()
+        models = {row.id: row for row in (*design.region_points, *design.spawn_points)} if design else {}
+        for key in self.markers.keys() - models.keys():
+            self.map_scene.removeItem(self.markers.pop(key))
+        for key, model in models.items():
+            if key not in self.markers:
+                self.markers[key] = MarkerItem(model)
+                self.map_scene.addItem(self.markers[key])
+            self.markers[key].set_model(model)
+        if self.ladder is not None:
+            self.map_scene.removeItem(self.ladder)
+            self.ladder = None
+        if design and design.template_ladder:
+            self.ladder = self.map_scene.addSimpleText("↕ ladder_default")
+            self.ladder.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            self.ladder.setBrush(QColor("#e8cb8c"))
+            self.ladder.setPos(*design.template_ladder)
+            self.ladder.setZValue(1000)
+        self.select_marker(selection)
+
+    def select_marker(self, key):
+        if self.marker_id in self.markers:
+            previous = self.markers[self.marker_id]
+            previous.active = False
+            previous.update()
+        self.marker_id = key if key in self.markers else ""
+        if self.marker_id:
+            self.map_scene.clearSelection()
+            item = self.markers[self.marker_id]
+            item.active = True
+            item.update()
+        self.marker_selected.emit(self.marker_id)
 
     def set_tool(self, tool):
         self.cancel_gesture()
@@ -236,6 +277,18 @@ class MapView(CanvasView):
         position = event.position().toPoint()
         point = self.mapToScene(position)
         mode = self.tool
+        if mode in ("place_entry", "place_escape", "place_spawn"):
+            self.marker_placed.emit(mode, self.snapped(point).toTuple())
+            event.accept()
+            return
+        if mode == "select":
+            marker = next((item for item in self.items(position) if isinstance(item, MarkerItem)), None)
+            self.select_marker(marker.model.id if marker else "")
+            if marker:
+                self.gesture = {"mode": "marker", "start": position, "anchor": point,
+                                "item": marker, "active": False, "removed": ()}
+                event.accept()
+                return
         data = {}
         if mode == "select":
             item, handles = self._handles()
@@ -283,11 +336,14 @@ class MapView(CanvasView):
         g = self.gesture
         point = self.mapToScene(position)
         mode = g["mode"]
-        if mode in ("move", "resize", "box") and not g["active"]:
+        if mode in ("move", "resize", "box", "marker") and not g["active"]:
             if (position - g["start"]).manhattanLength() < 4:
                 return
             g["active"] = True
-        if mode == "move":
+        if mode == "marker":
+            item = g["item"]
+            item.setPos(self.snapped(QPointF(*item.model.position) + point - g["anchor"]))
+        elif mode == "move":
             primary = QPointF(*g["before"][g["primary"]].position)
             delta = self.snapped(primary + point - g["anchor"]) - primary
             for key, obj in g["before"].items():
@@ -347,6 +403,13 @@ class MapView(CanvasView):
         g = self.gesture
         mode = g["mode"]
         payload = None
+        if mode == "marker" and g["active"]:
+            item = g["item"]
+            key, position = item.model.id, item.pos().toTuple()
+            self.cancel_gesture()
+            self.marker_moved.emit(key, position)
+            event.accept()
+            return
         if mode in ("move", "resize") and g["active"]:
             payload = {}
             for key in g["before"]:
@@ -374,6 +437,8 @@ class MapView(CanvasView):
         if self.gesture is None:
             return
         g, self.gesture = self.gesture, None
+        if g["mode"] == "marker":
+            g["item"].setPos(*g["item"].model.position)
         for key, model in g.get("before", {}).items():
             item = self.objects[key]
             item.model = None
@@ -389,6 +454,7 @@ class MapView(CanvasView):
                 self.cancel_gesture()
             else:
                 self.map_scene.clearSelection()
+                self.select_marker("")
             event.accept()
         else:
             super().keyPressEvent(event)

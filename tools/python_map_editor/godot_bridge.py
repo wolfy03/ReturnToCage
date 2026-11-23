@@ -371,6 +371,8 @@ class GodotSession:
                            data["region_hash"], data["scene_uid"], data["region_uid"], bindings)
 
     def stage_export(self, document):
+        if document.design is not None:
+            raise BridgeError("UNSUPPORTED_NODE", "Region design requires a supported Scene/Resource conversion.")
         source = document.source
         if source is None:
             raise BridgeError("INVALID_DOCUMENT", "원본 지역에 연결된 V3 문서를 먼저 여세요.")

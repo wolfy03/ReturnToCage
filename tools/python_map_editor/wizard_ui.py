@@ -67,6 +67,7 @@ class WizardEdit(QUndoCommand):
         self.window.draft = document
         self.window._apply_metadata((document.region_id, document.display_name, document.width, document.height))
         self.window._sync_objects()
+        self.window._sync_region_design()
         self.window._refresh_godot_actions()
         self.window.view.fit_map()
 
