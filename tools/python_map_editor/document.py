@@ -97,6 +97,11 @@ def _invalid_constant(value):
 
 
 def decode(payload):
+    document, _ = _decode_versioned(payload)
+    return document
+
+
+def _decode_versioned(payload):
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("draft exceeds the schema's size limit")
     try:
@@ -109,7 +114,7 @@ def decode(payload):
     version = data.pop("schema_version")
     if version not in (1, 2, 3, SCHEMA_VERSION):
         raise DocumentError("unsupported draft version")
-    return MapDocument(**_MIGRATIONS[version](data))
+    return MapDocument(**_MIGRATIONS[version](data)), version
 
 
 _REGION_FIELDS = {"region_id", "display_name", "width", "height"}
@@ -213,8 +218,15 @@ def _read(path):
 
 
 def read_document(path):
+    document, revision, _ = read_document_snapshot(path)
+    return document, revision
+
+
+def read_document_snapshot(path):
+    """Return the validated draft, exact byte revision and on-disk schema version."""
     payload = _read(_draft_path(path))
-    return decode(payload), hashlib.sha256(payload).hexdigest()
+    document, version = _decode_versioned(payload)
+    return document, hashlib.sha256(payload).hexdigest(), version
 
 
 def document_revision(path):

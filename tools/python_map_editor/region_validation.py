@@ -4,11 +4,22 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from objects import rotate
+from region_index import INDEXED, INVALID, MISSING, MODIFIED
 
 PASS = "PASS"
 WARNING = "WARNING"
 FAIL = "FAIL"
 NOT_EVALUATED = "NOT EVALUATED"
+STATIC = "static"
+EXTERNAL = "external"
+RUNTIME = "runtime"
+PHYSICS = "physics"
+
+
+def summarize(states):
+    states = set(states)
+    return next((status for status in (FAIL, WARNING, NOT_EVALUATED) if status in states),
+                PASS if states else NOT_EVALUATED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +29,7 @@ class Finding:
     detail: str = ""
     target: str = ""
     connection: int | None = None
+    domain: str = STATIC
 
 
 def _asset_exists(root, path):
@@ -32,8 +44,8 @@ def validate_region(document, index=None, project=None):
     index = index or {}
     findings = []
 
-    def add(status, code, detail="", target="", connection=None):
-        findings.append(Finding(status, code, detail, target, connection))
+    def add(status, code, detail="", target="", connection=None, domain=STATIC):
+        findings.append(Finding(status, code, detail, target, connection, domain))
 
     def in_bounds(position):
         x, y = position
@@ -49,7 +61,8 @@ def validate_region(document, index=None, project=None):
         if path and path not in texture_checks:
             texture_checks[path] = project is not None and _asset_exists(project, path)
             if not texture_checks[path]:
-                add(FAIL if project else NOT_EVALUATED, "texture_reference", path, f"object:{obj.id}")
+                add(FAIL if project else NOT_EVALUATED, "texture_reference", path, f"object:{obj.id}",
+                    domain=STATIC if project else RUNTIME)
 
     design = document.design
     if design is None:
@@ -58,6 +71,8 @@ def validate_region(document, index=None, project=None):
         point_counts = Counter((point.kind, point.point_id) for point in design.region_points)
         if not any(kind == "ENTRY" for kind, _ in point_counts):
             add(FAIL, "entry_missing")
+        if not any(kind == "ESCAPE" for kind, _ in point_counts):
+            add(WARNING, "escape_missing")  # RegionDefinition permits an empty ESCAPE list.
         for point in design.region_points:
             target = f"marker:{point.id}"
             if point_counts[point.kind, point.point_id] > 1:
@@ -65,24 +80,38 @@ def validate_region(document, index=None, project=None):
             if not in_bounds(point.position):
                 add(FAIL, "outside_bounds", point.point_id, target)
 
-        entries = [point.point_id for point in design.region_points if point.kind == "ENTRY"]
         by_exit = defaultdict(set)
         routes = Counter((link.exit_id, link.region_id) for link in design.connections)
+        external_entries = {key: Counter(row.current_entries) for key, row in index.items()
+                            if row.current_entries is not None}
         for link in design.connections:
             by_exit[link.exit_id].add(link.entry_id)
         for offset, link in enumerate(design.connections):
             detail = f"{link.exit_id} → {link.region_id} / {link.entry_id}"
+            source_count = point_counts["ESCAPE", link.exit_id]
+            if source_count != 1:
+                add(FAIL, "source_exit_missing" if source_count == 0 else "source_exit_ambiguous",
+                    detail, connection=offset)
             if routes[link.exit_id, link.region_id] > 1:
                 add(FAIL, "duplicate_connection", detail, connection=offset)
             if len(by_exit[link.exit_id]) > 1:
                 add(FAIL, "shared_entry_conflict", detail, connection=offset)
-            external = index.get(link.region_id)
-            destination = entries if link.region_id == document.region_id else (
-                None if external is None else [point.point_id for point in external if point.kind == "ENTRY"])
-            if destination is None:
-                add(NOT_EVALUATED, "destination_not_indexed", detail, connection=offset)
-            elif destination.count(link.entry_id) != 1:
-                add(FAIL, "destination_entry_invalid", detail, connection=offset)
+            if link.region_id == document.region_id:
+                if point_counts["ENTRY", link.entry_id] != 1:
+                    add(FAIL, "destination_entry_invalid", detail, connection=offset)
+                continue
+            row = index.get(link.region_id)
+            if row is None or (row.state == INDEXED and row.entries is None):
+                add(NOT_EVALUATED, "destination_not_indexed", detail, connection=offset, domain=EXTERNAL)
+            elif row.state != INDEXED:
+                status, code = {MODIFIED: (NOT_EVALUATED, "destination_modified"),
+                                MISSING: (FAIL, "destination_missing"),
+                                INVALID: (FAIL, "destination_invalid")}[row.state]
+                add(status, code, f"{detail} · {row.path}", connection=offset, domain=EXTERNAL)
+            elif external_entries[link.region_id][link.entry_id] != 1:
+                add(FAIL, "destination_entry_invalid", detail, connection=offset, domain=EXTERNAL)
+            else:
+                add(PASS, "destination_verified", detail, connection=offset, domain=EXTERNAL)
 
         platforms = [obj for obj in document.objects if obj.type == "platform"]
         slots = Counter(spawn.spawn_index for spawn in design.spawn_points)
@@ -112,14 +141,18 @@ def validate_region(document, index=None, project=None):
             if project and not _asset_exists(project, env.path.removeprefix("res://")):
                 add(FAIL, "environment_reference", env.path)
             else:
-                add(NOT_EVALUATED, "environment_resource_type", env.path)
+                if project is None:
+                    add(NOT_EVALUATED, "environment_reference_unchecked", env.path, domain=RUNTIME)
+                add(NOT_EVALUATED, "environment_resource_type", env.path, domain=RUNTIME)
         if design.template_ladder is not None:
             if not in_bounds(design.template_ladder):
                 add(FAIL, "outside_bounds", "ladder_default")
-            add(NOT_EVALUATED, "template_ladder_support")
+            add(NOT_EVALUATED, "template_ladder_support", domain=PHYSICS)
 
-    if not any(item.status in (FAIL, WARNING) for item in findings):
+    if not any(item.domain == STATIC for item in findings):
         add(PASS, "document_structure_valid")
-    add(NOT_EVALUATED, "content_registry_check")
-    add(NOT_EVALUATED, "physics_clearance_check")
+    if not any(item.domain == EXTERNAL for item in findings):
+        add(PASS, "no_external_connections", domain=EXTERNAL)
+    add(NOT_EVALUATED, "content_registry_check", domain=RUNTIME)
+    add(NOT_EVALUATED, "physics_clearance_check", domain=PHYSICS)
     return findings

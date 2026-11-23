@@ -10,10 +10,10 @@ from PySide6.QtWidgets import (
     QListWidget, QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from document import read_document
 from objects import MAX_GEOMETRY, DocumentError
 from placement_presets import capture_preset, load_preset
 from region_design import SPAWN_SLOTS, Connection, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint
+from region_index import INDEXED, NOT_INDEXED, IndexedRegion
 from strings import tr
 
 
@@ -67,16 +67,18 @@ class RegionMixin:
         panel = QWidget()
         form = QFormLayout(panel)
         self.connection_list = QListWidget()
-        self.exit_id = QLineEdit()
+        self.exit_id = QComboBox()
         self.destination = QComboBox()
         self.destination.setEditable(True)
         self.entry_target = QComboBox()
         self.entry_target.setEditable(True)
+        self.destination_status = QLabel()
         self.destination.currentTextChanged.connect(self._refresh_entry_choices)
         form.addRow(self.connection_list)
         form.addRow(tr("exit_id"), self.exit_id)
         form.addRow(tr("destination_region"), self.destination)
         form.addRow(tr("destination_entry"), self.entry_target)
+        form.addRow(tr("external_state"), self.destination_status)
         form.addRow(_button("add_connection", self._add_connection), _button("delete", self._remove_connection))
         form.addRow(_button("index_regions", self._index_region_files))
         tabs.addTab(panel, tr("connections"))
@@ -179,9 +181,12 @@ class RegionMixin:
             text = f"{row.kind} · {row.point_id}" if isinstance(row, RegionPoint) else f"{tr('spawn_slot')} {row.spawn_index + 1}"
             self.marker_list.addItem(text)
         self.marker_list.blockSignals(False)
-        self.connection_list.clear()
-        for link in design.connections:
-            self.connection_list.addItem(f"{link.exit_id} → {link.region_id} / {link.entry_id}")
+        self._populate_connections()
+        previous_exit = self.exit_id.currentText()
+        self.exit_id.clear()
+        self.exit_id.addItems(sorted({row.point_id for row in design.region_points if row.kind == "ESCAPE"}))
+        if previous_exit:
+            self.exit_id.setCurrentText(previous_exit)
         for field, value in ((self.environment_path, design.environment.path), (self.environment_uid, design.environment.uid),
                              (self.environment_color, design.environment.loading_color)):
             field.setText(value)
@@ -297,12 +302,48 @@ class RegionMixin:
 
     def _refresh_entry_choices(self, key):
         previous = self.entry_target.currentText()
-        points = (self._design().region_points if key == self._values()[0] else self.region_index.get(key) or ())
-        entries = sorted({point.point_id for point in points if point.kind == "ENTRY"})
+        record = self.region_index.get(key)
+        if key == self._values()[0]:
+            entries = {point.point_id for point in self._design().region_points if point.kind == "ENTRY"}
+            status = "local"
+        else:
+            entries = set(record.current_entries or ()) if record else set()
+            status = record.state if record else NOT_INDEXED
+            if record and status == INDEXED and record.entries is None:
+                status = "entries_unavailable"
+        self.destination_status.setText(tr(f"index_{status}"))
+        self.destination_status.setToolTip(str(record.path) if record else "")
         self.entry_target.clear()
-        self.entry_target.addItems(entries)
-        if previous:
+        self.entry_target.addItems(sorted(entries))
+        if previous in entries:
             self.entry_target.setCurrentText(previous)
+
+    def _connection_text(self, link):
+        if link.region_id == self._values()[0]:
+            state = "local"
+        else:
+            record = self.region_index.get(link.region_id)
+            state = record.state if record else NOT_INDEXED
+            if record and state == INDEXED and record.entries is None:
+                state = "entries_unavailable"
+        return f"{link.exit_id} → {link.region_id} / {link.entry_id} · {tr(f'index_{state}')}"
+
+    def _refresh_index_labels(self):
+        self._refresh_region_choices()
+        self._populate_connections(self.connection_list.currentRow())
+
+    def _populate_connections(self, selection=-1):
+        self.connection_list.clear()
+        for link in self._design().connections:
+            self.connection_list.addItem(self._connection_text(link))
+        self.connection_list.setCurrentRow(selection)
+
+    def _recheck_region_index(self):
+        checked = {key: row.recheck() for key, row in self.region_index.items()}
+        if checked != self.region_index:
+            self.region_index = checked
+            self._refresh_index_labels()
+            self._invalidate_validation()
 
     def _index_region_files(self):
         names, _ = QFileDialog.getOpenFileNames(self, tr("index_regions"), self._last_folder(), tr("document_filter"))
@@ -311,20 +352,20 @@ class RegionMixin:
         index = {}
         try:
             for name in names:
-                doc, _ = read_document(Path(name))
-                if doc.region_id in index:
-                    raise DocumentError(f"중복 지역 ID · {doc.region_id}")
-                index[doc.region_id] = doc.design.region_points if doc.design else None
+                record = IndexedRegion.read(Path(name))
+                if record.region_id in index:
+                    raise DocumentError(f"중복 지역 ID · {record.region_id}")
+                index[record.region_id] = record
         except (OSError, DocumentError) as error:
             self._edit_error(error)
             return
         self.region_index = index
-        self._refresh_region_choices()
+        self._refresh_index_labels()
         self._invalidate_validation()
 
     def _add_connection(self):
         try:
-            link = Connection(self.exit_id.text().strip(), self.destination.currentText().strip(),
+            link = Connection(self.exit_id.currentText().strip(), self.destination.currentText().strip(),
                               self.entry_target.currentText().strip())
             design = self._design()
             self._change_design(replace(design, connections=(*design.connections, link)), self.view.marker_id)

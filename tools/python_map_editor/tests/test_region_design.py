@@ -7,8 +7,9 @@ from document import MapDocument, decode, encode, read_document, write_document
 from objects import DocumentError
 from placement_presets import capture_preset, load_preset
 from region_design import Connection, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint
+from region_index import IndexedRegion
 from region_wizard import create_region
-from region_validation import FAIL, NOT_EVALUATED, PASS, WARNING, validate_region
+from region_validation import EXTERNAL, FAIL, NOT_EVALUATED, PASS, STATIC, WARNING, summarize, validate_region
 
 
 def test_region_design_save_and_reopen(tmp_path):
@@ -53,6 +54,9 @@ def test_wizard_tracks_native_template_geometry(template, object_count):
         assert draft.design.template_ladder == (490, 454)
         assert draft.objects[1].properties.one_way
     assert decode(encode(draft)) == draft
+    for dimensions in ((1200, 600), (64, 64), (32768, 32768)):
+        resized = create_region("sewer_draft", "하수구", *dimensions, template, 4, RegionEnvironment())
+        assert summarize(item.status for item in validate_region(resized) if item.domain == STATIC) == PASS
 
 
 def test_wizard_checks_known_region_ids():
@@ -73,10 +77,10 @@ def test_validation_matches_region_point_and_spawn_rules(tmp_path):
     # Sewer shares an ID between an ENTRY and an ESCAPE. Within one kind it must be unique.
     points = (RegionPoint("a", "ENTRY", "gate", [10, 10]), RegionPoint("b", "ESCAPE", "gate", [20, 10]))
     draft = create_region("draft", "Draft", 1200, 600, "flat", 4, RegionEnvironment())
-    design = replace(draft.design, region_points=points, connections=(Connection("exit", "draft", "gate"),))
-    assert any(item.status == PASS for item in validate_region(replace(draft, design=design)))
+    design = replace(draft.design, region_points=points, connections=(Connection("gate", "draft", "gate"),))
+    assert summarize(item.status for item in validate_region(replace(draft, design=design)) if item.domain == STATIC) == PASS
     invalid = replace(design, region_points=(*points, RegionPoint("c", "ENTRY", "gate", [-2, 8])),
-                      connections=(*design.connections, Connection("exit", "draft", "wrong")),
+                      connections=(*design.connections, Connection("gate", "draft", "wrong")),
                       spawn_points=(SpawnPoint("spawn_a", 0, [600, 565]), SpawnPoint("spawn_b", 1, [600, 565]),
                                     SpawnPoint("spawn_c", 2, [90, 60]), SpawnPoint("spawn_d", 2, [80, 60])),
                       environment=RegionEnvironment("res://missing.tres"))
@@ -91,12 +95,71 @@ def test_validation_matches_region_point_and_spawn_rules(tmp_path):
     assert any(item.status == NOT_EVALUATED and item.code == "physics_clearance_check" for item in findings)
 
 
-def test_external_entry_requires_an_index():
+def test_external_entry_requires_an_index(tmp_path):
     draft = create_region("draft", "Draft", 1200, 600, "empty", 4, RegionEnvironment())
-    link = Connection("settlement", "external", "entry")
+    link = Connection("draft_exit", "external", "entry")
     draft = replace(draft, design=replace(draft.design, connections=(link,)))
     assert any(item.status == NOT_EVALUATED and item.connection == 0 for item in validate_region(draft))
-    assert any(item.status == FAIL and item.connection == 0 for item in validate_region(draft, {"external": ()}))
-    assert all(item.connection is None for item in validate_region(draft, {
-        "external": (RegionPoint("a", "ENTRY", "entry", [1, 2]),),
-    }))
+    record = IndexedRegion("external", tmp_path / "external.rtcmap", "hash", 4, ())
+    assert any(item.status == FAIL and item.connection == 0 for item in validate_region(draft, {"external": record}))
+    other = replace(record, region_id="other")
+    draft = replace(draft, design=replace(draft.design, connections=(link, Connection("draft_exit", "other", "entry"))))
+    findings = validate_region(draft, {"external": replace(record, entries=("entry",)),
+                                       "other": replace(other, entries=("entry",))})
+    assert [item.status for item in findings if item.domain == EXTERNAL] == [PASS, PASS]
+
+
+@pytest.mark.parametrize(("edit", "exit_id", "expected"), [
+    ("unchanged", "draft_exit", None), ("unchanged", "missing", "source_exit_missing"),
+    ("unchanged", "draft_entry", "source_exit_missing"), ("duplicate", "draft_exit", "source_exit_ambiguous"),
+    ("delete", "draft_exit", "source_exit_missing"), ("rename", "draft_exit", "source_exit_missing"),
+])
+def test_connection_source_uses_escape_points(edit, exit_id, expected):
+    draft = create_region("draft", "Draft", 1200, 600, "empty", 4, RegionEnvironment())
+    entry, escape = draft.design.region_points
+    points = {"unchanged": (entry, escape), "duplicate": (entry, escape, replace(escape, id="extra_escape")),
+              "delete": (entry,), "rename": (entry, replace(escape, point_id="new_exit"))}[edit]
+    design = replace(draft.design, region_points=points, connections=(Connection(exit_id, "draft", "draft_entry"),))
+    codes = [item.code for item in validate_region(replace(draft, design=design)) if item.connection == 0]
+    assert codes == ([expected] if expected else [])
+
+
+@pytest.mark.parametrize(("change", "state", "status", "code"), [
+    ("entry", "modified", NOT_EVALUATED, "destination_modified"),
+    ("id", "modified", NOT_EVALUATED, "destination_modified"),
+    ("version", "modified", NOT_EVALUATED, "destination_modified"),
+    ("missing", "missing", FAIL, "destination_missing"),
+    ("invalid", "invalid", FAIL, "destination_invalid"),
+    ("unknown_schema", "invalid", FAIL, "destination_invalid"),
+])
+def test_region_index_rejects_stale_entry_information(tmp_path, change, state, status, code):
+    external = create_region("external", "이웃 지역", 1200, 600, "flat", 4, RegionEnvironment())
+    path = tmp_path / "이웃.rtcmap"
+    original = encode(external)
+    path.write_bytes(original)
+    record = IndexedRegion.read(path)
+    assert record.schema_version == 4 and record.entries == ("external_entry",)
+    assert record.sha256 == read_document(path)[1]
+    if change == "missing":
+        path.unlink()
+    else:
+        data = {"entry": original.replace(b"external_entry", b"changed_entry"),
+                "id": encode(replace(external, region_id="other")),
+                "version": encode(replace(external, design=None)), "invalid": b"not JSON",
+                "unknown_schema": original.replace(b'"schema_version":4', b'"schema_version":99')}[change]
+        path.write_bytes(data)
+    checked = record.recheck()
+    assert checked.state == state and checked.current_entries is None and checked.sha256 == record.sha256
+    draft = create_region("draft", "Draft", 1200, 600, "empty", 4, RegionEnvironment())
+    draft = replace(draft, design=replace(draft.design, connections=(Connection("draft_exit", "external", "external_entry"),)))
+    assert [(item.status, item.code) for item in validate_region(draft, {"external": checked}) if item.domain == EXTERNAL] == [(status, code)]
+    path.write_bytes(original)
+    assert checked.recheck() == record
+
+
+@pytest.mark.parametrize(("states", "expected"), [
+    ((), NOT_EVALUATED), ((PASS, PASS), PASS), ((PASS, NOT_EVALUATED), NOT_EVALUATED),
+    ((PASS, NOT_EVALUATED, WARNING), WARNING), ((WARNING, NOT_EVALUATED, FAIL), FAIL),
+])
+def test_summary_requires_evidence_for_every_applicable_domain(states, expected):
+    assert summarize(states) == expected

@@ -226,7 +226,7 @@ class MainWindow(GodotMixin, ValidationMixin, RegionMixin, EditingMixin, QMainWi
                 elif widget.value() != value:
                     setter(value)
         if renamed:
-            self._refresh_region_choices()
+            self._refresh_index_labels()
         self._update_document_status()
 
     def _update_document_status(self):

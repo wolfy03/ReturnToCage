@@ -51,7 +51,7 @@ def edit_region(window, fixture, require):
                          pos=window.view.mapFromScene(QPointF(x, y)))
     require(len(window.view.markers) == 8, "Qt viewport placed ENTRY, ESCAPE and the fourth spawn")
     entry = window.draft.design.region_points[0]
-    window.exit_id.setText("settlement_gate")
+    window.exit_id.setCurrentText("offline_region_exit")
     window.destination.setCurrentText("offline_region")
     window.entry_target.setCurrentText(entry.point_id)
     window._add_connection()
@@ -59,7 +59,8 @@ def edit_region(window, fixture, require):
     window.environment_color.setText("#113355")
     window._save_environment()
     window.validation_action.trigger()
-    require(window._python_state == PASS and window._export_state == window._runtime_state == NOT_EVALUATED,
+    require(window._python_state == window._external_state == PASS
+            and window._export_state == window._runtime_state == window._physics_state == window._overall_state == NOT_EVALUATED,
             "Python validation is separate from Godot export and runtime")
     window._move_marker(entry.id, (-32, 70))
     require(window.validation_list.count() == 0, "map change invalidated stale validation")
@@ -85,6 +86,7 @@ def reopen_region(window, path):
     assert document.region_id == "offline_region" and len(window.view.markers) == 8
     assert len(document.design.spawn_points) == 4
     assert document.design.connections[0].entry_id == "offline_region_entry"
+    assert document.design.connections[0].exit_id == "offline_region_exit"
     assert document.design.environment.loading_color == "#113355"
     assert not window.dirty and window.close()
     return digest

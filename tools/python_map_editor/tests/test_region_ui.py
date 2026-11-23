@@ -1,17 +1,19 @@
 import pytest
+from dataclasses import replace
 
 pytest.importorskip("PySide6", reason="Qt is installed by the Windows GUI job")
 
 from PySide6.QtCore import QPointF, QSettings, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFileDialog, QInputDialog, QListWidgetItem
 
 import godot_ui
-from document import MapDocument, read_document
+from document import MapDocument, read_document, write_document
 from godot_bridge import BridgeError
 from objects import MapObject
-from region_design import RegionDesign
-from region_validation import FAIL, NOT_EVALUATED, PASS
+from region_design import RegionDesign, RegionEnvironment
+from region_validation import FAIL, NOT_EVALUATED, PASS, Finding
+from region_wizard import create_region
 from strings import tr
 from window import MainWindow
 from wizard_ui import RegionWizard
@@ -63,7 +65,8 @@ def test_offline_region_workflow_with_qt_events(monkeypatch, tmp_path):
         assert len(window.draft.design.region_points) == 3
         window.undo.undo()
 
-        window.exit_id.setText("settlement_gate")
+        assert window.exit_id.findText("offline_region_entry") == -1
+        window.exit_id.setCurrentText("offline_region_exit")
         window.destination.setCurrentText("offline_region")
         window.entry_target.setCurrentText("offline_region_entry")
         window._add_connection()
@@ -121,4 +124,100 @@ def test_erase_continuous_segment_hits_small_objects_between_mouse_samples():
         assert removed == {item.id for item in things}
     finally:
         view.close()
+        app.processEvents()
+
+
+def test_index_status_and_validation_focus_follow_external_file_revision(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(QSettings(str(tmp_path / "qt.ini"), QSettings.Format.IniFormat))
+    try:
+        draft = create_region("draft", "Draft", 1200, 600, "flat", 4, RegionEnvironment())
+        external = create_region("other", "이웃", 1200, 600, "flat", 4, RegionEnvironment())
+        path = tmp_path / "외부 지역.rtcmap"
+        digest = write_document(path, external)
+        window._install_draft(draft)
+        monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_: ([str(path)], ""))
+        window._index_region_files()
+        assert window.draft == draft
+        window.destination.setCurrentText("other")
+        assert window.destination_status.text() == "Indexed"
+        assert window.entry_target.currentText() == "other_entry"
+        window._add_connection()
+        window._validate_python()
+        assert window._python_state == window._external_state == PASS
+        assert window._runtime_state == window._physics_state == window._overall_state == NOT_EVALUATED
+        saved = tmp_path / "연결 있음.rtcmap"
+        window.save_document(saved)
+        window._install_draft(MapDocument())
+        window.open_document(saved)
+        window.destination.setCurrentText("other")
+        assert window.connection_list.count() == 1
+
+        renamed_points = (replace(external.design.region_points[0], point_id="changed_entry"), external.design.region_points[1])
+        changed = replace(external, design=replace(external.design, region_points=renamed_points))
+        write_document(path, changed, digest)
+        window._validate_python()
+        assert window.destination_status.text().startswith("Modified")
+        assert window.entry_target.findText("other_entry") == -1 and window._external_state == NOT_EVALUATED
+        assert "Modified" in window.connection_list.item(0).text()
+        target = next(window.validation_list.item(i) for i in range(window.validation_list.count())
+                      if window.validation_list.item(i).data(Qt.ItemDataRole.UserRole).code == "destination_modified")
+        window._focus_finding(target)
+        assert window.region_tabs.currentIndex() == 1 and window.connection_list.currentRow() == 0
+
+        window._index_region_files()
+        assert window.validation_list.count() == 0 and window.entry_target.currentText() == "changed_entry"
+        window._validate_python()
+        assert window._external_state == FAIL and window._overall_state == FAIL
+        window._remove_connection()
+        assert window.validation_list.count() == 0
+        window.undo.undo()
+        assert len(window.draft.design.connections) == 1
+        window.undo.redo()
+        assert not window.draft.design.connections
+        stale = QListWidgetItem()
+        stale.setData(Qt.ItemDataRole.UserRole, Finding(FAIL, "outside_bounds", target="marker:removed"))
+        window._focus_finding(stale)
+        assert window.statusBar().currentMessage() == tr("validation_target_missing")
+    finally:
+        window.undo.setClean()
+        window.close()
+        app.processEvents()
+
+
+def test_design_edits_and_preset_invalidate_validation_on_undo_and_redo(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(QSettings(str(tmp_path / "qt.ini"), QSettings.Format.IniFormat))
+    try:
+        window._install_draft(create_region("draft", "Draft", 1200, 600, "flat", 3, RegionEnvironment()))
+
+        def check_edit(action):
+            before = window.draft
+            window._validate_python()
+            action()
+            after = window.draft
+            assert before != after and window.validation_list.count() == 0
+            window._validate_python()
+            window.undo.undo()
+            assert window.draft == before and window.validation_list.count() == 0
+            window._validate_python()
+            window.undo.redo()
+            assert window.draft == after and window.validation_list.count() == 0
+
+        for mode in ("place_entry", "place_escape", "place_spawn"):
+            check_edit(lambda: window._add_marker(mode, (200, 200)))
+            key = window.view.marker_id
+            check_edit(lambda: window._move_marker(key, (250, 250)))
+            check_edit(window._delete_marker)
+
+        window.environment_color.setText("#122436")
+        check_edit(window._save_environment)
+        window.view.objects["flat_ground"].setSelected(True)
+        monkeypatch.setattr(QInputDialog, "getText", lambda *_: ("Platform preset", True))
+        monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **_: (args[3][0], True))
+        window._capture_placement()
+        check_edit(window._apply_placement)
+    finally:
+        window.undo.setClean()
+        window.close()
         app.processEvents()

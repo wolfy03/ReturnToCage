@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from objects import DocumentError
-from region_validation import FAIL, NOT_EVALUATED, PASS, WARNING, Finding, validate_region
+from region_validation import EXTERNAL, FAIL, NOT_EVALUATED, PASS, PHYSICS, RUNTIME, STATIC, WARNING, Finding, summarize, validate_region
 from strings import tr
 
 _COLORS = {FAIL: "#ff939a", WARNING: "#ffd080", PASS: "#8fdfbd", NOT_EVALUATED: "#b6c0d1"}
@@ -30,7 +30,8 @@ class ValidationMixin:
         self.tabifyDockWidget(self.output_dock, self.validation_dock)
         self.output_dock.raise_()
         self._validation_context = None
-        self._python_state = self._export_state = self._runtime_state = NOT_EVALUATED
+        self._python_state = self._external_state = self._physics_state = NOT_EVALUATED
+        self._export_state = self._runtime_state = NOT_EVALUATED
         self._show_validation_status()
 
     def _validation_key(self):
@@ -42,7 +43,8 @@ class ValidationMixin:
             if draft is self.draft and index is self.region_index and values == self._values() and root == self.view.textures.root:
                 return
         self._validation_context = None
-        self._python_state = self._export_state = self._runtime_state = NOT_EVALUATED
+        self._python_state = self._external_state = self._physics_state = NOT_EVALUATED
+        self._export_state = self._runtime_state = NOT_EVALUATED
         self.validation_list.clear()
         self.view.issue_position = None
         for item in self.view.markers.values():
@@ -55,11 +57,14 @@ class ValidationMixin:
         self._show_validation_status()
 
     def _show_validation_status(self):
-        self.validation_status.setText("  |  ".join((f"Python · {self._python_state}",
-                                                       f"{tr('export_state')} · {self._export_state}",
-                                                       f"{tr('runtime_state')} · {self._runtime_state}")))
+        states = ((STATIC, self._python_state), (EXTERNAL, self._external_state),
+                  (RUNTIME, self._runtime_state), (PHYSICS, self._physics_state), ("export", self._export_state))
+        self._overall_state = summarize(state for _, state in states)
+        self.validation_status.setText("  |  ".join(f"{tr(f'{domain}_state')} · {state}"
+                                                       for domain, state in (*states, ("overall", self._overall_state))))
 
     def _validate_python(self):
+        self._recheck_region_index()
         self._invalidate_validation()
         self._validation_context = self._validation_key()
         region_id, name, width, height = self._values()
@@ -69,15 +74,19 @@ class ValidationMixin:
             findings = validate_region(document, self.region_index, root.resolve() if root else None)
         except (DocumentError, OSError, RuntimeError) as error:
             findings = [Finding(FAIL, "invalid_document", str(error))]
-        states = {item.status for item in findings}
-        self._python_state = FAIL if FAIL in states else WARNING if WARNING in states else PASS
+        self._python_state = summarize(item.status for item in findings if item.domain == STATIC)
+        self._external_state = summarize(item.status for item in findings if item.domain == EXTERNAL)
+        self._physics_state = summarize(item.status for item in findings if item.domain == PHYSICS)
         self._show_validation_status()
         self.validation_list.clear()
+        self.view.issue_position = None
         for marker in self.view.markers.values():
             marker.issue = False
             marker.update()
         for finding in findings:
-            text = f"{finding.status} · {tr(finding.code, finding.code)}"
+            if finding.domain == RUNTIME and finding.status == NOT_EVALUATED and self._runtime_state == PASS:
+                continue
+            text = f"{tr(f'{finding.domain}_state')} · {finding.status} · {tr(finding.code, finding.code)}"
             if finding.detail:
                 text += f" · {finding.detail}"
             item = QListWidgetItem(text, self.validation_list)
@@ -94,6 +103,8 @@ class ValidationMixin:
 
     def _focus_finding(self, item):
         finding = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(finding, Finding):
+            return
         category, _, key = finding.target.partition(":")
         self.view.issue_position = None
         if category == "marker" and key in self.view.markers:
@@ -111,10 +122,12 @@ class ValidationMixin:
             self.view.issue_position = QPointF(obj.pos())
             self.view.centerOn(obj)
             self.inspector_dock.raise_()
-        elif finding.connection is not None:
+        elif finding.connection is not None and 0 <= finding.connection < self.connection_list.count():
             self.connection_list.setCurrentRow(finding.connection)
             self.region_dock.raise_()
             self.region_tabs.setCurrentIndex(1)
+        elif finding.target or finding.connection is not None:
+            self.statusBar().showMessage(tr("validation_target_missing"), 5000)
         self.view.viewport().update()
 
     def _record_godot_validation(self, error=None, phase="stage"):
@@ -130,4 +143,9 @@ class ValidationMixin:
             self._export_state, self._runtime_state = PASS, FAIL
         else:
             self._export_state, self._runtime_state = FAIL, NOT_EVALUATED
+        if self._runtime_state == PASS:
+            for row in reversed(range(self.validation_list.count())):
+                finding = self.validation_list.item(row).data(Qt.ItemDataRole.UserRole)
+                if finding.domain == RUNTIME and finding.status == NOT_EVALUATED:
+                    self.validation_list.takeItem(row)
         self._show_validation_status()
