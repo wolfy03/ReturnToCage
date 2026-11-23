@@ -14,6 +14,17 @@ import tempfile
 from zipfile import ZipFile
 
 
+def package_environment():
+    # A crash dump of this process must not inherit runner tokens or credentials.
+    keys = ("SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "TEMP", "TMP", "USERPROFILE",
+            "HOMEDRIVE", "HOMEPATH", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+            "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS")
+    env = {key: os.environ[key] for key in keys if key in os.environ}
+    env["PATH"] = str(Path(env["SYSTEMROOT"]) / "System32")
+    env["QT_FORCE_STDERR_LOGGING"] = "1"
+    return env
+
+
 def pe_subsystem(executable):
     with executable.open("rb") as stream:
         if stream.read(2) != b"MZ":
@@ -90,9 +101,7 @@ def verify(archive, output, scales, project=None, godot=None, bridge_repeats=1):
             if not (distribution / "_internal" / "python314.dll").is_file():
                 raise ValueError("the distribution is missing its Python runtime")
 
-            env = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("PYTHON", "QT_", "QML", "GODOT")) and key != "VIRTUAL_ENV"}
-            env["PATH"] = str(Path(env["SYSTEMROOT"]) / "System32")
+            env = package_environment()
             for name in ("APPDATA", "LOCALAPPDATA"):
                 directory = folder / name.lower()
                 directory.mkdir()

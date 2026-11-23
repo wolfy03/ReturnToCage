@@ -169,8 +169,27 @@ jobs:
         run: |
           $archives = @(Get-ChildItem build/map-editor-stability -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP3-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
-          python -u -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-stability-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT --bridge-repeats 10
-          exit $LASTEXITCODE
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\ReturnToCageMapEditor.exe'
+          $created = $false
+          try {
+            if (-not (Test-Path -LiteralPath $key)) {
+              try {
+                $dumps = (New-Item -ItemType Directory -Path build/map-editor-stability-qa/exe-dumps -Force).FullName
+                New-Item -Path $key -Force | Out-Null
+                $created = $true
+                New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value $dumps | Out-Null
+                New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 1 | Out-Null
+                New-ItemProperty -LiteralPath $key -Name DumpCount -PropertyType DWord -Value 10 | Out-Null
+              } catch {
+                Write-Warning "EXE minidump capture unavailable ($($_.Exception.Message))"
+              }
+            }
+            python -u -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-stability-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT --bridge-repeats 10
+            $packageExit = $LASTEXITCODE
+          } finally {
+            if ($created) { Remove-Item -LiteralPath $key }
+          }
+          exit $packageExit
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -6,7 +6,7 @@ import tempfile
 import traceback
 from threading import Event
 
-from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMessageBox, QPushButton, QToolBar, QWidget,
@@ -50,25 +50,25 @@ def run_operation(settings, cancel, operation, payload, progress):
         raise BridgeError("EXPORT_FAILED", str(error), session.evidence if session else None) from error
 
 
-class BridgeWorker(QObject):
+class BridgeWorker(QThread):
     progress = Signal(str)
-    finished = Signal(object, object)
 
-    def __init__(self, settings, operation, payload):
-        super().__init__()
+    def __init__(self, parent, settings, operation, payload):
+        super().__init__(parent)
         self.settings = settings
         self.operation = operation
         self.payload = payload
         self.cancel = Event()
+        self.result = None
+        self.error = None
 
-    @Slot()
     def run(self):
         try:
-            result = run_operation(self.settings, self.cancel, self.operation, self.payload, self.progress.emit)
+            self.result = run_operation(self.settings, self.cancel, self.operation, self.payload, self.progress.emit)
         except BridgeError as error:
-            self.finished.emit(None, error)
-        else:
-            self.finished.emit(result, None)
+            self.error = error
+        except Exception as error:
+            self.error = BridgeError("EXPORT_FAILED", str(error))
 
 
 class GodotSettingsDialog(QDialog):
@@ -127,7 +127,6 @@ class GodotSettingsDialog(QDialog):
 class GodotMixin:
     def _build_godot_actions(self, menu):
         self._bridge_thread = None
-        self._bridge_worker = None
         self._bridge_completion = None
         self._bridge_close = False
         self._regions = None
@@ -269,17 +268,9 @@ class GodotMixin:
             return
         self.view.cancel_gesture()
         self._bridge_completion = completion
-        self._bridge_reply = None
-        thread = self._bridge_thread = QThread(self)
-        worker = self._bridge_worker = BridgeWorker(settings, operation, payload)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progress.connect(self._godot_progress)
-        worker.finished.connect(self._godot_done)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._godot_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        thread = self._bridge_thread = BridgeWorker(self, settings, operation, payload)
+        thread.progress.connect(self._godot_progress, Qt.ConnectionType.QueuedConnection)
+        thread.finished.connect(self._godot_thread_finished, Qt.ConnectionType.QueuedConnection)
         self._set_godot_busy(True)
         self._godot_progress(tr("godot_started"))
         thread.start()
@@ -294,8 +285,8 @@ class GodotMixin:
             self._refresh_godot_actions()
 
     def _cancel_godot(self):
-        if self._bridge_worker is not None:
-            self._bridge_worker.cancel.set()
+        if self._bridge_thread is not None:
+            self._bridge_thread.cancel.set()
             self.godot_cancel.setEnabled(False)
             self._godot_progress(tr("godot_canceling"))
 
@@ -304,14 +295,17 @@ class GodotMixin:
         self.godot_status.setText(message)
         self.output.appendPlainText(message)
 
-    @Slot(object, object)
-    def _godot_done(self, result, error):
-        self._bridge_reply = result, error
-
     @Slot()
     def _godot_thread_finished(self):
-        result, error = self._bridge_reply
-        self._bridge_thread = self._bridge_worker = None
+        thread = self._bridge_thread
+        # QThread.finished can arrive before thread-local cleanup has completed.
+        if not thread.wait(0):
+            QTimer.singleShot(10, self, self._godot_thread_finished)
+            return
+        result, error = thread.result, thread.error
+        completion = self._bridge_completion
+        self._bridge_thread = self._bridge_completion = None
+        thread.deleteLater()
         self._set_godot_busy(False)
         if self._bridge_close:
             self._bridge_close = False
@@ -322,7 +316,7 @@ class GodotMixin:
         else:
             self._godot_progress(tr("godot_pass"))
             self.output.appendPlainText(tr("godot_evidence").format(path=result["evidence"]))
-            self._bridge_completion(result)
+            completion(result)
 
     def _report_godot_error(self, error):
         text = str(error)

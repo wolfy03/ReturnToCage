@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 import traceback
 
 from PySide6.QtCore import QEventLoop, QPointF, QSettings, Qt, QTimer
@@ -32,10 +33,15 @@ def schedule_bridge_smoke(app, report, project, godot):
                 "godot": str(godot), "project": str(project), "initial_scene": original_scene,
                 "definition_hash": original_region}
 
+    def checkpoint(name):
+        with report.with_suffix(".jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"time": time.time(), "step": name}) + "\n")
+
     def require(condition, name):
         if not condition:
             raise AssertionError(name + (" | dialog: " + errors[-1] if errors else ""))
         checks.append(name)
+        checkpoint(name)
 
     def modal():
         widget = app.activeModalWidget()
@@ -110,14 +116,17 @@ def schedule_bridge_smoke(app, report, project, godot):
             window.save_document(path)
             saved, _ = read_document(path)
             require(saved.source == window.draft.source and len(saved.objects) == 5, "V3 draft saved")
+            checkpoint("stage validation requested")
             window.godot_validate_action.trigger()
             wait_job()
             require(not errors and window.godot_status.text() == tr("godot_pass")
                     and file_hash(scene) == original_scene, "validation reloads and runs the stage without publication")
+            checkpoint("publication requested")
             window.godot_export_action.trigger()
             wait_job()
             require(not errors and file_hash(scene) != original_scene and file_hash(region) == original_region,
                     "confirmed publish changed only the Scene")
+            checkpoint("updated source fingerprint save requested")
             require(window.dirty and window.save(), "updated source fingerprint can be saved")
             window.open_document(path)
             actual = next(item for item in window.draft.objects if item.id == west.id)
@@ -145,5 +154,6 @@ def schedule_bridge_smoke(app, report, project, godot):
             report.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
             app.exit(0 if evidence["passed"] else 1)
 
+    checkpoint("smoke window started")
     QTimer.singleShot(200, run)
     return app.exec()
