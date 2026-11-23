@@ -77,7 +77,8 @@ def test_decode_rejects_nonfinite_json(constant):
 
 def test_future_version_is_rejected():
     with pytest.raises(DocumentError, match="unsupported"):
-        decode(encode(sample()).replace(b'"schema_version":2', b'"schema_version":4'))
+        future = f'"schema_version":{document.SCHEMA_VERSION + 1}'.encode()
+        decode(encode(sample()).replace(b'"schema_version":2', future))
 
 
 def test_minimal_properties_and_wrong_object_properties():

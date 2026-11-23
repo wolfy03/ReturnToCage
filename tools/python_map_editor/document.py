@@ -12,10 +12,11 @@ import stat
 import tempfile
 
 from objects import DEFAULT_LAYERS, MAX_OBJECTS, DocumentError, MapLayer, MapObject
+from region_design import RegionDesign
 from source_region import GodotSource
 
 SUFFIX = ".rtcmap"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MIN_EXTENT = 64
 MAX_EXTENT = 32768
@@ -34,6 +35,7 @@ class MapDocument:
     layers: tuple[MapLayer, ...] = DEFAULT_LAYERS
     objects: tuple[MapObject, ...] = ()
     source: GodotSource | None = None
+    design: RegionDesign | None = None
 
     def __post_init__(self):
         if (not isinstance(self.region_id, str) or len(self.region_id) > 64
@@ -61,12 +63,20 @@ class MapDocument:
             raise DocumentError("object references an unknown layer")
         if self.source is not None and not isinstance(self.source, GodotSource):
             raise DocumentError("invalid Godot source")
+        if self.design is not None and not isinstance(self.design, RegionDesign):
+            raise DocumentError("invalid region design")
 
 
 def encode(document):
-    data = {"schema_version": SCHEMA_VERSION if document.source else 2, **asdict(document)}
-    if document.source is None:
-        del data["source"]
+    data = {"schema_version": 2, **asdict(document)}
+    if document.design is not None:
+        data["schema_version"] = SCHEMA_VERSION
+    else:
+        del data["design"]
+        if document.source is not None:
+            data["schema_version"] = 3
+        else:
+            del data["source"]
     payload = (json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("draft exceeds the schema's size limit")
@@ -97,19 +107,24 @@ def decode(payload):
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
         raise DocumentError("missing or invalid schema_version")
     version = data.pop("schema_version")
-    if version == 1:
-        if data.keys() != {"region_id", "display_name", "width", "height"}:
-            raise DocumentError("unrecognized or missing V1 draft fields")
-        return MapDocument(**data)
-    if version not in (2, SCHEMA_VERSION):
+    if version not in (1, 2, 3, SCHEMA_VERSION):
         raise DocumentError("unsupported draft version")
-    expected = set(MapDocument.__dataclass_fields__)
-    if version == 2:
-        expected.remove("source")
-    if data.keys() != expected:
-        raise DocumentError("unrecognized or missing draft fields")
-    if version == SCHEMA_VERSION:
-        data["source"] = GodotSource.from_data(data["source"])
+    return MapDocument(**_MIGRATIONS[version](data))
+
+
+_REGION_FIELDS = {"region_id", "display_name", "width", "height"}
+_V2_FIELDS = _REGION_FIELDS | {"layers", "objects"}
+
+
+def _migrate_v1(data):
+    if data.keys() != _REGION_FIELDS:
+        raise DocumentError("unrecognized or missing V1 draft fields")
+    return data
+
+
+def _migrate_v2(data):
+    if data.keys() != _V2_FIELDS:
+        raise DocumentError("unrecognized or missing V2 draft fields")
     layers, objects = data["layers"], data["objects"]
     if (not isinstance(layers, list) or not 1 <= len(layers) <= 128
             or not isinstance(objects, list) or len(objects) > MAX_OBJECTS):
@@ -119,7 +134,26 @@ def decode(payload):
         data["objects"] = tuple(MapObject.from_data(item) for item in objects)
     except TypeError as error:
         raise DocumentError("invalid layer or object fields") from error
-    return MapDocument(**data)
+    return data
+
+
+def _migrate_v3(data):
+    if data.keys() != _V2_FIELDS | {"source"}:
+        raise DocumentError("unrecognized or missing V3 draft fields")
+    source = GodotSource.from_data(data.pop("source"))
+    return {**_migrate_v2(data), "source": source}
+
+
+def _decode_v4(data):
+    if data.keys() != _V2_FIELDS | {"source", "design"}:
+        raise DocumentError("unrecognized or missing V4 draft fields")
+    design = RegionDesign.from_data(data.pop("design"))
+    source = data.pop("source")
+    return {**_migrate_v2(data), "design": design,
+            "source": GodotSource.from_data(source) if source is not None else None}
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _decode_v4}
 
 
 def _draft_path(path):
