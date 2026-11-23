@@ -124,7 +124,7 @@ class ValidationMixin:
             self._export_state = self._runtime_state = PASS
         elif error.code == "CANCELLED":
             self._export_state = self._runtime_state = NOT_EVALUATED
-        elif phase == "publish":
+        elif phase == "runtime_passed":
             self._export_state, self._runtime_state = FAIL, PASS
         elif phase == "runtime":
             self._export_state, self._runtime_state = PASS, FAIL

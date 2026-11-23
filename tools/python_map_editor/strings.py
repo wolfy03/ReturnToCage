@@ -19,6 +19,7 @@ KO = {
     "preset_selection_required": "플랫폼 또는 장식을 먼저 선택하세요.", "no_placement_presets": "저장된 배치 프리셋이 없습니다.",
     "validation": "검증", "validate_python": "Python 문서 검증", "export_state": "Godot 내보내기",
     "runtime_state": "Godot 런타임", "runtime_running": "게임 런타임 검사",
+    "runtime_validated": "게임 런타임 검사 통과",
     "invalid_document": "잘못된 문서", "display_name_missing": "표시 이름이 비어 있습니다",
     "document_structure_valid": "Python 문서 구조를 확인했습니다",
     "region_design_unavailable": "이 문서에 편집 가능한 지역 설계 데이터가 없습니다",

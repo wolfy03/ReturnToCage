@@ -301,8 +301,8 @@ class GodotMixin:
     def _godot_progress(self, message):
         if message == tr("runtime_running"):
             self._bridge_phase = "runtime"
-        elif message == tr("godot_publishing"):
-            self._bridge_phase = "publish"
+        elif message in (tr("runtime_validated"), tr("godot_publishing")):
+            self._bridge_phase = "runtime_passed"
         self.godot_status.setText(message)
         self.output.appendPlainText(message)
 

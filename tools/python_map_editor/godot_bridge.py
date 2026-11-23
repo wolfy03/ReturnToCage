@@ -20,6 +20,7 @@ from uuid import uuid4
 from document import MapDocument
 from objects import DocumentError, MapObject
 from source_region import GodotSource, NodeBinding, relative_path
+from strings import tr
 
 if not getattr(sys, "frozen", False):
     # The shared Windows Job Object helper also serves the traversal worker.
@@ -391,7 +392,7 @@ class GodotSession:
             raise BridgeError("SOURCE_MODIFIED", "staged output hash mismatch")
         verified = self.call("validate_export", region_path=region_path, expected=expected)
         _verify_objects(document.objects, verified["objects"], verified["bindings"])
-        self.progress("게임 런타임 검사")
+        self.progress(tr("runtime_running"))
         _, logs = self._run("runtime", ["--scene", "res://tools/map_bridge/runtime_validation.tscn",
                                        "--", "--region", document.region_id], timeout=60)
         runtime = {line.removeprefix("REGION_PLAYTEST_JSON ") for line in logs.splitlines()
@@ -399,6 +400,7 @@ class GodotSession:
         if ("AUTHORED FIELD RUNTIME PASS" not in logs or len(runtime) != 1
                 or json.loads(next(iter(runtime))).get("overall") not in ("PASS", "PASS_WITH_WARNINGS")):
             raise BridgeError("RUNTIME_LOAD_FAILED", "기존 지역 런타임 검사에 실패했습니다.")
+        self.progress(tr("runtime_validated"))
         self.assert_source_unchanged()
         manifest = {**self.manifest, source.scene_path: expected["output_hash"]}
         fresh = replace(document, source=self._source(verified, manifest))

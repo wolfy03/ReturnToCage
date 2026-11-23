@@ -10,6 +10,8 @@ import godot_ui
 from document import MapDocument, read_document
 from godot_bridge import BridgeError
 from region_design import RegionDesign
+from region_validation import FAIL, NOT_EVALUATED, PASS
+from strings import tr
 from window import MainWindow
 from wizard_ui import RegionWizard
 
@@ -84,3 +86,20 @@ def test_unsupported_region_design_never_starts_a_godot_session(monkeypatch, ope
     monkeypatch.setattr(godot_ui, "GodotSession", lambda *args: pytest.fail("unsupported export started Godot"))
     with pytest.raises(BridgeError, match="UNSUPPORTED_NODE"):
         godot_ui.run_operation(None, None, operation, (MapDocument(design=RegionDesign()), None), None)
+
+
+def test_source_conflict_after_runtime_evidence_keeps_the_runtime_result(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(QSettings(str(tmp_path / "qt.ini"), QSettings.Format.IniFormat))
+    try:
+        window._godot_progress(tr("runtime_running"))
+        window._godot_progress(tr("runtime_validated"))
+        error = BridgeError("SOURCE_MODIFIED", "fixture changed")
+        window._record_godot_validation(error, window._bridge_phase)
+        assert window._export_state == FAIL and window._runtime_state == PASS
+        window.region_id.setText("changed")
+        assert window._export_state == window._runtime_state == NOT_EVALUATED
+    finally:
+        window.undo.setClean()
+        window.close()
+        app.processEvents()
