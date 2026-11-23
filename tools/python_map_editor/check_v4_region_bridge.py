@@ -3,10 +3,12 @@
 import argparse
 from dataclasses import replace
 from pathlib import Path
+import tempfile
 from threading import Event
 
 from document import decode, encode
-from godot_bridge import BridgeError, GodotSession, ProjectSettings, write_json
+from godot_bridge import BridgeError, GodotSession, ProjectSettings, file_hash, project_manifest, write_json
+from publish_region import publish_pair, recover_project
 from region_design import RegionEnvironment, RegionPoint, SpawnPoint
 from region_wizard import create_region
 
@@ -97,17 +99,48 @@ def new_regions(settings):
         print("V4 NEW REGIONS PASS", session.evidence, flush=True)
 
 
+def publication(settings):
+    cancel = Event()
+    settings.work.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="v4-publish-copy-", dir=settings.work) as directory:
+        project = Path(directory)
+        original = project_manifest(settings.project, cancel, project)
+        isolated = replace(settings, project=project)
+        draft = create_region("v4_publish", "Published region", 1200, 600, "flat", 4, RegionEnvironment())
+        with GodotSession(isolated, cancel, print) as session:
+            saved, receipt = session.stage_design(draft)
+            scene, definition = publish_pair(session, draft, receipt)
+            assert file_hash(scene) == saved.source.scene_hash and file_hash(definition) == saved.source.region_hash
+            assert recover_project(project) == []
+        with GodotSession(isolated, cancel, print) as session:
+            reopened, _ = session.import_region(saved.source.region_path, design=True)
+            assert reopened.source == saved.source and reopened.design == saved.design
+            entry, *others = reopened.design.region_points
+            design = replace(reopened.design, region_points=(replace(entry, position=(160, 520)), *others),
+                             environment=replace(reopened.design.environment, loading_color="#123456"))
+            edited = replace(reopened, design=design)
+            updated, receipt = session.stage_design(edited)
+            assert publish_pair(session, edited, receipt) == (scene, definition)
+            assert file_hash(scene) == updated.source.scene_hash and file_hash(definition) == updated.source.region_hash
+            assert updated.source.scene_uid == saved.source.scene_uid and updated.source.region_uid == saved.source.region_uid
+            assert project_manifest(settings.project, cancel) == original and recover_project(project) == []
+            write_json(session.evidence / "publish-v4-check.json", {"new": True, "edited": True, "uid_preserved": True})
+            print("V4 PAIR PUBLICATION PASS", session.evidence, flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
-    parser.add_argument("--only", choices=("sewer", "new"))
+    parser.add_argument("--only", choices=("sewer", "new", "publish"))
     args = parser.parse_args()
     settings = ProjectSettings(Path.cwd(), args.godot, args.artifacts)
-    if args.only != "new":
+    if args.only in (None, "sewer"):
         sewer(settings)
-    if args.only != "sewer":
+    if args.only in (None, "new"):
         new_regions(settings)
+    if args.only in (None, "publish"):
+        publication(settings)
 
 
 if __name__ == "__main__":
