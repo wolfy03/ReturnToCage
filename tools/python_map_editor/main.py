@@ -40,6 +40,7 @@ def main():
     parser.add_argument("document", nargs="?", type=Path)
     parser.add_argument("--smoke-report", type=Path, help="Run the windowed deployment smoke check.")
     parser.add_argument("--smoke-reopen", type=Path, help="Reopen a deployment smoke fixture in a fresh process.")
+    parser.add_argument("--smoke-region-reopen", type=Path, help="Reopen the offline region deployment fixture.")
     parser.add_argument("--smoke-bridge", type=Path, help="Run Godot GUI smoke against a disposable copy.")
     parser.add_argument("--bridge-project", type=Path)
     parser.add_argument("--bridge-godot", type=Path)
@@ -51,8 +52,8 @@ def main():
         return scan_textures(*args.scan_textures)
     if args.smoke_bridge and not (args.bridge_project and args.bridge_godot):
         parser.error("--smoke-bridge requires --bridge-project and --bridge-godot")
-    if args.smoke_reopen and not args.smoke_report:
-        parser.error("--smoke-reopen requires --smoke-report")
+    if (args.smoke_reopen or args.smoke_region_reopen) and not args.smoke_report:
+        parser.error("smoke reopen requires --smoke-report")
     app = QApplication([sys.argv[0]])
     app.setOrganizationName("ReturnToCage")
     app.setApplicationName(APP_NAME)
@@ -65,7 +66,7 @@ def main():
     if args.smoke_report:
         from smoke import schedule_smoke
 
-        return schedule_smoke(app, args.smoke_report.resolve(), args.smoke_reopen)
+        return schedule_smoke(app, args.smoke_report.resolve(), args.smoke_reopen, args.smoke_region_reopen)
     log_directory = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation))
     log_directory.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=log_directory / "editor.log", encoding="utf-8",

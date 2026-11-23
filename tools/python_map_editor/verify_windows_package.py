@@ -43,11 +43,10 @@ def run_smoke(executable, cwd, env, evidence, scale):
     env = {**env, "QT_SCALE_FACTOR": scale}
     run = {"scale": float(scale), "passed": False}
     stem = f"qt-smoke-{scale}"
-    for name, extra in (("edit", []), ("reopen", ["--smoke-reopen"])):
+    for name, flag, key in (("edit", None, None), ("reopen", "--smoke-reopen", "fixture"),
+                            ("region-reopen", "--smoke-region-reopen", "region_fixture")):
         report = evidence / f"{stem}-{name}.json"
-        if extra:
-            fixture = Path(run["edit"]["fixture"])
-            extra.append(str(fixture))
+        extra = [flag, run["edit"][key]] if flag else []
         try:
             completed = subprocess.run([str(executable), "--smoke-report", str(report), *extra],
                                        cwd=cwd, env=env, timeout=45, check=False)
@@ -60,7 +59,9 @@ def run_smoke(executable, cwd, env, evidence, scale):
                 or qt.get("platform") != "windows" or Path(qt["executable"]).resolve() != executable.resolve()
                 or qt.get("device_pixel_ratio", 0) < float(scale)):
             return run
-    run["passed"] = run["reopen"]["draft_sha256"] == hashlib.sha256(fixture.read_bytes()).hexdigest()
+        if key and qt.get("draft_sha256") != hashlib.sha256(Path(run["edit"][key]).read_bytes()).hexdigest():
+            return run
+    run["passed"] = True
     return run
 
 

@@ -162,6 +162,7 @@ class MapView(CanvasView):
         self.markers = {}
         self.marker_id = ""
         self.ladder = None
+        self.issue_position = None
         self.tool = "select"
         self.snap_enabled = True
         self.brush_spacing = 32
@@ -266,6 +267,10 @@ class MapView(CanvasView):
         if self.gesture and self.gesture["mode"] == "paint":
             for x, y in self.gesture["points"]:
                 painter.drawEllipse(QPointF(x, y), radius, radius)
+        if self.issue_position is not None:
+            painter.setPen(QPen(QColor("#ff626a"), 0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(self.issue_position, 13 / self.zoom, 13 / self.zoom)
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton or self.tool == "pan":

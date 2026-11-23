@@ -139,6 +139,7 @@ class EditingMixin:
         self._stop_texture_scan()
         self.settings.setValue("library/root", str(root))
         self.view.textures.root = root
+        self._invalidate_validation()
         self.view.textures.images.clear()
         self.library.set_paths(())
         self.view.viewport().update()

@@ -19,6 +19,7 @@ from editing import EditingMixin, MetadataEdit
 from godot_ui import GodotMixin
 from region_ui import RegionMixin
 from strings import tr
+from validation_ui import ValidationMixin
 from viewport import MapView
 from wizard_ui import RegionWizard, WizardEdit
 
@@ -40,7 +41,7 @@ QGraphicsView#mapViewport { border: 1px solid #384052; }
 """
 
 
-class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
+class MainWindow(GodotMixin, ValidationMixin, RegionMixin, EditingMixin, QMainWindow):
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
@@ -61,6 +62,7 @@ class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
         self.setCentralWidget(content)
         self._build_docks()
         self._build_region_dock()
+        self._build_validation_dock()
         self._build_actions()
         self.region_status = QLabel()
         self.cursor_status = QLabel("x 0 · y 0")
@@ -172,6 +174,8 @@ class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
         view_menu = self.menuBar().addMenu(tr("view"))
         self._build_editing_actions(toolbar, view_menu)
         self._region_actions()
+        self.validation_action = self._action("validate_python", self._validate_python)
+        view_menu.addAction(self.validation_action)
         toolbar.addSeparator()
         for key, callback, shortcut in (
             ("fit", self.view.fit_map, "F"),
@@ -189,7 +193,7 @@ class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
         view_menu.addAction(grid)
         view_menu.addSeparator()
         for dock in (self.library_dock, self.layers_dock, self.structure_dock, self.inspector_dock, self.output_dock,
-                     self.region_dock):
+                     self.region_dock, self.validation_dock):
             view_menu.addAction(dock.toggleViewAction())
         help_menu = self.menuBar().addMenu(tr("help"))
         help_menu.addAction(self._action("about", lambda: QMessageBox.information(self, APP_NAME, tr("about_body"))))
@@ -208,6 +212,7 @@ class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
             self.undo.push(MetadataEdit(self, self._metadata, values, field))
 
     def _apply_metadata(self, values):
+        renamed = hasattr(self, "_metadata") and self._metadata[0] != values[0]
         self._metadata = values
         for widget, setter, value in zip(
             (self.region_id, self.display_name, self.width_field, self.height_field),
@@ -220,6 +225,8 @@ class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
                         setter(value)
                 elif widget.value() != value:
                     setter(value)
+        if renamed:
+            self._refresh_region_choices()
         self._update_document_status()
 
     def _update_document_status(self):
@@ -231,6 +238,7 @@ class MainWindow(GodotMixin, RegionMixin, EditingMixin, QMainWindow):
         self.region_status.setText(f"{tr('region')} · {label}")
         self.draft_status.setText(tr("dirty") if self.dirty else tr("saved" if self.path else "draft"))
         self.setWindowTitle(f"{label}{' *' if self.dirty else ''} — {APP_NAME}")
+        self._invalidate_validation()
 
     @Slot(int)
     def _undo_index_changed(self, _index):

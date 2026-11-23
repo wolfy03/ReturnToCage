@@ -15,11 +15,12 @@ from PySide6.QtWidgets import QFileDialog, QDialogButtonBox, QMessageBox
 
 from editing_smoke import benchmark, edit_map, restart_checks
 from document import MapDocument, read_document, write_document
+from region_smoke import edit_region, reopen_region
 from strings import tr
 from window import MainWindow
 
 
-def schedule_smoke(app, report, reopen=None):
+def schedule_smoke(app, report, reopen=None, region_reopen=None):
     report.parent.mkdir(parents=True, exist_ok=True)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
     with tempfile.TemporaryDirectory(prefix="rtc-map-smoke-") as temporary:
@@ -68,6 +69,11 @@ def schedule_smoke(app, report, reopen=None):
                 return window.save_as()
 
             try:
+                if region_reopen is not None:
+                    result["draft_sha256"] = reopen_region(window, region_reopen)
+                    result["checks"].append("fresh process rebuilt the offline V4 region")
+                    result["passed"] = True
+                    return
                 if reopen is not None:
                     result["draft_sha256"] = restart_checks(window, reopen)
                     result["checks"].append("fresh process rebuilt the saved V2 scene")
@@ -198,6 +204,10 @@ def schedule_smoke(app, report, reopen=None):
                         "grid and dock settings persisted")
                 reopened.show()
                 result["benchmark_ms"] = benchmark(reopened, folder)
+                region = fixture_dir / "새 지역.rtcmap"
+                region.unlink(missing_ok=True)  # Only a generated smoke fixture.
+                edit_region(reopened, region, require)
+                result["region_fixture"] = str(region)
                 require(reopened.close(), "1,000-object selection, zoom, pan, save, reopen and window close")
                 result["passed"] = True
             except Exception:

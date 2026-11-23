@@ -287,7 +287,7 @@ class RegionMixin:
 
     def _refresh_entry_choices(self, key):
         previous = self.entry_target.currentText()
-        points = (self._design().region_points if key == self._values()[0] else self.region_index.get(key, ()))
+        points = (self._design().region_points if key == self._values()[0] else self.region_index.get(key) or ())
         entries = sorted({point.point_id for point in points if point.kind == "ENTRY"})
         self.entry_target.clear()
         self.entry_target.addItems(entries)
@@ -304,12 +304,13 @@ class RegionMixin:
                 doc, _ = read_document(Path(name))
                 if doc.region_id in index:
                     raise DocumentError(f"중복 지역 ID · {doc.region_id}")
-                index[doc.region_id] = doc.design.region_points if doc.design else ()
+                index[doc.region_id] = doc.design.region_points if doc.design else None
         except (OSError, DocumentError) as error:
             self._edit_error(error)
             return
         self.region_index = index
         self._refresh_region_choices()
+        self._invalidate_validation()
 
     def _add_connection(self):
         try:

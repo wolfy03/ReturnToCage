@@ -188,6 +188,7 @@ class GodotMixin:
         self.settings.remove("godot/version")
         self.settings.sync()
         self._set_project_root(settings.project)
+        self._invalidate_validation(force=True)
         self._refresh_region_choices()
         self._refresh_godot_actions()
 
@@ -272,6 +273,7 @@ class GodotMixin:
             return
         self.view.cancel_gesture()
         self._bridge_completion = completion
+        self._bridge_phase = "stage"
         thread = self._bridge_thread = BridgeWorker(self, settings, operation, payload)
         thread.progress.connect(self._godot_progress, Qt.ConnectionType.QueuedConnection)
         thread.finished.connect(self._godot_thread_finished, Qt.ConnectionType.QueuedConnection)
@@ -281,7 +283,8 @@ class GodotMixin:
 
     def _set_godot_busy(self, running):
         for widget in (self.centralWidget(), self.menuBar(), self.inspector_dock,
-                       self.library_dock, self.layers_dock, self.region_dock, *self.findChildren(QToolBar)):
+                       self.library_dock, self.layers_dock, self.region_dock, self.validation_dock,
+                       *self.findChildren(QToolBar)):
             widget.setEnabled(not running)
         self.godot_cancel.setVisible(running)
         self.godot_cancel.setEnabled(running)
@@ -296,6 +299,10 @@ class GodotMixin:
 
     @Slot(str)
     def _godot_progress(self, message):
+        if message == tr("runtime_running"):
+            self._bridge_phase = "runtime"
+        elif message == tr("godot_publishing"):
+            self._bridge_phase = "publish"
         self.godot_status.setText(message)
         self.output.appendPlainText(message)
 
@@ -308,6 +315,7 @@ class GodotMixin:
             return
         result, error = thread.result, thread.error
         completion = self._bridge_completion
+        validates = thread.operation in ("validate_export", "export_region", "export_as")
         self._bridge_thread = self._bridge_completion = None
         thread.deleteLater()
         self._set_godot_busy(False)
@@ -316,11 +324,15 @@ class GodotMixin:
             QTimer.singleShot(0, self.close)
             return
         if error:
+            if validates:
+                self._record_godot_validation(error, self._bridge_phase)
             self._report_godot_error(error)
         else:
             self._godot_progress(tr("godot_pass"))
             self.output.appendPlainText(tr("godot_evidence").format(path=result["evidence"]))
             completion(result)
+            if validates:
+                self._record_godot_validation()
 
     def _report_godot_error(self, error):
         text = str(error)
