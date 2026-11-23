@@ -65,7 +65,7 @@ def run_operation(settings, cancel, operation, payload, progress, approval=None)
             error.evidence = session.evidence
         if validation is not None:
             error.validation = validation
-        if error.code == "SOURCE_MODIFIED":
+        if error.code in ("SOURCE_MODIFIED", "INVALID_PROJECT"):
             error.validation = None
             error.validation_stale = True
         raise

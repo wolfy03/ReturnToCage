@@ -226,3 +226,23 @@ def test_other_editor_lock_blocks_entire_pair(tmp_path):
     assert completed.returncode == 1 and "another process is publishing" in completed.stderr
     assert not list(journal.glob("pair-*"))
     assert project_manifest(root, Event()) == session.manifest
+
+
+def test_external_write_as_completion_is_recorded_keeps_recovery_evidence(tmp_path, monkeypatch):
+    session, receipt = fixture(tmp_path, existing=True)
+    root = session.settings.project
+    original = publish_region._durable_json
+
+    def external(path, record):
+        original(path, record)
+        if path.name == "committed.json":
+            (root / REGION).write_bytes(b"external write at completion")
+
+    monkeypatch.setattr(publish_region, "_durable_json", external)
+    with pytest.raises(BridgeError, match="SOURCE_MODIFIED"):
+        publish_pair(session, linked_draft(session), receipt)
+    assert (root / REGION).read_bytes() == b"external write at completion"
+    journal = next((root / publish_region.JOURNAL_NAME).glob("pair-*"))
+    assert (journal / "pending.json").is_file() and (journal / "before-1").is_file()
+    with pytest.raises(BridgeError, match="SOURCE_MODIFIED"):
+        recover_project(root)

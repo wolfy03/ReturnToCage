@@ -169,8 +169,11 @@ def verify(archive, output, scales, project=None, godot=None, bridge_repeats=1, 
                         outcome = run_bridge_smoke(executable, Path(isolated_trial), env, trial, project, godot, include_design)
                     bridge_runs.append(outcome)
                     print(f"PACKAGE GODOT {index}/{bridge_repeats}: {outcome['passed']}", flush=True)
+                    if not outcome["passed"]:
+                        break
                 result["bridge"] = bridge_runs[0]
-            result["passed"] = all(run["passed"] for run in (*result["runs"], *bridge_runs))
+            result["passed"] = ((project is None or len(bridge_runs) == bridge_repeats)
+                                and all(run["passed"] for run in (*result["runs"], *bridge_runs)))
     finally:
         (evidence / "package-verification.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(f"PACKAGE EVIDENCE {evidence}")

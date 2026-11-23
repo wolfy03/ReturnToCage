@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import stat
 import tempfile
+from threading import Event
 
 from document import DocumentConflict, _save_lock, _unique_fields
 from godot_bridge import BridgeError, check_cancelled, file_hash, project_manifest, regular, safe_child
@@ -369,7 +370,12 @@ def _publish_pair_locked(session, document, receipt, journal):
         _pair_targets(project, paths)
         _check_manifest(project, expected_manifest, session.cancel)
         check_cancelled(session.cancel)
-        _terminal(tx, "committed", record)
+        _durable_json(tx / "committed.json", record)
+        # The decision is durable. A late cancellation cannot undo it. Keep
+        # pending evidence if an independent writer changed either output.
+        _check_manifest(project, expected_manifest, Event())
+        pending.unlink()
+        _flush_directory(tx)
     except (OSError, BridgeError):
         if pending.exists():
             _recover_pair(project, tx)
