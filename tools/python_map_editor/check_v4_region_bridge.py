@@ -7,7 +7,8 @@ from threading import Event
 
 from document import decode, encode
 from godot_bridge import BridgeError, GodotSession, ProjectSettings, write_json
-from region_design import RegionPoint, SpawnPoint
+from region_design import RegionEnvironment, RegionPoint, SpawnPoint
+from region_wizard import create_region
 
 SEWER = "data/content/regions/sewer_region.tres"
 
@@ -63,12 +64,50 @@ def sewer(settings):
         print("V4 SEWER PASS", session.evidence, flush=True)
 
 
+def new_regions(settings):
+    with GodotSession(settings, Event(), print) as session:
+        results = {}
+        env = RegionEnvironment("res://world/environment/presets/sewer_environment.tres", loading_color="#203456")
+        floor = create_region("v4_floor", "Fixture", 1200, 600, "flat", 4, env).objects
+        for template in ("empty", "flat", "platform"):
+            draft = create_region(f"v4_{template}", f"V4 {template}", 1200, 600, template, 4, env)
+            if template == "empty":
+                assert not draft.objects
+                draft = replace(draft, objects=floor)  # Add a floor in the normal document model before live spawn.
+            linked, receipt = session.stage_design(draft)
+            assert linked.source.scene_uid and linked.source.region_uid and linked.source.scene_uid != linked.source.region_uid
+            assert receipt["runtime"]["overall"] in ("PASS", "PASS_WITH_WARNINGS")
+            assert receipt["region_path"].endswith(f"/{draft.region_id}.tres")
+            assert receipt["scene_path"].endswith(f"/{draft.region_id}.tscn")
+            assert all(node in receipt["scene_state"]["nodes"] for node in (
+                "NetworkEntityRegistry", "LootSpawnManager", "EnemySpawnManager", "PlayerSpawnManager"))
+            if template == "platform":
+                assert "Climbables/TemplateLadder/Top" in receipt["scene_state"]["nodes"]
+            results[template] = {"nodes": receipt["node_count"], "runtime": receipt["runtime"]["overall"]}
+        unsafe = create_region("v4_no_floor", "Empty without floor", 1200, 600, "empty", 4, RegionEnvironment())
+        try:
+            session.stage_design(unsafe)
+        except BridgeError as error:
+            assert error.code == "RUNTIME_LOAD_FAILED", error
+            assert "Ground Support" in str(error) or "Player Spawn" in str(error), error
+            assert not (settings.project / "world/adventure/v4_no_floor.tscn").exists()
+        else:
+            raise AssertionError("a floorless region was approved for live spawning")
+        write_json(session.evidence / "new-v4-check.json", {**results, "floorless": "BLOCKED"})
+        print("V4 NEW REGIONS PASS", session.evidence, flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", type=Path, required=True)
     parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument("--only", choices=("sewer", "new"))
     args = parser.parse_args()
-    sewer(ProjectSettings(Path.cwd(), args.godot, args.artifacts))
+    settings = ProjectSettings(Path.cwd(), args.godot, args.artifacts)
+    if args.only != "new":
+        sewer(settings)
+    if args.only != "sewer":
+        new_regions(settings)
 
 
 if __name__ == "__main__":

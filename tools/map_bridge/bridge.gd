@@ -3,9 +3,10 @@ extends Node
 const ShutdownGuard := preload("res://tools/map_bridge/shutdown_guard.gd")
 const Contract := preload("res://tools/map_bridge/scene_contract.gd")
 const Design := preload("res://tools/map_bridge/region_design_contract.gd")
+const SCAFFOLD := preload("res://addons/rtc_field_editor/region_scaffold.tscn")
 const PROTOCOL := 1
 const COMMANDS := ["inspect_project", "inspect_region", "import_region", "validate_document", "export_region", "validate_export",
-	"import_v4_region", "stage_v4_export", "validate_v4_export"]
+	"import_v4_region", "stage_v4_export", "validate_v4_export", "stage_new_region"]
 var request: Dictionary
 var region: RegionDefinition
 var scene: PackedScene
@@ -36,6 +37,9 @@ func _run() -> void:
 					"definition": definition.resource_path.trim_prefix("res://"), "scene": definition.scene_path.trim_prefix("res://")})
 		regions.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.id < b.id)
 		_finish({"regions": regions})
+		return
+	if request.operation == "stage_new_region":
+		_stage_new_region()
 		return
 	var path: Variant = request.get("region_path")
 	if not path is String or not path.begins_with("res://data/content/") or not path.ends_with(".tres") \
@@ -215,13 +219,22 @@ func _design_operation(objects: Dictionary, links: Array, summary: Dictionary) -
 			return
 		for field: String in ["scene_uid", "region_uid"]:
 			if expected.get(field) != initial.get(field):
-				_finish({}, "UID_CONFLICT: staged %s did not match on reload" % field)
+				_finish({}, "UID_CONFLICT: staged %s expected %s; reloaded %s" % [field, expected.get(field), initial.get(field)])
+				return
+			var path: String = initial.scene_path if field == "scene_uid" else initial.region_path
+			if not initial[field].is_empty() and ResourceUID.get_id_path(ResourceUID.text_to_id(initial[field])) != "res://" + path:
+				_finish({}, "UID_CONFLICT: %s resolves to another resource" % field)
 				return
 		for field: String in ["scene_hash", "region_hash", "scene_state", "definition_state"]:
 			if not _same_json(expected.get(field), initial.get(field)):
-				_finish({}, "EXPORT_FAILED: staged %s did not match on reload" % field)
+				var detail := _difference(expected.scene_state, initial.scene_state) if field == "scene_state" and expected.get(field) is Dictionary else ""
+				_finish({}, "EXPORT_FAILED: staged %s did not match on reload %s" % [field, detail])
 				return
 		print("RTC_BRIDGE CONTRACT_PASS")
+		var spawn_issue := _preflight_design_spawn()
+		if not spawn_issue.is_empty():
+			_finish({}, spawn_issue)
+			return
 		var issue := await _runtime_collision()
 		_finish(initial, issue)
 		return
@@ -233,10 +246,7 @@ func _design_operation(objects: Dictionary, links: Array, summary: Dictionary) -
 		if source.get(field) != initial.get(field):
 			_finish({}, "SOURCE_MODIFIED: source %s is stale" % field)
 			return
-	if not request.get("design") is Dictionary or request.design.get("template_ladder") != null:
-		_finish({}, "UNSUPPORTED_NODE: template ladder editing in a linked region is unavailable")
-		return
-	var error := Design.apply(scene_root, region, design, request.design, links)
+	var error := Design.apply(scene_root, region, design, request.get("design"), links)
 	if error.is_empty():
 		error = _apply_document(objects, links, false)
 	if error.is_empty():
@@ -247,6 +257,76 @@ func _design_operation(objects: Dictionary, links: Array, summary: Dictionary) -
 		_finish({}, error)
 		return
 	_save_design(initial, links)
+
+func _stage_new_region() -> void:
+	var id: Variant = request.get("region_id")
+	var label: Variant = request.get("display_name")
+	if not id is String or RegEx.create_from_string("^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$").search(id) == null \
+			or id.length() > 64 or not label is String or label.strip_edges().is_empty():
+		_finish({}, "INVALID_DOCUMENT: invalid new region ID or name")
+		return
+	var scene_path := "res://world/adventure/%s.tscn" % id
+	var region_path := "res://data/content/regions/%s.tres" % id
+	if ContentRegistry.has_id(StringName(id)) or _occupied(scene_path) or _occupied(region_path):
+		_finish({}, "SOURCE_MODIFIED: region ID or a destination is already present")
+		return
+	scene = SCAFFOLD
+	scene_root = SCAFFOLD.instantiate() as Node2D
+	scene_root.name = id.to_pascal_case()
+	scene_root.scene_file_path = ""
+	region = RegionDefinition.new()
+	region.id = StringName(id)
+	region.display_name = label
+	region.scene_path = scene_path
+	var authored := Design.inventory(scene_root, region)
+	var links: Array = []
+	var issue := Design.apply(scene_root, region, authored, request.get("design"), links, true)
+	if issue.is_empty():
+		issue = _apply_document(Contract.inventory(scene_root, id), links, false)
+	if issue.is_empty():
+		var errors := region.validate_scene(scene_root, ContentRegistry)
+		if not errors.is_empty():
+			issue = "INVALID_DOCUMENT: " + "\n".join(errors)
+	if not issue.is_empty():
+		_finish({}, issue)
+		return
+	var packed := PackedScene.new()
+	if packed.pack(scene_root) != OK or not _save_new(packed, scene_path) or not _save_new(region, region_path):
+		_finish({}, "EXPORT_FAILED: could not stage both new region files")
+		return
+	region.take_over_path(region_path)
+	var objects := Contract.inventory(scene_root, id)
+	var design := Design.inventory(scene_root, region)
+	if objects.has("error") or design.has("error"):
+		_finish({}, objects.get("error", design.get("error", "")))
+		return
+	var summary := _design_summary(_summary(objects, links), design)
+	if summary.has("error"):
+		_finish({}, summary.error)
+		return
+	# The detached root was packed without its scaffold link. Reload assigns the new path.
+	summary.scene_state.nodes["."].instance = scene_path
+	_finish(summary)
+
+func _occupied(path: String) -> bool:
+	return FileAccess.file_exists(path) or DirAccess.dir_exists_absolute(path) or ResourceLoader.exists(path)
+
+func _save_new(resource: Resource, path: String) -> bool:
+	var uid := ResourceUID.create_id()
+	if _occupied(path) or not _save_resource(resource, path, ResourceUID.id_to_text(uid)):
+		return false
+	ResourceUID.add_id(uid, path)
+	return true
+
+func _preflight_design_spawn() -> String:
+	var manager := scene_root.get_node("PlayerSpawnManager") as PlayerSpawnManager
+	for node in scene_root.get_children():
+		if node is PlayerSpawnPoint:
+			var issue := PlayerSpawnManager.authored_spawn_issue(scene_root, node.position, manager.clearance_radius,
+				manager.support_distance, manager.spawn_validation_collision_mask)
+			if not issue.is_empty():
+				return "RUNTIME_LOAD_FAILED: Player Spawn slot %d: %s" % [node.spawn_index, issue]
+	return ""
 
 func _save_design(initial: Dictionary, links: Array) -> void:
 	var objects := Contract.inventory(scene_root, String(region.id))

@@ -3,6 +3,12 @@ extends RefCounted
 const Contract := preload("res://tools/map_bridge/scene_contract.gd")
 const POINT := preload("res://world/region_point.gd")
 const SPAWN := preload("res://world/multiplayer/player_spawn_point.gd")
+const Placement := preload("res://addons/rtc_field_editor/placement.gd")
+const TEMPLATE_LADDER := &"rtc_map_template_ladder"
+
+class ContentView extends RefCounted:
+	func get_definition(id: StringName) -> ContentDefinition:
+		return ContentRegistry.get_definition(id)
 
 static func inventory(root: Node2D, region: RegionDefinition) -> Dictionary:
 	var bindings := {}
@@ -30,6 +36,13 @@ static func inventory(root: Node2D, region: RegionDefinition) -> Dictionary:
 		else:
 			row.spawn_index = node.spawn_index
 			design.spawn_points.append(row)
+	for node: Node2D in root.find_children("*", "Area2D", true, false):
+		if not node.has_meta(TEMPLATE_LADDER):
+			continue
+		if design.template_ladder != null or not node is ClimbableArea2D or node.definition == null \
+				or node.definition.id != &"ladder_default" or node.owner != root:
+			return {"error": "UNSUPPORTED_NODE: invalid template ladder metadata"}
+		design.template_ladder = Contract.vector(node.global_position)
 	return {"design": design, "bindings": bindings, "definition_state": Contract.storage(region, root)}
 
 static func _point_id(value: Variant) -> bool:
@@ -85,12 +98,31 @@ static func _environment(region: RegionDefinition, desired: Variant, previous: D
 		region.environment_loading_color = Color.html(desired.loading_color)
 	return ""
 
-static func apply(root: Node2D, region: RegionDefinition, original: Dictionary, design: Variant, links: Array) -> String:
+static func apply(root: Node2D, region: RegionDefinition, original: Dictionary, design: Variant, links: Array,
+		new_region: bool = false) -> String:
 	if not design is Dictionary or not design.get("connections") is Array or not design.connections.is_empty():
 		return "UNSUPPORTED_NODE: ESCAPE routes do not map to a runtime SettlementExitDefinition"
 	var environment_issue := _environment(region, design.get("environment"), original.design.environment)
 	if not environment_issue.is_empty():
 		return environment_issue
+	var requested_ladder: Variant = design.get("template_ladder")
+	if new_region and requested_ladder != null:
+		if not _position(requested_ladder):
+			return "INVALID_DOCUMENT: invalid template ladder position"
+		var group := root.get_node("Climbables") as Node2D
+		var ladder := Placement.make_node({"kind": "climb", "id": &"ladder_default"}, root, ContentView.new()) as ClimbableArea2D
+		if ladder == null:
+			return "RESOURCE_MISSING: official ladder_default"
+		ladder.name = "TemplateLadder"
+		ladder.set_meta(TEMPLATE_LADDER, true)
+		group.add_child(ladder)
+		ladder.owner = root
+		ladder.position = group.to_local(Vector2(requested_ladder[0], requested_ladder[1]))
+		ladder.top_marker.position.y = -37
+		for child in ladder.get_children():
+			child.owner = root
+	elif requested_ladder != original.design.template_ladder:
+		return "UNSUPPORTED_NODE: linked template ladder changes are unavailable"
 	var seen := {}
 	var entries: Array[StringName] = []
 	var escapes: Array[StringName] = []

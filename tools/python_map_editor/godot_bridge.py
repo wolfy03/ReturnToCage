@@ -310,12 +310,12 @@ class GodotSession:
             self.temp.cleanup()
             raise
 
-    def _prepare_resources(self):
+    def _prepare_resources(self, label="prepare"):
         if os.name != "nt":
-            self._run("prepare", ["--editor", "--recovery-mode", "--import"], timeout=180)
+            self._run(label, ["--editor", "--recovery-mode", "--import"], timeout=180)
             return
         with staged_import_settings(self.stage):
-            _, logs = self._run("prepare", ["--editor", "--import", "--scene",
+            _, logs = self._run(label, ["--editor", "--import", "--scene",
                                             "res://tools/map_bridge/import_only.tscn"], timeout=180)
         if "RTC_BRIDGE EDITOR_IMPORT_CLEANUP" not in logs:
             raise BridgeError("INVALID_RESPONSE", "Isolated Godot import did not run the shutdown guard")
@@ -417,18 +417,26 @@ class GodotSession:
     def stage_design(self, document):
         source = document.source
         design = document.design
-        if design is None or source is None:
-            raise BridgeError("INVALID_DOCUMENT", "Choose a linked V4 design to stage.")
+        if design is None:
+            raise BridgeError("INVALID_DOCUMENT", "Choose a V4 design to stage.")
         if design.connections:
             raise BridgeError("UNSUPPORTED_NODE", "Remove the unsupported ESCAPE routes before converting this document.")
+        fields = {"region_id": document.region_id, "display_name": document.display_name,
+                  "objects": [asdict(item) for item in document.objects], "design": asdict(design)}
+        if source is None:
+            scene_path = f"world/adventure/{document.region_id}.tscn"
+            region_path = f"data/content/regions/{document.region_id}.tres"
+            expected = self.call("stage_new_region", **fields)
+            # A fresh editor scan registers the new text resource UIDs in the isolated cache.
+            self._prepare_resources(f"prepare-v4-{uuid4().hex}")
+            return self._verify_staged_design(document, expected, scene_path, region_path)
         if self.manifest.get("project.godot") != source.project_id or fingerprint(self.manifest) != source.fingerprint:
             raise BridgeError("SOURCE_MODIFIED", "Project, Scene or RegionDefinition changed after import.")
         region_path = "res://" + source.region_path
-        expected = self.call("stage_v4_export", region_path=region_path, region_id=document.region_id,
-                             display_name=document.display_name, objects=[asdict(item) for item in document.objects],
+        expected = self.call("stage_v4_export", region_path=region_path, **fields,
                              source={key: getattr(source, key) for key in ("scene_path", "region_path", "scene_hash",
                                                                           "region_hash", "scene_uid", "region_uid")},
-                             bindings={item.id: item.as_bridge_data() for item in source.bindings}, design=asdict(design))
+                             bindings={item.id: item.as_bridge_data() for item in source.bindings})
         return self._verify_staged_design(document, expected, source.scene_path, source.region_path)
 
     def _verify_staged_design(self, document, expected, scene_path, region_path):
@@ -454,15 +462,18 @@ class GodotSession:
         _verify_design(document.design, resulting_design)
         self.progress(tr("runtime_running"))
         serial = uuid4().hex
-        _, logs = self._run(f"design-runtime-{serial}", ["--scene", "res://tools/map_bridge/runtime_validation.tscn",
-                                     "--", "--region", document.region_id], timeout=60)
+        code, logs = self._run(f"design-runtime-{serial}", ["--scene", "res://tools/map_bridge/runtime_validation.tscn",
+                                     "--", "--region", document.region_id], timeout=60, allow_response=True)
+        if code < 0 or code > 255 or ENGINE_ERROR.search(logs):
+            raise BridgeError("PROCESS_CRASH", f"V4 runtime: {code} (0x{code & 0xffffffff:08X}); see Godot logs")
         results = {line.removeprefix("REGION_PLAYTEST_JSON ") for line in logs.splitlines()
                    if line.startswith("REGION_PLAYTEST_JSON ")}
-        if "AUTHORED FIELD RUNTIME PASS" not in logs or len(results) != 1:
+        if len(results) != 1:
             raise BridgeError("RUNTIME_LOAD_FAILED", "Godot did not complete the authored region runtime probe.")
         runtime = json.loads(next(iter(results)))
-        if runtime.get("overall") not in ("PASS", "PASS_WITH_WARNINGS"):
-            raise BridgeError("RUNTIME_LOAD_FAILED", "Region runtime or live spawn safety failed.")
+        if code != 0 or "AUTHORED FIELD RUNTIME PASS" not in logs or runtime.get("overall") not in ("PASS", "PASS_WITH_WARNINGS"):
+            failures = ", ".join(row["stage"] for row in runtime.get("results", ()) if row.get("status") == "FAIL")
+            raise BridgeError("RUNTIME_LOAD_FAILED", f"Region runtime or live spawn safety failed: {failures}")
         self.progress(tr("runtime_validated"))
         self.assert_source_unchanged()
         fresh = replace(document, source=self._source(verified, manifest), design=resulting_design)
