@@ -89,8 +89,13 @@ var _host_transport_error_for_test: Error = OK
 var _rejected_disconnect_hook_for_test: Callable = Callable()
 var _local_profile: LocalPlayerProfile
 
+var _notification_channel: GameplayNotificationChannel
+
 func _ready() -> void:
 	_ensure_local_profile()
+	_notification_channel = GameplayNotificationChannel.new()
+	_notification_channel.name = GameplayNotificationChannel.NODE_NAME
+	add_child(_notification_channel)
 	multiplayer.peer_connected.connect(_on_transport_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_transport_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
@@ -856,7 +861,7 @@ func send_gameplay_notification(player_id: StringName, message: String) -> bool:
 	var peer_id := peer_id_for_player(player_id)
 	if peer_id <= 1 or not players.has(peer_id) or not can_send_to_peer(peer_id):
 		return false
-	_receive_gameplay_notification.rpc_id(peer_id, message)
+	_notification_channel._receive.rpc_id(peer_id, message)
 	return true
 
 # Settlement-wide text for every session peer except the actor, who already
@@ -868,10 +873,10 @@ func broadcast_shared_notification(message: String, exclude_player_id: StringNam
 		if not exclude_player_id.is_empty() and player_id_for_peer(peer_id) == exclude_player_id:
 			continue
 		if can_send_to_peer(peer_id):
-			_receive_gameplay_notification.rpc_id(peer_id, message)
+			_notification_channel._receive.rpc_id(peer_id, message)
 
-# Authority-only: a client cannot send this to the host or to another client.
-@rpc("authority", "call_remote", "reliable")
+# Receive side of GameplayNotificationChannel's authority-only RPC (the RPC
+# lives on that child node so NetworkManager's own RPC table is unchanged).
 func _receive_gameplay_notification(message: String) -> void:
 	if is_server() or not _session_entered or not NetworkProtocol.valid_notification(message):
 		return

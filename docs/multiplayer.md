@@ -433,8 +433,11 @@ Classification of the existing writers:
 - Local: UI messages (pause, Save/Load results, backup-recovery notice, identity activation,
   phase/session errors, offline party finish and pending-loot claim).
 
-Wire: `NetworkManager._receive_gameplay_notification(message)` is `@rpc("authority")`, so only
-the host can send it; a client has no RPC to notify the host or another client. The host sends it
+Wire: the RPC is `GameplayNotificationChannel._receive(message)`, `@rpc("authority")`, on a
+dedicated child node `/root/NetworkManager/GameplayNotifications`, so only the host can send it.
+It is not on `NetworkManager` itself: adding any RPC method to NetworkManager's RPC table crashed
+mixed Windows release/editor processes (0xC0000005) in the export ENet validation, verified by CI
+bisection, so that table is left unchanged; a client has no RPC to notify the host or another client. The host sends it
 only through `send_gameplay_notification(player_id, ...)` (peer from the authenticated
 `player_id` mapping, peer > 1, `can_send_to_peer`) or `broadcast_shared_notification(...)`
 (`all_ready_remote_peer_ids()` minus the actor). The receiver ignores it on the host, before the
