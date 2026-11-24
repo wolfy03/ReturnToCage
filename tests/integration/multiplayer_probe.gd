@@ -135,7 +135,7 @@ func _ready() -> void:
 	deadline_msec = Time.get_ticks_msec() + 15000
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
 	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
-	GameSession.notifications.local_message_changed.connect(_on_probe_local_message)
+	GameSession.notifications.remote_message_received.connect(_on_probe_local_message)
 	if role == "host":
 		if NetworkManager.host_game(port, expected_players) != OK or not GameSession.start_new_game():
 			_fail("host setup failed")

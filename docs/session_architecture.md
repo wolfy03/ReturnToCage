@@ -80,7 +80,7 @@ attached/detached canonical PlayerState와 personal progression은 persistent `p
 
 ## 알림 소유권
 
-`GameSession.notifications`(`GameplayNotificationService`)가 HUD status text의 소유자다. `last_message`는 이 프로세스의 local 메시지를 읽고 쓰는 호환 property이며, 저장·복제 상태가 아니다. 다른 플레이어를 위해 실행되는 권위 코드는 `notify_player`/`notify_shared`로 대상 `player_id`를 지정한다. 세부 정책은 [multiplayer.md](multiplayer.md)의 Per-player gameplay notifications를 따른다.
+`GameSession.notifications`(`GameplayNotificationService`)가 HUD status text의 소유자다. `last_message`는 이 프로세스의 local 메시지(일반 변수)이며 저장·복제 상태가 아니다. HUD refresh signal(`remote_message_received`)은 host에서 notification을 받았을 때만 발생하고, local 쓰기와 session 정리는 UI callback을 동기 실행하지 않는다. 다른 플레이어를 위해 실행되는 권위 코드는 `notify_player`/`notify_shared`로 대상 `player_id`를 지정한다. 세부 정책은 [multiplayer.md](multiplayer.md)의 Per-player gameplay notifications를 따른다.
 
 ## 호환 API와 시그널
 

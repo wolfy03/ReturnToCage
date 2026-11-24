@@ -47,16 +47,12 @@ const LOCAL_EVENT_ACTOR: StringName = &"__local_player__"
 
 var session_id: String = ""
 var play_time_seconds: float = 0.0
-# Routes gameplay text to the player it belongs to (see
-# GameplayNotificationService). last_message is only this process's own HUD
-# status line; assigning it is a local notification. Authoritative code acting
-# for a peer uses notifications.notify_player()/notify_shared() instead.
+# This process's own HUD status line. Writing it is a local message only.
+# Authoritative code acting for a peer routes text through
+# notifications.notify_player()/notify_shared() (GameplayNotificationService),
+# never through this field.
+var last_message: String = ""
 var notifications := GameplayNotificationService.new()
-var last_message: String:
-	get:
-		return notifications.local_message
-	set(value):
-		notifications.notify_local(value)
 var last_network_snapshot_error: String = ""
 # Active peer attachment view. Canonical PlayerState ownership is keyed by the
 # persistent logical player_id in _player_states_by_id.

@@ -49,7 +49,7 @@ func _ready() -> void:
 	)
 	if role != "host":
 		GameSession.player_combat_runtime_changed.connect(_on_combat_runtime_changed)
-		GameSession.notifications.local_message_changed.connect(func(message: String) -> void:
+		GameSession.notifications.remote_message_received.connect(func(message: String) -> void:
 			if not message.is_empty():
 				_message_log.append(message)
 		)
@@ -681,6 +681,11 @@ func _command(command: String, value: int) -> void:
 			if settlement_service == null:
 				_fail("settlement replication service is unavailable")
 				return
+			# The actor's own result arrives on the command-result path, not as
+			# a notification; log it so a duplicate shared broadcast is visible.
+			settlement_service.facility_upgrade_result.connect(func(_success: bool, message: String) -> void:
+				_message_log.append(message)
+			, CONNECT_ONE_SHOT)
 			settlement_service.request_upgrade_facility(&"workbench")
 			_confirm.rpc_id(1, command, {})
 		"RETURN", "RETURN_FOR_HOST", "RETURN_FROM_OCCUPIED":

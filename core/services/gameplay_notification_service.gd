@@ -21,18 +21,25 @@ extends RefCounted
 # Remote delivery goes through NetworkManager's authority-only notification
 # RPC; clients never originate notifications.
 
-signal local_message_changed(message: String)
+# Emitted only when a notification arrives from the host over the network, so
+# the HUD can refresh a status line nothing local changed. Local writes keep
+# the pre-existing behaviour: callers refresh their own UI, and no UI work runs
+# synchronously inside authoritative state transitions or session teardown.
+signal remote_message_received(message: String)
 
-var local_message: String = ""
+var local_message: String:
+	get:
+		return GameSession.last_message
 
 func notify_local(message: String) -> void:
-	if local_message == message:
-		return
-	local_message = message
-	local_message_changed.emit(message)
+	GameSession.last_message = message
+
+func receive_remote(message: String) -> void:
+	GameSession.last_message = message
+	remote_message_received.emit(message)
 
 func clear_local() -> void:
-	notify_local("")
+	GameSession.last_message = ""
 
 # `deliver_remote` is false for commands whose requester already receives the
 # same text through its own command-result RPC (craft, upgrade, quest reward),

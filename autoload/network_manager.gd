@@ -875,7 +875,7 @@ func broadcast_shared_notification(message: String, exclude_player_id: StringNam
 func _receive_gameplay_notification(message: String) -> void:
 	if is_server() or not _session_entered or not NetworkProtocol.valid_notification(message):
 		return
-	GameSession.notifications.notify_local(message)
+	GameSession.notifications.receive_remote(message)
 
 func send_gather_state(peer_id: int, world_id: StringName, consumed_ids: Array[StringName]) -> void:
 	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:

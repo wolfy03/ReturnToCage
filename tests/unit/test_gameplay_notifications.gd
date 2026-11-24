@@ -19,7 +19,7 @@ func run(t: Node) -> void:
 func _test_offline_routing(t: Node) -> void:
 	var notices: Array[String] = []
 	var on_message := func(message: String) -> void: notices.append(message)
-	GameSession.notifications.local_message_changed.connect(on_message)
+	GameSession.notifications.remote_message_received.connect(on_message)
 	GameSession.last_message = "local ui"
 	t.assert_equal(GameSession.notifications.local_message, "local ui", "last_message assignment is a local notification")
 	GameSession.notifications.notify_player(GameSession.get_local_player_id(), "offline personal")
@@ -28,8 +28,11 @@ func _test_offline_routing(t: Node) -> void:
 	t.assert_equal(GameSession.last_message, "offline anyone", "offline has one user, so every gameplay actor is local")
 	GameSession.notifications.notify_shared("offline shared")
 	t.assert_equal(GameSession.last_message, "offline shared", "offline shared notification is shown locally")
-	t.assert_equal(notices, ["local ui", "offline personal", "offline anyone", "offline shared"], "the HUD refresh signal fires once per change")
-	GameSession.notifications.local_message_changed.disconnect(on_message)
+	t.assert_true(notices.is_empty(), "local writes run no UI callbacks synchronously")
+	GameSession.notifications.receive_remote("from host")
+	t.assert_equal(GameSession.last_message, "from host", "a received notification becomes the local status line")
+	t.assert_equal(notices, ["from host"], "only a received notification asks the HUD to refresh")
+	GameSession.notifications.remote_message_received.disconnect(on_message)
 
 	GameSession.start_new_game()
 	GameSession.settlement.storage.add_item(&"rusty_scrap", 3)

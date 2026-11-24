@@ -407,8 +407,10 @@ The reproduction and real mouse/ENet regression commands are in
 
 ## Per-player gameplay notifications (STEP 3, introduced in Protocol v20)
 
-`GameSession.last_message` is only **this process's own** HUD status line. Assigning it is a
-local notification (`GameplayNotificationService.notify_local`). Authoritative code that acts
+`GameSession.last_message` is only **this process's own** HUD status line (a plain field).
+Writing it is a local notification (`GameplayNotificationService.notify_local`); only a
+notification received from the host emits `remote_message_received` so the HUD refreshes. Local
+writes and session cleanup never run UI callbacks synchronously. Authoritative code that acts
 for a peer never writes it directly, because on a host that would put a remote player's private
 result on the host HUD. `GameSession.notifications` (a RefCounted service, not an autoload)
 routes text by persistent `player_id`:
