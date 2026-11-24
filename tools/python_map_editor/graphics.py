@@ -7,12 +7,19 @@ from PySide6.QtGui import QColor, QImageReader, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem
 
 from objects import MIN_SIZE, validate_texture
+from terrain_atlas import BUILTIN_ROOT
+from terrain_renderer import TerrainCache, draw_terrain
 
 
 class TextureCache:
     def __init__(self):
         self.root = None
         self.images = {}
+        self.terrain = TerrainCache()
+
+    @property
+    def terrain_root(self):
+        return self.root or BUILTIN_ROOT
 
     def lookup(self, path):
         return self._load(path)[0]
@@ -49,6 +56,7 @@ class ObjectItem(QGraphicsRectItem):
         super().__init__()
         self.textures = textures
         self.model = None
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemUsesExtendedStyleOption)
         self.set_model(model)
 
     def set_model(self, model):
@@ -75,7 +83,17 @@ class ObjectItem(QGraphicsRectItem):
         model = self.model
         platform = model.type == "platform"
         image = self.textures.lookup(model.properties.texture_path)
-        if image.isNull():
+        surface = model.properties.terrain
+        if surface:
+            tiles = self.textures.terrain.lookup(self.textures.terrain_root, surface)
+            if tiles:
+                draw_terrain(painter, rect, option.exposedRect, surface, tiles)
+            else:
+                painter.fillRect(rect, QColor("#552529"))
+                painter.setPen(QPen(QColor("#ef9f9f"), 0))
+                painter.drawLine(rect.topLeft(), rect.bottomRight())
+                painter.drawLine(rect.topRight(), rect.bottomLeft())
+        elif image.isNull():
             fill = "#41666b" if platform else "#564766"
             painter.fillRect(rect, QColor(fill))
             if not platform:

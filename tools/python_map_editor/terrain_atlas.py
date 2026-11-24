@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import struct
+import sys
 import zlib
 
 from document import _unique_fields
@@ -10,6 +11,7 @@ from objects import DocumentError, TerrainSurface, validate_texture
 
 ATLAS_FOLDER = "assets/terrain"
 MARGIN_KEYS = ("left", "top", "right", "bottom")
+BUILTIN_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
 
 
 def project_file(root, relative):

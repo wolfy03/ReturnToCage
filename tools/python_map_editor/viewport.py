@@ -363,7 +363,7 @@ class MapView(CanvasView):
                 if direction:
                     fixed = -direction * size[axis] / 2
                     stride = self.map_scene.grid_size if self.snap_enabled else None
-                    size[axis] = max(MIN_SIZE, snap(direction * (local[axis] - fixed), stride))
+                    size[axis] = max(obj.minimum_size[axis], snap(direction * (local[axis] - fixed), stride))
                     center[axis] = fixed + direction * size[axis] / 2
             dx, dy = rotate(center, obj.rotation)
             item = self.objects[obj.id]

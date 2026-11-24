@@ -44,3 +44,30 @@ def test_metadata_rejects_missing_asset_and_bad_override(tmp_path):
         replace(surface, texture_path="assets/terrain/../secret.png")
     with pytest.raises(DocumentError, match="positive center"):
         replace(surface, margins=(20, 6, 9, 5))
+
+
+def test_qt_tiles_clip_without_stretching(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtWidgets import QApplication
+    from terrain_renderer import TerrainCache, draw_terrain
+
+    app = QApplication.instance() or QApplication([])
+    surface = read_theme(PROJECT, "sewer_concrete")
+    tile_cache = TerrainCache()
+    tiles = tile_cache.lookup(PROJECT, surface)
+    assert len(tiles) == 9
+    source = QImage(str(PROJECT / surface.texture_path))
+    for w, h in ((16, 11), (128, 128), (192, 192), (256, 128), (512, 128), (768, 256)):
+        output = QImage(w, h, QImage.Format.Format_ARGB32)
+        output.fill(0)
+        painter = QPainter(output)
+        rect = QRectF(0, 0, w, h)
+        draw_terrain(painter, rect, rect, surface, tiles)
+        painter.end()
+        for (sx, sy, sw, sh), (x, y, dw, dh) in slice_boxes(surface, w, h):
+            for py in range(y, y + dh):
+                for px in (range(x, x + dw) if py % 19 == 0 else range(x, min(x + 2, x + dw))):
+                    assert output.pixel(px, py) == source.pixel(sx + (px - x) % sw, sy + (py - y) % sh)
+    assert app is QApplication.instance()
