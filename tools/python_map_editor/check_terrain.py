@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from threading import Event
 
+from check_scene_bridge import traversal
 from check_v4_region_bridge import SEWER
 from godot_bridge import ENGINE_ERROR, VERSION, GodotSession, ProjectSettings, project_manifest, run_child, write_json
 from publish_region import publish_pair, recover_project
@@ -111,6 +112,7 @@ def bridge(godot, evidence):
             unchanged, receipt = session.stage_export(legacy_view)
             assert unchanged.source.scene_hash == saved.source.scene_hash
             assert receipt["source_hash"] == receipt["output_hash"]
+            assert traversal(session, "terrain-appearance-only") == [5, 25, 11]
         assert project_manifest(PROJECT, cancel) == original_manifest
     print("TERRAIN SCENE ROUND-TRIP AND PAIR PUBLISH PASS")
 

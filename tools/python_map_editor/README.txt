@@ -1,4 +1,4 @@
-ReturnToCage Map Editor — PY-STEP 5 (Windows x64)
+ReturnToCage Map Editor — PY-STEP 6 (Windows x64)
 
 ZIP 전체를 풀고 ReturnToCageMapEditor.exe를 실행하세요.
 _internal 폴더를 실행 파일과 같은 위치에 두세요.
@@ -13,6 +13,12 @@ Ctrl+N / Ctrl+O / Ctrl+S: 새 맵 / 열기 / 저장
 폴더에서 PNG가 포함된 폴더를 지정할 수 있습니다. 회전과 정확한 좌표는
 속성에서 입력하고, 선택한 플랫폼의 모서리나 가장자리 핸들을 끌어
 크기를 조절하세요. 레이어에서 객체 수, 표시 및 잠금을 확인할 수 있습니다.
+
+플랫폼 속성의 지형 표시 / 테마 또는 라이브러리의 플랫폼 브러시에서
+9-Slice 테마를 선택할 수 있습니다. 여백은 좌, 상, 우, 하 순서입니다.
+테마를 적용한 문서는 Schema V5로 저장됩니다. 동봉된 하수구와 숲 PNG는
+렌더링 검증용이며, 프로젝트에 게시할 때는 대상 프로젝트에 해당 메타데이터와
+Godot에서 가져온 PNG가 있어야 합니다.
 
 .rtcmap은 지역 정보, 플랫폼·장식, 레이어 상태를 담는 JSON 초안입니다.
 기존 V1 문서는 열 수 있으며 다음 저장 때 V2로 기록됩니다. PNG는 프로젝트

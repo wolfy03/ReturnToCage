@@ -22,4 +22,4 @@ From the repository root, run the paired pixel comparison and isolated Sewer pub
 python tools/python_map_editor/check_terrain.py --godot <godot-exe> --artifacts <output-directory>
 ```
 
-The comparison records source-sized, resized, tall, wide and rotated platform captures from both renderers. It checks pixel coverage and color, and checks that applying appearance leaves the same collision resource, size, mask, layer and one-way flag in use. The bridge test runs in a disposable project and checks that only the intended node changes and that both V3 and region-design views reload the published asset.
+The comparison records source-sized, resized, tall, wide and rotated platform captures from both renderers. It checks pixel coverage and color, and checks that applying appearance leaves the same collision resource, size, mask, layer and one-way flag in use. The bridge test runs in a disposable project and checks that only the intended node changes and that both V3 and region-design views reload the published asset. It also reruns the existing traversal fixture against the themed Sewer and expects the original 5 surfaces, 25 candidates and 11 verified edges.
