@@ -42,7 +42,7 @@ func _ready() -> void:
 	GameSession.difficulty_changed.connect(func(_id: StringName) -> void: refresh_all())
 	GameSession.adventure_finished.connect(func(_result: AdventureSession.Result, _summary: String) -> void: refresh_all())
 	GameSession.player_combat_runtime_changed.connect(_on_player_combat_runtime_changed)
-	GameSession.notifications.local_message_changed.connect(func(_message: String) -> void: refresh_all())
+	GameSession.notifications.local_message_changed.connect(_on_local_message_changed)
 	SaveManager.save_finished.connect(_on_persistence_result)
 	SaveManager.load_finished.connect(_on_persistence_result)
 	refresh_all()
@@ -181,7 +181,15 @@ func _on_session_ended(_reason: String) -> void:
 	_bind_player(null)
 
 func _exit_tree() -> void:
+	# The session-end cleanup during shutdown clears the local message; a HUD
+	# that is leaving the tree must not be refreshed by it.
+	if GameSession.notifications.local_message_changed.is_connected(_on_local_message_changed):
+		GameSession.notifications.local_message_changed.disconnect(_on_local_message_changed)
 	_bind_player(null)
+
+func _on_local_message_changed(_message: String) -> void:
+	if is_inside_tree() and not is_queued_for_deletion():
+		refresh_all()
 
 ## Stamina is read from the authoritative runtime mirror, never from the bound
 ## actor's CombatComponent: on a client that component does not simulate, so its
