@@ -90,6 +90,8 @@ jobs:
         run: python -u -X utf8 tools/python_map_editor/check_scene_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence"
       - name: V4 markers, new regions, runtime and pair publication
         run: python -u -X utf8 tools/python_map_editor/check_v4_region_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/v4"
+      - name: Forest Trail import, V5 round-trip and enemy marker preservation
+        run: python -u -X utf8 tools/python_map_editor/check_forest_region_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/forest"
       - name: Terrain conversion and publication using an isolated Sewer
         run: python -u -X utf8 tools/python_map_editor/check_terrain.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/terrain" --only bridge
       - name: Copy scene integration logs

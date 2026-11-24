@@ -112,3 +112,27 @@ Windows 11 x64에서 pytest 52개 중 51개가 통과했다. Windows 심볼릭 �
 ## Platform terrain appearance
 
 Select a registered terrain theme in the platform Inspector or the platform brush control. Terrain settings are saved in Schema V5. See the [atlas contract and verification guide](terrain_nine_slice.md) for PNG registration, minimum sizes and the Godot rendering check.
+
+## Forest Trail과 Enemy 배치
+
+`forest_region`은 Python Map Editor에서 그대로 열린다. 9-Slice 테마 4종
+(`forest_grass_dirt`, `forest_soil`, `forest_tree_root`, `forest_fallen_log`)은 `assets/terrain/`에
+등록돼 플랫폼 브러시와 Inspector에서 고를 수 있고, 문서는 Schema V5로 저장된다.
+
+```powershell
+python tools/python_map_editor/check_forest_region_bridge.py --godot <godot-exe> --artifacts <output-directory>
+```
+
+이 검사는 격리된 프로젝트 사본에서 숲을 가져와 V5 왕복, 무변경 저장 시 Scene/Resource
+바이트 동일성, 플랫폼·장식·ESCAPE 편집 후 재로드, 런타임 검증을 확인한다.
+
+**Enemy 스폰은 Python 문서에 없다.** `.rtcmap`의 객체는 `platform`/`decoration`뿐이고 지역 설계는
+ENTRY/ESCAPE/플레이어 스폰만 다룬다. `FieldEnemySpawnPoint`(딱정벌레·개구리)는 Godot Scene에만
+있으며, 브리지는 이를 건드리지 않고 그대로 보존한다(위 검사가 노드 단위로 비교한다). Enemy
+배치와 이동은 Godot Field Editor(`addons/rtc_field_editor`)의 Enemy 팔레트로 한다 — 새 Enemy는
+`data/content/enemies/`에 추가하면 팔레트에 자동으로 나타난다.
+
+Python에서 Enemy 스폰을 편집하려면 지역 설계에 `enemy_spawns`(id, `spawn_id`, `enemy_id`,
+position, enabled)를 추가하는 **Schema V6**가 필요하다. V5로는 표현할 수 없다. 이 변경은 아직
+하지 않았다: V1~V5 읽기 유지, V6 미사용 문서는 기존 버전 그대로 쓰기, 브리지의 marker
+계약 확장, 이전 버전 로딩 검증이 함께 들어가야 한다.
