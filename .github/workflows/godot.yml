@@ -79,7 +79,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
   windows-demo:
-    needs: headless
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
