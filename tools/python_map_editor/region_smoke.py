@@ -94,7 +94,9 @@ def edit_region(window, fixture, require):
             "terrain theme redo restores atlas settings")
     brush = window.library.brush_theme
     QTest.keyClick(brush, Qt.Key.Key_Home)
-    QTest.keyClick(brush, Qt.Key.Key_Down)
+    # Step by theme id, not by list position: registering a theme must not move the target.
+    for _ in range(brush.findData("forest_ground")):
+        QTest.keyClick(brush, Qt.Key.Key_Down)
     window.layer_panel.select_layer("terrain")
     window.tool_actions["rectangle"].trigger()
     begin = view.mapFromScene(QPointF(256, 288))

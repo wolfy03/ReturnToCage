@@ -58,6 +58,7 @@ idle ─▶ patrol ─▶ (prepare ─▶ hop ─▶ patrol …) ─▶ idle
 - **추적 한계:** 대상이 사라지거나 `chase_range × 1.35` 밖이거나 `leash_distance`를 넘으면 return.
 - **공격:** 0.2초 웅크린 뒤 짧게 도약한다. 도약 한 번에 `perform_attack()`은 최대 1회이고
   기존 권위·사거리 검사를 그대로 쓴다. `attack_cooldown_seconds`가 다음 공격을 막는다.
+  쿨다운은 도약하는 순간 시작하고 공격이 끝날 때 다시 시작한다 — 피격으로 끊긴 도약도 쿨다운을 남긴다.
   대상이 `attack_vertical_reach`보다 위나 아래에 있으면 공격하지 않고 hop으로 접근한다.
 - **타깃 결정은 서버다.** 기존 `EnemyAgent._select_target()`(가장 가까운 유효 플레이어)을 쓴다.
 - **복제는 기존 snapshot 그대로다.** `EnemyState.snapshot_state()`로 상태별 매핑만 지정한다:

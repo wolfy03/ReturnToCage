@@ -519,6 +519,7 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 | 개구리 AI | `tests/unit/test_frog_enemy.gd` | 실제 숲에서 실제 PlayerActor로: hop 순찰과 반경·지형 유지, 접지 상태에서만 발사, 탐지→alert→chase→attack, 도약당 최대 1회 피해, 쿨다운, 대상 상실 후 복귀, 가장자리 감지, hurt, death와 제거 |
 | 지역 런타임 | `python tools/playtest_region.py --godot <godot> --region forest_region` | 스폰·ENTRY·ESCAPE·채집·Enemy 4/4·정착지 복귀 |
 | ENet | `python tools/test_multiplayer_forest.py --godot <godot> --players 2`(3) | 서버 전용 스폰, client roster, 서버 개구리의 타깃·도약 피해(도약당 1회), replica의 jump_start/공중/attack clip, replica가 물리·hurtbox를 갖지 않는지, leash 복귀, 늦게 들어온 client(3인)와 host의 roster 복원, 가까운 플레이어로 재타깃, 딱정벌레·개구리의 death 표현과 제거 복제 |
+| 렌더링(GUI) | `python tools/test_forest_visual.py --godot <godot> --artifacts <dir>` | **창을 띄워** 숲에 들어가 실제 입력 action으로 걷고 공격한다. 네 Enemy의 presenter가 켜지고 placeholder polygon이 숨는지, 딱정벌레 5개·개구리 8개 clip이 실제로 재생됐는지, 네 마리가 실제 공격 입력으로 제거되는지 확인하고 screenshot을 남긴다. headless에서는 실패한다. Enemy 옆 배치만 합성이며, 아트 품질은 사람이 screenshot으로 본다. CI에는 넣지 않았다(로컬 검증용) |
 | Python Map Editor | `python tools/python_map_editor/check_forest_region_bridge.py --godot <godot> --artifacts <dir>` | 숲 import, Schema V5 왕복, 무변경 저장의 바이트 동일성, 편집 후 재로드, Enemy 스폰 marker 보존 |
 
 숲 지형을 고치면 실제 입력으로 입구→전망대 경로와 움푹한 구간 탈출을 다시 확인한다. 자동화된

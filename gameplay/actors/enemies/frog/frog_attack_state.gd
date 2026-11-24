@@ -30,6 +30,9 @@ func physics_tick(delta: float) -> StringName:
 		if remaining > recovery_seconds:
 			return &""
 		leaped = true
+		# The cooldown starts with the leap, so a leap cut short by a hit cannot
+		# be repeated at once. A finished attack restarts it below.
+		frog.attack_cooldown_remaining = frog.attack_cooldown_seconds
 		if frog.is_grounded():
 			frog.velocity = Vector2(frog.facing * frog.effect_stats.value(&"move_speed") * frog.attack_leap_speed_scale, -frog.attack_leap_lift)
 		return &""
