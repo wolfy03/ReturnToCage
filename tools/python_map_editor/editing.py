@@ -16,6 +16,7 @@ from document import MAX_FILE_BYTES
 from objects import DocumentError, MapObject, ObjectProperties
 from panels import Asset, LayerPanel, LibraryPanel, ObjectInspector
 from strings import tr
+from terrain_atlas import discover_themes, png_size
 
 CLIPBOARD_MIME = "application/x-rtc-objects"
 DEFAULT_SIZE = {"platform": (192, 24), "decoration": (64, 64)}
@@ -84,6 +85,8 @@ class EditingMixin:
         self.library.tree.verticalScrollBar().valueChanged.connect(self.library.refresh_icons)
         self.library_scan = None
         self.library_generation = 0
+        self.terrain_themes, _ = discover_themes(self.view.textures.terrain_root)
+        self.library.set_themes(self.terrain_themes)
 
     def _build_editing_actions(self, toolbar, view_menu):
         menu = self.menuBar().addMenu(tr("edit"))
@@ -141,6 +144,12 @@ class EditingMixin:
         self.view.textures.root = root
         self._invalidate_validation()
         self.view.textures.images.clear()
+        self.view.textures.terrain.slices.clear()
+        self.terrain_themes, errors = discover_themes(root)
+        self.library.set_themes(self.terrain_themes)
+        for error in errors:
+            self._edit_error(error)
+        self._update_selection()
         self.library.set_paths(())
         self.view.viewport().update()
         generation = self.library_generation
@@ -206,7 +215,7 @@ class EditingMixin:
         return [item.model for item in self.view.map_scene.selectedItems()]
 
     def _update_selection(self):
-        self.object_inspector.populate(self._selected_models(), self.draft.layers, self.view.textures.natural_size)
+        self.object_inspector.populate(self._selected_models(), self.draft.layers, self.view.textures.natural_size, themes=self.terrain_themes)
 
     def _update_preview(self):
         models = []
@@ -216,7 +225,8 @@ class EditingMixin:
                                       size=(item.rect().width(), item.rect().height())))
             except DocumentError:
                 models.append(item.model)
-        self.object_inspector.populate(models, self.draft.layers, self.view.textures.natural_size, preview=True)
+        self.object_inspector.populate(models, self.draft.layers, self.view.textures.natural_size, preview=True,
+                                       themes=self.terrain_themes)
 
     def _finish_gesture(self, mode, payload):
         try:
@@ -263,13 +273,16 @@ class EditingMixin:
             raise DocumentError(tr("locked_layer"))
         if size is None:
             size = self.view.textures.natural_size(asset.path) if asset.path else DEFAULT_SIZE[asset.type]
+        surface = self.terrain_themes.get(self.library.brush_theme.currentData()) if asset.type == "platform" else None
+        if surface:
+            size = tuple(max(n, minimum) for n, minimum in zip(size, surface.minimum_size))
         occupied = {obj.position for obj in self.draft.objects
                     if obj.layer_id == layer_id and obj.type == asset.type and obj.properties.texture_path == asset.path}
         added = []
         for point in points:
             if label == "paint" and point in occupied:
                 continue
-            properties = ObjectProperties(texture_path=asset.path)
+            properties = ObjectProperties(texture_path=asset.path, terrain=surface)
             added.append(MapObject(self._new_id(asset.type), asset.type, layer_id, point, size, properties=properties))
         self._commit(label, (*self.draft.objects, *added), selection=[obj.id for obj in added])
 
@@ -362,11 +375,26 @@ class EditingMixin:
                     new = replace(obj, layer_id=value)
                 elif key == "one_way":
                     new = replace(obj, properties=replace(obj.properties, one_way=value == "true"))
+                elif key == "terrain_theme":
+                    surface = None if value == "__legacy__" else self.terrain_themes.get(value)
+                    if surface is None and value != "__legacy__":
+                        raise DocumentError(tr("terrain_missing"))
+                    new = replace(obj, properties=replace(obj.properties, terrain=surface))
+                elif key in ("terrain_texture", "terrain_margins"):
+                    surface = obj.properties.terrain
+                    if surface is None:
+                        raise DocumentError(tr("terrain_missing"))
+                    if key == "terrain_texture":
+                        size = png_size(self.view.textures.terrain_root, value)
+                        surface = replace(surface, texture_path=value, source_size=size)
+                    else:
+                        surface = replace(surface, margins=tuple(int(n.strip()) for n in value.split(",")))
+                    new = replace(obj, properties=replace(obj.properties, terrain=surface))
                 else:
                     new = replace(obj, properties=replace(obj.properties, texture_path=value))
                 updates[obj.id] = new
             self._change_objects("property", updates)
-        except ValueError as error:
+        except (ValueError, OSError) as error:
             self._edit_error(error)
         self._update_selection()
 

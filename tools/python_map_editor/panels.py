@@ -61,6 +61,8 @@ class LibraryPanel(QWidget):
         self.textures = textures
         self.assets = ()
         self.search = QLineEdit(placeholderText=tr("asset_search"))
+        self.brush_theme = QComboBox()
+        self.brush_theme.setToolTip(tr("terrain_brush"))
         self.tree = LibraryTree()
         self.tree.setHeaderHidden(True)
         self.tree.setDragEnabled(True)
@@ -70,6 +72,7 @@ class LibraryPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self.search)
+        layout.addWidget(self.brush_theme)
         layout.addWidget(self.tree)
         self.set_paths(())
 
@@ -77,6 +80,14 @@ class LibraryPanel(QWidget):
     def asset(self):
         item = self.tree.currentItem()
         return item.data(0, ROLE) if item is not None else None
+
+    def set_themes(self, themes):
+        selected = self.brush_theme.currentData()
+        self.brush_theme.clear()
+        self.brush_theme.addItem(tr("terrain_brush"), "")
+        for key in themes:
+            self.brush_theme.addItem(tr(f"theme_{key}", key), key)
+        self.brush_theme.setCurrentIndex(max(0, self.brush_theme.findData(selected)))
 
     def set_paths(self, paths):
         previous = self.asset
@@ -190,12 +201,12 @@ class ObjectInspector(QWidget):
         self.form = QFormLayout(self)
         self.form.setContentsMargins(0, 0, 0, 0)
         self.fields = {}
-        for key in ("object_id", "x", "y", "object_width", "object_height", "rotation", "scale_x", "scale_y", "texture"):
+        for key in ("object_id", "x", "y", "object_width", "object_height", "rotation", "scale_x", "scale_y", "texture", "terrain_texture", "terrain_margins", "terrain_repeat"):
             field = self.fields[key] = QLineEdit()
-            field.setReadOnly(key == "object_id")
+            field.setReadOnly(key in ("object_id", "terrain_repeat"))
             field.editingFinished.connect(lambda key=key: self._submit(key))
             self.form.addRow(tr(key), field)
-        for key in ("layer", "one_way"):
+        for key in ("layer", "one_way", "terrain_theme"):
             field = self.fields[key] = QComboBox()
             field.activated.connect(lambda _index, key=key: self._combo(key))
             self.form.addRow(tr(key), field)
@@ -211,14 +222,19 @@ class ObjectInspector(QWidget):
         if value is not None:
             self.property_edited.emit(key, str(value))
 
-    def populate(self, models, layers, image_size, preview=False):
+    def populate(self, models, layers, image_size, preview=False, themes=()):
         self.setVisible(bool(models))
         if not models:
             return
         platforms = all(obj.type == "platform" for obj in models)
         decorations = all(obj.type == "decoration" for obj in models)
         base_sizes = [image_size(obj.properties.texture_path) for obj in models] if decorations else []
+        surfaces = [obj.properties.terrain for obj in models]
+        textured = platforms and all(surfaces)
         values = {
+            "terrain_texture": [surface.texture_path for surface in surfaces] if textured else [],
+            "terrain_margins": [", ".join(map(str, surface.margins)) for surface in surfaces] if textured else [],
+            "terrain_repeat": [tr("terrain_tiling")] if textured else [],
             "object_id": [obj.id for obj in models],
             "x": [obj.position[0] for obj in models],
             "y": [obj.position[1] for obj in models],
@@ -243,6 +259,11 @@ class ObjectInspector(QWidget):
         self._options("layer", destinations, [obj.layer_id for obj in models])
         self._options("one_way", [(tr("solid"), "false"), (tr("one_way_enabled"), "true")],
                       [str(obj.properties.one_way).lower() for obj in models] if platforms else [])
+
+        terrain_ids = [surface.theme_id if surface else "__legacy__" for surface in surfaces] if platforms else []
+        registered = dict.fromkeys((*themes, *(key for key in terrain_ids if key != "__legacy__")))
+        self._options("terrain_theme", [(tr("terrain_legacy"), "__legacy__"),
+                      *((tr(f"theme_{key}", key), key) for key in registered)], terrain_ids)
 
     def _options(self, key, options, values):
         combo = self.fields[key]

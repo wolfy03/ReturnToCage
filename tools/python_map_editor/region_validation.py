@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from objects import rotate
+from terrain_atlas import BUILTIN_ROOT, atlas_error
 from region_index import INDEXED, INVALID, MISSING, MODIFIED
 
 PASS = "PASS"
@@ -54,9 +55,16 @@ def validate_region(document, index=None, project=None):
     if not document.display_name.strip():
         add(WARNING, "display_name_missing")
     texture_checks = {}
+    terrain_checks = {}
     for obj in document.objects:
         if document.source is None and not in_bounds(obj.position):
             add(WARNING, "outside_bounds", obj.id, f"object:{obj.id}")
+        surface = obj.properties.terrain
+        if surface is not None:
+            if surface not in terrain_checks:
+                terrain_checks[surface] = atlas_error(project or BUILTIN_ROOT, surface)
+            if terrain_checks[surface]:
+                add(FAIL, "terrain_missing", terrain_checks[surface], f"object:{obj.id}")
         path = obj.properties.texture_path
         if path and path not in texture_checks:
             texture_checks[path] = project is not None and _asset_exists(project, path)

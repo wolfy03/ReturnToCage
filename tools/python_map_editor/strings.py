@@ -1,6 +1,12 @@
 """Korean UI text. Stable keys allow additional translations."""
 
 KO = {
+    "terrain_brush": "플랫폼 브러시 · 단색",
+    "terrain_theme": "지형 표시 / 테마", "terrain_legacy": "기존 단색",
+    "theme_sewer_concrete": "하수구 콘크리트 · 테스트", "theme_forest_ground": "숲 지형 · 테스트",
+    "terrain_texture": "지형 PNG", "terrain_margins": "여백 (좌, 상, 우, 하)",
+    "terrain_repeat": "반복 방식", "terrain_tiling": "가장자리·중앙 반복",
+    "terrain_missing": "지형 아틀라스를 확인하세요.",
     "region_wizard": "새 지역 마법사…", "template": "지역 템플릿",
     "template_empty": "빈 지역", "template_flat": "평지", "template_platform": "플랫폼 지역",
     "environment_path": "환경 리소스 (.tres)", "spawn_count": "플레이어 스폰 슬롯 수",

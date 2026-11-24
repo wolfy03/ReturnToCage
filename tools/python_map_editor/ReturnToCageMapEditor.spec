@@ -4,7 +4,8 @@ source = Path(SPECPATH)
 analysis = Analysis(
     [str(source / "main.py")],
     pathex=[str(source), str(source.parent)],
-    datas=[(str(source.parent / "map_bridge"), "map_bridge")],
+    datas=[(str(source.parent / "map_bridge"), "map_bridge"),
+           (str(source.parent.parent / "assets" / "terrain"), "assets/terrain")],
 )
 # Qt6Core uses Windows' unsuffixed ICU exports. A vendor ICU DLL collected
 # from the build machine can shadow the OS DLL with incompatible exports.
