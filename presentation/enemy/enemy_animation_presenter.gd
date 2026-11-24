@@ -18,6 +18,7 @@ var current_animation: StringName = &""
 ## Counts real clip starts; tests use it to prove a clip is not restarted every frame.
 var play_count: int = 0
 var _airborne: bool = false
+var _rising: bool = false
 var _grounded_time: float = 0.0
 var _land_remaining: float = 0.0
 var _death_started: bool = false
@@ -52,15 +53,24 @@ func _wanted_animation() -> StringName:
 		return profile.hurt_animation
 	if state == &"attack":
 		return profile.attack_animation
-	if state == &"prepare" and profile.has_animation(profile.jump_start_animation):
-		return profile.jump_start_animation
 	if _airborne:
-		var airborne := profile.jump_animation if agent.velocity.y < 0.0 else profile.fall_animation
+		var airborne := profile.jump_animation if _rising else profile.fall_animation
 		if profile.has_animation(airborne):
 			return airborne
 	if _land_remaining > 0.0 and profile.has_animation(profile.land_animation):
 		return profile.land_animation
+	if _is_preparing(state) and profile.has_animation(profile.jump_start_animation):
+		return profile.jump_start_animation
 	return profile.move_animation if absf(agent.velocity.x) > profile.move_speed_threshold else profile.idle_animation
+
+## The authority knows its Prepare state by name. A replica only mirrors the
+## coarse snapshot state, where a hopper that is "moving" yet standing on the
+## ground can only be crouching for its next hop.
+func _is_preparing(state: StringName) -> bool:
+	if state == &"prepare":
+		return true
+	return not agent.is_simulation_authority() and state == &"chase" \
+		and absf(agent.velocity.x) <= profile.move_speed_threshold
 
 ## Replicated actors do not run physics, so "airborne" is read from the vertical
 ## velocity both sides have. The short confirmation time hides the apex, where
@@ -69,6 +79,8 @@ func _update_airborne(delta: float) -> void:
 	_land_remaining = maxf(0.0, _land_remaining - delta)
 	if absf(agent.velocity.y) > profile.airborne_speed:
 		_airborne = true
+		# Decided only by a clear vertical speed, so the apex keeps the rising clip.
+		_rising = agent.velocity.y < 0.0
 		_grounded_time = 0.0
 	elif _airborne:
 		_grounded_time += delta

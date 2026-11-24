@@ -4,6 +4,7 @@ const FRAME := 1.0 / 60.0
 
 func run(t: Node) -> void:
 	await _check_enemy(t, &"sewer_beetle", false)
+	await _check_enemy(t, &"frog", true)
 
 func _check_enemy(t: Node, enemy_id: StringName, expects_airborne: bool) -> void:
 	var label := String(enemy_id)

@@ -1,0 +1,88 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_agent.gd" id="1"]
+[ext_resource type="Script" path="res://gameplay/components/health_component.gd" id="2"]
+[ext_resource type="Script" path="res://gameplay/components/hurtbox_component.gd" id="3"]
+[ext_resource type="Script" path="res://gameplay/components/network_enemy_component.gd" id="4"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_idle_state.gd" id="5"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_patrol_state.gd" id="6"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_alert_state.gd" id="7"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_chase_state.gd" id="8"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_prepare_state.gd" id="9"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_hop_state.gd" id="10"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_attack_state.gd" id="11"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/hurt_state.gd" id="12"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/frog/frog_return_state.gd" id="13"]
+[ext_resource type="Script" path="res://gameplay/actors/enemies/dead_state.gd" id="14"]
+
+[sub_resource type="RectangleShape2D" id="BodyShape"]
+size = Vector2(30, 22)
+
+[sub_resource type="RectangleShape2D" id="HurtShape"]
+size = Vector2(36, 28)
+
+[node name="Frog" type="CharacterBody2D"]
+collision_layer = 1
+collision_mask = 1
+script = ExtResource("1")
+animation_profile_path = "res://presentation/enemy/profiles/frog_animation_profile.tres"
+
+[node name="Visual" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-15, 11, -17, 0, -8, -11, 8, -11, 17, -2, 15, 11)
+color = Color(0.36, 0.66, 0.29, 1)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("BodyShape")
+
+[node name="Health" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("2")
+max_health = 18.0
+
+[node name="NetworkEnemy" type="Node" parent="."]
+unique_name_in_owner = true
+script = ExtResource("4")
+
+[node name="Hurtbox" type="Area2D" parent="."]
+unique_name_in_owner = true
+collision_layer = 2
+collision_mask = 4
+script = ExtResource("3")
+faction = &"hostile"
+health_path = NodePath("../Health")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Hurtbox"]
+shape = SubResource("HurtShape")
+
+[node name="States" type="Node" parent="."]
+unique_name_in_owner = true
+
+[node name="Idle" type="Node" parent="States"]
+script = ExtResource("5")
+
+[node name="Patrol" type="Node" parent="States"]
+script = ExtResource("6")
+
+[node name="Alert" type="Node" parent="States"]
+script = ExtResource("7")
+
+[node name="Chase" type="Node" parent="States"]
+script = ExtResource("8")
+
+[node name="Prepare" type="Node" parent="States"]
+script = ExtResource("9")
+
+[node name="Hop" type="Node" parent="States"]
+script = ExtResource("10")
+
+[node name="Attack" type="Node" parent="States"]
+script = ExtResource("11")
+
+[node name="Hurt" type="Node" parent="States"]
+script = ExtResource("12")
+
+[node name="Return" type="Node" parent="States"]
+script = ExtResource("13")
+
+[node name="Dead" type="Node" parent="States"]
+script = ExtResource("14")

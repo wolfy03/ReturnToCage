@@ -198,17 +198,29 @@ asset_path = "res://assets/decorations/forest/mushroom.png"
 
 [node name="SpawnPoints" type="Node2D" parent="."]
 
-[node name="HollowBeetle" type="Marker2D" parent="SpawnPoints"]
+[node name="LedgeBeetle" type="Marker2D" parent="SpawnPoints"]
+position = Vector2(640, 477)
+script = ExtResource("8")
+spawn_id = &"forest_beetle_ledge"
+enemy_id = &"sewer_beetle"
+
+[node name="HollowFrog" type="Marker2D" parent="SpawnPoints"]
 position = Vector2(1100, 565)
 script = ExtResource("8")
-spawn_id = &"forest_beetle_hollow"
-enemy_id = &"sewer_beetle"
+spawn_id = &"forest_frog_hollow"
+enemy_id = &"frog"
 
 [node name="TrailBeetle" type="Marker2D" parent="SpawnPoints"]
 position = Vector2(1750, 525)
 script = ExtResource("8")
 spawn_id = &"forest_beetle_trail"
 enemy_id = &"sewer_beetle"
+
+[node name="EastFrog" type="Marker2D" parent="SpawnPoints"]
+position = Vector2(2200, 525)
+script = ExtResource("8")
+spawn_id = &"forest_frog_east"
+enemy_id = &"frog"
 
 [node name="GatherPoints" type="Node2D" parent="."]
 

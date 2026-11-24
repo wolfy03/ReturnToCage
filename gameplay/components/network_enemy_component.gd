@@ -57,7 +57,8 @@ func make_snapshot() -> EnemyRuntimeSnapshot:
 	snapshot.facing = actor.facing
 	snapshot.health = clampf(actor.health.current_health, 0.0, actor.health.max_health)
 	snapshot.max_health = actor.health.max_health
-	snapshot.state = _state_value(actor.current_state_id)
+	var override := actor.current_state.snapshot_state() if actor.current_state != null else -1
+	snapshot.state = (override as EnemyRuntimeSnapshot.State) if override >= 0 else _state_value(actor.current_state_id)
 	snapshot.snapshot_sequence = _sequence
 	return snapshot
 

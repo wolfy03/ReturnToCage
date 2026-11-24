@@ -4,6 +4,8 @@ extends CharacterBody2D
 signal state_changed(state_id: StringName)
 signal finished(agent: EnemyAgent)
 
+const GRAVITY := 1100.0
+
 @export var definition: EnemyDefinition
 ## EnemyAnimationProfile path. A string on purpose: the actor scene is preloaded
 ## through EnemyDefinition by ContentRegistry, so a direct reference would pull
@@ -106,7 +108,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_select_target()
 	if not is_on_floor():
-		velocity.y += 1100.0 * delta
+		velocity.y += GRAVITY * delta
 	if current_state != null:
 		var next := current_state.physics_tick(delta)
 		if not next.is_empty():

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="EnemyDefinition" load_steps=3 format=3]
+[ext_resource path="res://data/definitions/enemy_definition.gd" type="Script" id="1"]
+[ext_resource path="res://gameplay/actors/enemies/frog.tscn" type="PackedScene" id="2"]
+[resource]
+script = ExtResource("1")
+id = &"frog"
+display_name = "Trail Frog"
+actor_scene = ExtResource("2")
+max_health = 18.0
+attack_damage = 6.0
+move_speed = 150.0
+chase_range = 260.0
+attack_range = 72.0
+faction = &"hostile"
+loot_table_id = &"frog_loot"

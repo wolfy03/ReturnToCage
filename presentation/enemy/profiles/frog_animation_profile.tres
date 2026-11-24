@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="EnemyAnimationProfile" format=3]
+
+[ext_resource type="Script" path="res://presentation/definitions/enemy_animation_profile.gd" id="1"]
+[ext_resource type="SpriteFrames" path="res://assets/characters/enemies/frog/sprite_frames.tres" id="2"]
+
+[resource]
+script = ExtResource("1")
+sprite_frames = ExtResource("2")
+move_animation = &"idle"
+jump_start_animation = &"jump_start"
+jump_animation = &"jump"
+fall_animation = &"fall"
+land_animation = &"land"
+visual_offset = Vector2(4, -19)
+attack_hit_frame = 2
