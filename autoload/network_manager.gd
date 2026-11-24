@@ -102,6 +102,31 @@ func _ready() -> void:
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
+# Application shutdown: autoloads leave the tree after the boot scene, so by
+# now the session UI and GameSession are already leaving too. Close the
+# transport quietly, without the session-end path and with the transport
+# callbacks released first, so a peer that is still connected cannot drive
+# gameplay or UI callbacks while the engine tears the tree down. A release
+# Windows host quitting with a connected client crashed (0xC0000005) after a
+# passing validation without this.
+func _exit_tree() -> void:
+	for binding: Array in [
+		[multiplayer.peer_connected, _on_transport_peer_connected],
+		[multiplayer.peer_disconnected, _on_transport_peer_disconnected],
+		[multiplayer.connected_to_server, _on_connected_to_server],
+		[multiplayer.connection_failed, _on_connection_failed],
+		[multiplayer.server_disconnected, _on_server_disconnected],
+	]:
+		var source_signal: Signal = binding[0]
+		if source_signal.is_connected(binding[1]):
+			source_signal.disconnect(binding[1])
+	_transport_generation += 1
+	_accepting_handshakes = false
+	if _peer != null:
+		_peer.close()
+	_peer = null
+	multiplayer.multiplayer_peer = null
+
 func host_game(port: int = DEFAULT_PORT, max_players: int = MAX_PLAYERS) -> Error:
 	if port < 1 or port > 65535 or max_players < 2 or max_players > MAX_PLAYERS:
 		last_error = "Invalid host port or player limit"

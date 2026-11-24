@@ -451,6 +451,15 @@ reconnected player never shows status text from the previous connection. Because
 current `player_id` → peer mapping at send time, a reconnected identity receives its new notices on
 its new peer ID. Gameplay state, Save v5 and Profile v1 are unchanged.
 
+## Application shutdown with an open transport
+
+On application exit autoloads leave the tree after the boot scene. `NetworkManager._exit_tree()`
+releases its `multiplayer` transport callbacks and closes the ENet peer directly, without the
+session-end path, so a peer that is still connected cannot run gameplay/UI callbacks while the engine
+tears the tree down. A Windows release host that quit with a connected editor client crashed
+(0xC0000005) after a passing export validation; that race could not be reproduced on Linux, so the
+Windows export validation in CI is the regression check.
+
 ## Not synchronized yet
 
 Stage 2 player presentation roster recovery is described in
