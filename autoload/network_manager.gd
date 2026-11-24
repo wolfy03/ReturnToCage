@@ -847,35 +847,12 @@ func broadcast_gather_consumed(world_id: StringName, interaction_id: StringName)
 	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
 		gather_consumed_received.emit(world_id, interaction_id)
 
-# Private gameplay text for one persistent player. Only the host sends it, and
-# only to the peer currently authenticated as that player_id; other players,
-# including the host HUD, never receive it.
-func send_gameplay_notification(player_id: StringName, message: String) -> bool:
-	if not is_server() or player_id.is_empty() or not NetworkProtocol.valid_notification(message):
-		return false
-	var peer_id := peer_id_for_player(player_id)
-	if peer_id <= 1 or not players.has(peer_id) or not can_send_to_peer(peer_id):
-		return false
-	_receive_gameplay_notification.rpc_id(peer_id, message)
-	return true
+# ci-bisect: transport removed; routing and host isolation unchanged.
+func send_gameplay_notification(_player_id: StringName, _message: String) -> bool:
+	return false
 
-# Settlement-wide text for every session peer except the actor, who already
-# receives its own command result.
-func broadcast_shared_notification(message: String, exclude_player_id: StringName = &"") -> void:
-	if not is_server() or not NetworkProtocol.valid_notification(message):
-		return
-	for peer_id in all_ready_remote_peer_ids():
-		if not exclude_player_id.is_empty() and player_id_for_peer(peer_id) == exclude_player_id:
-			continue
-		if can_send_to_peer(peer_id):
-			_receive_gameplay_notification.rpc_id(peer_id, message)
-
-# Authority-only: a client cannot send this to the host or to another client.
-@rpc("authority", "call_remote", "reliable")
-func _receive_gameplay_notification(message: String) -> void:
-	if is_server() or not _session_entered or not NetworkProtocol.valid_notification(message):
-		return
-	GameSession.notifications.receive_remote(message)
+func broadcast_shared_notification(_message: String, _exclude_player_id: StringName = &"") -> void:
+	pass
 
 func send_gather_state(peer_id: int, world_id: StringName, consumed_ids: Array[StringName]) -> void:
 	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
