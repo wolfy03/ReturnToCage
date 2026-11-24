@@ -346,7 +346,7 @@ func _test_save_and_wire_limits(t: Node) -> void:
 	t.assert_true(mirror.inventory.to_slot_dict() == GameSession.player.inventory.to_slot_dict(), "v19 replicates exact source coordinates")
 	t.assert_equal(_totals(mirror.inventory), _totals(GameSession.player.inventory), "wire limitation does not lose or duplicate quantities")
 	t.assert_equal(SaveManager.CURRENT_VERSION, 5, "Save uses v5")
-	t.assert_equal(NetworkProtocol.VERSION, 19, "Protocol uses v19")
+	t.assert_equal(NetworkProtocol.VERSION, 20, "Protocol uses v20")
 	t.assert_equal(LocalPlayerProfile.PROFILE_VERSION, 1, "Profile remains v1")
 	GameSession.start_new_game()
 
