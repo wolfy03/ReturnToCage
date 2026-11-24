@@ -5,12 +5,18 @@ on:
     paths:
       - 'tools/python_map_editor/**'
       - 'tools/map_bridge/**'
+      - 'assets/terrain/**'
+      - 'world/adventure/field_platform.gd'
+      - 'docs/terrain_nine_slice.md'
       - 'docs/python_map_editor*.md'
       - '.github/workflows/python-map-editor.yml'
   pull_request:
     paths:
       - 'tools/python_map_editor/**'
       - 'tools/map_bridge/**'
+      - 'assets/terrain/**'
+      - 'world/adventure/field_platform.gd'
+      - 'docs/terrain_nine_slice.md'
       - 'docs/python_map_editor*.md'
       - '.github/workflows/python-map-editor.yml'
   workflow_dispatch:
@@ -40,7 +46,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         shell: pwsh
@@ -63,7 +69,7 @@ jobs:
             python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-smoke-$scale.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $region = (Get-Content "build/map-editor-qa/source-smoke-$scale.json" -Raw | ConvertFrom-Json).region_fixture
-            if (-not $region) { throw 'The offline smoke did not write a V4 fixture' }
+            if (-not $region) { throw 'The offline smoke did not write a V5 terrain fixture' }
             python -X utf8 tools/python_map_editor/main.py --smoke-report "build/map-editor-qa/source-region-reopen-$scale.json" --smoke-region-reopen $region
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -84,6 +90,8 @@ jobs:
         run: python -u -X utf8 tools/python_map_editor/check_scene_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence"
       - name: V4 markers, new regions, runtime and pair publication
         run: python -u -X utf8 tools/python_map_editor/check_v4_region_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/v4"
+      - name: Terrain conversion and publication using an isolated Sewer
+        run: python -u -X utf8 tools/python_map_editor/check_terrain.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/terrain" --only bridge
       - name: Copy scene integration logs
         if: always()
         run: |
@@ -98,14 +106,14 @@ jobs:
       - name: Run the packaged EXE on Windows
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
-          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP5-win-x64.zip')
+          $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP6-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
           python -X utf8 tools/python_map_editor/verify_windows_package.py $archives[0].FullName --artifacts build/map-editor-qa --bridge-project . --godot $env:RTC_VALIDATION_GODOT --include-design
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         with:
           name: ReturnToCageMapEditor-win-x64
-          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP5-win-x64.zip
+          path: build/map-editor-ci/**/ReturnToCageMapEditor-PY-STEP6-win-x64.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
@@ -173,7 +181,7 @@ jobs:
       - name: Ten independent packaged Godot publish runs
         if: ${{ !cancelled() && steps.stability-package.outcome == 'success' }}
         run: |
-          $archives = @(Get-ChildItem build/map-editor-stability -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP5-win-x64.zip')
+          $archives = @(Get-ChildItem build/map-editor-stability -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP6-win-x64.zip')
           if ($archives.Count -ne 1) { throw 'Expected one map editor ZIP' }
           $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\ReturnToCageMapEditor.exe'
           $created = $false

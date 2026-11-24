@@ -48,6 +48,7 @@ def test_metadata_rejects_missing_asset_and_bad_override(tmp_path):
 
 def test_qt_tiles_clip_without_stretching(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
     from PySide6.QtCore import QRectF
     from PySide6.QtGui import QImage, QPainter
     from PySide6.QtWidgets import QApplication
@@ -71,3 +72,73 @@ def test_qt_tiles_clip_without_stretching(monkeypatch):
                 for px in (range(x, x + dw) if py % 19 == 0 else range(x, min(x + 2, x + dw))):
                     assert output.pixel(px, py) == source.pixel(sx + (px - x) % sw, sy + (py - y) % sh)
     assert app is QApplication.instance()
+
+
+def test_terrain_preset_keeps_properties_and_unknown_surface_fields_block_load():
+    from placement_presets import capture_preset, load_preset
+
+    surface = read_theme(PROJECT, "sewer_concrete")
+    original = MapObject("platform_a", "platform", "terrain", (10, 20), (80, 64), rotation=12,
+                         properties=ObjectProperties(terrain=replace(surface, margins=(6, 5, 7, 4))))
+    label, (reloaded,) = load_preset(capture_preset("terrain test", (original,)))
+    assert label == "terrain test"
+    assert reloaded.properties == original.properties and reloaded.rotation == original.rotation
+    data = json.loads(encode(MapDocument(objects=(original,))))
+    data["objects"][0]["properties"]["terrain"]["future_property"] = True
+    with pytest.raises(DocumentError, match="invalid object property fields"):
+        decode(json.dumps(data).encode())
+
+
+def test_modified_atlas_dimensions_are_rejected(tmp_path):
+    import shutil
+
+    root = tmp_path / "project"
+    shutil.copytree(PROJECT / "assets/terrain", root / "assets/terrain")
+    atlas = read_theme(root, "sewer_concrete")
+    metadata = root / "assets/terrain/sewer_concrete.json"
+    valid = metadata.read_text(encoding="utf-8")
+    data = json.loads(valid)
+    data["source_size"][0] += 1
+    metadata.write_text(json.dumps(data), encoding="utf-8")
+    assert "dimensions" in atlas_error(root, atlas)
+
+
+def test_linked_texture_is_rejected(tmp_path):
+    import shutil
+
+    root = tmp_path / "project"
+    shutil.copytree(PROJECT / "assets/terrain", root / "assets/terrain")
+    atlas = read_theme(root, "sewer_concrete")
+    outside = tmp_path / "outsider.png"
+    source = root / atlas.texture_path
+    source.rename(outside)
+    try:
+        source.symlink_to(outside)
+    except OSError:
+        pytest.skip("symbolic link requires local privilege")
+    assert "linked terrain path" in atlas_error(root, atlas)
+
+
+def test_bridge_requires_registered_texture_without_rewriting_uid(tmp_path):
+    import shutil
+    from godot_bridge import BridgeError, GodotSession, file_hash
+
+    shutil.copytree(PROJECT / "assets/terrain", tmp_path / "assets/terrain")
+    surface = read_theme(tmp_path, "sewer_concrete")
+    platform = MapObject("platform_a", "platform", "terrain", (31, 45), (80, 24),
+                         properties=ObjectProperties(terrain=surface))
+    document = MapDocument(objects=(platform,))
+    session = GodotSession.__new__(GodotSession)
+    session.stage = tmp_path
+    session.manifest = {}
+    with pytest.raises(BridgeError) as missing:
+        session._check_atlases(document)
+    assert missing.value.code == "RESOURCE_MISSING"
+    sidecar = surface.texture_path + ".import"
+    path = tmp_path / sidecar
+    session.manifest[sidecar] = file_hash(path)
+    session._check_atlases(document)
+    path.write_text('uid="uid://replacement"\n', encoding="utf-8")
+    with pytest.raises(BridgeError) as drift:
+        session._check_atlases(document)
+    assert drift.value.code == "UID_CONFLICT"

@@ -22,7 +22,7 @@ from objects import DocumentError, MapObject
 from region_design import RegionDesign
 from source_region import GodotSource, NodeBinding, relative_path
 from strings import tr
-from terrain_atlas import atlas_error
+from terrain_atlas import atlas_error, read_theme
 
 if not getattr(sys, "frozen", False):
     # The shared Windows Job Object helper also serves the traversal worker.
@@ -376,6 +376,14 @@ class GodotSession:
         for surface in {obj.properties.terrain for obj in document.objects} - {None}:
             if error := atlas_error(self.stage, surface):
                 raise BridgeError("INVALID_DOCUMENT", error)
+            default = read_theme(self.stage, surface.theme_id)
+            for texture in {surface.texture_path, default.texture_path}:
+                sidecar = texture + ".import"
+                if sidecar not in self.manifest:
+                    raise BridgeError("RESOURCE_MISSING", f"Import the terrain PNG in the target project first: {texture}")
+                staged = safe_child(self.stage, sidecar, ".import")
+                if file_hash(staged) != self.manifest[sidecar]:
+                    raise BridgeError("UID_CONFLICT", f"Godot changed the registered terrain import settings: {sidecar}")
 
     def _source(self, data, manifest):
         region = data["region_path"]

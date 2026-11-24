@@ -108,3 +108,7 @@ Windows 11 x64에서 pytest 52개 중 51개가 통과했다. Windows 심볼릭 �
 | 100% | 54.19 | 15.84 | 15.09 | 14.69 | 24.04 | 58.85 |
 | 150% | 57.49 | 18.50 | 17.60 | 16.33 | 23.85 | 59.21 |
 | 200% | 57.49 | 18.45 | 18.60 | 15.00 | 29.67 | 56.35 |
+
+## Platform terrain appearance
+
+Select a registered terrain theme in the platform Inspector or the platform brush control. Terrain settings are saved in Schema V5. See the [atlas contract and verification guide](terrain_nine_slice.md) for PNG registration, minimum sizes and the Godot rendering check.

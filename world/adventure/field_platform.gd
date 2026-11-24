@@ -29,7 +29,6 @@ extends StaticBody2D
 		_update_appearance()
 
 var _overrides_visual := false
-var _legacy_visible := true
 
 
 func _ready() -> void:
@@ -71,9 +70,8 @@ func _update_appearance() -> void:
 	var visual := get_node_or_null("Visual") as Polygon2D
 	var active := has_terrain()
 	if visual != null and active != _overrides_visual:
-		if active:
-			_legacy_visible = visual.visible
-		visual.visible = false if active else _legacy_visible
+		# Keep the authored visibility serializable even in the tool preview.
+		RenderingServer.canvas_item_set_visible(visual.get_canvas_item(), visual.visible and not active)
 		_overrides_visual = active
 	queue_redraw()
 

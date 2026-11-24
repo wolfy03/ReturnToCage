@@ -50,6 +50,6 @@ for name in ("PySide6-Essentials", "shiboken6", "PyInstaller"):
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to copy third-party license notices"
 }
-Compress-Archive -LiteralPath $distribution -DestinationPath "$root/ReturnToCageMapEditor-PY-STEP5-win-x64.zip"
+Compress-Archive -LiteralPath $distribution -DestinationPath "$root/ReturnToCageMapEditor-PY-STEP6-win-x64.zip"
 Write-Output "EXE $distribution/ReturnToCageMapEditor.exe"
-Write-Output "ZIP $root/ReturnToCageMapEditor-PY-STEP5-win-x64.zip"
+Write-Output "ZIP $root/ReturnToCageMapEditor-PY-STEP6-win-x64.zip"

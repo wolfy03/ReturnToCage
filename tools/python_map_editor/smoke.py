@@ -71,7 +71,7 @@ def schedule_smoke(app, report, reopen=None, region_reopen=None):
             try:
                 if region_reopen is not None:
                     result["draft_sha256"] = reopen_region(window, region_reopen)
-                    result["checks"].append("fresh process rebuilt the offline V4 region")
+                    result["checks"].append("fresh process rebuilt the offline V5 terrain region")
                     result["passed"] = True
                     return
                 if reopen is not None:

@@ -122,6 +122,12 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
                 and (file_hash(scene), file_hash(region)) == original,
                 "V4 validation measured spawn physics without publishing")
         draft = create_region("v4_packaged", "Packaged fixture", 1200, 600, "flat", 4, RegionEnvironment())
+        from dataclasses import replace
+        from terrain_atlas import read_theme
+
+        floor = draft.objects[0]
+        atlas = read_theme(project, "forest_ground")
+        draft = replace(draft, objects=(replace(floor, properties=replace(floor.properties, terrain=atlas)),))
         window._install_draft(draft)
         window.godot_export_action.trigger()
         wait_job()
@@ -139,7 +145,8 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
         window.save_document(path)
         window.open_document(path)
         require(window.draft.source.scene_uid and window.draft.source.region_uid
-                and window.draft.design == draft.design, "published V4 draft reopened with both resource UIDs")
+                and window.draft.design == draft.design and window.draft.objects == draft.objects,
+                "published V5 terrain draft reopened with both resource UIDs and atlas settings")
 
     def run():
         try:
