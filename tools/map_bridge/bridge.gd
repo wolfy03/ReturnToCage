@@ -379,7 +379,8 @@ func _same_json(a: Variant, b: Variant) -> bool:
 func _same_object(a: Dictionary, b: Dictionary) -> bool:
 	return _same_json(a.position, b.position) and _same_json(a.size, b.size) and a.rotation == b.rotation \
 		and a.properties.get("one_way", false) == b.properties.get("one_way", false) \
-		and a.properties.get("texture_path", "") == b.properties.get("texture_path", "")
+		and a.properties.get("texture_path", "") == b.properties.get("texture_path", "") \
+		and _same_json(a.properties.get("terrain"), b.properties.get("terrain"))
 
 func _export(original: Dictionary, links: Array) -> void:
 	var expected := Contract.scene_state(scene_root, links)

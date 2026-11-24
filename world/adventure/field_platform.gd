@@ -42,9 +42,11 @@ func _update_geometry() -> void:
 	var visual := get_node_or_null("Visual") as Polygon2D
 	if collision == null or visual == null:
 		return
-	var shape := RectangleShape2D.new()
-	shape.size = size
-	collision.shape = shape
+	var shape := collision.shape as RectangleShape2D
+	if shape == null or shape.size != size:
+		shape = RectangleShape2D.new() if shape == null else shape.duplicate() as RectangleShape2D
+		shape.size = size
+		collision.shape = shape
 	collision.one_way_collision = one_way
 	var half := size / 2.0
 	visual.polygon = PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])

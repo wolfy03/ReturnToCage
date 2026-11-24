@@ -1,6 +1,7 @@
 extends RefCounted
 
 const EDIT_ID := &"rtc_map_object_id"
+const PLATFORM_SCRIPT := preload("res://world/adventure/field_platform.gd")
 const PLATFORM := preload("res://world/adventure/field_platform.tscn")
 const DECORATION := preload("res://world/adventure/field_decoration.gd")
 const MIN_SIZE := 4.0
@@ -66,14 +67,27 @@ static func classify(node: Node, root: Node) -> Dictionary:
 			or not collision.shape is RectangleShape2D or not collision.transform.is_equal_approx(Transform2D.IDENTITY) \
 			or not visual.transform.is_equal_approx(Transform2D.IDENTITY):
 		return {"warning": "UNSUPPORTED_NODE: platform needs centered rectangular collision and visual"}
-	var authored_platform: bool = node is FieldPlatform and node.get_script() == preload("res://world/adventure/field_platform.gd")
+	var authored_platform: bool = node is FieldPlatform and node.get_script() == PLATFORM_SCRIPT
 	if not authored_platform and (node.get_script() != null or not polygon_is_rectangle(visual.polygon, collision.shape.size)):
 		return {"warning": "UNSUPPORTED_NODE: custom static body or polygon"}
 	if visual.texture != null or not visual.offset.is_zero_approx() or visual.get_child_count() != 0 or collision.get_child_count() != 0:
 		return {"warning": "UNSUPPORTED_NODE: custom platform surface"}
 	var size: Vector2 = node.size if authored_platform else collision.shape.size
 	var one_way: bool = node.one_way if authored_platform else collision.one_way_collision
-	return {"kind": "platform", "size": size * scale, "scale": scale, "properties": {"one_way": one_way},
+	var properties := {"one_way": one_way}
+	if authored_platform and (node.terrain_texture != null or not node.terrain_theme.is_empty() or node.terrain_margins != Vector4i.ZERO):
+		var path: String = node.terrain_texture.resource_path if node.terrain_texture != null else ""
+		var m: Vector4i = node.terrain_margins
+		var dimensions := Vector2i(texture_size(path))
+		var terrain := {"theme_id": node.terrain_theme, "texture_path": path.trim_prefix("res://"),
+			"source_size": [dimensions.x, dimensions.y], "margins": [m.x, m.y, m.z, m.w]}
+		var issue := terrain_error(terrain, size)
+		if not issue.is_empty():
+			return {"error": issue}
+		if not _can_texture_platform(node):
+			return {"error": "UNSUPPORTED_NODE: themed platform has a custom visual or world scale"}
+		properties.terrain = terrain
+	return {"kind": "platform", "size": size * scale, "scale": scale, "properties": properties,
 		"collision_layer": node.collision_layer, "collision_mask": node.collision_mask}
 
 static func texture_size(asset: String) -> Vector2:
@@ -92,6 +106,8 @@ static func inventory(root: Node, region_id: String) -> Dictionary:
 		if data.is_empty():
 			continue
 		var path := String(root.get_path_to(node))
+		if data.has("error"):
+			return {"error": "%s (%s)" % [data.error, path]}
 		if data.has("warning"):
 			warnings.append("%s (%s)" % [data.warning, path])
 			continue
@@ -262,6 +278,14 @@ static func object_error(object: Dictionary) -> String:
 		return "INVALID_DOCUMENT: invalid rotation or properties for %s" % object.id
 	if kind == "platform" and not object.properties.get("one_way", false) is bool:
 		return "INVALID_DOCUMENT: invalid one-way value for %s" % object.id
+	var terrain: Variant = object.properties.get("terrain")
+	if terrain != null:
+		if kind != "platform":
+			return "INVALID_DOCUMENT: terrain requires a platform"
+		var size := Vector2(float(object.size[0]), float(object.size[1]))
+		var issue := terrain_error(terrain, size)
+		if not issue.is_empty():
+			return "%s (%s)" % [issue, object.id]
 	if kind == "decoration":
 		var texture: Variant = object.properties.get("texture_path")
 		if not texture is String or texture.is_empty() or texture.is_absolute_path() or texture.contains("\\") \
@@ -269,6 +293,71 @@ static func object_error(object: Dictionary) -> String:
 				or texture_size("res://" + texture) == Vector2.ZERO:
 			return "RESOURCE_MISSING: decoration PNG for %s (%s)" % [object.id, texture]
 	return ""
+
+static func _terrain_png(value: Variant) -> Vector2:
+	if not value is String or not value.begins_with("assets/terrain/") or value.contains("\\") or value.contains(":"):
+		return Vector2.ZERO
+	for part: String in value.split("/"):
+		if part.is_empty() or part == "." or part == ".." or part.ends_with(".") or part.ends_with(" "):
+			return Vector2.ZERO
+	return texture_size("res://" + value)
+
+
+static func _terrain_geometry(dimensions: Variant, margins: Variant, actual: Vector2) -> bool:
+	if not dimensions is Array or dimensions.size() != 2 or not margins is Array or margins.size() != 4:
+		return false
+	for n: Variant in dimensions + margins:
+		if not _number_in(n, 1, 2048) or float(n) != floorf(float(n)):
+			return false
+	return actual == Vector2(float(dimensions[0]), float(dimensions[1])) \
+		and margins[0] + margins[2] < dimensions[0] and margins[1] + margins[3] < dimensions[1]
+
+
+static func terrain_error(terrain: Variant, size: Vector2) -> String:
+	if not terrain is Dictionary or terrain.size() != 4 or not terrain.get("theme_id") is String \
+		or RegEx.create_from_string("^[a-z][a-z0-9_]{0,63}$").search(terrain.theme_id) == null:
+		return "INVALID_DOCUMENT: invalid terrain surface"
+	var metadata := "res://assets/terrain/%s.json" % terrain.theme_id
+	if not FileAccess.file_exists(metadata):
+		return "RESOURCE_MISSING: " + metadata
+	var atlas: Variant = JSON.parse_string(FileAccess.get_file_as_string(metadata))
+	if not atlas is Dictionary or atlas.get("format") != "rtc_terrain_9slice" or atlas.get("version") != 1 \
+		or atlas.get("theme_id") != terrain.theme_id or atlas.get("filter") != "nearest" \
+		or atlas.get("edge_mode") != "tile" or atlas.get("center_mode") != "tile" or not atlas.get("margins") is Dictionary:
+		return "INVALID_DOCUMENT: unsupported terrain metadata"
+	var defaults: Dictionary = atlas.margins
+	var atlas_texture := _terrain_png(atlas.get("texture"))
+	if atlas_texture == Vector2.ZERO:
+		return "RESOURCE_MISSING: " + str(atlas.get("texture"))
+	if not _terrain_geometry(atlas.get("source_size"), [defaults.get("left"), defaults.get("top"),
+		defaults.get("right"), defaults.get("bottom")], atlas_texture):
+		return "INVALID_DOCUMENT: invalid terrain atlas dimensions or margins"
+	var actual := _terrain_png(terrain.get("texture_path"))
+	if actual == Vector2.ZERO:
+		return "RESOURCE_MISSING: " + str(terrain.get("texture_path"))
+	if not _terrain_geometry(terrain.get("source_size"), terrain.get("margins"), actual):
+		return "INVALID_DOCUMENT: invalid terrain PNG dimensions or slice margins"
+	for texture: String in [atlas.texture, terrain.texture_path]:
+		var path := "res://" + texture
+		var resource_id := ResourceLoader.get_resource_uid(path)
+		if resource_id != ResourceUID.INVALID_ID and ResourceUID.get_id_path(resource_id) != path:
+			return "UID_CONFLICT: " + path
+	var margins: Array = terrain.margins
+	if size.x < margins[0] + margins[2] or size.y < margins[1] + margins[3]:
+		return "INVALID_DOCUMENT: platform is smaller than its terrain margins"
+	return ""
+
+
+static func _can_texture_platform(node: Node2D) -> bool:
+	if node.get_script() != PLATFORM_SCRIPT and (node.get_script() != null or not node.scene_file_path.is_empty()):
+		return false
+	var visual := node.get_node_or_null("Visual") as Polygon2D
+	var basis := node.global_transform
+	return visual != null and visual.visible and visual.material == null and node.material == null \
+		and not visual.use_parent_material and visual.modulate == Color.WHITE and visual.self_modulate == Color.WHITE \
+		and visual.z_index == 0 and visual.z_as_relative and is_equal_approx(basis.x.length(), 1.0) \
+		and is_equal_approx(basis.y.length(), 1.0)
+
 
 static func _number_in(value: Variant, low: float, high: float) -> bool:
 	return (value is int or value is float) and is_finite(value) and value >= low and value <= high
@@ -305,10 +394,31 @@ static func apply(root: Node2D, node: Node2D, object: Dictionary) -> String:
 	else:
 		var scale := Vector2(old.x.length(), old.y.length())
 		var local_size := size / scale
+		var terrain: Variant = object.properties.get("terrain")
+		if terrain != null:
+			if not _can_texture_platform(node):
+				return "UNSUPPORTED_NODE: terrain requires a standard rectangular visual and unit world scale"
+			if not node is FieldPlatform:
+				var legacy_visual := node.get_node("Visual") as Polygon2D
+				var legacy_collider := node.get_node("CollisionShape2D") as CollisionShape2D
+				node.set_script(PLATFORM_SCRIPT)
+				node.size = legacy_collider.shape.size
+				node.tint = legacy_visual.color
+				node.one_way = legacy_collider.one_way_collision
+				node.set_meta(EDIT_ID, object.id)
 		set_world(node, Transform2D(radians, scale, 0.0, offset))
 		if node is FieldPlatform:
 			node.size = local_size
 			node.one_way = object.properties.get("one_way", false)
+			if terrain is Dictionary:
+				node.terrain_theme = terrain.theme_id
+				node.terrain_texture = ResourceLoader.load("res://" + terrain.texture_path, "Texture2D") as Texture2D
+				var m: Array = terrain.margins
+				node.terrain_margins = Vector4i(int(m[0]), int(m[1]), int(m[2]), int(m[3]))
+			else:
+				node.terrain_theme = ""
+				node.terrain_texture = null
+				node.terrain_margins = Vector4i.ZERO
 		else:
 			var collision := node.get_node("CollisionShape2D") as CollisionShape2D
 			var visual := node.get_node("Visual") as Polygon2D

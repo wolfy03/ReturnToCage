@@ -22,6 +22,7 @@ from objects import DocumentError, MapObject
 from region_design import RegionDesign
 from source_region import GodotSource, NodeBinding, relative_path
 from strings import tr
+from terrain_atlas import atlas_error
 
 if not getattr(sys, "frozen", False):
     # The shared Windows Job Object helper also serves the traversal worker.
@@ -368,7 +369,13 @@ class GodotSession:
         document = MapDocument(data["region_id"], data["display_name"], *data["extent"],
                                objects=tuple(MapObject.from_data(item) for item in data["objects"]), source=source,
                                design=RegionDesign.from_data(data["design"]) if design else None)
+        self._check_atlases(document)
         return document, data
+
+    def _check_atlases(self, document):
+        for surface in {obj.properties.terrain for obj in document.objects} - {None}:
+            if error := atlas_error(self.stage, surface):
+                raise BridgeError("INVALID_DOCUMENT", error)
 
     def _source(self, data, manifest):
         region = data["region_path"]
@@ -391,6 +398,7 @@ class GodotSession:
         if self.manifest.get("project.godot") != source.project_id or fingerprint(self.manifest) != source.fingerprint:
             raise BridgeError("SOURCE_MODIFIED", f"프로젝트 또는 리소스가 Import 이후 변경되었습니다. {source.scene_path}")
         region_path = "res://" + source.region_path
+        self._check_atlases(document)
         expected = self.call("export_region", region_path=region_path, region_id=document.region_id,
                              display_name=document.display_name, objects=[item.to_data() for item in document.objects],
                              source={key: getattr(source, key) for key in ("scene_hash", "region_hash", "scene_path",
@@ -430,6 +438,7 @@ class GodotSession:
             raise BridgeError("INVALID_DOCUMENT", "Choose a V4 design to stage.")
         if design.connections:
             raise BridgeError("UNSUPPORTED_NODE", "Remove the unsupported ESCAPE routes before converting this document.")
+        self._check_atlases(document)
         fields = {"region_id": document.region_id, "display_name": document.display_name,
                   "objects": [item.to_data() for item in document.objects], "design": asdict(design)}
         if source is None:
