@@ -16,7 +16,7 @@ from region_design import RegionDesign
 from source_region import GodotSource
 
 SUFFIX = ".rtcmap"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MIN_EXTENT = 64
 MAX_EXTENT = 32768
@@ -69,14 +69,17 @@ class MapDocument:
 
 def encode(document):
     data = {"schema_version": 2, **asdict(document)}
+    data["objects"] = [item.to_data() for item in document.objects]
     if document.design is not None:
-        data["schema_version"] = SCHEMA_VERSION
+        data["schema_version"] = 4
     else:
         del data["design"]
         if document.source is not None:
             data["schema_version"] = 3
         else:
             del data["source"]
+    if any(item.properties.terrain is not None for item in document.objects):
+        data.update(schema_version=SCHEMA_VERSION, source=data.get("source"), design=data.get("design"))
     payload = (json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("draft exceeds the schema's size limit")
@@ -112,9 +115,12 @@ def _decode_versioned(payload):
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int:
         raise DocumentError("missing or invalid schema_version")
     version = data.pop("schema_version")
-    if version not in (1, 2, 3, SCHEMA_VERSION):
+    if version not in _MIGRATIONS:
         raise DocumentError("unsupported draft version")
-    return MapDocument(**_MIGRATIONS[version](data)), version
+    document = MapDocument(**_MIGRATIONS[version](data))
+    if version < 5 and any(item.properties.terrain is not None for item in document.objects):
+        raise DocumentError("terrain surfaces require Schema V5")
+    return document, version
 
 
 _REGION_FIELDS = {"region_id", "display_name", "width", "height"}
@@ -149,16 +155,21 @@ def _migrate_v3(data):
     return {**_migrate_v2(data), "source": source}
 
 
-def _decode_v4(data):
+def _decode_v4(data, *, allow_draft=False):
     if data.keys() != _V2_FIELDS | {"source", "design"}:
         raise DocumentError("unrecognized or missing V4 draft fields")
-    design = RegionDesign.from_data(data.pop("design"))
+    design_data = data.pop("design")
+    design = None if allow_draft and design_data is None else RegionDesign.from_data(design_data)
     source = data.pop("source")
     return {**_migrate_v2(data), "design": design,
             "source": GodotSource.from_data(source) if source is not None else None}
 
 
-_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _decode_v4}
+def _decode_v5(data):
+    return _decode_v4(data, allow_draft=True)
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _decode_v4, 5: _decode_v5}
 
 
 def _draft_path(path):

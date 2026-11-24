@@ -1,6 +1,6 @@
 """Immutable object data in the Godot 2D coordinate system."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import math
 import re
 
@@ -65,14 +65,48 @@ DEFAULT_LAYERS = (MapLayer("terrain", "지형"), MapLayer("decorations", "장식
 
 
 @dataclass(frozen=True, slots=True)
+class TerrainSurface:
+    theme_id: str
+    texture_path: str
+    source_size: tuple
+    margins: tuple  # left, top, right, bottom
+
+    def __post_init__(self):
+        validate_id(self.theme_id)
+        validate_texture(self.texture_path)
+        if not self.texture_path or not self.texture_path.startswith("assets/terrain/"):
+            raise DocumentError("terrain texture must be a PNG under assets/terrain")
+        for key, count in (("source_size", 2), ("margins", 4)):
+            value = getattr(self, key)
+            if (not isinstance(value, (list, tuple)) or len(value) != count
+                    or any(type(n) is not int or not 1 <= n <= 2048 for n in value)):
+                raise DocumentError(f"invalid terrain {key}")
+            object.__setattr__(self, key, tuple(value))
+        if any(minimum >= length for minimum, length in zip(self.border_size, self.source_size)):
+            raise DocumentError("atlas must contain a positive center region")
+
+    @property
+    def border_size(self):
+        left, top, right, bottom = self.margins
+        return left + right, top + bottom
+
+    @property
+    def minimum_size(self):
+        return tuple(max(MIN_SIZE, n) for n in self.border_size)
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectProperties:
     one_way: bool = False
     texture_path: str = ""
+    terrain: TerrainSurface | None = None
 
     def __post_init__(self):
         if type(self.one_way) is not bool:
             raise DocumentError("one_way must be a boolean")
         validate_texture(self.texture_path)
+        if self.terrain is not None and not isinstance(self.terrain, TerrainSurface):
+            raise DocumentError("invalid terrain surface")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,11 +125,23 @@ class MapObject:
         if self.type not in OBJECT_TYPES or not isinstance(self.properties, ObjectProperties):
             raise DocumentError("unsupported object type or properties")
         if (self.type == "platform" and self.properties.texture_path
-                or self.type == "decoration" and self.properties.one_way):
+                or self.type == "decoration" and (self.properties.one_way or self.properties.terrain is not None)):
             raise DocumentError("properties do not match object type")
         object.__setattr__(self, "position", validate_vector(self.position, -MAX_GEOMETRY))
         object.__setattr__(self, "size", validate_vector(self.size, MIN_SIZE))
         validate_number(self.rotation)
+        if any(n < minimum for n, minimum in zip(self.size, self.minimum_size)):
+            raise DocumentError("platform is smaller than the terrain margins")
+
+    @property
+    def minimum_size(self):
+        return self.properties.terrain.minimum_size if self.properties.terrain else (MIN_SIZE, MIN_SIZE)
+
+    def to_data(self):
+        data = asdict(self)
+        if self.properties.terrain is None:
+            del data["properties"]["terrain"]
+        return data
 
     @classmethod
     def from_data(cls, data):
@@ -104,7 +150,13 @@ class MapObject:
         properties = data["properties"]
         if not isinstance(properties, dict):
             raise DocumentError("invalid object properties")
-        return cls(**{**data, "properties": ObjectProperties(**properties)})
+        properties = properties.copy()
+        try:
+            if properties.get("terrain") is not None:
+                properties["terrain"] = TerrainSurface(**properties["terrain"])
+            return cls(**{**data, "properties": ObjectProperties(**properties)})
+        except TypeError as error:
+            raise DocumentError("invalid object property fields") from error
 
 
 HANDLES = ((-1, -1), (0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0))

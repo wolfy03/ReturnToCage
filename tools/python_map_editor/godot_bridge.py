@@ -392,7 +392,7 @@ class GodotSession:
             raise BridgeError("SOURCE_MODIFIED", f"프로젝트 또는 리소스가 Import 이후 변경되었습니다. {source.scene_path}")
         region_path = "res://" + source.region_path
         expected = self.call("export_region", region_path=region_path, region_id=document.region_id,
-                             display_name=document.display_name, objects=[asdict(item) for item in document.objects],
+                             display_name=document.display_name, objects=[item.to_data() for item in document.objects],
                              source={key: getattr(source, key) for key in ("scene_hash", "region_hash", "scene_path",
                                                                           "scene_uid", "region_uid")},
                              bindings={item.id: item.as_bridge_data() for item in source.bindings})
@@ -431,7 +431,7 @@ class GodotSession:
         if design.connections:
             raise BridgeError("UNSUPPORTED_NODE", "Remove the unsupported ESCAPE routes before converting this document.")
         fields = {"region_id": document.region_id, "display_name": document.display_name,
-                  "objects": [asdict(item) for item in document.objects], "design": asdict(design)}
+                  "objects": [item.to_data() for item in document.objects], "design": asdict(design)}
         if source is None:
             scene_path = f"world/adventure/{document.region_id}.tscn"
             region_path = f"data/content/regions/{document.region_id}.tres"

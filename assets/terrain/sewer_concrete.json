@@ -1,0 +1,19 @@
+{
+  "format": "rtc_terrain_9slice",
+  "version": 1,
+  "theme_id": "sewer_concrete",
+  "texture": "assets/terrain/sewer_concrete.png",
+  "source_size": [
+    29,
+    22
+  ],
+  "margins": {
+    "left": 7,
+    "top": 6,
+    "right": 9,
+    "bottom": 5
+  },
+  "edge_mode": "tile",
+  "center_mode": "tile",
+  "filter": "nearest"
+}
