@@ -1,0 +1,274 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://world/adventure/adventure_region.gd" id="1"]
+[ext_resource type="Script" path="res://world/multiplayer/network_entity_registry.gd" id="2"]
+[ext_resource type="Script" path="res://world/multiplayer/loot_spawn_manager.gd" id="3"]
+[ext_resource type="Script" path="res://world/multiplayer/enemy_spawn_manager.gd" id="4"]
+[ext_resource type="Script" path="res://world/multiplayer/player_spawn_manager.gd" id="5"]
+[ext_resource type="Script" path="res://world/multiplayer/player_spawn_point.gd" id="6"]
+[ext_resource type="Script" path="res://world/region_point.gd" id="7"]
+[ext_resource type="Script" path="res://world/adventure/field_enemy_spawn_point.gd" id="8"]
+[ext_resource type="Script" path="res://world/adventure/field_gather_point.gd" id="9"]
+[ext_resource type="Script" path="res://world/adventure/field_decoration.gd" id="10"]
+[ext_resource type="PackedScene" path="res://world/adventure/field_platform.tscn" id="11"]
+[ext_resource type="Texture2D" path="res://assets/terrain/forest_grass_dirt.png" id="t_G"]
+[ext_resource type="Texture2D" path="res://assets/terrain/forest_soil.png" id="t_S"]
+[ext_resource type="Texture2D" path="res://assets/terrain/forest_tree_root.png" id="t_R"]
+[ext_resource type="Texture2D" path="res://assets/terrain/forest_fallen_log.png" id="t_L"]
+
+[node name="ForestRegion" type="Node2D"]
+script = ExtResource("1")
+
+[node name="NetworkEntityRegistry" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="LootSpawnManager" type="Node" parent="."]
+script = ExtResource("3")
+
+[node name="EnemySpawnManager" type="Node" parent="."]
+script = ExtResource("4")
+
+[node name="PlayerSpawnManager" type="Node" parent="."]
+script = ExtResource("5")
+
+[node name="PlayerSpawnPoint0" type="Marker2D" parent="."]
+position = Vector2(150, 520)
+script = ExtResource("6")
+
+[node name="PlayerSpawnPoint1" type="Marker2D" parent="."]
+position = Vector2(198, 520)
+script = ExtResource("6")
+spawn_index = 1
+
+[node name="PlayerSpawnPoint2" type="Marker2D" parent="."]
+position = Vector2(246, 520)
+script = ExtResource("6")
+spawn_index = 2
+
+[node name="PlayerSpawnPoint3" type="Marker2D" parent="."]
+position = Vector2(294, 520)
+script = ExtResource("6")
+spawn_index = 3
+
+[node name="Terrain" type="Node2D" parent="."]
+
+[node name="GroundWest" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(450, 685)
+size = Vector2(900, 300)
+tint = Color(0.34, 0.5, 0.26, 1)
+terrain_theme = "forest_grass_dirt"
+terrain_texture = ExtResource("t_G")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="FrogHollow" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(1100, 705)
+size = Vector2(400, 260)
+tint = Color(0.34, 0.5, 0.26, 1)
+terrain_theme = "forest_grass_dirt"
+terrain_texture = ExtResource("t_G")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="GroundEast" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(1850, 685)
+size = Vector2(1100, 300)
+tint = Color(0.34, 0.5, 0.26, 1)
+terrain_theme = "forest_grass_dirt"
+terrain_texture = ExtResource("t_G")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="WestLedge" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(640, 511)
+size = Vector2(240, 48)
+tint = Color(0.43, 0.31, 0.19, 1)
+terrain_theme = "forest_soil"
+terrain_texture = ExtResource("t_S")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="FallenLog" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(900, 456)
+size = Vector2(200, 32)
+tint = Color(0.41, 0.3, 0.2, 1)
+one_way = true
+terrain_theme = "forest_fallen_log"
+terrain_texture = ExtResource("t_L")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="HollowRoot" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(1160, 503)
+size = Vector2(160, 32)
+tint = Color(0.38, 0.26, 0.17, 1)
+one_way = true
+terrain_theme = "forest_tree_root"
+terrain_texture = ExtResource("t_R")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="RootStepLow" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(1490, 503)
+size = Vector2(140, 32)
+tint = Color(0.38, 0.26, 0.17, 1)
+one_way = true
+terrain_theme = "forest_tree_root"
+terrain_texture = ExtResource("t_R")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="RootStepHigh" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(1710, 456)
+size = Vector2(180, 32)
+tint = Color(0.38, 0.26, 0.17, 1)
+one_way = true
+terrain_theme = "forest_tree_root"
+terrain_texture = ExtResource("t_R")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="HighLog" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(1950, 409)
+size = Vector2(180, 32)
+tint = Color(0.41, 0.3, 0.2, 1)
+one_way = true
+terrain_theme = "forest_fallen_log"
+terrain_texture = ExtResource("t_L")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="Overlook" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(2230, 362)
+size = Vector2(260, 32)
+tint = Color(0.34, 0.5, 0.26, 1)
+one_way = true
+terrain_theme = "forest_grass_dirt"
+terrain_texture = ExtResource("t_G")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="WestWall" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(-360, 297.5)
+size = Vector2(720, 1075)
+tint = Color(0.43, 0.31, 0.19, 1)
+terrain_theme = "forest_soil"
+terrain_texture = ExtResource("t_S")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="EastWall" parent="Terrain" instance=ExtResource("11")]
+position = Vector2(2760, 297.5)
+size = Vector2(720, 1075)
+tint = Color(0.43, 0.31, 0.19, 1)
+terrain_theme = "forest_soil"
+terrain_texture = ExtResource("t_S")
+terrain_margins = Vector4i(16, 16, 16, 16)
+
+[node name="Decorations" type="Node2D" parent="."]
+
+[node name="BushWest" type="Marker2D" parent="Decorations"]
+position = Vector2(360, 513)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/bush.png"
+
+[node name="BushMid" type="Marker2D" parent="Decorations"]
+position = Vector2(1385, 513)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/bush.png"
+
+[node name="BushEast" type="Marker2D" parent="Decorations"]
+position = Vector2(2060, 513)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/bush.png"
+
+[node name="MushroomTrail" type="Marker2D" parent="Decorations"]
+position = Vector2(470, 523)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/mushroom.png"
+
+[node name="MushroomHollowA" type="Marker2D" parent="Decorations"]
+position = Vector2(1000, 563)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/mushroom.png"
+
+[node name="MushroomHollowB" type="Marker2D" parent="Decorations"]
+position = Vector2(1215, 563)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/mushroom.png"
+
+[node name="MushroomEast" type="Marker2D" parent="Decorations"]
+position = Vector2(1960, 523)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/mushroom.png"
+
+[node name="MushroomOverlook" type="Marker2D" parent="Decorations"]
+position = Vector2(2150, 334)
+script = ExtResource("10")
+asset_path = "res://assets/decorations/forest/mushroom.png"
+
+[node name="SpawnPoints" type="Node2D" parent="."]
+
+[node name="HollowBeetle" type="Marker2D" parent="SpawnPoints"]
+position = Vector2(1100, 565)
+script = ExtResource("8")
+spawn_id = &"forest_beetle_hollow"
+enemy_id = &"sewer_beetle"
+
+[node name="TrailBeetle" type="Marker2D" parent="SpawnPoints"]
+position = Vector2(1750, 525)
+script = ExtResource("8")
+spawn_id = &"forest_beetle_trail"
+enemy_id = &"sewer_beetle"
+
+[node name="GatherPoints" type="Node2D" parent="."]
+
+[node name="BerryBush" type="Marker2D" parent="GatherPoints"]
+position = Vector2(640, 457)
+script = ExtResource("9")
+interaction_id = &"forest_berry_ledge"
+item_id = &"berry"
+amount = 2
+
+[node name="MossPatch" type="Marker2D" parent="GatherPoints"]
+position = Vector2(1710, 410)
+script = ExtResource("9")
+interaction_id = &"forest_moss_root"
+item_id = &"moss_fiber"
+amount = 2
+
+[node name="OverlookBerries" type="Marker2D" parent="GatherPoints"]
+position = Vector2(2190, 316)
+script = ExtResource("9")
+interaction_id = &"forest_berry_overlook"
+item_id = &"berry"
+
+[node name="RegionPoints" type="Node2D" parent="."]
+
+[node name="Entry" type="Marker2D" parent="RegionPoints"]
+position = Vector2(150, 520)
+script = ExtResource("7")
+point_id = &"forest_trail"
+
+[node name="TrailEscape" type="Marker2D" parent="RegionPoints"]
+position = Vector2(70, 510)
+script = ExtResource("7")
+point_id = &"forest_trail"
+kind = 1
+
+[node name="OverlookEscape" type="Marker2D" parent="RegionPoints"]
+position = Vector2(2300, 322)
+script = ExtResource("7")
+point_id = &"forest_overlook"
+kind = 1
+
+[node name="Climbables" type="Node2D" parent="."]
+
+[node name="Signs" type="Node2D" parent="."]
+
+[node name="Title" type="Label" parent="Signs"]
+offset_left = 30.0
+offset_top = 35.0
+theme_override_font_sizes/font_size = 18
+text = "FOREST TRAIL / Danger 1"
+
+[node name="Entrance" type="Label" parent="Signs"]
+offset_left = 35.0
+offset_top = 455.0
+theme_override_font_sizes/font_size = 18
+text = "Trailhead"
+
+[node name="Overlook" type="Label" parent="Signs"]
+offset_left = 2255.0
+offset_top = 268.0
+theme_override_font_sizes/font_size = 18
+text = "Overlook"

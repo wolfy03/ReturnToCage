@@ -13,7 +13,8 @@ PROJECT = Path(__file__).resolve().parents[3]
 
 def test_registered_themes_and_v5_round_trip():
     themes, errors = discover_themes(PROJECT)
-    assert set(themes) == {"sewer_concrete", "forest_ground"}
+    assert set(themes) == {"sewer_concrete", "forest_ground", "forest_grass_dirt", "forest_soil",
+                           "forest_tree_root", "forest_fallen_log"}
     assert not errors
     surface = themes["sewer_concrete"]
     platform = MapObject("platform_a", "platform", "terrain", (31, 45), surface.minimum_size,

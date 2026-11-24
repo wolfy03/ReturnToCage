@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="RegionDefinition" load_steps=2 format=3]
+[ext_resource path="res://data/definitions/region_definition.gd" type="Script" id="1"]
+[resource]
+script = ExtResource("1")
+id = &"forest_region"
+display_name = "Forest Trail"
+description = "A sunlit trail of roots and fallen logs. Beetles patrol the flats."
+scene_path = "res://world/adventure/forest_region.tscn"
+danger_level = 1
+entry_point_ids = Array[StringName]([&"forest_trail"])
+escape_point_ids = Array[StringName]([&"forest_trail", &"forest_overlook"])
+major_resource_ids = Array[StringName]([&"berry", &"moss_fiber"])
+enemy_ids = Array[StringName]([&"sewer_beetle"])
+recommended_gear = "Sharpened Twig, berries, clean water"
+environment_path = "res://world/environment/presets/forest_environment.tres"
+environment_loading_color = Color(0.5882353, 0.8039216, 0.88235295, 1)

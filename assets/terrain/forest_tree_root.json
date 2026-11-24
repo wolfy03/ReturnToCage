@@ -1,0 +1,19 @@
+{
+  "format": "rtc_terrain_9slice",
+  "version": 1,
+  "theme_id": "forest_tree_root",
+  "texture": "assets/terrain/forest_tree_root.png",
+  "source_size": [
+    48,
+    48
+  ],
+  "margins": {
+    "left": 16,
+    "top": 16,
+    "right": 16,
+    "bottom": 16
+  },
+  "edge_mode": "tile",
+  "center_mode": "tile",
+  "filter": "nearest"
+}

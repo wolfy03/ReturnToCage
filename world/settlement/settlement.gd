@@ -82,8 +82,20 @@ func _create_exits() -> void:
 		var result := NetworkManager._begin_player_world_transition(actor.peer_id, sewer_data.id, &"sewer_region") if server_runtime_mode and actor is PlayerActor else NetworkManager.request_enter_region(sewer_data.id, &"sewer_region")
 		GameSession.last_message = result.message
 	)
+	_create_region_exit(&"forest_gate", &"forest_region", Vector2(1010, 510), Color("3f6b3a"))
 	var field := WorldHelpers.add_interaction(self, &"field_gate", "Locked: improve settlement", Vector2(1160, 510), Vector2(100, 90), Color("4b4b4b"), 1)
 	field.enabled = false
+
+func _create_region_exit(exit_id: StringName, region_id: StringName, at: Vector2, color: Color) -> void:
+	var data := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
+	if data == null:
+		push_error("Missing settlement exit: %s" % exit_id)
+		return
+	var target := WorldHelpers.add_interaction(self, data.id, "%s - %s" % [data.prompt, data.display_name], at, Vector2(96, 90), color, 5)
+	target.activated.connect(func(actor: Node) -> void:
+		var result := NetworkManager._begin_player_world_transition(actor.peer_id, data.id, region_id) if server_runtime_mode and actor is PlayerActor else NetworkManager.request_enter_region(data.id, region_id)
+		GameSession.last_message = result.message
+	)
 
 func _create_save_post() -> void:
 	WorldHelpers.add_label(self, "Archive post", Vector2(30, 455))

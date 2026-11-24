@@ -76,3 +76,25 @@ Polygon2D 외곽을 함께 편집한다. 일반 지형의 layer와 mask는 1이�
 GUI에서 씬 배치를 편집하는 방법은 [Field Editor 사용법](field_editor.md)을 참고한다.
 
 새 AdventureRegion은 [New Region과 배치 프리셋](field_editor.md#지역-생성과-배치-프리셋)으로 시작할 수 있다. 생성 후 출구 연결과 해금 조건을 작성한다.
+
+## Forest Trail (`forest_region`)
+
+두 번째 모험 지역이다. 새 로더나 스키마 없이 기존 Region 구조만 쓴다.
+
+| 항목 | 위치 |
+|---|---|
+| 정의 | `data/content/regions/forest_region.tres` |
+| 씬 | `world/adventure/forest_region.tscn` (`region_scaffold.tscn`과 같은 그룹 구조) |
+| 정착지 출구 | `data/content/exits/forest_gate.tres`, `Settlement._create_region_exit()` |
+| 배경 | `world/environment/presets/forest_environment.tres` (far / mid / near 3 레이어) |
+| 지형 테마 | `assets/terrain/forest_grass_dirt`, `forest_soil`, `forest_tree_root`, `forest_fallen_log` |
+
+- ENTRY/ESCAPE `forest_trail`은 서쪽 입구, ESCAPE `forest_overlook`은 동쪽 위 전망대다.
+  지역 간 직접 이동은 런타임에 없으므로 숲은 정착지 `forest_gate`로만 들어간다.
+- 플레이어 점프 높이는 약 69px(-390 / 1100)이다. 단차는 48px, 발판 사이 간격은 60~80px로
+  맞췄고 위쪽 경로 발판은 전부 one-way다. 지형을 고치면 실제 입력으로 다시 확인한다.
+- 통나무·뿌리는 사각형 `FieldPlatform` + nine-slice 테마다. 불규칙 충돌체는 쓰지 않는다.
+- 새 게임만 `forest_gate`/`forest_region`이 해금된다(`default_game_start.tres`). 기존 Save는
+  저장된 해금 목록을 그대로 쓰므로 숲이 열리지 않는다.
+- **임시 프로그래머 아트**: 위 지형 테마 4종, `assets/backgrounds/forest/*.png`,
+  `assets/decorations/forest/*.png`는 전부 스크립트로 그린 placeholder다. 완성 아트가 아니다.

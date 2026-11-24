@@ -100,6 +100,7 @@ func run_all() -> void:
 	await preload("res://tests/unit/test_world_runtime.gd").new().run(self)
 	await preload("res://tests/unit/test_gameplay_authority.gd").new().run(self)
 	preload("res://tests/unit/test_field_scene.gd").new().run(self)
+	preload("res://tests/unit/test_forest_region.gd").new().run(self)
 	await preload("res://tests/unit/test_environment_presentation.gd").new().run(self)
 	await preload("res://tests/unit/test_player_spawn_policy.gd").new().run(self)
 	preload("res://tests/unit/test_local_player_profile.gd").new().run(self)
@@ -357,6 +358,9 @@ func test_session_start_and_ownership() -> void:
 	var sword := GameSession.player.equipment.equipped(EquipmentDefinition.EquipmentSlot.MAIN_HAND)
 	assert_true(sword.instance_id.begins_with("twig_sword_") and sword.instance_id.length() == 43, "new starter sword carries an authority-issued identity")
 	expected.equipment["0"].instance_id = sword.instance_id
+	# The Forest Trail is new starting content; the legacy fixture itself stays untouched.
+	expected["unlocked_regions"] = ["sewer_region", "forest_region"]
+	expected["unlocked_exits"] = ["sewer_gate", "forest_gate"]
 	_assert_saved_fields(GameSession.export_state(), expected, "new game retains legacy values apart from the issued identity")
 	assert_true(GameSession.get_player(GameSession.get_local_peer_id()) == GameSession.player, "active peer and local facade share one PlayerState")
 	assert_true(GameSession.get_player_state_by_player_id(GameSession.get_local_player_id()) == GameSession.player, "persistent registry and active view share one PlayerState")

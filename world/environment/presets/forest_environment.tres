@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="EnvironmentDefinition" format=3]
+
+[ext_resource type="Script" path="res://world/environment/background_layer_definition.gd" id="1"]
+[ext_resource type="Script" path="res://world/environment/environment_definition.gd" id="2"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/forest/forest_far.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/forest/forest_mid.png" id="4"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/forest/forest_near.png" id="5"]
+
+[sub_resource type="Resource" id="Far"]
+script = ExtResource("1")
+layer_name = &"far"
+texture = ExtResource("3")
+fit_mode = 1
+
+[sub_resource type="Resource" id="Mid"]
+script = ExtResource("1")
+layer_name = &"mid"
+texture = ExtResource("4")
+scroll_scale = Vector2(0.25, 0.85)
+repeat_size = Vector2(1280, 0)
+repeat_times = 3
+z_index = -600
+
+[sub_resource type="Resource" id="Near"]
+script = ExtResource("1")
+layer_name = &"near"
+texture = ExtResource("5")
+scroll_scale = Vector2(0.55, 1)
+repeat_size = Vector2(1280, 0)
+repeat_times = 3
+z_index = -200
+
+[resource]
+script = ExtResource("2")
+fallback_color = Color(0.5882353, 0.8039216, 0.88235295, 1)
+layers = Array[ExtResource("1")]([SubResource("Far"), SubResource("Mid"), SubResource("Near")])
