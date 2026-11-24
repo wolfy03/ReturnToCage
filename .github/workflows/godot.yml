@@ -23,7 +23,7 @@ jobs:
       - name: Import, validate, test and restart
         run: python tools/check_project.py --godot "$GODOT"
       - name: Release publication boundary tests
-        run: python -m unittest discover -s tools/tests -p test_windows_release_validation.py
+        run: python -m unittest discover -s tools/tests -p "test_*.py"
       - name: Normal ENet and Host disconnect E2E
         run: |
           python tools/test_multiplayer_local.py --godot "$GODOT" --players 2
@@ -48,13 +48,13 @@ jobs:
           python tools/test_multiplayer_authority.py --godot "$GODOT" --players 3
           python tools/test_multiplayer_protocol.py --godot "$GODOT" --players 2
       - name: Disconnect menu input and session recovery E2E
-        run: python tools/test_multiplayer_disconnect.py --godot "$GODOT" --artifacts build/validation/disconnect-ui
+        run: python tools/test_multiplayer_disconnect.py --godot "$GODOT" --artifacts build/validation/disconnect-ui --ipv6 require
       - name: Host and Client presentation roster ENet E2E
         run: |
           python tools/test_multiplayer_roster.py --godot "$GODOT" --players 2 --artifacts build/validation/roster2
           python tools/test_multiplayer_roster.py --godot "$GODOT" --players 3 --artifacts build/validation/roster3
       - name: Same-process single/multiplayer lifecycle E2E
-        run: python tools/test_session_recovery.py --godot "$GODOT" --artifacts build/validation/lifecycle
+        run: python tools/test_session_recovery.py --godot "$GODOT" --artifacts build/validation/lifecycle --ipv6 require
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -104,7 +104,7 @@ jobs:
           $version = (Get-Content .godot-version).Trim()
           "GODOT=$env:RTC_GODOT\Godot_v$version-stable_win64_console.exe" >> $env:GITHUB_ENV
       - name: Release publication boundary tests
-        run: python -m unittest discover -s tools/tests -p test_windows_release_validation.py
+        run: python -m unittest discover -s tools/tests -p "test_*.py"
       - name: Build release EXE and execute content and ENet validation
         shell: pwsh
         env:
@@ -117,7 +117,7 @@ jobs:
         run: python tools/test_inventory_ui.py --godot "$env:GODOT" --rendered
       - name: Disconnect menu input and session recovery E2E
         shell: pwsh
-        run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui
+        run: python tools/test_multiplayer_disconnect.py --godot "$env:GODOT" --artifacts build/validation/disconnect-ui --ipv6 require
       - name: Host and Client presentation roster ENet E2E
         shell: pwsh
         run: |

@@ -63,6 +63,10 @@ buffered `attack_1 → attack_2`의 sequence/combo step/key/timing, Dodge direct
 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
+### Autoload signal 생명주기 (unit)
+
+재생성 가능한 UI(`AppRoot`, `GameHUD`, `MultiplayerPanel`, `DebugPanel`)는 autoload signal 연결을 `SignalBindings`에 기록해 `_exit_tree`에서 정확히 그 연결만 끊고, tree에 다시 들어오면(`_enter_tree` + `is_node_ready()`) 복원한다. Godot는 target이 free될 때 연결(bound method와 lambda 모두)을 자동 정리하므로 free 이후 누수는 없지만, tree에서 빠졌으나 아직 free되지 않은 구간에는 autoload 이벤트가 그대로 전달된다(예: `AppRoot._return_to_menu`의 `get_tree() == null`). `tests/unit/test_signal_lifecycle.gd`는 AppRoot 생성→detach→재부착→free를 3회, 단독 HUD/MultiplayerPanel 생성·삭제를 3회 반복하며 모든 autoload signal의 연결 수가 기준값으로 돌아오는지, 같은 callback 중복 연결이 없는지, detach된 subtree가 어떤 autoload signal도 받지 않는지, Host/leave 반복이 연결을 늘리지 않는지 확인한다. ObjectDB/orphan 경고는 `check_project.py`의 출력 검사가 실패로 처리한다.
+
 ### 플레이어별 알림 격리
 
 `tests/unit/test_gameplay_notifications.gd`는 offline/host local routing, host 자신의 gather 알림, 원격 private 알림이 host HUD에 나타나지 않는지, shared upgrade 중복 방지, 수신 RPC guard와 `valid_notification`, session 종료 시 정리, Load 결과 표시를 검사한다. 실제 ENet에서는 `test_multiplayer_world_runtime.py`가 host status를 sentinel로 고정한 채 gather(2인 B / 3인 C), B return, B death 알림이 소유자에게 정확히 1회 가고 host와 다른 client에는 가지 않는지(`NOTIFICATION ... ISOLATION OK`), client B의 workbench upgrade가 B에게 1회(command result), host와 C에게 shared로 1회 가는지(`NOTIFICATION SHARED UPGRADE OK`) 확인한다. `test_multiplayer_local.py`는 disconnect 전 personal notice가 자기 client에만 도착하는지, session 종료 후 메시지가 비는지, reconnect 후 새 peer mapping으로 자기 identity의 notice만 받는지 확인한다.
@@ -91,9 +95,15 @@ inventory(instance_id·수량 보존)다. E2E는 각 경로를 실제 world 설�
   `unsecured_loot`가 아니라 owner-private main bag으로 돌아오는지 확인한다. 단위 수준의
   instance_id·수량 보존은 `tests/integration/test_inventory_drop.gd`가 검사한다.
 
-`test_multiplayer_disconnect.py`와 `test_session_recovery.py`는 `::1` IPv6 loopback join을
-포함하므로 IPv6가 없는 환경(일부 컨테이너)에서는 해당 단계에서 실패한다. GitHub runner는
-IPv6 loopback을 지원한다. lifecycle 입력 검사에서 dodge 이후 정지 판정은 attack과 같이
+`test_multiplayer_disconnect.py`와 `test_session_recovery.py`의 loopback 정책은
+`tools/loopback_policy.py`가 정한다. 기본 Host/Join 주소는 IPv4 `127.0.0.1`(`--address`로 변경 가능,
+loopback IP literal만 허용)이고, 두 번째 Host에 다른 주소 형식으로 접속하는 단계만 IPv6 `::1`을
+쓴다. `--ipv6 auto`(기본)는 `::1`을 bind할 수 있을 때만 그 단계를 IPv6로 실행하고, 아니면 IPv4로
+실행한 뒤 `IPv6 SKIPPED (사유)`를 출력한다. `--ipv6 require`는 IPv6를 쓸 수 없으면 실패하고,
+`--ipv6 skip`은 IPv4로 고정한다. 결과는 PASS 줄과 lifecycle `summary.json`의 `loopback`에
+IPv4/IPv6로 구분해 기록된다. CI(Linux/Windows)는 `--ipv6 require`로 실행하고, Windows release
+EXE lifecycle도 `ipv6_mode="require"`를 쓰므로 기존 IPv6 검증은 약화되지 않는다. 정책 자체는
+`tools/tests/test_loopback_policy.py`가 검사한다. lifecycle 입력 검사에서 dodge 이후 정지 판정은 attack과 같이
 `ready_action`(CombatAction IDLE + 접지)을 기다린다. dodge 실행 tick에는 속도가 아직 적용되지
 않아, 그 전에 정지를 판정하면 이어지는 dodge 이동을 위반으로 오판한다.
 
@@ -338,7 +348,8 @@ port is supplied to the same production Host/Join handlers. Isolated user-data
 directories and newly created test profiles keep production identities/Saves out
 of the test. It covers Host Disconnect → New/Load/Host/Host Save, explicit Client
 Disconnect → New Game, automatic server loss → New Game/rejoin, and joining the
-replacement Host at `::1` after the first Host at `127.0.0.1`. Host Save is repeated
+replacement Host at `::1` (the IPv6 step; IPv4 fallback only under `--ipv6 auto` without IPv6)
+after the first Host at `127.0.0.1`. Host Save is repeated
 with the same saved session ID after an Adventure increased the old revision.
 
 Every menu checkpoint verifies offline transport, empty attachment/ready/roster

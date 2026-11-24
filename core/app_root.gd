@@ -29,6 +29,10 @@ var _host_saved_game_path: String = SaveManager.SAVE_PATH
 # exactly that file (same source and bytes) or refuses.
 var _identity_inspection: Dictionary = {}
 
+# Autoload signal connections owned by this root; released in _exit_tree so a
+# detached or shutting-down AppRoot never reacts to session events.
+var autoload_signals := SignalBindings.new()
+
 func _ready() -> void:
 	SceneRouter.register_world_layer(world_layer)
 	%NewGameButton.pressed.connect(_start_new_game)
@@ -38,12 +42,13 @@ func _ready() -> void:
 	multiplayer_panel.host_saved_requested.connect(_host_saved_game)
 	multiplayer_panel.join_requested.connect(_join_game)
 	multiplayer_panel.disconnect_requested.connect(_leave_game)
-	NetworkManager.session_synchronized.connect(_enter_network_session)
-	NetworkManager.local_world_assignment_received.connect(_apply_local_world_assignment)
-	NetworkManager.world_transition_failed.connect(_show_error)
-	NetworkManager.connection_failed.connect(_on_network_failure)
-	NetworkManager.server_disconnected.connect(_on_server_disconnected)
-	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
+	autoload_signals.add(NetworkManager.session_synchronized, _enter_network_session)
+	autoload_signals.add(NetworkManager.local_world_assignment_received, _apply_local_world_assignment)
+	autoload_signals.add(NetworkManager.world_transition_failed, _show_error)
+	autoload_signals.add(NetworkManager.connection_failed, _on_network_failure)
+	autoload_signals.add(NetworkManager.server_disconnected, _on_server_disconnected)
+	autoload_signals.add(NetworkManager.multiplayer_session_ended, _on_multiplayer_session_ended)
+	autoload_signals.connect_all()
 	identity_dialog.recover_requested.connect(_recover_identity)
 	identity_dialog.activation_retry_requested.connect(_retry_identity_activation)
 	identity_dialog.create_new_requested.connect(_create_new_identity)
@@ -337,3 +342,11 @@ func _finish_menu_transition() -> void:
 func _show_error(message: String) -> void:
 	error_label.text = message
 	error_label.visible = true
+
+func _enter_tree() -> void:
+	# Re-entering after a detach restores the bindings released by _exit_tree.
+	if is_node_ready():
+		autoload_signals.connect_all()
+
+func _exit_tree() -> void:
+	autoload_signals.disconnect_all()

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 
+import loopback_policy
 from test_multiplayer_roster import publish_command
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,8 @@ class Probe:
         self.roles: dict[str, dict] = {}
         self.steps: list[dict] = []
         self.port = free_port()
+        self.loopback = loopback_policy.resolve(args.address, args.ipv6)
+        print("LOOPBACK", self.loopback.describe(), flush=True)
 
     def launch(self, role: str) -> None:
         folder = self.directory / role
@@ -100,7 +103,7 @@ class Probe:
         self.launch("B")
         self.call("A", "seed_save")
         self.call("A", "host")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.call("A", "adventure")
         self.call("A", "disconnect")
         self.call("B", "check_menu")
@@ -113,27 +116,29 @@ class Probe:
         self.call("A", "host")
         self.call("A", "stale_callbacks")
         self.call("B", "to_menu")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.call("B", "disconnect")
         self.call("B", "new_game")
         self.call("B", "to_menu")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.call("A", "disconnect")
         self.call("B", "check_menu")
         first_save_host = self.call("A", "host_saved")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.call("A", "adventure")
         self.call("A", "disconnect")
         self.call("B", "check_menu")
         second_save_host = self.call("A", "host_saved")
         if first_save_host["session_id"] != second_save_host["session_id"]:
             raise RuntimeError("Host Save fixture failed to reuse its saved session ID")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.call("A", "disconnect")
         self.call("B", "check_menu")
         self.launch("D")
         self.call("D", "host")
-        self.call("B", "join", address="::1")
+        # Joining the same kind of Host through a second address form keeps the
+        # IPv6 parse/dual-stack check where available (see loopback_policy).
+        self.call("B", "join", address=self.loopback.alternate)
         self.call("B", "disconnect")
         self.call("B", "new_game")
         self.call("D", "disconnect")
@@ -145,7 +150,7 @@ class Probe:
             output = (item["folder"] / "engine.log").read_text(encoding="utf-8", errors="replace")
             if code or ERRORS.search(output) or "DISCONNECT RECOVERY PROBE PASS" not in output:
                 raise RuntimeError(f"process exit={code}\n{output}")
-        print("MULTIPLAYER DISCONNECT UI RECOVERY PASS (3 persistent processes)", flush=True)
+        print("MULTIPLAYER DISCONNECT UI RECOVERY PASS (3 persistent processes; %s)" % self.loopback.describe(), flush=True)
 
     def close(self) -> None:
         for role, item in self.roles.items():
@@ -163,7 +168,13 @@ def main() -> int:
     parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--rendered", action="store_true")
     parser.add_argument("--rendering-method", default="gl_compatibility", choices=("gl_compatibility", "forward_plus"))
-    probe = Probe(parser.parse_args())
+    loopback_policy.add_arguments(parser)
+    args = parser.parse_args()
+    try:
+        probe = Probe(args)
+    except (RuntimeError, ValueError) as error:
+        print("Disconnect recovery failed:", error, file=sys.stderr)
+        return 1
     try:
         probe.run()
         return 0

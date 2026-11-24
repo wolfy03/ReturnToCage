@@ -22,6 +22,9 @@ var inventory_presenter: InventoryPresenter
 func _has_active_game() -> bool:
 	return GameSession.phase != GameSession.Phase.MENU and not GameSession.session_id.is_empty()
 
+# Autoload signal connections owned by this HUD; released in _exit_tree.
+var autoload_signals := SignalBindings.new()
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	visible = _has_active_game()
@@ -29,22 +32,23 @@ func _ready() -> void:
 	_build_ui()
 	inventory_presenter = InventoryPresenter.new()
 	add_child(inventory_presenter)
-	SceneRouter.transition_finished.connect(_on_transition_finished)
-	GameSession.inventory_changed.connect(refresh_all)
-	GameSession.session_reset.connect(refresh_all)
-	NetworkManager.multiplayer_session_ended.connect(_on_session_ended)
-	GameSession.storage_changed.connect(refresh_all)
-	GameSession.settlement_state_changed.connect(func(_revision: int) -> void: refresh_all())
-	GameSession.facility_changed.connect(func(_id: StringName, _level: int) -> void: refresh_all())
-	GameSession.quest_changed.connect(func(_id: StringName) -> void: refresh_all())
-	GameSession.phase_changed.connect(refresh_all)
-	GameSession.player_world_changed.connect(func(_player_id: StringName, _state: PlayerWorldState) -> void: refresh_all())
-	GameSession.difficulty_changed.connect(func(_id: StringName) -> void: refresh_all())
-	GameSession.adventure_finished.connect(func(_result: AdventureSession.Result, _summary: String) -> void: refresh_all())
-	GameSession.player_combat_runtime_changed.connect(_on_player_combat_runtime_changed)
-	GameSession.notifications.remote_message_received.connect(_on_remote_message_received)
-	SaveManager.save_finished.connect(_on_persistence_result)
-	SaveManager.load_finished.connect(_on_persistence_result)
+	autoload_signals.add(SceneRouter.transition_finished, _on_transition_finished)
+	autoload_signals.add(GameSession.inventory_changed, refresh_all)
+	autoload_signals.add(GameSession.session_reset, refresh_all)
+	autoload_signals.add(NetworkManager.multiplayer_session_ended, _on_session_ended)
+	autoload_signals.add(GameSession.storage_changed, refresh_all)
+	autoload_signals.add(GameSession.settlement_state_changed, refresh_all.unbind(1))
+	autoload_signals.add(GameSession.facility_changed, refresh_all.unbind(2))
+	autoload_signals.add(GameSession.quest_changed, refresh_all.unbind(1))
+	autoload_signals.add(GameSession.phase_changed, refresh_all)
+	autoload_signals.add(GameSession.player_world_changed, refresh_all.unbind(2))
+	autoload_signals.add(GameSession.difficulty_changed, refresh_all.unbind(1))
+	autoload_signals.add(GameSession.adventure_finished, refresh_all.unbind(2))
+	autoload_signals.add(GameSession.player_combat_runtime_changed, _on_player_combat_runtime_changed)
+	autoload_signals.add(GameSession.notifications.remote_message_received, _on_remote_message_received)
+	autoload_signals.add(SaveManager.save_finished, _on_persistence_result)
+	autoload_signals.add(SaveManager.load_finished, _on_persistence_result)
+	autoload_signals.connect_all()
 	refresh_all()
 
 func _build_ui() -> void:
@@ -180,9 +184,14 @@ func _on_session_ended(_reason: String) -> void:
 	visible = false
 	_bind_player(null)
 
+
+func _enter_tree() -> void:
+	# Re-entering after a detach restores the bindings released by _exit_tree.
+	if is_node_ready():
+		autoload_signals.connect_all()
+
 func _exit_tree() -> void:
-	if GameSession.notifications.remote_message_received.is_connected(_on_remote_message_received):
-		GameSession.notifications.remote_message_received.disconnect(_on_remote_message_received)
+	autoload_signals.disconnect_all()
 	_bind_player(null)
 
 func _on_remote_message_received(_message: String) -> void:

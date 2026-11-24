@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 
+import loopback_policy
 from test_multiplayer_roster import Probe as RosterController, publish_command
 from test_windows_export import ERRORS
 
@@ -18,8 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class LifecycleChecks(RosterController):
     def __init__(self, godot: str, executable: Path | None, artifacts: Path,
-                 rendered: bool = False, rendering_method: str | None = None) -> None:
+                 rendered: bool = False, rendering_method: str | None = None,
+                 address: str = loopback_policy.IPV4_LOOPBACK, ipv6_mode: str = "auto") -> None:
         super().__init__(SimpleNamespace(godot=godot, artifacts=artifacts, rendered=rendered))
+        self.loopback = loopback_policy.resolve(address, ipv6_mode)
+        print("LOOPBACK", self.loopback.describe(), flush=True)
         self.executable = executable.resolve() if executable else None
         self.rendering_method = rendering_method
         self.worlds: dict[str, str] = {}
@@ -238,7 +242,7 @@ class LifecycleChecks(RosterController):
         self.call("A", "host")
         self.worlds["A"] = "settlement"
         self.launch("B")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("two-player drop fixture")
         self._check_world_drop()
@@ -268,7 +272,7 @@ class LifecycleChecks(RosterController):
         self.launch("B")
         first_host = self.call("A", "host")  # Loaded single-player -> Host in the same process.
         self.worlds["A"] = "settlement"
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("two-player join")
         self.call("A", "item_windows")
@@ -295,7 +299,7 @@ class LifecycleChecks(RosterController):
         self.movement("B")
         self.verify_input_isolation(third=False)
         self.launch("D")
-        self.call("D", "join", address="127.0.0.1")
+        self.call("D", "join", address=self.loopback.primary)
         self.worlds["D"] = "settlement"
         self.check("three-player late join")
         self.verify_input_isolation(third=True)
@@ -316,7 +320,7 @@ class LifecycleChecks(RosterController):
         self.call("A", "field_gear_rehost")
         self.worlds["A"] = "settlement"
         for role in ("B", "D"):
-            self.call(role, "join", address="127.0.0.1")
+            self.call(role, "join", address=self.loopback.primary)
             self.worlds[role] = "settlement"
         self.check("craft save and rehost")
         self.call("B", "slot_check")
@@ -335,7 +339,7 @@ class LifecycleChecks(RosterController):
         self.travel("B", "return")
         self.call("B", "disconnect")
         del self.worlds["B"]
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("equipped client reconnects")
         self.call("B", "slot_check")
@@ -348,7 +352,7 @@ class LifecycleChecks(RosterController):
         self.call("A", "field_gear_rehost")
         self.worlds["A"] = "settlement"
         for role in ("B", "D"):
-            self.call(role, "join", address="127.0.0.1")
+            self.call(role, "join", address=self.loopback.primary)
             self.worlds[role] = "settlement"
         self.check("equipped client restored from Host Save")
         self.call("B", "slot_check")
@@ -402,7 +406,7 @@ class LifecycleChecks(RosterController):
         self.movement("A")
         self.call("A", "host_saved")
         self.worlds["A"] = "settlement"
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("restored host and returning client")
         # D remains disconnected while A and B exercise the saved session.
@@ -427,7 +431,7 @@ class LifecycleChecks(RosterController):
         self.movement("B")
         self.call("B", "to_menu")
         self.call("D", "check_menu")
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("same-process client rejoin")
         self.start_input_movement("B")
@@ -443,7 +447,8 @@ class LifecycleChecks(RosterController):
         if first_host["session_id"] == replacement["session_id"]:
             raise RuntimeError("Replacement Host reused the old Host session")
         self.worlds["D"] = "settlement"
-        self.call("B", "join", address="::1")
+        # Second address form: IPv6 loopback where available (loopback_policy).
+        self.call("B", "join", address=self.loopback.alternate)
         self.worlds["B"] = "settlement"
         self.check("join another Host address")
         # Adjacent Settlement spawns put B directly to D's right. Walk away
@@ -467,7 +472,7 @@ class LifecycleChecks(RosterController):
         if rehost["session_id"] == first_host["session_id"]:
             raise RuntimeError("New Game followed by rehost retained the previous session")
         self.worlds["A"] = "settlement"
-        self.call("B", "join", address="127.0.0.1")
+        self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("original host rehosts after offline New Game")
         self._check_world_drop()
@@ -486,9 +491,10 @@ class LifecycleChecks(RosterController):
                 raise RuntimeError(f"{role} exit={code}\n{output}")
         summary = {"status": "pass", "release_exe": bool(self.executable), "rendered": self.args.rendered,
                    "steps": len(self.steps), "process_ids": {r: i["game_pid"] for r, i in self.roles.items()},
-                   "manual_two_pc_test": False, "audio_playback_verified": False}
+                   "manual_two_pc_test": False, "audio_playback_verified": False,
+                   "loopback": self.loopback.to_summary()}
         (self.directory / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-        print(f"SESSION LIFECYCLE RECOVERY PASS ({len(self.roles)} unchanged processes)", flush=True)
+        print(f"SESSION LIFECYCLE RECOVERY PASS ({len(self.roles)} unchanged processes; {self.loopback.describe()})", flush=True)
 
 
 def main() -> int:
@@ -499,11 +505,17 @@ def main() -> int:
     parser.add_argument("--rendered", action="store_true")
     parser.add_argument("--world-drop-only", action="store_true", help="Exercise a Client GUI drop and the Host replica.")
     parser.add_argument("--rendering-method", choices=("gl_compatibility", "forward_plus"))
+    loopback_policy.add_arguments(parser)
     args = parser.parse_args()
     if args.exe and sys.platform != "win32":
         parser.error("Actual Windows EXE execution requires Windows")
     artifacts = args.artifacts or Path(tempfile.mkdtemp(prefix="rtc_lifecycle_")) / "checks"
-    checks = LifecycleChecks(args.godot, args.exe, artifacts, args.rendered, args.rendering_method)
+    try:
+        checks = LifecycleChecks(args.godot, args.exe, artifacts, args.rendered, args.rendering_method,
+                                 args.address, args.ipv6)
+    except (RuntimeError, ValueError) as error:
+        print("Session lifecycle validation failed:", error, file=sys.stderr)
+        return 1
     try:
         checks.run(world_drop_only=args.world_drop_only)
         return 0

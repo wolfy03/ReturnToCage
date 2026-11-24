@@ -39,7 +39,7 @@ wrapper over the same assertions. Existing assertions remain in that shared prob
    moves offline, returns to menu, clicks Load and verifies the original Save.
 5. A clicks Host Save; B rejoins, manually disconnects, starts/moves in an offline
    New Game, returns to menu and rejoins A again in the same process.
-6. A disconnects. D becomes a new Host without restarting. B joins D at `::1`
+6. A disconnects. D becomes a new Host without restarting. B joins D at `::1` (IPv6 step; required in CI, see `tools/loopback_policy.py`)
    after previously using A at `127.0.0.1`; B/D see each other move. Both leave.
 
 New/Load/Save/Host/Host Save/Join/Disconnect use `Viewport.push_input` mouse

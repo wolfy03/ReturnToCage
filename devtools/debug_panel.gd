@@ -2,12 +2,16 @@ extends CanvasLayer
 
 var panel: PanelContainer
 
+# Autoload signal connections owned by this panel; released in _exit_tree.
+var autoload_signals := SignalBindings.new()
+
 func _ready() -> void:
 	if not OS.is_debug_build():
 		queue_free()
 		return
 	_build_ui()
-	NetworkManager.connected_to_server.connect(func() -> void: panel.visible = false)
+	autoload_signals.add(NetworkManager.connected_to_server, _on_connected_to_server)
+	autoload_signals.connect_all()
 
 func _build_ui() -> void:
 	panel = PanelContainer.new()
@@ -63,3 +67,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed(&"debug_panel"):
 		panel.visible = not panel.visible
+
+func _enter_tree() -> void:
+	# Re-entering after a detach restores the bindings released by _exit_tree.
+	if is_node_ready():
+		autoload_signals.connect_all()
+
+func _exit_tree() -> void:
+	autoload_signals.disconnect_all()
+
+func _on_connected_to_server() -> void:
+	panel.visible = false

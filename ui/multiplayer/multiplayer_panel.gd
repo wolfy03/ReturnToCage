@@ -15,6 +15,9 @@ var status_label: Label
 var _session_actions_enabled: bool = true
 var _host_restore_busy: bool = false
 
+# Autoload signal connections owned by this panel; released in _exit_tree.
+var autoload_signals := SignalBindings.new()
+
 func _ready() -> void:
 	layer = 40
 	var panel := PanelContainer.new()
@@ -48,11 +51,12 @@ func _ready() -> void:
 	host_saved_button.pressed.connect(host_saved_requested.emit)
 	join_button.pressed.connect(func() -> void: join_requested.emit(address_edit.text))
 	disconnect_button.pressed.connect(disconnect_requested.emit)
-	NetworkManager.hosting_started.connect(refresh)
-	NetworkManager.connected_to_server.connect(refresh)
-	NetworkManager.connection_failed.connect(refresh)
-	NetworkManager.server_disconnected.connect(refresh)
-	NetworkManager.session_synchronized.connect(refresh)
+	for source_signal: Signal in [
+		NetworkManager.hosting_started, NetworkManager.connected_to_server, NetworkManager.connection_failed,
+		NetworkManager.server_disconnected, NetworkManager.session_synchronized,
+	]:
+		autoload_signals.add(source_signal, refresh)
+	autoload_signals.connect_all()
 	refresh()
 
 func refresh() -> void:
@@ -74,3 +78,11 @@ func set_session_actions_enabled(enabled: bool) -> void:
 func set_host_restore_busy(busy: bool) -> void:
 	_host_restore_busy = busy
 	refresh()
+
+func _enter_tree() -> void:
+	# Re-entering after a detach restores the bindings released by _exit_tree.
+	if is_node_ready():
+		autoload_signals.connect_all()
+
+func _exit_tree() -> void:
+	autoload_signals.disconnect_all()

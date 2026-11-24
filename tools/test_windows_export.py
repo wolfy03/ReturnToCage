@@ -140,8 +140,9 @@ class ExportChecks:
         # Keep every original content/Editor/EXE check above. The additional
         # lifecycle uses the same release binary outside the source directory.
         from test_session_recovery import LifecycleChecks
+        # The release lifecycle keeps its IPv6 loopback step mandatory.
         lifecycle = LifecycleChecks(self.godot, self.executable, self.artifacts / "lifecycle",
-                                    self.rendered, self.rendering_method)
+                                    self.rendered, self.rendering_method, ipv6_mode="require")
         try:
             lifecycle.run()
             self.results["lifecycle"] = json.loads((lifecycle.directory / "summary.json").read_text(encoding="utf-8"))
