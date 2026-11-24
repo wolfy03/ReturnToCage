@@ -5,12 +5,19 @@ signal state_changed(state_id: StringName)
 signal finished(agent: EnemyAgent)
 
 @export var definition: EnemyDefinition
+## EnemyAnimationProfile path. A string on purpose: the actor scene is preloaded
+## through EnemyDefinition by ContentRegistry, so a direct reference would pull
+## textures into the headless server runtime.
+@export_file("*.tres") var animation_profile_path: String = ""
 @onready var health: HealthComponent = %Health
 @onready var hurtbox: HurtboxComponent = %Hurtbox
 @onready var network: NetworkEnemyComponent = %NetworkEnemy
 var network_entity_id: int = 0
 var world_id: StringName = &""
 var simulation_enabled: bool = true
+## False for actors simulated inside a ServerWorldRuntime: nothing draws them.
+var presentation_enabled: bool = true
+var animation_presenter: EnemyAnimationPresenter
 var effects: EffectController
 var effect_stats: StatBlock
 var player: PlayerActor
@@ -27,12 +34,14 @@ func setup_enemy(
 	p_definition: EnemyDefinition,
 	entity_id: int,
 	p_simulation_enabled: bool,
-	p_world_id: StringName = &""
+	p_world_id: StringName = &"",
+	p_presentation_enabled: bool = true
 ) -> void:
 	definition = p_definition
 	network_entity_id = entity_id
 	simulation_enabled = p_simulation_enabled
 	world_id = p_world_id
+	presentation_enabled = p_presentation_enabled
 
 func is_simulation_authority() -> bool:
 	return simulation_enabled and NetworkManager.is_authoritative_simulation()
@@ -66,6 +75,7 @@ func _ready() -> void:
 			states[StringName(child.name.to_snake_case())] = child
 	change_state(&"idle")
 	network.configure(self)
+	_create_presentation()
 	if not is_simulation_authority():
 		set_physics_process(false)
 		health.set_process(false)
@@ -73,6 +83,23 @@ func _ready() -> void:
 		hurtbox.monitorable = false
 		for state in states.values():
 			(state as EnemyState).set_process(false)
+
+## Sprite presentation is optional. Any failure leaves the placeholder polygon
+## in place and never affects simulation.
+func _create_presentation() -> void:
+	if not presentation_enabled or animation_profile_path.is_empty() or not ResourceLoader.exists(animation_profile_path):
+		return
+	var profile := ResourceLoader.load(animation_profile_path) as EnemyAnimationProfile
+	if profile == null or not profile.validation_errors().is_empty():
+		push_warning("Enemy animation profile is unusable: %s" % animation_profile_path)
+		return
+	animation_presenter = EnemyAnimationPresenter.new()
+	animation_presenter.name = "AnimationPresenter"
+	add_child(animation_presenter)
+	animation_presenter.setup(self, profile)
+	var placeholder := get_node_or_null("Visual") as CanvasItem
+	if placeholder != null:
+		placeholder.hide()
 
 func _physics_process(delta: float) -> void:
 	if not is_simulation_authority() or _death_resolved:

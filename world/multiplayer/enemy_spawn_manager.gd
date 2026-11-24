@@ -56,7 +56,7 @@ func _spawn_definition(definition: EnemyDefinition, position: Vector2, report_wa
 		actor.free()
 		return 0
 	actor.name = "Enemy_%d" % entity_id
-	actor.setup_enemy(definition, entity_id, true, world_id)
+	actor.setup_enemy(definition, entity_id, true, world_id, not authoritative_runtime)
 	actor.global_position = position
 	get_parent().add_child(actor, true)
 	actor.finished.connect(_on_enemy_finished)

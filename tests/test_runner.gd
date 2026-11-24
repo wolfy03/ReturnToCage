@@ -101,6 +101,7 @@ func run_all() -> void:
 	await preload("res://tests/unit/test_gameplay_authority.gd").new().run(self)
 	preload("res://tests/unit/test_field_scene.gd").new().run(self)
 	preload("res://tests/unit/test_forest_region.gd").new().run(self)
+	await preload("res://tests/unit/test_enemy_animation.gd").new().run(self)
 	await preload("res://tests/unit/test_environment_presentation.gd").new().run(self)
 	await preload("res://tests/unit/test_player_spawn_policy.gd").new().run(self)
 	preload("res://tests/unit/test_local_player_profile.gd").new().run(self)
