@@ -63,6 +63,10 @@ buffered `attack_1 → attack_2`의 sequence/combo step/key/timing, Dodge direct
 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
+### 플레이어별 알림 격리
+
+`tests/unit/test_gameplay_notifications.gd`는 offline/host local routing, host 자신의 gather 알림, 원격 private 알림이 host HUD에 나타나지 않는지, shared upgrade 중복 방지, 수신 RPC guard와 `valid_notification`, session 종료 시 정리, Load 결과 표시를 검사한다. 실제 ENet에서는 `test_multiplayer_world_runtime.py`가 host status를 sentinel로 고정한 채 gather(2인 B / 3인 C), B return, B death 알림이 소유자에게 정확히 1회 가고 host와 다른 client에는 가지 않는지(`NOTIFICATION ... ISOLATION OK`), client B의 workbench upgrade가 B에게 1회(command result), host와 C에게 shared로 1회 가는지(`NOTIFICATION SHARED UPGRADE OK`) 확인한다. `test_multiplayer_local.py`는 disconnect 전 personal notice가 자기 client에만 도착하는지, session 종료 후 메시지가 비는지, reconnect 후 새 peer mapping으로 자기 identity의 notice만 받는지 확인한다.
+
 ### Save primary/backup 복구 (unit)
 
 `tests/unit/test_save_backup_recovery.gd`는 실제 `SaveManager.save_game()`으로 만든 고유 `user://` 파일만 사용한다(production Save·profile 미사용). Primary/backup 조합표(둘 다 유효, backup 손상, primary 없음/JSON 손상/구조 손상/full staging 실패 + 유효 backup, backup 없음, 둘 다 손상, 둘 다 없음, legacy v2 primary + 유효 backup, 다른 identity의 유효 primary + 다른 backup)를 검사하고 load가 파일을 쓰지 않는지 확인한다. `SaveManager.set_failure_hook_for_tests()`로 temporary open/write/validate, backup preserve/create, primary install, rollback 실패를 주입해 이전 primary/backup bytes와 load 결과가 보존되는지, 무효 primary가 `.bak`을 덮지 않는지, rollback까지 실패해도 backup으로 복구되는지 확인한다. `test_host_saved_game.gd`는 primary 없이 유효 backup만 있을 때 Saved Host가 backup을 호스팅하고 primary를 쓰지 않는지 확인한다.
@@ -403,7 +407,7 @@ The full runner includes tests/unit/test_inventory_slots.gd; --inventory-slots-o
 
 ## Slot persistence and server intents (Stage 3)
 
-The full runner includes `test_inventory_persistence.gd`; `--inventory-persistence-only` runs its Save v5/v17 boundaries. The source/release lifecycle adds real positive and forged slot RPCs, reconnect/world/privacy checks. Restart probes validate expanded sparse bags/storage, and mismatch uses v18 against v19. See [inventory_persistence.md](inventory_persistence.md).
+The full runner includes `test_inventory_persistence.gd`; `--inventory-persistence-only` runs its Save v5/v17 boundaries. The source/release lifecycle adds real positive and forged slot RPCs, reconnect/world/privacy checks. Restart probes validate expanded sparse bags/storage, and mismatch uses the previous protocol (v19) against v20. See [inventory_persistence.md](inventory_persistence.md).
 
 ## Item data stability (Stage 6-A)
 

@@ -46,7 +46,7 @@ autoload 5개 (`project.godot`):
 ## 3. 세션 상태
 
 `GameSession` 은 5개 State 의 facade다. 자체 소유: `session_id`, `play_time_seconds`,
-`last_message`, `phase`, 그리고 플레이어 레지스트리.
+`last_message`(local HUD 메시지, `notifications` 서비스 경유), `phase`, 그리고 플레이어 레지스트리.
 
 | State | 소유 |
 |---|---|

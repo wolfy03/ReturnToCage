@@ -139,8 +139,13 @@ func _create_escape_points() -> void:
 		target.add_child(visual)
 		add_child(target)
 		target.activated.connect(func(actor: Node) -> void:
-			var result := NetworkManager._escape_at_point(actor.peer_id, point.point_id) if server_runtime_mode and actor is PlayerActor else NetworkManager.request_escape_at_point(point.point_id)
-			GameSession.last_message = result.message
+			if server_runtime_mode and actor is PlayerActor:
+				var escape := NetworkManager._escape_at_point(actor.peer_id, point.point_id)
+				# Success text comes from the authoritative return; only failures here.
+				if not escape.success:
+					GameSession.notifications.notify_peer(actor.peer_id, escape.message)
+			else:
+				GameSession.last_message = NetworkManager.request_escape_at_point(point.point_id).message
 		)
 
 func _create_death_drops() -> void:
@@ -192,7 +197,7 @@ func _try_gather(peer_id: int, interaction_id: StringName) -> bool:
 	if result.changed <= 0:
 		return false
 	_consumed_gather[interaction_id] = true
-	GameSession.last_message = "Unsecured loot: %s x%d" % [point.item_id, result.changed]
+	GameSession.notifications.notify_peer(peer_id, "Unsecured loot: %s x%d" % [point.item_id, result.changed])
 	_gather_targets.erase(interaction_id)
 	target.enabled = false
 	target.queue_free()
@@ -218,4 +223,7 @@ func _on_peer_world_ready(peer_id: int) -> void:
 
 func _escape(result: AdventureSession.Result) -> void:
 	var transition := NetworkManager.request_return_to_settlement(result)
-	GameSession.last_message = transition.message
+	# On the authority a successful return already notified the returning
+	# player with its loot summary; do not replace it with the transition text.
+	if not transition.success or not NetworkManager.is_authoritative_simulation():
+		GameSession.last_message = transition.message

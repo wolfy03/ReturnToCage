@@ -10,6 +10,9 @@ var expected_players := 2
 var world_layer: Node
 var _server_root: ServerWorldRoot
 var _confirmations: Dictionary[String, Dictionary] = {}
+# STEP 3 notification isolation: each client's local HUD message history.
+var _message_log: Array[String] = []
+const HOST_SENTINEL := "host-private-status-sentinel"
 var _remote_peers: Array[int] = []
 var _finished := false
 var _deadline_msec := 0
@@ -46,6 +49,10 @@ func _ready() -> void:
 	)
 	if role != "host":
 		GameSession.player_combat_runtime_changed.connect(_on_combat_runtime_changed)
+		GameSession.notifications.local_message_changed.connect(func(message: String) -> void:
+			if not message.is_empty():
+				_message_log.append(message)
+		)
 	if role == "host":
 		_server_root = ServerWorldRoot.new()
 		_server_root.name = "ServerWorldRoot"
@@ -108,6 +115,9 @@ func _run_host_scenario() -> void:
 	if not await _wait_until(func() -> bool: return _confirmed("SETTLEMENT_REJECT", b_peer)):
 		_fail("Sewer player did not receive a Settlement-command rejection")
 		return
+	# From here the host's own status line must not change because of a
+	# remote player's personal gather / return / death results.
+	GameSession.last_message = HOST_SENTINEL
 	var settlement_rejection := _confirmation("SETTLEMENT_REJECT", b_peer)
 	if bool(settlement_rejection.get("success", true)) \
 			or GameSession.settlement.facility_levels.get(&"workbench", 0) != 0:
@@ -339,12 +349,17 @@ func _run_host_scenario() -> void:
 	var personal := GameSession.adventure_session_for_peer(gather_peer).get_player_adventure(gather_peer)
 	var scrap_before := personal.unsecured_loot.count(&"rusty_scrap")
 	gather_actor.global_position = gather_target.global_position
+	if not await _clear_client_messages():
+		return
 	_send_command(gather_peer, "GATHER", 0)
 	if not await _wait_until(func() -> bool: return runtime_region._consumed_gather.has(&"scrap_cache_a")):
 		_fail("same-world gather did not commit")
 		return
 	if personal.unsecured_loot.count(&"rusty_scrap") != scrap_before + 2 or runtime_region._try_gather(gather_peer, &"scrap_cache_a"):
 		_fail("authored gather amount or duplicate guard is wrong")
+		return
+	var gather_notice := "Unsecured loot: rusty_scrap x2"
+	if not await _expect_private_notice(gather_peer, gather_notice, "gather"):
 		return
 	var observe_gather_peer := b_peer if gather_peer == c_peer else c_peer
 	if observe_gather_peer > 0:
@@ -554,9 +569,13 @@ func _run_host_scenario() -> void:
 	b_actor.hurt.physics_tick(b_actor.hurt.remaining + 0.01)
 	b_actor.hurt.duration_seconds = 0.25
 
+	if not await _clear_client_messages():
+		return
 	_send_command(b_peer, "RETURN", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("RETURN", b_peer)):
 		_fail("B did not return independently")
+		return
+	if not await _expect_private_notice(b_peer, "Expedition secured:", "return", true):
 		return
 	if not await _wait_until(_host_presentation_matches_world):
 		_fail("returned B is missing/hidden in Host presentation despite a valid server runtime")
@@ -590,6 +609,8 @@ func _run_host_scenario() -> void:
 		return
 	if _server_root.runtime(SEWER) != null:
 		_fail("empty Sewer runtime was not cleaned up")
+		return
+	if not await _check_shared_upgrade_notice(b_peer, c_peer):
 		return
 	_send_command(b_peer, "REENTER", 0)
 	if not await _wait_until(func() -> bool: return _confirmed("REENTER", b_peer)):
@@ -637,6 +658,8 @@ func _run_host_scenario() -> void:
 		if absf(host_actor.position.x - host_origin.x) <= 12.0:
 			_fail("host authoritative Sewer actor did not move")
 			return
+	if not await _check_remote_death_notice(b_peer):
+		return
 	_finish_success()
 
 @rpc("authority", "call_remote", "reliable")
@@ -648,6 +671,18 @@ func _command(command: String, value: int) -> void:
 				_fail(result.message)
 				return
 			await _confirm_when_world_ready(command, SEWER)
+		"CLEAR_MESSAGES":
+			_message_log.clear()
+			_confirm.rpc_id(1, command, {})
+		"REPORT_MESSAGES":
+			_confirm.rpc_id(1, command, {"current": GameSession.last_message, "log": _message_log.duplicate()})
+		"UPGRADE_WORKBENCH":
+			var settlement_service := get_tree().get_first_node_in_group(&"settlement_replication_service") as SettlementReplicationService
+			if settlement_service == null:
+				_fail("settlement replication service is unavailable")
+				return
+			settlement_service.request_upgrade_facility(&"workbench")
+			_confirm.rpc_id(1, command, {})
 		"RETURN", "RETURN_FOR_HOST", "RETURN_FROM_OCCUPIED":
 			var result := NetworkManager.request_escape_at_point(&"sewer_entrance")
 			if not result.success:
@@ -932,6 +967,113 @@ func _on_combat_runtime_changed(peer_id: int, stamina: float, max_stamina: float
 		return
 	_min_mirrored_stamina = minf(_min_mirrored_stamina, stamina)
 	_mirrored_max_stamina = max_stamina
+
+func _clear_client_messages() -> bool:
+	for peer_id in _remote_peers:
+		_confirmations.erase("CLEAR_MESSAGES:%d" % peer_id)
+		_send_command(peer_id, "CLEAR_MESSAGES", 0)
+	if not await _wait_until(func() -> bool:
+		for peer_id in _remote_peers:
+			if not _confirmed("CLEAR_MESSAGES", peer_id):
+				return false
+		return true
+	, 3.0):
+		_fail("clients did not clear their notification logs")
+		return false
+	return true
+
+func _client_message_log(peer_id: int) -> Array:
+	_confirmations.erase("REPORT_MESSAGES:%d" % peer_id)
+	_send_command(peer_id, "REPORT_MESSAGES", 0)
+	if not await _wait_until(func() -> bool: return _confirmed("REPORT_MESSAGES", peer_id), 3.0):
+		return ["<no report>"]
+	return _confirmation("REPORT_MESSAGES", peer_id).get("log", [])
+
+func _count_notice(log: Array, notice: String, prefix: bool) -> int:
+	var count := 0
+	for entry in log:
+		if (String(entry).begins_with(notice) if prefix else String(entry) == notice):
+			count += 1
+	return count
+
+# The owner sees its private notice exactly once; the host HUD and every other
+# client never see it.
+func _expect_private_notice(owner_peer: int, notice: String, label: String, prefix: bool = false) -> bool:
+	var until := Time.get_ticks_msec() + 4000
+	var owner_log: Array = []
+	while Time.get_ticks_msec() < until:
+		owner_log = await _client_message_log(owner_peer)
+		if _count_notice(owner_log, notice, prefix) > 0:
+			break
+		await get_tree().create_timer(0.1).timeout
+	if _count_notice(owner_log, notice, prefix) != 1:
+		_fail("%s notice reached its owner %d times: %s" % [label, _count_notice(owner_log, notice, prefix), owner_log])
+		return false
+	if GameSession.last_message != HOST_SENTINEL:
+		_fail("%s notice of peer %d changed the host HUD: %s" % [label, owner_peer, GameSession.last_message])
+		return false
+	for peer_id in _remote_peers:
+		if peer_id == owner_peer:
+			continue
+		var other_log := await _client_message_log(peer_id)
+		if _count_notice(other_log, notice, prefix) != 0:
+			_fail("%s notice of peer %d reached peer %d: %s" % [label, owner_peer, peer_id, other_log])
+			return false
+	print("NOTIFICATION %s ISOLATION OK owner=%d" % [label.to_upper(), owner_peer])
+	return true
+
+# A Settlement facility upgrade is shared: the actor gets its command result
+# once (not also the broadcast), the host and other clients get the shared notice.
+func _check_shared_upgrade_notice(actor_peer: int, other_peer: int) -> bool:
+	if not await _clear_client_messages():
+		return false
+	GameSession.last_message = HOST_SENTINEL
+	GameSession.settlement.storage.add_item(&"rusty_scrap", 3)
+	var notice := "%s upgraded to level 1" % (ContentRegistry.get_definition(&"workbench") as FacilityDefinition).display_name
+	_send_command(actor_peer, "UPGRADE_WORKBENCH", 0)
+	if not await _wait_until(func() -> bool: return GameSession.last_message == notice, 4.0):
+		_fail("host did not show the shared upgrade notice: %s" % GameSession.last_message)
+		return false
+	var actor_log: Array = []
+	var until := Time.get_ticks_msec() + 4000
+	while Time.get_ticks_msec() < until:
+		actor_log = await _client_message_log(actor_peer)
+		if _count_notice(actor_log, notice, false) > 0:
+			break
+		await get_tree().create_timer(0.1).timeout
+	await get_tree().create_timer(0.2).timeout
+	actor_log = await _client_message_log(actor_peer)
+	if _count_notice(actor_log, notice, false) != 1:
+		_fail("upgrade actor saw its result %d times: %s" % [_count_notice(actor_log, notice, false), actor_log])
+		return false
+	if other_peer > 0:
+		var other_log: Array = []
+		until = Time.get_ticks_msec() + 4000
+		while Time.get_ticks_msec() < until:
+			other_log = await _client_message_log(other_peer)
+			if _count_notice(other_log, notice, false) > 0:
+				break
+			await get_tree().create_timer(0.1).timeout
+		if _count_notice(other_log, notice, false) != 1:
+			_fail("other Settlement client saw the shared upgrade %d times: %s" % [_count_notice(other_log, notice, false), other_log])
+			return false
+	GameSession.last_message = HOST_SENTINEL
+	print("NOTIFICATION SHARED UPGRADE OK")
+	return true
+
+func _check_remote_death_notice(victim_peer: int) -> bool:
+	if not await _clear_client_messages():
+		return false
+	GameSession.last_message = HOST_SENTINEL
+	var victim := NetworkManager.authoritative_actor(victim_peer)
+	if victim == null:
+		_fail("death fixture actor is unavailable")
+		return false
+	victim.health.receive_periodic_damage(victim.health.current_health + 1000.0)
+	if not await _wait_until(func() -> bool: return GameSession.get_player_death_result(victim_peer) != null, 3.0):
+		_fail("remote death did not resolve on the host")
+		return false
+	return await _expect_private_notice(victim_peer, GameSession.get_player_death_result(victim_peer).summary(), "death")
 
 @rpc("any_peer", "call_remote", "reliable")
 func _confirm(command: String, data: Dictionary) -> void:

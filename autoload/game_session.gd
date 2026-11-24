@@ -47,7 +47,16 @@ const LOCAL_EVENT_ACTOR: StringName = &"__local_player__"
 
 var session_id: String = ""
 var play_time_seconds: float = 0.0
-var last_message: String = ""
+# Routes gameplay text to the player it belongs to (see
+# GameplayNotificationService). last_message is only this process's own HUD
+# status line; assigning it is a local notification. Authoritative code acting
+# for a peer uses notifications.notify_player()/notify_shared() instead.
+var notifications := GameplayNotificationService.new()
+var last_message: String:
+	get:
+		return notifications.local_message
+	set(value):
+		notifications.notify_local(value)
 var last_network_snapshot_error: String = ""
 # Active peer attachment view. Canonical PlayerState ownership is keyed by the
 # persistent logical player_id in _player_states_by_id.
@@ -594,7 +603,7 @@ func start_quest(quest_id: StringName, player_id: StringName = &"") -> bool:
 		return false
 	var actor_id := get_local_player_id() if player_id.is_empty() else player_id
 	var result := _quest_system.start_quest(quest_id, actor_id)
-	last_message = result.message
+	notifications.notify_player(actor_id, result.message)
 	return result.success
 
 func report_quest_event(type: QuestObjectiveDefinition.ObjectiveType, target_id: StringName, amount: int = 1, player_id: StringName = LOCAL_EVENT_ACTOR) -> void:
@@ -616,7 +625,8 @@ func claim_quest_reward_result(quest_id: StringName, player_id: StringName = &""
 		return CommandResult.make(false, "Only the server can change quest state")
 	var actor_id := get_local_player_id() if player_id.is_empty() else player_id
 	var result := _quest_system.claim_reward(quest_id, actor_id)
-	last_message = result.message
+	# Remote claimants receive this text through the quest reward-result RPC.
+	notifications.notify_player(actor_id, result.message, false)
 	return result
 
 func get_shared_quest_states() -> Dictionary[StringName, QuestState]:
@@ -821,12 +831,13 @@ func handle_player_death(peer_id: int, death_position: Vector2, life_id: int = -
 	runtime.death_result = DeathResolutionService.resolve(state, settlement, adventure, rules, death_position, start.respawn_policy, start.survival_config, session_id, Callable(ContentRegistry, "get_item"), not individual_multiplayer_death, personal_adventure, peer_id, get_player_id(peer_id), peer_adventure_session)
 	state.end_item_update()
 	runtime.life_phase = PlayerRuntimeState.LifePhase.RESPAWNING
-	last_message = runtime.death_result.summary()
+	var death_summary := runtime.death_result.summary()
+	notifications.notify_peer(peer_id, death_summary)
 	player_life_changed.emit(peer_id, runtime.life_id, runtime.life_phase)
 	player_died.emit(peer_id, runtime.death_result)
 	if not individual_multiplayer_death:
 		adventure.active_session = null
-		adventure_finished.emit(AdventureSession.Result.DEATH, last_message)
+		adventure_finished.emit(AdventureSession.Result.DEATH, death_summary)
 	return runtime.death_result
 
 func complete_respawn(peer_id: int) -> void:
@@ -1017,12 +1028,13 @@ func finish_player_adventure(peer_id: int, result: AdventureSession.Result, cons
 		state.last_safe_position = return_position
 	# The destination and loot are valid; the remaining commit cannot fail.
 	player_world_changed.emit(candidate.player_id, candidate.copy())
-	last_message = "Expedition secured: %d loot stacks" % loot.size() if secured.success else "Storage full: %d loot stacks retained in pending storage" % loot.size()
+	var summary := "Expedition secured: %d loot stacks" % loot.size() if secured.success else "Storage full: %d loot stacks retained in pending storage" % loot.size()
+	notifications.notify_player(candidate.player_id, summary)
 	settlement.end_update()
 	state.inventory.end_update()
 	state.end_item_update()
-	adventure_finished.emit(result, last_message)
-	return CommandResult.make(true, last_message)
+	adventure_finished.emit(result, summary)
+	return CommandResult.make(true, summary)
 
 func request_adventure_from_exit(exit_id: StringName, region_id: StringName) -> AdventureContext:
 	var exit := ContentRegistry.get_definition(exit_id) as SettlementExitDefinition
@@ -1047,7 +1059,8 @@ func execute_craft_command(recipe_id: StringName, actor_player_id: StringName) -
 		return CommandResult.make(false, "Crafting requires settlement state")
 	var owner := get_player_state_by_player_id(actor_player_id)
 	var result := _settlement_command_service.try_craft(recipe_id, actor_player_id, owner.inventory if owner != null else null)
-	last_message = "Crafted %s" % recipe_id if result.success else result.message
+	# Remote crafters receive this text through the settlement command-result RPC.
+	notifications.notify_player(actor_player_id, "Crafted %s" % recipe_id if result.success else result.message, false)
 	return result
 
 func discover_escape(point_id: StringName, player_id: StringName = LOCAL_EVENT_ACTOR) -> void:
@@ -1092,8 +1105,11 @@ func execute_facility_upgrade_command(facility_id: StringName, actor_player_id: 
 	if phase != Phase.SETTLEMENT:
 		return CommandResult.make(false, "Facility upgrades require settlement state")
 	var result := _settlement_command_service.try_upgrade_facility(facility_id, actor_player_id)
-	last_message = result.message
+	# The actor gets its command result (remote: the settlement command-result
+	# RPC); a successful upgrade is also a shared Settlement event for everyone else.
+	notifications.notify_player(actor_player_id, result.message, false)
 	if result.success:
+		notifications.notify_shared(result.message, actor_player_id)
 		facility_changed.emit(facility_id, settlement.facility_levels.get(facility_id, 0))
 	return result
 
@@ -1315,6 +1331,9 @@ func apply_network_snapshot(snapshot: NetworkSessionSnapshot) -> bool:
 	_phase = snapshot.phase as Phase
 	_connect_model_signals()
 	phase_changed.emit()
+	# A newly joined session (including a reconnect under another identity)
+	# never shows status text from the previous connection.
+	notifications.clear_local()
 	session_reset.emit()
 	return true
 
@@ -1353,6 +1372,8 @@ func _network_snapshot_issue(snapshot: NetworkSessionSnapshot) -> String:
 	return ""
 
 func reset_to_offline_local_player(previous_local_peer_id: int) -> void:
+	# Leaving a multiplayer session retires every notification that belonged to it.
+	notifications.clear_local()
 	var retained_state := get_player(previous_local_peer_id)
 	if retained_state == null:
 		retained_state = get_player(LOCAL_SINGLEPLAYER_PEER_ID)

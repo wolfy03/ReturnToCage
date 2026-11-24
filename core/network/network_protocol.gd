@@ -21,7 +21,13 @@ extends RefCounted
 # the unknown action through the existing slot result without changing state.
 # v18 adds the live loot throw origin. Rosters carry null and skip the throw.
 # v19 adds the approved collector and body position to loot despawn.
-const VERSION := 19
+# v20 adds the host->owner gameplay notification RPC (one bounded string).
+const VERSION := 20
+const MAX_NOTIFICATION_LENGTH := 512
+
+static func valid_notification(message: Variant) -> bool:
+	return message is String and not (message as String).is_empty() \
+		and (message as String).length() <= MAX_NOTIFICATION_LENGTH
 
 static func valid_command_sender(sender_id: int, actor_peer_id: int, known_peer: bool) -> bool:
 	return sender_id > 0 and sender_id == actor_peer_id and known_peer

@@ -279,7 +279,11 @@ func is_return_channel_complete() -> bool:
 func _complete_return_channel() -> void:
 	if not is_simulation_authority() or return_channel <= 0.0:
 		return
-	GameSession.last_message = NetworkManager.complete_return_item(self).message
+	# Runs on the authority for every actor. Success is reported by the
+	# authoritative return itself; a failure belongs to this actor's player only.
+	var completed := NetworkManager.complete_return_item(self)
+	if not completed.success:
+		GameSession.notifications.notify_peer(peer_id, completed.message)
 	_cancel_return_channel()
 
 func _cancel_return_channel() -> void:
@@ -344,7 +348,7 @@ func _on_died(_context: DamageContext) -> void:
 	movement.enabled = false
 	var result: RespawnResult = GameSession.handle_player_death(peer_id, global_position, _life_id)
 	if not result.success:
-		GameSession.last_message = result.error_message
+		GameSession.notifications.notify_peer(peer_id, result.error_message, false)
 		_death_handled = false
 		movement.enabled = true
 		survival.drain_paused = false

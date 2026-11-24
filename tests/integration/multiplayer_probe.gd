@@ -76,6 +76,14 @@ var pickup_success_count: int = 0
 var pickup_failure_count: int = 0
 var pickup_replay_failures_before: int = -1
 var pickup_replay_confirmed: bool = false
+# Per-player notification routing (STEP 3). The host sends each client a
+# personal notice before disconnect and again after reconnect; neither may
+# appear on the host HUD or on another client.
+const NOTICE_PREFIX := "PROBE PERSONAL NOTICE "
+const RECONNECT_NOTICE_PREFIX := "PROBE RECONNECT NOTICE "
+var reconnect_notice_sent: Dictionary[int, bool] = {}
+var reconnect_notice_confirmations: Dictionary[int, bool] = {}
+var client_received_notices: Array[String] = []
 var quest_sync_confirmation_sent: bool = false
 var quest_sync_confirmations: Dictionary[int, bool] = {}
 var expected_killer_peer: int = 0
@@ -127,6 +135,7 @@ func _ready() -> void:
 	deadline_msec = Time.get_ticks_msec() + 15000
 	NetworkManager.server_disconnected.connect(_on_server_disconnected)
 	NetworkManager.multiplayer_session_ended.connect(_on_multiplayer_session_ended)
+	GameSession.notifications.local_message_changed.connect(_on_probe_local_message)
 	if role == "host":
 		if NetworkManager.host_game(port, expected_players) != OK or not GameSession.start_new_game():
 			_fail("host setup failed")
@@ -529,6 +538,14 @@ func _process(_delta: float) -> void:
 					return
 				if not _prepare_reconnect_state():
 					return
+				var host_message_before := GameSession.last_message
+				for peer_id in GameSession.players:
+					if peer_id != 1:
+						var notice_id := GameSession.get_player_id(peer_id)
+						GameSession.notifications.notify_player(notice_id, NOTICE_PREFIX + String(notice_id))
+				if GameSession.last_message != host_message_before:
+					_fail("a client's personal notification changed the host HUD message")
+					return
 				_probe_done.rpc()
 				phase_started_msec = Time.get_ticks_msec()
 				state = ProbeState.CLEANUP
@@ -542,7 +559,17 @@ func _process(_delta: float) -> void:
 				print("PROBE HOST CLEANUP OK")
 				state = ProbeState.RECONNECT
 		ProbeState.RECONNECT:
+			for peer_id in reconnect_confirmations:
+				if not reconnect_notice_sent.has(peer_id):
+					# Routed through the new peer mapping of the persistent identity.
+					reconnect_notice_sent[peer_id] = true
+					var notice_id := GameSession.get_player_id(peer_id)
+					GameSession.notifications.notify_player(notice_id, RECONNECT_NOTICE_PREFIX + String(notice_id))
+			if GameSession.last_message.begins_with(RECONNECT_NOTICE_PREFIX) or GameSession.last_message.begins_with(NOTICE_PREFIX):
+				_fail("a client's personal notification reached the host HUD")
+				return
 			if GameSession.players.size() == expected_players \
+				and reconnect_notice_confirmations.size() == expected_players - 1 \
 				and get_tree().get_nodes_in_group(&"player").size() == expected_players \
 				and reconnect_reattach_verified.size() == expected_players - 1 \
 				and reconnect_confirmations.size() == expected_players - 1:
@@ -1254,6 +1281,14 @@ func _probe_done() -> void:
 	peer_ids.sort()
 	var disconnect_delay := 0.2 + maxf(0.0, float(peer_ids.find(NetworkManager.local_peer_id()) - 1)) * 0.5
 	await get_tree().create_timer(disconnect_delay).timeout
+	var own_notice := NOTICE_PREFIX + String(GameSession.get_local_player_id())
+	if not client_received_notices.has(own_notice):
+		_fail("client did not show its own personal notification (log=%s)" % [client_received_notices])
+		return
+	for notice in client_received_notices:
+		if notice.begins_with(NOTICE_PREFIX) and notice != own_notice:
+			_fail("client received another player's personal notification: %s" % notice)
+			return
 	if not client_saw_authoritative_snapshot:
 		_fail("client did not display an authoritative transform snapshot")
 		return
@@ -1281,6 +1316,24 @@ func _confirm_reconnect() -> void:
 	if NetworkManager.has_peer(sender):
 		reconnect_confirmations[sender] = true
 
+func _on_probe_local_message(message: String) -> void:
+	if role != "client" or message.is_empty():
+		return
+	client_received_notices.append(message)
+	if message.begins_with(RECONNECT_NOTICE_PREFIX):
+		if message != RECONNECT_NOTICE_PREFIX + String(GameSession.get_local_player_id()):
+			_fail("reconnected client received another identity's notification: %s" % message)
+			return
+		_confirm_reconnect_notice.rpc_id(1)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _confirm_reconnect_notice() -> void:
+	if not NetworkManager.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.has_peer(sender) and reconnect_notice_sent.has(sender):
+		reconnect_notice_confirmations[sender] = true
+
 @rpc("authority", "call_remote", "reliable")
 func _reconnect_done() -> void:
 	var peer_ids: Array[int] = []
@@ -1304,6 +1357,9 @@ func _on_multiplayer_session_ended(reason: String) -> void:
 		or GameSession.phase != GameSession.Phase.MENU \
 		or not GameSession.session_id.is_empty():
 		_fail("session-end signal fired before cleanup completed")
+		return
+	if not GameSession.last_message.is_empty():
+		_fail("a notification from the ended session is still displayed: %s" % GameSession.last_message)
 		return
 	session_end_verified = true
 	print("PROBE CLIENT SESSION END OK %s" % reason)

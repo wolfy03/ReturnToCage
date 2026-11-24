@@ -42,6 +42,7 @@ func _ready() -> void:
 	GameSession.difficulty_changed.connect(func(_id: StringName) -> void: refresh_all())
 	GameSession.adventure_finished.connect(func(_result: AdventureSession.Result, _summary: String) -> void: refresh_all())
 	GameSession.player_combat_runtime_changed.connect(_on_player_combat_runtime_changed)
+	GameSession.notifications.local_message_changed.connect(func(_message: String) -> void: refresh_all())
 	SaveManager.save_finished.connect(_on_persistence_result)
 	SaveManager.load_finished.connect(_on_persistence_result)
 	refresh_all()

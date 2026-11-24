@@ -78,6 +78,10 @@ attached/detached canonical PlayerState와 personal progression은 persistent `p
 알 수 없는 item/quest/equipment/facility는 경고와 함께 제외한다. 지역·출구·플래그 문자열은
 기존처럼 보존한다. 잘못된 envelope는 현재 세션을 건드리지 않고 로드 실패한다.
 
+## 알림 소유권
+
+`GameSession.notifications`(`GameplayNotificationService`)가 HUD status text의 소유자다. `last_message`는 이 프로세스의 local 메시지를 읽고 쓰는 호환 property이며, 저장·복제 상태가 아니다. 다른 플레이어를 위해 실행되는 권위 코드는 `notify_player`/`notify_shared`로 대상 `player_id`를 지정한다. 세부 정책은 [multiplayer.md](multiplayer.md)의 Per-player gameplay notifications를 따른다.
+
 ## 호환 API와 시그널
 
 과거 `player_inventory`, `player_stats`, `settlement_storage`, `quest_states` 등의 state-property

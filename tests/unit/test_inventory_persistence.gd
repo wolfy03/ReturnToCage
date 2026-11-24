@@ -2,7 +2,7 @@ extends RefCounted
 
 func run(t: Node) -> void:
 	t.assert_equal(SaveManager.CURRENT_VERSION, 5, "indexed inventories use Save v5")
-	t.assert_equal(NetworkProtocol.VERSION, 19, "indexed owner snapshots use protocol v19")
+	t.assert_equal(NetworkProtocol.VERSION, 20, "indexed owner snapshots use current protocol v20")
 	if not GameSession.player.inventory.has_method("to_slot_dict"):
 		t.assert_true(false, "inventory exposes indexed serialization")
 		return

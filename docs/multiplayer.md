@@ -405,6 +405,47 @@ Profile schema changes are involved (Protocol 16 / Save 4 / Profile 1).
 The reproduction and real mouse/ENet regression commands are in
 [testing.md](testing.md#disconnect-menu-recovery).
 
+## Per-player gameplay notifications (STEP 3, introduced in Protocol v20)
+
+`GameSession.last_message` is only **this process's own** HUD status line. Assigning it is a
+local notification (`GameplayNotificationService.notify_local`). Authoritative code that acts
+for a peer never writes it directly, because on a host that would put a remote player's private
+result on the host HUD. `GameSession.notifications` (a RefCounted service, not an autoload)
+routes text by persistent `player_id`:
+
+| Category | API | Recipients |
+|---|---|---|
+| Local UI / session / network error | `notify_local` (or `last_message =`) | this process only |
+| Player-private gameplay result | `notify_player(player_id, msg)` / `notify_peer(peer_id, msg)` | the local HUD if that player is local; otherwise only the peer currently authenticated as that `player_id` |
+| Settlement-wide event | `notify_shared(msg, actor_player_id)` | local HUD (unless the host is the actor) and every session peer except the actor |
+
+Classification of the existing writers:
+
+- Personal, delivered to a remote owner: Adventure gather (`Unsecured loot`), individual death
+  summary, individual return/escape (`Expedition secured` / `Storage full`), escape-point and
+  return-item failures, quest start.
+- Personal, local only for remote actors because the requester already gets the same text through
+  its own command-result RPC: craft, facility-upgrade result, quest reward claim, death-callback
+  errors. These are never re-sent, so a remote requester sees its result once.
+- Shared: a successful facility upgrade (the actor receives its command result, not the broadcast).
+- Local: UI messages (pause, Save/Load results, backup-recovery notice, identity activation,
+  phase/session errors, offline party finish and pending-loot claim).
+
+Wire: `NetworkManager._receive_gameplay_notification(message)` is `@rpc("authority")`, so only
+the host can send it; a client has no RPC to notify the host or another client. The host sends it
+only through `send_gameplay_notification(player_id, ...)` (peer from the authenticated
+`player_id` mapping, peer > 1, `can_send_to_peer`) or `broadcast_shared_notification(...)`
+(`all_ready_remote_peer_ids()` minus the actor). The receiver ignores it on the host, before the
+session is entered, and for anything `NetworkProtocol.valid_notification()` rejects (non-string,
+empty, longer than `MAX_NOTIFICATION_LENGTH` = 512). Adding the RPC changes the RPC surface, so
+the protocol moved to v20 and a v19 peer is rejected at handshake.
+
+Lifecycle: `reset_to_offline_local_player()` (every multiplayer session end) and a successful
+`apply_network_snapshot()` (join or reconnect) clear the local message, so a disconnected or
+reconnected player never shows status text from the previous connection. Because routing uses the
+current `player_id` → peer mapping at send time, a reconnected identity receives its new notices on
+its new peer ID. Gameplay state, Save v5 and Profile v1 are unchanged.
+
 ## Not synchronized yet
 
 Stage 2 player presentation roster recovery is described in
