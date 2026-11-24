@@ -199,7 +199,7 @@ class MapView(CanvasView):
 
     def sync_markers(self, design, selection=""):
         self.cancel_gesture()
-        models = {row.id: row for row in (*design.region_points, *design.spawn_points)} if design else {}
+        models = {row.id: row for row in design.markers} if design else {}
         for key in self.markers.keys() - models.keys():
             self.map_scene.removeItem(self.markers.pop(key))
         for key, model in models.items():
@@ -282,7 +282,7 @@ class MapView(CanvasView):
         position = event.position().toPoint()
         point = self.mapToScene(position)
         mode = self.tool
-        if mode in ("place_entry", "place_escape", "place_spawn"):
+        if mode in ("place_entry", "place_escape", "place_spawn", "place_enemy"):
             self.marker_placed.emit(mode, self.snapped(point).toTuple())
             event.accept()
             return

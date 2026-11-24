@@ -16,7 +16,8 @@ from region_design import RegionDesign
 from source_region import GodotSource
 
 SUFFIX = ".rtcmap"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+TERRAIN_VERSION = 5
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MIN_EXTENT = 64
 MAX_EXTENT = 32768
@@ -79,7 +80,13 @@ def encode(document):
         else:
             del data["source"]
     if any(item.properties.terrain is not None for item in document.objects):
-        data.update(schema_version=SCHEMA_VERSION, source=data.get("source"), design=data.get("design"))
+        data.update(schema_version=TERRAIN_VERSION, source=data.get("source"), design=data.get("design"))
+    if document.design is not None:
+        if document.design.enemy_spawns is None:
+            # A draft that does not manage enemy spawns keeps its earlier schema byte for byte.
+            del data["design"]["enemy_spawns"]
+        else:
+            data.update(schema_version=SCHEMA_VERSION, source=data.get("source"))
     payload = (json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("draft exceeds the schema's size limit")
@@ -120,6 +127,8 @@ def _decode_versioned(payload):
     document = MapDocument(**_MIGRATIONS[version](data))
     if version < 5 and any(item.properties.terrain is not None for item in document.objects):
         raise DocumentError("terrain surfaces require Schema V5")
+    if version == 6 and (document.design is None or document.design.enemy_spawns is None):
+        raise DocumentError("Schema V6 requires an enemy spawn list")
     return document, version
 
 
@@ -155,11 +164,12 @@ def _migrate_v3(data):
     return {**_migrate_v2(data), "source": source}
 
 
-def _decode_v4(data, *, allow_draft=False):
+def _decode_v4(data, *, allow_draft=False, enemy_spawns=False):
     if data.keys() != _V2_FIELDS | {"source", "design"}:
         raise DocumentError("unrecognized or missing V4 draft fields")
     design_data = data.pop("design")
-    design = None if allow_draft and design_data is None else RegionDesign.from_data(design_data)
+    design = (None if allow_draft and design_data is None
+              else RegionDesign.from_data(design_data, enemy_spawns=enemy_spawns))
     source = data.pop("source")
     return {**_migrate_v2(data), "design": design,
             "source": GodotSource.from_data(source) if source is not None else None}
@@ -169,7 +179,11 @@ def _decode_v5(data):
     return _decode_v4(data, allow_draft=True)
 
 
-_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _decode_v4, 5: _decode_v5}
+def _decode_v6(data):
+    return _decode_v4(data, allow_draft=True, enemy_spawns=True)
+
+
+_MIGRATIONS = {1: _migrate_v1, 2: _migrate_v2, 3: _migrate_v3, 4: _decode_v4, 5: _decode_v5, 6: _decode_v6}
 
 
 def _draft_path(path):

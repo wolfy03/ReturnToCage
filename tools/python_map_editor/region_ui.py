@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
 
 from objects import MAX_GEOMETRY, DocumentError
 from placement_presets import capture_preset, load_preset
-from region_design import SPAWN_SLOTS, Connection, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint
+from region_design import (
+    SPAWN_SLOTS, Connection, EnemySpawn, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint, discover_enemies,
+)
 from region_index import INDEXED, NOT_INDEXED, IndexedRegion
 from strings import tr
 
@@ -57,8 +59,15 @@ class RegionMixin:
         self.landing = QCheckBox()
         self.slot = QSpinBox()
         self.slot.setRange(1, SPAWN_SLOTS)
-        for key, field in (("point_id", self.point_name), ("x", self.marker_x), ("y", self.marker_y),
-                           ("requires_landing", self.landing), ("spawn_slot", self.slot)):
+        self.enemy_id = QComboBox()
+        self.enemy_id.setEditable(True)
+        self.enemy_spawn_id = QLineEdit()
+        self.enemy_spawn_id.setMaxLength(64)
+        self.enemy_enabled = QCheckBox()
+        for key, field in (("point_id", self.point_name), ("enemy_id", self.enemy_id),
+                           ("enemy_spawn_id", self.enemy_spawn_id), ("x", self.marker_x), ("y", self.marker_y),
+                           ("requires_landing", self.landing), ("spawn_slot", self.slot),
+                           ("enemy_enabled", self.enemy_enabled)):
             form.addRow(tr(key), field)
         form.addRow(_button("apply_region", self._save_marker), _button("delete", self._delete_marker))
         marker_layout.addWidget(self.marker_form)
@@ -108,7 +117,7 @@ class RegionMixin:
     def _region_actions(self):
         menu = self.menuBar().addMenu(tr("region"))
         menu.addAction(self.wizard_action)
-        for key in ("place_entry", "place_escape", "place_spawn"):
+        for key in ("place_entry", "place_escape", "place_spawn", "place_enemy"):
             action = self._action(key, lambda enabled, key=key: self._set_tool(key) if enabled else None,
                                   checked=False)
             self.tool_group.addAction(action)
@@ -175,12 +184,16 @@ class RegionMixin:
 
     def _sync_region_design(self, selection=""):
         design = self._design()
-        self.marker_rows = (*design.region_points, *design.spawn_points)
+        self.marker_rows = design.markers
         self.marker_list.blockSignals(True)
         self.marker_list.clear()
         for row in self.marker_rows:
-            text = f"{row.kind} · {row.point_id}" if isinstance(row, RegionPoint) else f"{tr('spawn_slot')} {row.spawn_index + 1}"
+            if isinstance(row, EnemySpawn):
+                text = f"{tr('enemy_spawn')} · {row.enemy_id} · {row.spawn_id}" + ("" if row.enabled else f" · {tr('enemy_disabled')}")
+            else:
+                text = f"{row.kind} · {row.point_id}" if isinstance(row, RegionPoint) else f"{tr('spawn_slot')} {row.spawn_index + 1}"
             self.marker_list.addItem(text)
+        self._refresh_enemy_choices()
         self.marker_list.blockSignals(False)
         self._populate_connections()
         previous_exit = self.exit_id.currentText()
@@ -213,9 +226,19 @@ class RegionMixin:
             return
         row = self.marker_rows[index]
         point = isinstance(row, RegionPoint)
+        enemy = isinstance(row, EnemySpawn)
         self.marker_form.layout().setRowVisible(self.point_name, point)
         self.marker_form.layout().setRowVisible(self.landing, point)
-        self.marker_form.layout().setRowVisible(self.slot, not point)
+        self.marker_form.layout().setRowVisible(self.slot, not point and not enemy)
+        for field in (self.enemy_id, self.enemy_spawn_id, self.enemy_enabled):
+            self.marker_form.layout().setRowVisible(field, enemy)
+        if enemy:
+            self.enemy_id.setCurrentText(row.enemy_id)
+            self.enemy_spawn_id.setText(row.spawn_id)
+            self.enemy_enabled.setChecked(row.enabled)
+            self.marker_x.setValue(row.position[0])
+            self.marker_y.setValue(row.position[1])
+            return
         self.point_name.setText(row.point_id if point else "")
         self.landing.setChecked(point and row.requires_landing)
         self.slot.setValue(1 if point else row.spawn_index + 1)
@@ -234,6 +257,18 @@ class RegionMixin:
 
     def _add_marker(self, mode, position):
         design = self._design()
+        if mode == "place_enemy":
+            if design.enemy_spawns is None and self.draft.source is not None:
+                # The linked Scene may already hold enemy markers this draft never read.
+                raise DocumentError(tr("enemy_reimport_required"))
+            enemy = self.enemy_id.currentText().strip()
+            if not enemy:
+                raise DocumentError(tr("enemy_id_required"))
+            taken = {row.spawn_id for row in design.enemy_spawns or ()}
+            spawn_id = next(name for name in (f"{enemy}_spawn_{i}"[:64] for i in range(1, 100000)) if name not in taken)
+            row = EnemySpawn(self._new_id("enemy"), spawn_id, enemy, position)
+            self._change_design(replace(design, enemy_spawns=(*(design.enemy_spawns or ()), row)), row.id)
+            return
         if mode == "place_spawn":
             slot = next((i for i in range(SPAWN_SLOTS) if all(row.spawn_index != i for row in design.spawn_points)), None)
             if slot is None:
@@ -251,7 +286,8 @@ class RegionMixin:
         row = next((row for row in self.marker_rows if row.id == key), None)
         if row is None:
             return
-        field = "region_points" if isinstance(row, RegionPoint) else "spawn_points"
+        field = ("enemy_spawns" if isinstance(row, EnemySpawn)
+                 else "region_points" if isinstance(row, RegionPoint) else "spawn_points")
         design = self._design()
         updated = tuple(replace(item, **values) if item.id == key else item for item in getattr(design, field))
         self._change_design(replace(design, **{field: updated}), key)
@@ -267,7 +303,11 @@ class RegionMixin:
         row = next((row for row in self.marker_rows if row.id == key), None)
         if row is None:
             return
-        change = {"point_id": self.point_name.text().strip(), "requires_landing": self.landing.isChecked()} if isinstance(row, RegionPoint) else {"spawn_index": self.slot.value() - 1}
+        if isinstance(row, EnemySpawn):
+            change = {"enemy_id": self.enemy_id.currentText().strip(), "spawn_id": self.enemy_spawn_id.text().strip(),
+                      "enabled": self.enemy_enabled.isChecked()}
+        else:
+            change = {"point_id": self.point_name.text().strip(), "requires_landing": self.landing.isChecked()} if isinstance(row, RegionPoint) else {"spawn_index": self.slot.value() - 1}
         try:
             # Spin boxes round for display. Preserve components the user did not edit.
             position = tuple(old if abs(field.value() - old) <= 0.0000005 else field.value()
@@ -280,8 +320,21 @@ class RegionMixin:
         key = self.view.marker_id
         if key:
             design = self._design()
+            enemies = design.enemy_spawns
             self._change_design(replace(design, region_points=tuple(row for row in design.region_points if row.id != key),
-                                        spawn_points=tuple(row for row in design.spawn_points if row.id != key)))
+                                        spawn_points=tuple(row for row in design.spawn_points if row.id != key),
+                                        enemy_spawns=None if enemies is None else tuple(row for row in enemies if row.id != key)))
+
+    def _refresh_enemy_choices(self):
+        """Offer the project's enemies and those already placed; any ID may still be typed."""
+        current = self.enemy_id.currentText()
+        placed = {row.enemy_id for row in self._design().enemy_spawns or ()}
+        choices = sorted(placed | set(discover_enemies(self.view.textures.terrain_root)))
+        self.enemy_id.blockSignals(True)
+        self.enemy_id.clear()
+        self.enemy_id.addItems(choices)
+        self.enemy_id.setCurrentText(current or (choices[0] if choices else ""))
+        self.enemy_id.blockSignals(False)
 
     def _save_environment(self):
         try:

@@ -117,22 +117,39 @@ Select a registered terrain theme in the platform Inspector or the platform brus
 
 `forest_region`은 Python Map Editor에서 그대로 열린다. 9-Slice 테마 4종
 (`forest_grass_dirt`, `forest_soil`, `forest_tree_root`, `forest_fallen_log`)은 `assets/terrain/`에
-등록돼 플랫폼 브러시와 Inspector에서 고를 수 있고, 문서는 Schema V5로 저장된다.
+등록돼 플랫폼 브러시와 Inspector에서 고를 수 있다. Godot에서 가져온 숲 문서는 Enemy 스폰을
+포함하므로 Schema V6로 저장된다.
 
 ```powershell
 python tools/python_map_editor/check_forest_region_bridge.py --godot <godot-exe> --artifacts <output-directory>
 ```
 
-이 검사는 격리된 프로젝트 사본에서 숲을 가져와 V5 왕복, 무변경 저장 시 Scene/Resource
-바이트 동일성, 플랫폼·장식·ESCAPE 편집 후 재로드, 런타임 검증을 확인한다.
+이 검사는 격리된 프로젝트 사본에서 숲을 가져와 V6 왕복, 무변경 저장 시 Scene/Resource
+바이트 동일성, V6 이전 문서(Enemy 목록 없음)의 무변경 저장, 플랫폼·장식·ESCAPE 편집 후 재로드,
+Enemy 스폰의 이동·종류 변경·끄기·삭제·추가, 잘못된 Enemy 목록 거절, 런타임 검증을 확인한다.
 
-**Enemy 스폰은 Python 문서에 없다.** `.rtcmap`의 객체는 `platform`/`decoration`뿐이고 지역 설계는
-ENTRY/ESCAPE/플레이어 스폰만 다룬다. `FieldEnemySpawnPoint`(딱정벌레·개구리)는 Godot Scene에만
-있으며, 브리지는 이를 건드리지 않고 그대로 보존한다(위 검사가 노드 단위로 비교한다). Enemy
-배치와 이동은 Godot Field Editor(`addons/rtc_field_editor`)의 Enemy 팔레트로 한다 — 새 Enemy는
-`data/content/enemies/`에 추가하면 팔레트에 자동으로 나타난다.
+### Enemy 스폰 편집 (Schema V6)
 
-Python에서 Enemy 스폰을 편집하려면 지역 설계에 `enemy_spawns`(id, `spawn_id`, `enemy_id`,
-position, enabled)를 추가하는 **Schema V6**가 필요하다. V5로는 표현할 수 없다. 이 변경은 아직
-하지 않았다: V1~V5 읽기 유지, V6 미사용 문서는 기존 버전 그대로 쓰기, 브리지의 marker
-계약 확장, 이전 버전 로딩 검증이 함께 들어가야 한다.
+- **지역 > Enemy 스폰 배치** 도구로 맵을 클릭하면 `FieldEnemySpawnPoint` 하나가 놓인다. 종류는 지역 설계
+  dock **마커** 탭의 **Enemy ID**에서 고른다. 목록은 프로젝트 `data/content/enemies/*.tres`와 문서에 이미
+  놓인 Enemy에서 채우며, 직접 입력할 수도 있다(존재 여부는 Godot 브리지가 최종 확인한다).
+- 선택한 Enemy 마커는 같은 탭에서 Enemy ID, 스폰 ID(`spawn_id`), 위치, 사용 여부(`enabled`)를 고치고
+  **적용**한다. 선택 도구로 끌어서 옮길 수 있고, 모든 편집은 Undo/Redo된다. 꺼진 스폰은 속이 빈 마름모로 보인다.
+- Python 검증은 중복 스폰 ID, 맵 범위 밖 위치, 프로젝트에 없는 Enemy ID를 FAIL로 보고한다.
+- 게시하면 브리지가 `SpawnPoints` 아래 마커를 만들거나 고치거나 지우고, `RegionDefinition.enemy_ids`에
+  새로 쓰인 Enemy를 추가하고 더 이상 마커가 없는 Enemy를 뺀다(마커 없이 선언만 돼 있던 항목은 유지).
+
+### Schema V6 호환성
+
+| 문서 | `design.enemy_spawns` | 저장 버전 | 브리지 동작 |
+|---|---|---|---|
+| V1~V5로 저장된 기존 문서 | 없음(`None`) | **기존 버전 그대로**, 바이트 동일 | Scene의 Enemy 마커를 건드리지 않고 보존 |
+| 마법사로 만든 새 지역(Enemy 없음) | 없음 | V4 또는 V5 | Enemy 마커를 만들지 않음 |
+| Godot에서 가져온 지역, 또는 Enemy를 배치한 새 지역 | 목록(빈 목록 포함) | **V6** | 목록이 Scene의 전체 Enemy 스폰 |
+
+- `None`과 빈 목록은 다르다. `None`은 "이 문서는 Enemy를 관리하지 않는다", 빈 목록은 "Enemy가 없다"다.
+- V4/V5 문서에 `enemy_spawns` 필드가 있거나 V6 문서에 목록이 없으면 읽기를 거절한다.
+- **V6 이전에 가져온 연결 문서(source 있음)에는 Enemy를 배치할 수 없다.** 그 문서는 원본 Scene의 Enemy를
+  읽은 적이 없어서, 관리를 시작하면 기존 Enemy를 지우게 된다. 지역을 다시 가져온 뒤 배치한다.
+- `.rtcmap`의 다른 필드, 객체, 마커 계약은 바뀌지 않았다. 채집 위치·사다리 등 나머지 Scene 노드는 여전히
+  Godot Field Editor에서 편집하고 브리지가 보존한다.

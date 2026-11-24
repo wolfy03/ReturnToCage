@@ -3,6 +3,7 @@ extends RefCounted
 const Contract := preload("res://tools/map_bridge/scene_contract.gd")
 const POINT := preload("res://world/region_point.gd")
 const SPAWN := preload("res://world/multiplayer/player_spawn_point.gd")
+const ENEMY := preload("res://world/adventure/field_enemy_spawn_point.gd")
 const Placement := preload("res://addons/rtc_field_editor/placement.gd")
 const TEMPLATE_LADDER := &"rtc_map_template_ladder"
 
@@ -10,13 +11,17 @@ class ContentView extends RefCounted:
 	func get_definition(id: StringName) -> ContentDefinition:
 		return ContentRegistry.get_definition(id)
 
-static func inventory(root: Node2D, region: RegionDefinition) -> Dictionary:
+## enemies: Schema V6. Only a request that manages enemy spawns inventories them,
+## so the identity set of an older draft stays exactly what it was.
+static func inventory(root: Node2D, region: RegionDefinition, enemies: bool = false) -> Dictionary:
 	var bindings := {}
 	var design := {"region_points": [], "spawn_points": [], "connections": [], "template_ladder": null,
 		"environment": {"path": region.environment_path, "uid": Contract.uid(region.environment_path) if not region.environment_path.is_empty() else "",
 			"loading_color": "#" + region.environment_loading_color.to_html()}}
+	if enemies:
+		design.enemy_spawns = []
 	for node: Node2D in root.find_children("*", "Marker2D", true, false):
-		if not node is RegionPoint and not node is PlayerSpawnPoint:
+		if not node is RegionPoint and not node is PlayerSpawnPoint and not (enemies and node is FieldEnemySpawnPoint):
 			continue
 		var parent := node.get_parent() as Node2D
 		if node.owner != root or parent == null or node.top_level or not node.global_transform.is_finite() \
@@ -33,6 +38,9 @@ static func inventory(root: Node2D, region: RegionDefinition) -> Dictionary:
 			row.merge({"kind": "ENTRY" if node.kind == RegionPoint.Kind.ENTRY else "ESCAPE", "point_id": String(node.point_id),
 				"requires_landing": node.requires_landing})
 			design.region_points.append(row)
+		elif node is FieldEnemySpawnPoint:
+			row.merge({"spawn_id": String(node.spawn_id), "enemy_id": String(node.enemy_id), "enabled": node.enabled})
+			design.enemy_spawns.append(row)
 		else:
 			row.spawn_index = node.spawn_index
 			design.spawn_points.append(row)
@@ -204,6 +212,100 @@ static func apply(root: Node2D, region: RegionDefinition, original: Dictionary, 
 			victim.free()
 	if entries.is_empty() or slots.is_empty():
 		return "INVALID_DOCUMENT: an ENTRY and a player spawn slot are required"
+	var enemy_issue := _apply_enemy_spawns(root, region, original, design.get("enemy_spawns"), links, seen)
+	if not enemy_issue.is_empty():
+		return enemy_issue
 	region.entry_point_ids = _ordered_ids(region.entry_point_ids, entries)
 	region.escape_point_ids = _ordered_ids(region.escape_point_ids, escapes)
+	return ""
+
+## null leaves every FieldEnemySpawnPoint untouched (a V1-V5 draft). An Array is
+## the complete authored list: missing markers are removed, new ones are created.
+static func _apply_enemy_spawns(root: Node2D, region: RegionDefinition, original: Dictionary, rows: Variant,
+		links: Array, seen: Dictionary) -> String:
+	if rows == null:
+		return ""
+	if not rows is Array or rows.size() > 4096 or not original.design.has("enemy_spawns"):
+		return "INVALID_DOCUMENT: invalid enemy spawn list"
+	var previous := {}
+	var previously_used: Array[StringName] = []
+	for item: Dictionary in original.design.enemy_spawns:
+		previous[item.id] = item
+		previously_used.append(StringName(item.enemy_id))
+	var kept := {}
+	var spawn_ids := {}
+	var used: Array[StringName] = []
+	for row: Variant in rows:
+		if not row is Dictionary or not _point_id(row.get("id")) or seen.has(row.id) or not _position(row.get("position")):
+			return "INVALID_DOCUMENT: invalid or duplicate marker"
+		seen[row.id] = true
+		kept[row.id] = true
+		if not _point_id(row.get("spawn_id")) or not _point_id(row.get("enemy_id")) or not row.get("enabled") is bool:
+			return "INVALID_DOCUMENT: invalid enemy spawn %s" % row.id
+		if spawn_ids.has(row.spawn_id):
+			return "INVALID_DOCUMENT: duplicate enemy spawn ID %s" % row.spawn_id
+		spawn_ids[row.spawn_id] = true
+		var enemy := StringName(row.enemy_id)
+		var before: Dictionary = previous.get(row.id, {})
+		var node: Node2D
+		if before.is_empty():
+			if original.bindings.has(row.id):
+				return "INVALID_DOCUMENT: marker type changed for %s" % row.id
+			var parent := root.get_node_or_null("SpawnPoints") as Node2D
+			if parent == null and not root.has_node("SpawnPoints"):
+				parent = Node2D.new()
+				parent.name = "SpawnPoints"
+				root.add_child(parent)
+				parent.owner = root
+			var name := NodePath("RTC_" + String(row.id))
+			if parent == null or parent.owner != root or parent.get_script() != null or parent.has_node(name) \
+					or is_zero_approx(parent.global_transform.determinant()):
+				return "UNSUPPORTED_NODE: marker placement parent or name collision %s" % name
+			node = ENEMY.new()
+			node.name = String(name)
+			node.set_meta(Contract.EDIT_ID, row.id)
+			parent.add_child(node)
+			node.owner = root
+		else:
+			node = root.get_node(NodePath(original.bindings[row.id].path))
+			if node.get_script() != ENEMY:
+				if not before == row:
+					return "UNSUPPORTED_NODE: cannot edit custom marker %s" % row.id
+				if enemy not in used:
+					used.append(enemy)
+				continue
+		if (before.is_empty() or before.enemy_id != row.enemy_id) and not ContentRegistry.get_definition(enemy) is EnemyDefinition:
+			return "RESOURCE_MISSING: EnemyDefinition %s" % enemy
+		if enemy not in used:
+			used.append(enemy)
+		var position := Vector2(row.position[0], row.position[1])
+		if before.is_empty() or not node.global_position.is_equal_approx(position):
+			node.position = (node.get_parent() as Node2D).to_local(position)
+		if before.is_empty() or before.spawn_id != row.spawn_id:
+			node.spawn_id = StringName(row.spawn_id)
+		if before.is_empty() or before.enemy_id != row.enemy_id:
+			node.enemy_id = enemy
+		if node.enabled != row.enabled:
+			node.enabled = row.enabled
+	for key: String in previous:
+		if kept.has(key):
+			continue
+		var victim := root.get_node(NodePath(original.bindings[key].path))
+		if victim.get_child_count() or victim.get_script() != ENEMY:
+			return "UNSUPPORTED_NODE: cannot remove custom marker %s" % key
+		var issue := Contract.removal_issue(root, victim, links)
+		if not issue.is_empty():
+			return issue
+		victim.free()
+	# Keep the declared order, and keep an enemy the region declares without a
+	# marker. Drop only what the edited markers no longer use; append new kinds.
+	var declared: Array[StringName] = []
+	for key in region.enemy_ids:
+		if key in used or key not in previously_used:
+			declared.append(key)
+	for key in used:
+		if key not in declared:
+			declared.append(key)
+	if declared != region.enemy_ids:
+		region.enemy_ids = declared
 	return ""

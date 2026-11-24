@@ -491,8 +491,9 @@ class GodotSession:
             manifest[path] = digest
         contract_keys = ("scene_hash", "region_hash", "scene_uid", "region_uid", "scene_state", "definition_state")
         verified = self.call("validate_v4_export", region_path="res://" + region_path,
-                             expected={key: expected[key] for key in contract_keys})
-        marker_ids = {item.id for item in (*document.design.region_points, *document.design.spawn_points)}
+                             expected={key: expected[key] for key in contract_keys},
+                             enemy_spawns=document.design.enemy_spawns is not None)
+        marker_ids = {item.id for item in document.design.markers}
         object_bindings = {key: value for key, value in verified["bindings"].items() if key not in marker_ids}
         _verify_objects(document.objects, verified["objects"], object_bindings)
         resulting_design = RegionDesign.from_data(verified["design"])
@@ -521,7 +522,10 @@ class GodotSession:
 
 
 def _verify_design(expected, actual):
-    for desired, loaded in ((expected.region_points, actual.region_points), (expected.spawn_points, actual.spawn_points)):
+    if (expected.enemy_spawns is None) != (actual.enemy_spawns is None):
+        raise BridgeError("EXPORT_FAILED", "Reloaded enemy spawn ownership differs from the draft.")
+    for desired, loaded in ((expected.region_points, actual.region_points), (expected.spawn_points, actual.spawn_points),
+                            (expected.enemy_spawns or (), actual.enemy_spawns or ())):
         rows = {item.id: item for item in loaded}
         if set(rows) != {item.id for item in desired}:
             raise BridgeError("EXPORT_FAILED", "Reloaded marker identities differ from the draft.")

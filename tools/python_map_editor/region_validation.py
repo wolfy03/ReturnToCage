@@ -144,6 +144,21 @@ def validate_region(document, index=None, project=None):
                         add(WARNING, "spawn_center_overlap", obj.id, target)
                         break
 
+        if design.enemy_spawns is not None:
+            from region_design import discover_enemies
+            known = set(discover_enemies(project))
+            spawn_ids = Counter(row.spawn_id for row in design.enemy_spawns)
+            for row in design.enemy_spawns:
+                target = f"marker:{row.id}"
+                if spawn_ids[row.spawn_id] > 1:
+                    add(FAIL, "duplicate_enemy_spawn_id", row.spawn_id, target)
+                if not in_bounds(row.position):
+                    add(FAIL, "outside_bounds", row.id, target)
+                if project is None:
+                    add(NOT_EVALUATED, "enemy_reference_unchecked", row.enemy_id, target, domain=RUNTIME)
+                elif row.enemy_id not in known:
+                    add(FAIL, "enemy_reference", row.enemy_id, target)
+
         env = design.environment
         if env.path:
             if project and not _asset_exists(project, env.path.removeprefix("res://")):

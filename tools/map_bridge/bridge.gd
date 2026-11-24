@@ -192,6 +192,15 @@ func _apply_document(data: Dictionary, links: Array, verify_bindings: bool = tru
 			victim.free()
 	return ""
 
+## Schema V6: enemy spawn markers join the design only when the request owns them.
+func _manages_enemies() -> bool:
+	if request.operation == "import_v4_region":
+		return true
+	if request.operation == "validate_v4_export":
+		return request.get("enemy_spawns") == true
+	var design: Variant = request.get("design")
+	return design is Dictionary and design.get("enemy_spawns") is Array
+
 func _design_summary(base: Dictionary, design: Dictionary) -> Dictionary:
 	var bindings: Dictionary = base.bindings.duplicate()
 	for key: String in design.bindings:
@@ -201,7 +210,7 @@ func _design_summary(base: Dictionary, design: Dictionary) -> Dictionary:
 	return base.merged({"bindings": bindings, "design": design.design, "definition_state": design.definition_state}, true)
 
 func _design_operation(objects: Dictionary, links: Array, summary: Dictionary) -> void:
-	var design := Design.inventory(scene_root, region)
+	var design := Design.inventory(scene_root, region, _manages_enemies())
 	if design.has("error"):
 		_finish({}, design.error)
 		return
@@ -278,7 +287,7 @@ func _stage_new_region() -> void:
 	region.id = StringName(id)
 	region.display_name = label
 	region.scene_path = scene_path
-	var authored := Design.inventory(scene_root, region)
+	var authored := Design.inventory(scene_root, region, _manages_enemies())
 	var links: Array = []
 	var issue := Design.apply(scene_root, region, authored, request.get("design"), links, true)
 	if issue.is_empty():
@@ -296,7 +305,7 @@ func _stage_new_region() -> void:
 		return
 	region.take_over_path(region_path)
 	var objects := Contract.inventory(scene_root, id)
-	var design := Design.inventory(scene_root, region)
+	var design := Design.inventory(scene_root, region, _manages_enemies())
 	if objects.has("error") or design.has("error"):
 		_finish({}, objects.get("error", design.get("error", "")))
 		return
@@ -330,7 +339,7 @@ func _preflight_design_spawn() -> String:
 
 func _save_design(initial: Dictionary, links: Array) -> void:
 	var objects := Contract.inventory(scene_root, String(region.id))
-	var design := Design.inventory(scene_root, region)
+	var design := Design.inventory(scene_root, region, _manages_enemies())
 	if objects.has("error") or design.has("error"):
 		_finish({}, "INVALID_DOCUMENT: " + objects.get("error", design.get("error", "")))
 		return

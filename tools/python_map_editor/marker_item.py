@@ -4,7 +4,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPen, QPolygonF
 from PySide6.QtWidgets import QGraphicsItem
 
-from region_design import RegionPoint
+from region_design import EnemySpawn, RegionPoint
 
 
 class MarkerItem(QGraphicsItem):
@@ -20,18 +20,28 @@ class MarkerItem(QGraphicsItem):
     def set_model(self, model):
         self.model = model
         self.point = isinstance(model, RegionPoint)
-        self.label = model.point_id if self.point else f"Slot {model.spawn_index + 1}"
+        self.enemy = isinstance(model, EnemySpawn)
+        if self.enemy:
+            self.label = f"{model.enemy_id} · {model.spawn_id}"
+        else:
+            self.label = model.point_id if self.point else f"Slot {model.spawn_index + 1}"
         self.setToolTip(f"{model.kind} · {self.label}" if self.point else self.label)
         self.setPos(*model.position)
         self.update()
 
     def boundingRect(self):
+        if self.enemy:
+            return QRectF(-11, -23, 22, 25)
         return QRectF(-11, -24, 22, 26) if self.point else QRectF(-10, 1, 20, 22)
 
     def paint(self, painter, option, widget=None):
         outline = "#ff626a" if self.issue else "#ffffff" if self.active else "#1c2430"
         painter.setPen(QPen(QColor(outline), 2))
-        if self.point:
+        if self.enemy:
+            # A diamond standing on the spawn position; hollow when the spawn is disabled.
+            painter.setBrush(QColor("#e0625f") if self.model.enabled else Qt.BrushStyle.NoBrush)
+            painter.drawPolygon(QPolygonF([QPointF(0, 0), QPointF(-9, -10), QPointF(0, -20), QPointF(9, -10)]))
+        elif self.point:
             entry = self.model.kind == "ENTRY"
             painter.setBrush(QColor("#78d8af" if entry else "#ffc178"))
             tip = QPointF(0, 0)

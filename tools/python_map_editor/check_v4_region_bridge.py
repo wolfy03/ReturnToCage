@@ -116,7 +116,9 @@ def publication(settings):
             assert recover_project(project) == []
         with GodotSession(isolated, cancel, print) as session:
             reopened, _ = session.import_region(saved.source.region_path, design=True)
-            assert reopened.source == saved.source and reopened.design == saved.design
+            # An import always reads the enemy spawn list (Schema V6); a scaffold region has none.
+            assert reopened.source == saved.source and reopened.design.enemy_spawns == ()
+            assert replace(reopened.design, enemy_spawns=None) == saved.design
             entry, *others = reopened.design.region_points
             design = replace(reopened.design, region_points=(replace(entry, position=(160, 520)), *others),
                              environment=replace(reopened.design.environment, loading_color="#123456"))

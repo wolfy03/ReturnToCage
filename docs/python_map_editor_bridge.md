@@ -28,6 +28,13 @@ Godot.exe --headless --path <project-copy> --log-file <log> --scene res://tools/
 | `import_v4_region`, `stage_v4_export` | V4 지역 설계 가져오기와 원본 기반의 Scene·RegionDefinition 편집 |
 | `stage_new_region`, `validate_v4_export` | 공식 Scaffold에 신규 쌍을 생성하고 새 프로세스에서 의미 비교와 물리 사전 검사 |
 
+**Enemy 스폰(Schema V6).** `import_v4_region`은 항상 `design.enemy_spawns`(id, `spawn_id`, `enemy_id`, position,
+enabled)와 그 마커의 binding을 돌려준다. `stage_v4_export`/`stage_new_region`은 요청의 `design.enemy_spawns`가
+배열일 때만 `FieldEnemySpawnPoint`를 inventory·편집하고, `null`이면 Enemy 마커를 식별자 집합에도 넣지 않고
+그대로 둔다 — 그래서 V6 이전 문서의 binding 비교가 깨지지 않는다. `validate_v4_export`는 요청의
+`enemy_spawns: true`로 같은 범위를 고른다. 알 수 없는 `enemy_id`는 `RESOURCE_MISSING`, 중복 `spawn_id`는
+`INVALID_DOCUMENT`다.
+
 Python은 요청 및 버전 일치, 종료 코드 0, 구조화된 PASS 결과와 산출물 해시를 요구한다. 게임 지역의 실제 로딩, 스폰 및 월드 흐름은 별도 기존 `field_runtime_probe.tscn`에서 확인한다. Godot 프로세스 로그와 종료 코드는 보존한다. `0xC0000005`와 같은 엔진 오류는 결과 파일이 있어도 실패이며 게시하지 않는다. 작업 취소·타임아웃에는 소유한 프로세스만 종료하며 Windows에서 Traversal의 Job Object를 사용한다. 선택한 엔진 또는 시간 한도를 자동으로 변경하지 않는다.
 
 V4 게시 저널은 `.rtc-map-publish/pair-*/`에 두 파일의 이전·이후 SHA-256과 진행 상태를 기록한다. 게시 잠금 안에서 사용자 승인 후 원본을 재검사하고, 원본 의존성과 검증된 파일 쌍을 완료 기록 직전까지 대조한다. 다음 명시적 Godot 작업에서 미완료 기록을 복구한다. 완료 기록 전 중단은 이전 상태를 복구하며, 완료 기록 후에는 확인된 새 쌍을 유지한다. 원래 SHA-256과 검증된 SHA-256 모두와 다른 파일을 발견하면 경로와 해시를 표시하고 저널 및 백업을 보존한다. 정상 완료·정상 롤백 저널은 각 최근 10개를 보존한다. 미완료·손상·충돌 및 예상 밖 파일이 들어 있는 저널은 자동 정리 대상에서 제외한다.
