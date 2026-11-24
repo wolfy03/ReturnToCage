@@ -25,6 +25,9 @@ var _host_restore_pending: bool = false
 # canonical primary path and never inspects the game-save backup.
 var _identity_recovery_save_path: String = SaveManager.SAVE_PATH
 var _host_saved_game_path: String = SaveManager.SAVE_PATH
+# Inspection that produced the recovery dialog's candidates. Recovery stages
+# exactly that file (same source and bytes) or refuses.
+var _identity_inspection: Dictionary = {}
 
 func _ready() -> void:
 	SceneRouter.register_world_layer(world_layer)
@@ -84,15 +87,20 @@ func _open_recovery_dialog() -> void:
 	if identity_gate_state not in [IdentityGateState.RECOVERY_REQUIRED, IdentityGateState.RECOVERY_DIALOG_OPEN]:
 		return
 	identity_gate_state = IdentityGateState.RECOVERY_DIALOG_OPEN
-	identity_dialog.present_inspection(SaveManager.inspect_identity_candidates(_identity_recovery_save_path))
+	_identity_inspection = SaveManager.inspect_identity_candidates(_identity_recovery_save_path)
+	identity_dialog.present_inspection(_identity_inspection)
 
 func _recover_identity(player_id: StringName) -> void:
 	if identity_gate_state != IdentityGateState.RECOVERY_DIALOG_OPEN:
 		return
 	identity_dialog.set_busy(true)
-	var result := SaveManager.recover_identity_from_save(player_id, _identity_recovery_save_path)
+	var result := SaveManager.recover_identity_from_save(player_id, _identity_recovery_save_path, _identity_inspection)
 	identity_dialog.set_busy(false)
 	if not result.success:
+		# The Save may have changed or been found invalid since the dialog was
+		# filled. Re-inspect so the list always reflects the file recovery uses.
+		_identity_inspection = SaveManager.inspect_identity_candidates(_identity_recovery_save_path)
+		identity_dialog.present_inspection(_identity_inspection)
 		identity_dialog.show_error(result.message)
 		return
 	_activation_pending = true
@@ -177,7 +185,8 @@ func _load_game() -> void:
 		menu.visible = false
 		SceneRouter.go_to_settlement()
 	else:
-		error_label.text = "No valid save found"
+		var detail := String(SaveManager.last_load_result.get("message", ""))
+		error_label.text = "No valid save found" if detail.is_empty() else "No valid save found: %s" % detail
 		error_label.visible = true
 
 func _host_game(port: int = NetworkManager.DEFAULT_PORT) -> void:
@@ -228,6 +237,8 @@ func _host_saved_game(
 		_rollback_host_restore(NetworkManager.last_error)
 		return
 	_set_host_restore_busy(false)
+	if prepared.recovered_from_backup:
+		GameSession.last_message = "%s Hosting the backup save." % SaveManager.BACKUP_RECOVERY_NOTICE
 	menu.visible = false
 	error_label.visible = false
 	if not _present_local_world_assignment():

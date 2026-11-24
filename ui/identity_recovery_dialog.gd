@@ -49,6 +49,8 @@ func present_inspection(result: Dictionary) -> void:
 	match status:
 		SaveManager.IdentityInspectionStatus.SINGLE_CANDIDATE, SaveManager.IdentityInspectionStatus.MULTIPLE_CANDIDATES:
 			message_label.text = "Choose the persistent player identity to recover."
+			if bool(result.get("recovered_from_backup", false)):
+				message_label.text = "%s\n%s" % [String(result.get("notice", "")), message_label.text]
 			for candidate in result.get("candidates", []):
 				var player_id := StringName(candidate)
 				_candidates.append(player_id)

@@ -6,6 +6,32 @@ signal load_finished(success: bool, message: String)
 const CURRENT_VERSION := 5
 const SAVE_PATH := "user://return_to_cage_save.json"
 
+enum SaveSource {
+	NONE,
+	PRIMARY,
+	BACKUP,
+}
+
+const BACKUP_SUFFIX := ".bak"
+const TEMP_SUFFIX := ".tmp"
+const BACKUP_ROLLBACK_SUFFIX := ".bak.rollback"
+const CORRUPT_SUFFIX := ".corrupt"
+const BACKUP_RECOVERY_NOTICE := "Primary save is missing or corrupted. A valid backup was found."
+
+# Failure-injection seam for the save transaction tests. The hook receives the
+# operation name and returns true to make that operation fail before it runs.
+const OP_TEMP_OPEN := &"temp_open"
+const OP_TEMP_WRITE := &"temp_write"
+const OP_TEMP_VALIDATE := &"temp_validate"
+const OP_BACKUP_PRESERVE := &"backup_preserve"
+const OP_BACKUP_CREATE := &"backup_create"
+const OP_CORRUPT_PRESERVE := &"corrupt_preserve"
+const OP_PRIMARY_INSTALL := &"primary_install"
+const OP_ROLLBACK := &"rollback"
+
+var last_load_result: Dictionary = {}
+var _failure_hook: Callable
+
 enum IdentityInspectionStatus {
 	SAVE_NOT_FOUND,
 	INVALID_SAVE,
@@ -48,94 +74,60 @@ func save_game(path: String = SAVE_PATH) -> bool:
 	if not staged.fatal_error.is_empty():
 		save_finished.emit(false, staged.fatal_error)
 		return false
-	var json := JSON.stringify(envelope, "  ")
-	var temporary := path + ".tmp"
-	var file := FileAccess.open(temporary, FileAccess.WRITE)
-	if file == null:
-		var message := "Cannot create temporary save: %s" % FileAccess.get_open_error()
-		save_finished.emit(false, message)
-		return false
-	file.store_string(json)
-	file.flush()
-	var write_error := file.get_error()
-	file.close()
-	var absolute_temp := ProjectSettings.globalize_path(temporary)
-	var absolute_path := ProjectSettings.globalize_path(path)
-	if write_error != OK:
-		DirAccess.remove_absolute(absolute_temp)
-		save_finished.emit(false, "Cannot write temporary save: %s" % error_string(write_error))
-		return false
-	var absolute_backup := absolute_path + ".bak"
-	if FileAccess.file_exists(path + ".bak"):
-		var remove_error := DirAccess.remove_absolute(absolute_backup)
-		if remove_error != OK:
-			DirAccess.remove_absolute(absolute_temp)
-			save_finished.emit(false, "Cannot replace save backup: %s" % error_string(remove_error))
-			return false
-	if FileAccess.file_exists(path):
-		var backup_error := DirAccess.rename_absolute(absolute_path, absolute_backup)
-		if backup_error != OK:
-			DirAccess.remove_absolute(absolute_temp)
-			save_finished.emit(false, "Cannot create save backup: %s" % error_string(backup_error))
-			return false
-	var error := DirAccess.rename_absolute(absolute_temp, absolute_path)
-	if error != OK:
-		var rollback_error := OK
-		if FileAccess.file_exists(path + ".bak"):
-			rollback_error = DirAccess.rename_absolute(absolute_backup, absolute_path)
-		if FileAccess.file_exists(temporary):
-			DirAccess.remove_absolute(absolute_temp)
-		var rollback_suffix := "" if rollback_error == OK else "; rollback failed: %s" % error_string(rollback_error)
-		save_finished.emit(false, "Atomic save rename failed: %s%s" % [error_string(error), rollback_suffix])
-		return false
-	save_finished.emit(true, "Game saved")
-	return true
+	var transaction := _write_save_transaction(path, JSON.stringify(envelope, "  "))
+	save_finished.emit(transaction.success, transaction.message)
+	return transaction.success
 
 func load_game(path: String = SAVE_PATH) -> bool:
 	var permission: CommandResult = can_load()
 	if not permission.success:
-		load_finished.emit(false, permission.message)
+		_finish_load(false, permission.message)
 		return false
 	var prepared := prepare_load(path)
 	if not prepared.success:
-		load_finished.emit(false, prepared.error)
+		_finish_load(false, prepared.error, prepared)
 		return false
 	var snapshot: SessionSnapshot = prepared.snapshot
 	if not GameSession.apply_persistent_snapshot(snapshot):
-		load_finished.emit(false, "Cannot apply the staged Save v5 session")
+		_finish_load(false, "Cannot apply the staged Save v5 session", prepared)
 		return false
 	var errors: PackedStringArray = prepared.warnings
 	var message := "Game loaded" if errors.is_empty() else "Game loaded with warnings: %s" % "; ".join(errors)
-	load_finished.emit(true, message)
+	if prepared.recovered_from_backup:
+		message = "%s Game loaded from backup. %s" % [BACKUP_RECOVERY_NOTICE, message]
+	# The HUD status line reads last_message, so a backup recovery stays visible
+	# after the menu has been replaced by the Settlement scene.
+	GameSession.last_message = message
+	_finish_load(true, message, prepared)
 	return true
+
+func _finish_load(success: bool, message: String, prepared: Dictionary = {}) -> void:
+	last_load_result = {
+		"success": success,
+		"message": message,
+		"source": prepared.get("source", SaveSource.NONE),
+		"recovered_from_backup": bool(prepared.get("recovered_from_backup", false)),
+		"primary_error": String(prepared.get("primary_error", "")),
+	}
+	load_finished.emit(success, message)
 
 # Reads, migrates, and fully validates a save into a detached SessionSnapshot.
 # It never mutates the live GameSession or opens multiplayer transport. Offline
 # Load applies the result immediately; Host Saved Game applies it only after a
-# gated server transport has opened successfully.
+# gated server transport has opened successfully. The file is chosen by
+# resolve_save_candidate(): primary first, backup only if primary is invalid.
 func prepare_load(
 	path: String = SAVE_PATH,
 	selected_player_id: StringName = &""
 ) -> Dictionary:
-	var result := {
-		"success": false,
-		"snapshot": null,
-		"warnings": PackedStringArray(),
-		"error": "",
-	}
-	var read_result := _read_save_dictionary(path)
-	if not read_result.success:
-		result.error = read_result.error
+	var result := _staging_result()
+	var candidate := resolve_save_candidate(path)
+	_copy_candidate_origin(candidate, result)
+	if not candidate.valid:
+		result.error = candidate.error
 		return result
-	var envelope: Dictionary = read_result.data
-	var migrated := migrate(envelope)
-	if migrated.is_empty():
-		result.error = "Unsupported save format"
-		return result
-	if GameSession.get_start_definition() == null:
-		result.error = "Cannot load game: invalid start configuration"
-		return result
-	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrated, selected_player_id, int(envelope.format_version) < CURRENT_VERSION)
+	var player_id := selected_player_id if not selected_player_id.is_empty() else NetworkManager.local_profile_player_id()
+	var snapshot := _stage_candidate(candidate, player_id)
 	if not snapshot.fatal_error.is_empty():
 		result.error = snapshot.fatal_error
 		return result
@@ -144,84 +136,64 @@ func prepare_load(
 	result.warnings = snapshot.warnings
 	return result
 
-# Reads only the primary Save v4/v5 file and validates the identity-bearing
-# envelope contract. It never migrates, stages domain objects, applies live
-# state, writes the save, or changes the local profile.
+# Identity inspection uses the same fully validated candidate as Load and
+# Host Saved Game. It never writes the save, changes the local profile, or
+# applies live state. The returned source/fingerprint pin the inspected file so
+# a later validate/recover call cannot silently stage a different file.
 func inspect_identity_candidates(path: String = SAVE_PATH) -> Dictionary:
-	var read_result := _read_save_dictionary(path)
-	if not read_result.success:
-		var missing: bool = read_result.error_code == ERR_FILE_NOT_FOUND
-		return _identity_inspection_result(
-			IdentityInspectionStatus.SAVE_NOT_FOUND if missing else IdentityInspectionStatus.INVALID_SAVE,
-			read_result.error
+	var candidate := resolve_save_candidate(path)
+	if not candidate.valid:
+		var result := _identity_inspection_result(
+			IdentityInspectionStatus.SAVE_NOT_FOUND if candidate.missing else IdentityInspectionStatus.INVALID_SAVE,
+			candidate.error
 		)
-	var envelope: Dictionary = read_result.data
-	var raw_version: Variant = envelope.get("format_version", null)
-	if not SaveData.is_integer(raw_version) or int(raw_version) not in [4, CURRENT_VERSION]:
-		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Identity recovery requires a primary Save v4/v5 file")
-	if not envelope.get("shared", null) is Dictionary or not envelope.get("players", null) is Dictionary:
-		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid save shared or players object")
-	var shared: Dictionary = envelope["shared"]
-	for key in ["session", "settlement", "progression", "difficulty", "adventure"]:
-		if not shared.get(key, null) is Dictionary:
-			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid save shared object: %s" % key)
-	var raw_players: Dictionary = envelope["players"]
-	if raw_players.is_empty():
-		return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Save contains no player records")
-	var candidate_names: Array[String] = []
-	for raw_player_id in raw_players:
-		if (not raw_player_id is String and not raw_player_id is StringName) \
-				or not LocalPlayerProfile.is_valid_player_id(raw_player_id):
-			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Save contains an invalid player ID")
-		var record: Variant = raw_players[raw_player_id]
-		if not record is Dictionary \
-				or not record.get("player_state", null) is Dictionary \
-				or not record.get("personal_progression", null) is Dictionary:
-			return _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, "Invalid save player record: %s" % raw_player_id)
-		candidate_names.append(String(raw_player_id))
-	candidate_names.sort()
-	var candidates: Array[StringName] = []
-	for candidate_name in candidate_names:
-		candidates.append(StringName(candidate_name))
+		_copy_candidate_origin(candidate, result)
+		return result
+	var version_error := _identity_version_error(candidate)
+	if not version_error.is_empty():
+		var rejected := _identity_inspection_result(IdentityInspectionStatus.INVALID_SAVE, version_error)
+		_copy_candidate_origin(candidate, rejected)
+		return rejected
+	var candidates: Array[StringName] = candidate.player_ids
 	var status := IdentityInspectionStatus.SINGLE_CANDIDATE if candidates.size() == 1 \
 			else IdentityInspectionStatus.MULTIPLE_CANDIDATES
 	var result := _identity_inspection_result(status)
-	result.candidates = candidates
-	result.saved_at = String(envelope.get("saved_at", "")) if SaveData.is_text(envelope.get("saved_at", "")) else ""
-	result.format_version = int(raw_version)
+	result.candidates = candidates.duplicate()
+	result.saved_at = candidate.saved_at
+	result.format_version = candidate.format_version
+	_copy_candidate_origin(candidate, result)
 	return result
 
-# Re-reads the primary save and performs the complete Save v5 staging
-# validation for the explicitly selected identity. No live state is applied.
-func validate_identity_candidate(player_id: StringName, path: String = SAVE_PATH) -> Dictionary:
-	var result := {
-		"success": false,
-		"snapshot": null,
-		"warnings": PackedStringArray(),
-		"error": "",
-	}
+# Resolves the candidate again and performs the complete Save v5 staging for the
+# explicitly selected identity. No live state is applied. When `expected` is an
+# inspection result, the candidate must still be the same source and bytes.
+func validate_identity_candidate(
+	player_id: StringName,
+	path: String = SAVE_PATH,
+	expected: Dictionary = {}
+) -> Dictionary:
+	var result := _staging_result()
 	if not LocalPlayerProfile.is_valid_player_id(player_id):
 		result.error = "Invalid selected player identity"
 		return result
-	var inspection := inspect_identity_candidates(path)
-	if inspection.status not in [IdentityInspectionStatus.SINGLE_CANDIDATE, IdentityInspectionStatus.MULTIPLE_CANDIDATES]:
-		result.error = inspection.error
+	var candidate := resolve_save_candidate(path)
+	_copy_candidate_origin(candidate, result)
+	if not candidate.valid:
+		result.error = candidate.error
 		return result
-	if not inspection.candidates.has(player_id):
+	if not expected.is_empty() and (
+			int(expected.get("source", SaveSource.NONE)) != int(candidate.source)
+			or String(expected.get("fingerprint", "")) != candidate.fingerprint):
+		result.error = "Save changed since identity inspection; inspect it again"
+		return result
+	var version_error := _identity_version_error(candidate)
+	if not version_error.is_empty():
+		result.error = version_error
+		return result
+	if not candidate.player_ids.has(player_id):
 		result.error = "Save does not contain the selected player identity"
 		return result
-	# Inspection results are deliberately not authoritative. Re-read before
-	# staging to avoid committing a candidate from stale UI state.
-	var read_result := _read_save_dictionary(path)
-	if not read_result.success:
-		result.error = read_result.error
-		return result
-	var envelope: Dictionary = read_result.data
-	var raw_version: Variant = envelope.get("format_version", null)
-	if not SaveData.is_integer(raw_version) or int(raw_version) not in [4, CURRENT_VERSION]:
-		result.error = "Identity recovery requires a primary Save v4/v5 file"
-		return result
-	var snapshot: SessionSnapshot = GameSession.prepare_persistent_restore(migrate(envelope), player_id, int(raw_version) < CURRENT_VERSION)
+	var snapshot := _stage_candidate(candidate, player_id)
 	if snapshot == null or not snapshot.fatal_error.is_empty():
 		result.error = snapshot.fatal_error if snapshot != null else "Cannot stage save identity recovery"
 		return result
@@ -238,17 +210,271 @@ func validate_identity_candidate(player_id: StringName, path: String = SAVE_PATH
 # complete save stages first, then the profile performs its disk transaction.
 func recover_identity_from_save(
 	player_id: StringName,
-	path: String = SAVE_PATH
+	path: String = SAVE_PATH,
+	expected: Dictionary = {}
 ) -> CommandResult:
-	var staged := validate_identity_candidate(player_id, path)
+	var staged := validate_identity_candidate(player_id, path, expected)
 	if not staged.success:
 		return CommandResult.make(false, staged.error)
 	return NetworkManager.commit_local_profile_identity(player_id)
+
+func backup_path(path: String = SAVE_PATH) -> String:
+	return path + BACKUP_SUFFIX
+
+# Candidate policy shared by every entry point:
+#   1. Primary is used whenever it passes the full validation pipeline, even if
+#      it does not contain the identity the caller wants. A valid primary never
+#      falls back to a backup with a different identity.
+#   2. Backup is considered only when primary is missing or invalid, and must
+#      pass the same pipeline. `.tmp` and rollback/corrupt copies are never
+#      candidates.
+# Validation is identity-independent (every player record is staged), so the
+# chosen file does not depend on which identity is asked for later.
+func resolve_save_candidate(path: String = SAVE_PATH) -> Dictionary:
+	var primary := _validate_save_file(path, SaveSource.PRIMARY)
+	if primary.valid:
+		return primary
+	var backup := _validate_save_file(backup_path(path), SaveSource.BACKUP)
+	if backup.valid:
+		backup.recovered_from_backup = true
+		backup.primary_error = primary.error
+		backup.notice = BACKUP_RECOVERY_NOTICE
+		return backup
+	var failed := _candidate_result(path, SaveSource.NONE)
+	failed.missing = primary.missing and backup.missing
+	failed.primary_error = primary.error
+	if backup.missing:
+		failed.error = primary.error
+		failed.error_code = primary.error_code
+	else:
+		failed.error = "Primary save: %s; backup save: %s" % [primary.error, backup.error]
+		failed.error_code = ERR_INVALID_DATA
+	return failed
+
+func set_failure_hook_for_tests(hook: Callable) -> void:
+	_failure_hook = hook
+
+func _validate_save_file(file_path: String, source: SaveSource) -> Dictionary:
+	var result := _candidate_result(file_path, source)
+	var read_result := _read_save_dictionary(file_path)
+	if not read_result.success:
+		result.missing = read_result.error_code == ERR_FILE_NOT_FOUND
+		result.error = read_result.error
+		result.error_code = read_result.error_code
+		return result
+	result.fingerprint = read_result.fingerprint
+	var envelope: Dictionary = read_result.data
+	var raw_version: Variant = envelope.get("format_version", null)
+	if not SaveData.is_integer(raw_version) or int(raw_version) < 1 or int(raw_version) > CURRENT_VERSION:
+		result.error = "Unsupported save format"
+		return result
+	result.format_version = int(raw_version)
+	result.saved_at = String(envelope.get("saved_at", "")) if SaveData.is_text(envelope.get("saved_at", "")) else ""
+	if GameSession.get_start_definition() == null:
+		result.error = "Cannot load game: invalid start configuration"
+		return result
+	var migrated := migrate(envelope)
+	if migrated.is_empty():
+		result.error = "Unsupported save format"
+		return result
+	var raw_players: Dictionary = migrated["players"]
+	if raw_players.is_empty():
+		result.error = "Save contains no player records"
+		return result
+	var names: Array[String] = []
+	for raw_player_id in raw_players:
+		if (not raw_player_id is String and not raw_player_id is StringName) \
+				or not LocalPlayerProfile.is_valid_player_id(raw_player_id):
+			result.error = "Save contains an invalid player ID"
+			return result
+		names.append(String(raw_player_id))
+	names.sort()
+	var player_ids: Array[StringName] = []
+	for player_name in names:
+		player_ids.append(StringName(player_name))
+	# Full staging validates the shared state and every player record, item
+	# instance registry and reference, not just the probed local record.
+	var legacy: bool = int(result.format_version) < CURRENT_VERSION
+	var probe := GameSession.prepare_persistent_restore(migrated.duplicate(true), player_ids[0], legacy)
+	if probe == null or not probe.fatal_error.is_empty():
+		result.error = probe.fatal_error if probe != null else "Cannot stage save"
+		return result
+	result.valid = true
+	result.error = ""
+	result.error_code = OK
+	result.migrated = migrated
+	result.player_ids = player_ids
+	result.legacy = legacy
+	result.probe_player_id = player_ids[0]
+	result.probe_snapshot = probe
+	return result
+
+func _stage_candidate(candidate: Dictionary, player_id: StringName) -> SessionSnapshot:
+	if player_id == candidate.probe_player_id and candidate.probe_snapshot != null:
+		return candidate.probe_snapshot
+	return GameSession.prepare_persistent_restore(candidate.migrated.duplicate(true), player_id, candidate.legacy)
+
+func _identity_version_error(candidate: Dictionary) -> String:
+	if candidate.format_version not in [4, CURRENT_VERSION]:
+		return "Identity recovery requires a Save v4/v5 file"
+	return ""
+
+func _candidate_result(file_path: String, source: SaveSource) -> Dictionary:
+	return {
+		"valid": false,
+		"source": source,
+		"path": file_path,
+		"missing": false,
+		"error": "",
+		"error_code": ERR_INVALID_DATA,
+		"fingerprint": "",
+		"format_version": 0,
+		"saved_at": "",
+		"migrated": {},
+		"player_ids": Array([], TYPE_STRING_NAME, "", null),
+		"legacy": false,
+		"probe_player_id": &"",
+		"probe_snapshot": null,
+		"recovered_from_backup": false,
+		"primary_error": "",
+		"notice": "",
+	}
+
+func _staging_result() -> Dictionary:
+	return {
+		"success": false,
+		"snapshot": null,
+		"warnings": PackedStringArray(),
+		"error": "",
+		"source": SaveSource.NONE,
+		"recovered_from_backup": false,
+		"primary_error": "",
+		"notice": "",
+		"fingerprint": "",
+	}
+
+func _copy_candidate_origin(candidate: Dictionary, target: Dictionary) -> void:
+	for key in ["source", "recovered_from_backup", "primary_error", "notice", "fingerprint"]:
+		target[key] = candidate[key]
+
+# Save transaction. Invariants:
+#   * The new data is written to `.tmp`, flushed, read back and fully validated
+#     before any existing file is touched.
+#   * A valid primary is rotated to `.bak`; the previous `.bak` is moved aside to
+#     `.bak.rollback` (not deleted) until the new primary is installed.
+#   * An invalid primary is never rotated into `.bak` (that would replace the
+#     last good copy); it is preserved as `.corrupt` and `.bak` is kept.
+#   * Every failure restores the files that were moved, so at least one
+#     previously valid copy remains reachable through resolve_save_candidate().
+# flush() hands data to the OS; it is not an fsync of the file or directory, so
+# this protects against crashes and failed operations, not power loss.
+func _write_save_transaction(path: String, json: String) -> Dictionary:
+	var temporary := path + TEMP_SUFFIX
+	var backup := backup_path(path)
+	var backup_rollback := path + BACKUP_ROLLBACK_SUFFIX
+	var corrupt := path + CORRUPT_SUFFIX
+	if FileAccess.file_exists(temporary) and _remove(temporary, &"") != OK:
+		return _transaction_failure("Cannot clear stale temporary save")
+	if _should_fail(OP_TEMP_OPEN):
+		return _transaction_failure("Cannot create temporary save: %s" % error_string(ERR_CANT_CREATE))
+	var file := FileAccess.open(temporary, FileAccess.WRITE)
+	if file == null:
+		return _transaction_failure("Cannot create temporary save: %s" % error_string(FileAccess.get_open_error()))
+	file.store_string(json)
+	file.flush()
+	var write_error: Error = ERR_FILE_CANT_WRITE if _should_fail(OP_TEMP_WRITE) else file.get_error()
+	file.close()
+	if write_error != OK:
+		_remove(temporary, &"")
+		return _transaction_failure("Cannot write temporary save: %s" % error_string(write_error))
+	var written := _validate_save_file(temporary, SaveSource.NONE)
+	if _should_fail(OP_TEMP_VALIDATE) or not written.valid or _read_text(temporary) != json:
+		_remove(temporary, &"")
+		return _transaction_failure("Temporary save failed verification: %s" % (written.error if not written.valid else "content mismatch"))
+	var primary_exists := FileAccess.file_exists(path)
+	var primary_valid: bool = primary_exists and _validate_save_file(path, SaveSource.PRIMARY).valid
+	if not primary_exists:
+		return _install_primary(temporary, path, "", "")
+	if not primary_valid:
+		# Keep the existing backup; it may be the only good copy.
+		if FileAccess.file_exists(corrupt) and _remove(corrupt, &"") != OK:
+			_remove(temporary, &"")
+			return _transaction_failure("Cannot clear previous corrupt save copy")
+		if _rename(path, corrupt, OP_CORRUPT_PRESERVE) != OK:
+			_remove(temporary, &"")
+			return _transaction_failure("Cannot preserve corrupted primary save")
+		return _install_primary(temporary, path, corrupt, "")
+	var had_backup := FileAccess.file_exists(backup)
+	if had_backup:
+		if FileAccess.file_exists(backup_rollback) and _remove(backup_rollback, &"") != OK:
+			_remove(temporary, &"")
+			return _transaction_failure("Cannot clear stale backup rollback copy")
+		var preserve_error := _rename(backup, backup_rollback, OP_BACKUP_PRESERVE)
+		if preserve_error != OK:
+			_remove(temporary, &"")
+			return _transaction_failure("Cannot replace save backup: %s" % error_string(preserve_error))
+	var backup_error := _rename(path, backup, OP_BACKUP_CREATE)
+	if backup_error != OK:
+		var restore_detail := _restore(backup_rollback, backup) if had_backup else ""
+		_remove(temporary, &"")
+		return _transaction_failure("Cannot create save backup: %s%s" % [error_string(backup_error), restore_detail])
+	var installed := _install_primary(temporary, path, backup, backup_rollback if had_backup else "")
+	if installed.success and had_backup and FileAccess.file_exists(backup_rollback):
+		# The previous generation is no longer needed once the new primary and the
+		# rotated backup are both in place. A failed cleanup is retried next save.
+		_remove(backup_rollback, &"")
+	return installed
+
+# Installs the verified temporary as primary. On failure the file that was moved
+# out of the primary slot (`displaced`) returns to it, and the backup generation
+# set aside in `backup_rollback` returns to `.bak`.
+func _install_primary(temporary: String, path: String, displaced: String, backup_rollback: String) -> Dictionary:
+	var install_error := _rename(temporary, path, OP_PRIMARY_INSTALL)
+	if install_error == OK:
+		return {"success": true, "message": "Game saved"}
+	var details := ""
+	if not displaced.is_empty():
+		details += _restore(displaced, path)
+	if not backup_rollback.is_empty():
+		details += _restore(backup_rollback, displaced)
+	_remove(temporary, &"")
+	return _transaction_failure("Atomic save rename failed: %s%s" % [error_string(install_error), details])
+
+func _restore(from_path: String, to_path: String) -> String:
+	if not FileAccess.file_exists(from_path):
+		return ""
+	var error := _rename(from_path, to_path, OP_ROLLBACK)
+	return "" if error == OK else "; rollback failed: %s" % error_string(error)
+
+func _transaction_failure(message: String) -> Dictionary:
+	return {"success": false, "message": message}
+
+func _rename(from_path: String, to_path: String, operation: StringName) -> Error:
+	if _should_fail(operation):
+		return ERR_CANT_CREATE
+	return DirAccess.rename_absolute(ProjectSettings.globalize_path(from_path), ProjectSettings.globalize_path(to_path))
+
+func _remove(file_path: String, operation: StringName) -> Error:
+	if _should_fail(operation):
+		return ERR_CANT_OPEN
+	return DirAccess.remove_absolute(ProjectSettings.globalize_path(file_path))
+
+func _should_fail(operation: StringName) -> bool:
+	return not operation.is_empty() and _failure_hook.is_valid() and bool(_failure_hook.call(operation))
+
+func _read_text(file_path: String) -> String:
+	var file := FileAccess.open(file_path, FileAccess.READ)
+	if file == null:
+		return ""
+	var text := file.get_as_text()
+	file.close()
+	return text
 
 func _read_save_dictionary(path: String) -> Dictionary:
 	var result := {
 		"success": false,
 		"data": {},
+		"fingerprint": "",
 		"error_code": ERR_INVALID_DATA,
 		"error": "Corrupted save file",
 	}
@@ -269,6 +495,7 @@ func _read_save_dictionary(path: String) -> Dictionary:
 		return result
 	result.success = true
 	result.data = json.data
+	result.fingerprint = contents.sha256_text()
 	result.error_code = OK
 	result.error = ""
 	return result

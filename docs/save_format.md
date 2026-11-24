@@ -25,9 +25,9 @@ players
 
 Offline은 동일한 v5 schema에 local profile player 하나를 저장한다. Multiplayer client는 파일을 쓸 수 없다. Host는 모든 active player가 Settlement safe boundary에 있을 때 canonical registry의 attached 및 detached PlayerState를 모두 저장할 수 있다. 어느 한 player라도 Adventure world에 참여 중이면 runtime world state와 unsecured loot가 Save v5에 포함되지 않으므로 Save를 거부한다. Load는 offline 또는 remote peer가 아직 없는 host에서만 허용하며, ADVENTURE/RESPAWNING 중에는 거부한다.
 
-`Host Save`는 offline `Load Game` 뒤에 fresh Host를 실행하지 않는다. Primary Save를 read/migrate/full-stage한 뒤에만 ENet transport를 `HOSTING_RESTORING` 상태로 열며, 이 상태에서는 protocol handshake가 canonical state를 변경할 수 없다. Transport bind가 성공한 뒤 staged snapshot을 적용하여 모든 `players[player_id]`를 복원하고 local profile player만 peer `1`에 attach한다. Network roster와 host world-ready invariant가 확인된 후에만 handshake gate를 열고 `hosting_started`를 emit한다. Saved remote records는 peer ID 없이 detached 상태로 남는다. Staging 실패는 transport를 열지 않고, bind 실패는 live session을 변경하지 않으며, post-open 실패는 transport를 닫고 offline local identity로 복귀한다.
+`Host Save`는 offline `Load Game` 뒤에 fresh Host를 실행하지 않는다. 아래 후보 선정 정책으로 고른 Save(primary 우선, 무효일 때만 검증된 backup)를 read/migrate/full-stage한 뒤에만 ENet transport를 `HOSTING_RESTORING` 상태로 열며, 이 상태에서는 protocol handshake가 canonical state를 변경할 수 없다. Transport bind가 성공한 뒤 staged snapshot을 적용하여 모든 `players[player_id]`를 복원하고 local profile player만 peer `1`에 attach한다. Network roster와 host world-ready invariant가 확인된 후에만 handshake gate를 열고 `hosting_started`를 emit한다. Saved remote records는 peer ID 없이 detached 상태로 남는다. Staging 실패는 transport를 열지 않고, bind 실패는 live session을 변경하지 않으며, post-open 실패는 transport를 닫고 offline local identity로 복귀한다.
 
-Writer는 `.tmp` write/flush/close, 기존 파일 `.bak` 이동, 최종 rename 전략을 유지한다. Temporary write, backup remove/rename, final rename 오류는 모두 실패로 보고하며 final rename 실패 시 backup rollback 결과도 확인한다. Loader는 독립 `SessionSnapshot`에 shared와 모든 player record를 먼저 복원하고 전체 검증이 성공한 경우에만 live `GameSession`을 교체한다. Local profile의 player record가 없거나 player ID가 형식에 맞지 않으면 load를 거부한다. 복원된 remote player는 persistent registry에 detached 상태로 남고 local profile player만 peer 1에 attach한다.
+Loader는 독립 `SessionSnapshot`에 shared와 모든 player record를 먼저 복원하고 전체 검증이 성공한 경우에만 live `GameSession`을 교체한다. Local profile의 player record가 없거나 player ID가 형식에 맞지 않으면 load를 거부한다. 복원된 remote player는 persistent registry에 detached 상태로 남고 local profile player만 peer 1에 attach한다.
 
 ## Item instance 검증
 
@@ -54,7 +54,25 @@ v3에는 PERSONAL progression이 없으므로 migration은 빈 personal quest co
 
 개발/테스트용 `--local-profile-path=X` override는 primary `X`, backup `X.bak`, temporary `X.tmp`를 사용한다. Profile version과 game save version은 서로 독립이다.
 
-Identity recovery backend는 primary `return_to_cage_save.json`이 Save v4 또는 v5일 때 `players` key를 persistent identity candidate로 읽는다. Inspection은 root/shared/player-record의 최소 contract를 검증하고 candidate를 문자열 사전순으로 반환하지만 domain object를 만들거나 Save, profile, live `GameSession`을 변경하지 않는다. 빈 `players`는 candidate 0개인 정상 Save가 아니라 invalid Save v5다. Legacy v1–v3 및 Save `.bak`은 identity source로 사용하지 않는다. 선택된 ID를 실제로 복구할 때는 primary Save를 다시 읽고 모든 shared/player state, global item instance registry, death drop, quest를 기존 `SessionSnapshot`에 full staging한 뒤에만 `NetworkManager`의 identity commit 경계를 호출한다.
+## Primary/Backup 후보 선정과 저장 트랜잭션
+
+`SaveManager.resolve_save_candidate(path)`가 Load, `prepare_load()`, Host Saved Game, identity inspection/validation/recovery의 유일한 파일 선택 경로다. 후보는 primary `path`와 backup `path.bak` 둘뿐이며 `.tmp`, `.bak.rollback`, `.corrupt`는 어떤 경우에도 후보가 아니다. 각 후보는 존재 → 읽기 → JSON parse → Dictionary → `format_version`(1–5 정수) → v1–v5 migration → `GameSession.prepare_persistent_restore()` full staging 순서로 검증한다. Full staging은 save 안의 **모든** player record를 복원하므로(첫 번째 player ID로 probe) 결과가 요청 identity와 무관하다. 즉 primary가 이 검증을 통과하면 local profile player가 없거나 다른 사람의 identity만 있어도 primary가 선택되고, 그 identity 오류는 그대로 보고된다. backup으로 다른 identity를 자동 선택하지 않는다. Primary가 없거나 검증에 실패할 때만 backup을 같은 파이프라인으로 검증하며, 그것도 실패하면 load는 실패하고 live `GameSession`은 변경되지 않는다.
+
+Backup으로 load에 성공하면 결과(`last_load_result`, `prepare_load()`의 `source`/`recovered_from_backup`/`primary_error`/`notice`)와 메시지에 `Primary save is missing or corrupted. A valid backup was found.`가 포함되고, 같은 문장이 `GameSession.last_message`로 HUD status에 표시된다. Load와 Host Saved Game은 복구 후 파일을 쓰지 않는다. 복구된 세션은 다음 정상 Save 때 기존 정책대로 primary로 기록된다.
+
+Writer(`save_game`)는 다음 불변식을 지킨다.
+
+1. 새 데이터는 `.tmp`에 write/flush/close한 뒤 다시 읽어 byte 일치와 위 full validation을 통과해야 한다. 이 단계까지는 기존 primary/backup을 전혀 건드리지 않는다.
+2. 기존 primary가 **유효**하면: 기존 `.bak`을 삭제하지 않고 `.bak.rollback`으로 옮기고, primary를 `.bak`으로, `.tmp`를 primary로 rename한다. 성공 후에만 `.bak.rollback`을 지운다(실패 시 다음 저장에서 정리).
+3. 기존 primary가 **무효**하면: 그것을 `.bak`으로 회전하지 않는다(유일한 정상 사본일 수 있는 backup을 덮지 않기 위해). 무효 primary는 `.corrupt`로 보존하고(이전 `.corrupt`는 교체) `.bak`은 그대로 둔 채 `.tmp`를 primary로 설치한다.
+4. Primary가 없으면 `.bak`을 그대로 두고 `.tmp`만 설치한다.
+5. 어느 rename이 실패해도 옮겼던 파일을 원래 자리로 되돌린다. 되돌리기 자체가 실패해도 이전 정상 primary는 `.bak`에 남아 있으므로 다음 Load가 backup으로 복구한다.
+
+모든 단계는 rename 대상이 비어 있는 상태에서만 rename하므로 Windows와 POSIX에서 같은 의미다.
+
+**디스크 내구성의 한계.** `FileAccess.flush()`는 Godot/C 버퍼를 운영체제로 넘길 뿐 `fsync`가 아니며, rename 이후 디렉터리 entry도 fsync하지 않는다. 따라서 위 보장은 프로세스 crash, 강제 종료, 개별 파일 작업 실패에 대한 것이다. 정전이나 OS crash 시에는 OS가 아직 디스크에 쓰지 않은 내용이 사라지거나 rename 순서가 재배열될 수 있어 primary/backup이 모두 비거나 잘린 상태가 될 수 있다. 이 경우 loader는 손상을 검출해 실패를 보고할 뿐 데이터를 복원하지 못한다. Godot 4.7 API에는 파일·디렉터리 fsync가 없어 이 단계에서는 문서화된 잔여 위험으로 남긴다.
+
+Identity recovery backend는 Load와 같은 후보 선정 정책으로 고른 Save가 v4 또는 v5일 때 `players` key를 persistent identity candidate로 읽는다. Inspection은 후보 Save를 detached `SessionSnapshot`으로 full staging해 검증하고 candidate를 문자열 사전순으로 반환하지만 Save, profile, live `GameSession`을 변경하지 않는다. 결과에는 출처(`source`: primary/backup)와 파일 내용 fingerprint가 포함되며, AppRoot는 이 값을 `recover_identity_from_save(..., expected)`에 그대로 넘긴다. 그 사이 Save가 바뀌었거나 다른 파일이 선택되면 복구를 거절하고 dialog를 다시 inspection으로 채운다. 빈 `players`는 candidate 0개인 정상 Save가 아니라 invalid Save v5다. Legacy v1–v3은 identity source로 사용하지 않는다. 선택된 ID를 실제로 복구할 때는 같은 후보를 다시 확인하고 모든 shared/player state, global item instance registry, death drop, quest를 기존 `SessionSnapshot`에 full staging한 뒤에만 `NetworkManager`의 identity commit 경계를 호출한다.
 
 `LocalPlayerProfile`은 profile file validation과 transactional persistence를 담당하고 mutable object로 일반 production caller에 노출되지 않는다. `NetworkManager`가 active local logical identity와 commit precondition을 소유하며, `SaveManager`는 Save inspection/staging과 commit 요청만 orchestration한다. Profile recovery 성공은 live Save snapshot을 암묵적으로 적용하지 않으며, startup gate가 별도 offline identity activation을 완료한 뒤 menu action을 연다.
 

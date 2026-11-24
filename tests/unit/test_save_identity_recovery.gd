@@ -22,7 +22,13 @@ func _test_inspection_statuses(t: Node, token: String) -> void:
 	t.assert_equal(missing.status, SaveManager.IdentityInspectionStatus.SAVE_NOT_FOUND, "missing primary save has a distinct inspection status")
 	t.assert_true(missing.candidates.is_empty(), "missing save exposes no candidates")
 	_write_json(path + ".bak", _valid_envelope([PLAYER_A]))
-	t.assert_equal(SaveManager.inspect_identity_candidates(path).status, SaveManager.IdentityInspectionStatus.SAVE_NOT_FOUND, "game-save backup is not an identity recovery source")
+	# STEP 2 policy: identity inspection uses the same candidate as Load. A
+	# fully valid backup is used only because the primary is missing.
+	var from_backup := SaveManager.inspect_identity_candidates(path)
+	t.assert_equal(from_backup.status, SaveManager.IdentityInspectionStatus.SINGLE_CANDIDATE, "valid game-save backup is the identity source when primary is missing")
+	t.assert_true(from_backup.recovered_from_backup and from_backup.source == SaveManager.SaveSource.BACKUP, "backup-sourced inspection is reported explicitly")
+	_write(path + ".bak", "{invalid backup")
+	t.assert_equal(SaveManager.inspect_identity_candidates(path).status, SaveManager.IdentityInspectionStatus.INVALID_SAVE, "an invalid backup is never an identity source")
 	_remove(path + ".bak")
 
 	_write(path, "{invalid json")
@@ -120,7 +126,7 @@ func _test_full_staging_rejection(t: Node, token: String) -> void:
 	var corrupt := _valid_envelope([PLAYER_A])
 	corrupt["players"][String(PLAYER_A)]["player_state"]["player_inventory"] = "corrupt"
 	_write_json(corrupt_path, corrupt)
-	t.assert_equal(SaveManager.inspect_identity_candidates(corrupt_path).status, SaveManager.IdentityInspectionStatus.SINGLE_CANDIDATE, "shallow inspection can expose a structurally valid record key")
+	t.assert_equal(SaveManager.inspect_identity_candidates(corrupt_path).status, SaveManager.IdentityInspectionStatus.INVALID_SAVE, "inspection fully stages the save and rejects corrupt player domain state")
 	t.assert_true(not SaveManager.validate_identity_candidate(PLAYER_A, corrupt_path).success, "corrupt player domain state fails full recovery staging")
 
 	var duplicate_path := _path(token, "duplicate")
@@ -134,7 +140,7 @@ func _test_full_staging_rejection(t: Node, token: String) -> void:
 	duplicate["players"][String(PLAYER_A)]["player_state"]["player_inventory"] = [stack]
 	duplicate["players"][String(PLAYER_B)]["player_state"]["protected_inventory"] = [stack]
 	_write_json(duplicate_path, duplicate)
-	t.assert_equal(SaveManager.inspect_identity_candidates(duplicate_path).status, SaveManager.IdentityInspectionStatus.MULTIPLE_CANDIDATES, "key inspection does not instantiate item domains")
+	t.assert_equal(SaveManager.inspect_identity_candidates(duplicate_path).status, SaveManager.IdentityInspectionStatus.INVALID_SAVE, "inspection fully stages the save and rejects a global duplicate instance")
 	t.assert_true(not SaveManager.validate_identity_candidate(PLAYER_A, duplicate_path).success, "global duplicate instance fails full recovery staging")
 	_cleanup_save(corrupt_path)
 	_cleanup_save(duplicate_path)

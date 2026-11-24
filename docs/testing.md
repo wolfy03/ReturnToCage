@@ -63,6 +63,10 @@ buffered `attack_1 → attack_2`의 sequence/combo step/key/timing, Dodge direct
 개별 복귀 동안 C runtime은 유지되고, 마지막 참가자 퇴장
 뒤 runtime 정리와 fresh 재생성을 확인한다.
 
+### Save primary/backup 복구 (unit)
+
+`tests/unit/test_save_backup_recovery.gd`는 실제 `SaveManager.save_game()`으로 만든 고유 `user://` 파일만 사용한다(production Save·profile 미사용). Primary/backup 조합표(둘 다 유효, backup 손상, primary 없음/JSON 손상/구조 손상/full staging 실패 + 유효 backup, backup 없음, 둘 다 손상, 둘 다 없음, legacy v2 primary + 유효 backup, 다른 identity의 유효 primary + 다른 backup)를 검사하고 load가 파일을 쓰지 않는지 확인한다. `SaveManager.set_failure_hook_for_tests()`로 temporary open/write/validate, backup preserve/create, primary install, rollback 실패를 주입해 이전 primary/backup bytes와 load 결과가 보존되는지, 무효 primary가 `.bak`을 덮지 않는지, rollback까지 실패해도 backup으로 복구되는지 확인한다. `test_host_saved_game.gd`는 primary 없이 유효 backup만 있을 때 Saved Host가 backup을 호스팅하고 primary를 쓰지 않는지 확인한다.
+
 ### 전리품 지급 위치 (PICKUP E2E)
 
 전리품 지급 위치는 **world kind가 결정한다**: Settlement는 main inventory, Adventure의 일반

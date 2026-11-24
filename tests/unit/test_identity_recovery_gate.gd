@@ -233,6 +233,11 @@ func _test_recovery_failure_and_retry(t: Node, token: String) -> void:
 	t.assert_true(app.identity_dialog.error_label.visible and not NetworkManager.has_valid_local_profile(), "staging failure is shown without committing profile")
 	t.assert_equal(GameSession.export_persistent_state(), session_before, "staging failure leaves GameSession unchanged")
 	_write_json(save_path, _valid_envelope([PLAYER_A]))
+	# Recovery is pinned to the inspected file, so the repaired Save must be
+	# inspected (shown to the user) again before it can be recovered.
+	app.identity_dialog.recover_button.pressed.emit()
+	t.assert_true(not NetworkManager.has_valid_local_profile(), "repaired Save is not recovered without a fresh inspection")
+	app._open_recovery_dialog()
 	app.identity_dialog.recover_button.pressed.emit()
 	_assert_ready(t, app, "retry after Save repair")
 	await _free_app(t, app)

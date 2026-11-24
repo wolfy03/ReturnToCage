@@ -21,6 +21,7 @@ func run(t: Node) -> void:
 	_test_bind_failure_does_not_apply(t, path, local_id)
 	_test_gated_transport_and_restore(t, path, local_id)
 	await _test_app_root_orchestration(t, path, corrupt_path, local_id)
+	await _test_saved_host_from_backup(t, path, local_id)
 	_test_fresh_host_authority(t)
 
 	_cleanup(path)
@@ -295,6 +296,30 @@ func _test_app_root_orchestration(t: Node, path: String, corrupt_path: String, l
 	t.assert_equal(GameSession.persistent_player_ids(), [local_id], "leaving removes saved remote session state from the offline menu")
 	app.queue_free()
 	await t.get_tree().process_frame
+
+# Host Saved Game resolves its file with the same policy as Load: a missing
+# primary with a fully valid backup hosts the backup and says so, without
+# writing the primary.
+func _test_saved_host_from_backup(t: Node, fixture_path: String, local_id: StringName) -> void:
+	var backup_only := fixture_path.trim_suffix(".json") + "_backup_only.json"
+	_cleanup(backup_only)
+	var file := FileAccess.open(fixture_path, FileAccess.READ)
+	_write(backup_only + ".bak", file.get_as_text())
+	file.close()
+	var identity_check := SaveManager.prepare_load(backup_only, local_id)
+	t.assert_true(identity_check.success and identity_check.recovered_from_backup, "Saved Host staging resolves the valid backup for the profile identity")
+	var app := (load("res://core/boot.tscn") as PackedScene).instantiate() as AppRoot
+	t.add_child(app)
+	await t.get_tree().process_frame
+	app._host_saved_game(backup_only, 26000 + randi_range(0, 800), 3)
+	t.assert_equal(NetworkManager.state, NetworkManager.ConnectionState.HOSTING, "Saved Host can host a recovered backup")
+	t.assert_equal(GameSession.session_id, "saved-host-session", "backup Saved Host restores the persisted session")
+	t.assert_true(GameSession.last_message.begins_with(SaveManager.BACKUP_RECOVERY_NOTICE), "backup Saved Host tells the host it used the backup")
+	t.assert_true(not FileAccess.file_exists(backup_only), "hosting a backup does not write the primary")
+	NetworkManager.leave_game()
+	app.queue_free()
+	await t.get_tree().process_frame
+	_cleanup(backup_only)
 
 func _test_fresh_host_authority(t: Node) -> void:
 	var port := 25200 + randi_range(0, 600)
