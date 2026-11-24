@@ -847,6 +847,12 @@ func broadcast_gather_consumed(world_id: StringName, interaction_id: StringName)
 	if GameSession.get_peer_world_id(local_peer_id()) == world_id and is_local_world_ready():
 		gather_consumed_received.emit(world_id, interaction_id)
 
+@rpc("authority", "call_remote", "reliable")
+func _receive_gameplay_notification(message: String) -> void:
+	if is_server() or not _session_entered or not NetworkProtocol.valid_notification(message):
+		return
+	GameSession.last_message = message
+
 func send_gather_state(peer_id: int, world_id: StringName, consumed_ids: Array[StringName]) -> void:
 	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
 		return
