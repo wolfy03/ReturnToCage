@@ -494,3 +494,21 @@ The owner-private item and shared storage snapshots now retain capacity and exac
 Stage 5 adds equipment slot IDs 2–4 to the existing v17 item snapshot. The
 owner is still the only recipient of private equipment. New gear requires
 the Stage 5 content and slot definitions on each participating peer.
+
+## Enemy roster for the host, target reselection and the frog (Forest Trail)
+
+No payload changed; `NetworkProtocol.VERSION` stays 20.
+
+- **The host's own presentation restores live enemies.** `EnemySpawnManager._on_peer_world_ready`
+  and `NetworkManager.send_enemy_roster` now deliver the roster to the local host peer through
+  `enemy_spawn_received`, the same way the loot roster already did. Before this, a host player who
+  entered a region another player already occupied saw none of the enemies alive there.
+- **Target reselection.** `EnemyAgent._select_target()` keeps its target only while that player is
+  valid and within `chase_range * 1.35`. Beyond that the nearest valid player in the same world is
+  chosen, so a distant first target no longer makes an enemy ignore players next to it. Target
+  choice remains server-only.
+- **Frog states reuse the enemy snapshot.** `EnemyState.snapshot_state()` lets a state pick its
+  replicated value; the frog's waiting states report `IDLE` and `prepare`/`hop` report `MOVING`.
+  Replicas derive jump, fall, landing and the pre-hop crouch from the mirrored state and velocity.
+- **Server runtime enemies build no visuals** (`presentation_enabled = not authoritative_runtime`).
+- `tools/test_multiplayer_forest.py` covers these with two and three ENet processes.

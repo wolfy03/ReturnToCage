@@ -25,6 +25,8 @@ python tools/test_multiplayer_worlds.py       --godot <godot> --players 2
 python tools/test_multiplayer_worlds.py       --godot <godot> --players 3
 python tools/test_multiplayer_world_runtime.py --godot <godot> --players 2
 python tools/test_multiplayer_world_runtime.py --godot <godot> --players 3
+python tools/test_multiplayer_forest.py       --godot <godot> --players 2
+python tools/test_multiplayer_forest.py       --godot <godot> --players 3
 ```
 
 ## 1. 절대 규칙 (기존 아키텍처가 강제하는 것)
@@ -362,9 +364,14 @@ func run(t: Node) -> void:            # 비동기가 필요하면 -> void 유지
 - **아트가 없는 것과 아트 구조가 없는 것은 다르다.** player 쪽은 presentation/animation
   구조(manifest → builder → `SpriteFrames` → profile → presenter)와 production 햄스터 sheet가
   연결되어 기본 실행에서 `AnimatedSprite2D`로 그려진다. Polygon은 diagnostic fallback으로만
-  남아 있다. 적·NPC·시설·아이템은 구조도 아트도 placeholder 다.
+  남아 있다. 적은 표현 구조(`EnemyAnimationProfile` → `EnemyAnimationPresenter`)는 있고 아트는 임시다.
+  NPC·시설·아이템은 구조도 아트도 placeholder 다.
   배경만 `assets/backgrounds/` 에 실제 텍스처가 있다
   (단, `stars_overlay_3840x2160.png` 는 잘린 파일이라 임포트 실패 상태 — 재출력 필요).
+- `forest_region.tscn`은 `region_scaffold.tscn`과 같은 그룹 구조에 nine-slice `FieldPlatform`만으로
+  지형을 만든다. 숲 지형·배경·장식과 딱정벌레·개구리 sprite는 전부 **임시 프로그래머 아트**다.
+  Enemy 표현 구조는 `docs/enemy_animation.md`를 따른다: profile은 문자열 경로로만 참조하고,
+  서버 런타임 actor는 visual을 만들지 않으며, presenter는 gameplay를 읽기만 한다.
 - z-index 규약: Backdrop `-1100`, 배경 `-1000..-100`, 게임플레이 `0`, 전경(미구현) `100..900`.
 
 ## 7. 손대기 전에 한 번 더 생각할 것

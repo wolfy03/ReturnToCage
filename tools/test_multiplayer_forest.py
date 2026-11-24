@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import argparse
+import socket
+import subprocess
+import time
+import json
+from contextlib import nullcontext
+from pathlib import Path
+from process_diagnostics import new_log_directory
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCENE = "res://tests/integration/multiplayer_forest_probe.tscn"
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def wait_for_marker(process: subprocess.Popen[bytes], path: Path, marker: str, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"host exited before {marker} (exit {process.returncode})")
+        if path.exists() and marker in path.read_text(encoding="utf-8", errors="replace"):
+            return
+        time.sleep(0.05)
+    raise RuntimeError(f"timeout waiting for {marker}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the Forest Trail enemy ENet probe in separate processes.")
+    parser.add_argument("--godot", default="godot")
+    parser.add_argument("--players", type=int, choices=(2, 3), default=2)
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--timeout", type=float, default=80.0)
+    args = parser.parse_args()
+    port = args.port if args.port > 0 else free_port()
+    common = [
+        args.godot, "--headless", "--path", str(ROOT), SCENE, "--",
+        f"--port={port}", f"--players={args.players}",
+    ]
+    processes: list[tuple[str, subprocess.Popen[bytes], Path, object]] = []
+    # Keep failures and successful runs alike; later runs never overwrite them.
+    with nullcontext(new_log_directory("return_to_cage_forest_")) as temporary:
+        print(f"FOREST LOGS {temporary}", flush=True)
+        records = []
+        try:
+            def launch(name: str, role: str, index: int) -> None:
+                log_path = Path(temporary) / f"{name}.log"
+                profile_path = Path(temporary) / f"{name}-profile.json"
+                log_file = log_path.open("wb")
+                process = subprocess.Popen(
+                    common + [f"--role={role}", f"--index={index}", f"--local-profile-path={profile_path}"],
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+                processes.append((name, process, log_path, log_file))
+                records.append({"name": name, "pid": process.pid, "command": process.args,
+                                "started": time.time(), "forced": False})
+
+            launch("host", "host", 0)
+            wait_for_marker(processes[0][1], processes[0][2], "FOREST HOST LISTENING", 10.0)
+            for index in range(1, args.players):
+                launch(f"client-{index}", "client", index)
+            deadline = time.monotonic() + args.timeout
+            while time.monotonic() < deadline and any(p.poll() is None for _, p, _, _ in processes):
+                if any(p.poll() not in (None, 0) for _, p, _, _ in processes):
+                    break
+                time.sleep(0.1)
+            failures: list[str] = []
+            for name, process, log_path, log_file in processes:
+                if process.poll() is None:
+                    next(record for record in records if record["name"] == name)["forced"] = True
+                    process.kill()
+                    failures.append(f"{name} timed out")
+                process.wait(timeout=5)
+                log_file.close()
+                output = log_path.read_text(encoding="utf-8", errors="replace")
+                print(f"[{name}]\n{output}")
+                if process.returncode != 0 or "FOREST PROBE PASS" not in output \
+                        or any(marker in output for marker in ("ERROR:", "SCRIPT ERROR:", "CowData", "ObjectDB instances leaked", "resources still in use")):
+                    failures.append(f"{name} failed with exit code {process.returncode}")
+            if failures:
+                raise RuntimeError("; ".join(failures))
+            return 0
+        except Exception as error:
+            print(f"forest probe failed: {error}")
+            for name, _, log_path, log_file in processes:
+                if not log_file.closed:
+                    log_file.flush()
+                print(f"[{name}]\n{log_path.read_text(encoding='utf-8', errors='replace')}")
+            return 1
+        finally:
+            for name, process, _, log_file in processes:
+                if process.poll() is None:
+                    next(record for record in records if record["name"] == name)["forced"] = True
+                    process.kill()
+                    process.wait(timeout=5)
+                if not log_file.closed:
+                    log_file.close()
+                record = next(record for record in records if record["name"] == name)
+                record.update(return_code=process.returncode, wall_seconds=round(time.time() - record["started"], 3))
+                print(f"FOREST EXIT {name} pid={process.pid} code={process.returncode} forced={record['forced']}")
+            (Path(temporary) / "processes.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -54,6 +54,10 @@ jobs:
         run: |
           python tools/test_multiplayer_world_runtime.py --godot "$GODOT" --players 2
           python tools/test_multiplayer_world_runtime.py --godot "$GODOT" --players 3
+      - name: Forest Trail enemy multiplayer E2E
+        run: |
+          python tools/test_multiplayer_forest.py --godot "$GODOT" --players 2
+          python tools/test_multiplayer_forest.py --godot "$GODOT" --players 3
       - name: Gameplay authority and lifecycle ENet E2E
         run: |
           python tools/test_multiplayer_authority.py --godot "$GODOT" --players 2

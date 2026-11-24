@@ -105,7 +105,8 @@ func _despawn_authoritative(entity_id: int) -> void:
 		NetworkManager.broadcast_enemy_despawn(world_id, entity_id)
 
 func _on_peer_world_ready(peer_id: int) -> void:
-	if not NetworkManager.can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+	if GameSession.get_peer_world_id(peer_id) != world_id \
+			or (peer_id != NetworkManager.local_peer_id() and not NetworkManager.can_send_to_peer(peer_id)):
 		return
 	var payloads: Array[Dictionary] = []
 	for actor in _enemies.values():

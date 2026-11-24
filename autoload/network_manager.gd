@@ -773,7 +773,15 @@ func broadcast_enemy_despawn(world_id: StringName, entity_id: int) -> void:
 	_broadcast_world_payload(world_id, &"enemy_despawn", {"entity_id": entity_id})
 
 func send_enemy_roster(peer_id: int, world_id: StringName, payloads: Array[Dictionary]) -> void:
-	if not can_send_to_peer(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+	if not is_host_session_ready() or not is_peer_world_ready(peer_id) or GameSession.get_peer_world_id(peer_id) != world_id:
+		return
+	# The host's own presentation is a mirror too: entering an occupied world
+	# late must restore the enemies already alive there, exactly like loot.
+	if peer_id == local_peer_id():
+		for payload in payloads:
+			enemy_spawn_received.emit(world_id, payload)
+		return
+	if not can_send_to_peer(peer_id):
 		return
 	var ready: PeerWorldReadyState = world_ready_peers.get(peer_id)
 	for payload in payloads:

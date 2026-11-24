@@ -23,8 +23,11 @@ extends EnemyAgent
 @export_range(0.0, 10.0, 0.05) var attack_cooldown_seconds: float = 1.2
 @export_range(50.0, 800.0, 1.0) var attack_leap_lift: float = 250.0
 @export_range(1.0, 4.0, 0.05) var attack_leap_speed_scale: float = 1.5
-## Centre distance at which the leap connects.
+## Horizontal centre distance at which the leap connects.
 @export_range(8.0, 200.0, 1.0) var attack_contact_distance: float = 44.0
+## Height difference the leap can cover. A target further above or below is
+## approached by hopping instead of attacked from the wrong level.
+@export_range(8.0, 200.0, 1.0) var attack_vertical_reach: float = 40.0
 @export_group("Recovery")
 @export_range(0.1, 2.0, 0.05) var alert_seconds: float = 0.35
 ## A chase or return that makes no progress for this long is abandoned.
@@ -67,6 +70,17 @@ func target_direction() -> float:
 		return facing
 	var offset := player.global_position.x - global_position.x
 	return facing if is_zero_approx(offset) else signf(offset)
+
+func target_offset() -> Vector2:
+	return player.global_position - global_position if has_target() else Vector2.INF
+
+func target_in_attack_reach() -> bool:
+	var offset := target_offset()
+	return offset.is_finite() and offset.length() <= definition.attack_range and absf(offset.y) <= attack_vertical_reach
+
+func target_in_contact() -> bool:
+	var offset := target_offset()
+	return offset.is_finite() and absf(offset.x) <= attack_contact_distance and absf(offset.y) <= attack_vertical_reach
 
 func distance_from_origin() -> float:
 	return absf(global_position.x - patrol_origin.x)

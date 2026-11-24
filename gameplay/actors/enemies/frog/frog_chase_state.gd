@@ -25,7 +25,7 @@ func physics_tick(delta: float) -> StringName:
 		return &""
 	var direction := frog.target_direction()
 	frog.face(direction)
-	if frog.distance_to_player() <= frog.definition.attack_range:
+	if frog.target_in_attack_reach():
 		if frog.attack_cooldown_remaining <= 0.0:
 			return &"attack"
 		return &""

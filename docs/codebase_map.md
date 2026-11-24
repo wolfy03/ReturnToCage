@@ -38,6 +38,8 @@ autoload 5개 (`project.godot`):
 | `data/definitions/` | `ContentDefinition` 상속 Resource 스크립트 |
 | `data/content/` | 실제 `.tres` 콘텐츠. **여기 있는 것만** ContentRegistry 가 로드 |
 | `gameplay/actors/` | Player, Enemy(+상태 노드), Loot 액터 씬·스크립트 |
+| `gameplay/actors/enemies/frog/` | `FrogAgent`와 hop 기반 상태 노드(idle/patrol/alert/chase/prepare/hop/attack/return) |
+| `presentation/enemy/` | `EnemyAnimationPresenter`와 Enemy별 `EnemyAnimationProfile` (ContentRegistry 밖) |
 | `gameplay/components/` | 액터에 붙는 컴포넌트(이동·전투·체력·생존·상호작용·효과·네트워크) |
 | `world/` | 월드 씬(정착지/모험지), 스폰·복제 매니저, 서버 런타임, 배경 표현 |
 | `ui/`, `devtools/` | HUD·멀티플레이 패널·신원 복구 창·디버그 패널 (전부 코드 생성 UI) |

@@ -34,7 +34,7 @@ func physics_tick(delta: float) -> StringName:
 			frog.velocity = Vector2(frog.facing * frog.effect_stats.value(&"move_speed") * frog.attack_leap_speed_scale, -frog.attack_leap_lift)
 		return &""
 	air_time += delta
-	if not attacked and frog.has_target() and frog.distance_to_player() <= frog.attack_contact_distance:
+	if not attacked and frog.target_in_contact():
 		# One hit per leap. perform_attack keeps the existing authority and range checks.
 		attacked = true
 		frog.perform_attack()

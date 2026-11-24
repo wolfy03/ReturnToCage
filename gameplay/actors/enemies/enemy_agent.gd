@@ -5,6 +5,8 @@ signal state_changed(state_id: StringName)
 signal finished(agent: EnemyAgent)
 
 const GRAVITY := 1100.0
+## Matches the distance at which the chase states give up.
+const TARGET_KEEP_RANGE_SCALE := 1.35
 
 @export var definition: EnemyDefinition
 ## EnemyAnimationProfile path. A string on purpose: the actor scene is preloaded
@@ -117,8 +119,12 @@ func _physics_process(delta: float) -> void:
 	if absf(velocity.x) > 0.01:
 		facing = signf(velocity.x)
 
+## The authority keeps its current target while that player is alive and still
+## within chase distance. Once the target is lost or out of reach, the nearest
+## valid player is chosen, so a far-away first target cannot shield players
+## standing next to the enemy.
 func _select_target() -> void:
-	if _valid_target(player):
+	if _valid_target(player) and distance_to_player() <= definition.chase_range * TARGET_KEEP_RANGE_SCALE:
 		return
 	player = null
 	var nearest_distance := INF

@@ -38,6 +38,8 @@ python tools/test_multiplayer_worlds.py --godot $godotExe --players 2
 python tools/test_multiplayer_worlds.py --godot $godotExe --players 3
 python tools/test_multiplayer_world_runtime.py --godot $godotExe --players 2
 python tools/test_multiplayer_world_runtime.py --godot $godotExe --players 3
+python tools/test_multiplayer_forest.py --godot $godotExe --players 2
+python tools/test_multiplayer_forest.py --godot $godotExe --players 3
 ```
 
 `valid`는 Save v4의 returning safe position과 owner-private/item/quest 상태를 재시작 전후 비교한다. `invalid`는 finite이지만 Settlement bounds 밖인 위치가 deterministic fallback으로 치유되고, 같은 세션의 다음 reconnect와 후속 Save에서 그 위치가 유지되는지 검사한다. 3-player mode는 B/C의 protected inventory, PERSONAL quest, effects, survival, spawn assignment가 서로 교차 노출되지 않는지 함께 확인한다. 고정 sleep 대신 atomic JSON sentinel을 사용하며, 기본 port는 실행마다 사용 가능한 UDP port를 선택한다. 성공 아티팩트가 필요하면 `--keep-artifacts`를 추가한다.
@@ -507,3 +509,17 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 작업 보관 안전성은 `python tools/test_traversal_jobs.py`, worker 생명주기는
 `python tools/test_traversal_process.py`로 별도 검사한다. 커스텀 엔진 패치의
 검증과 공식 엔진의 반복 안정성은 동일한 결과로 취급하지 않는다.
+
+## Forest Trail · Enemy 애니메이션 · 개구리
+
+| 검사 | 위치 | 확인하는 것 |
+|---|---|---|
+| 숲 씬·콘텐츠 | `tests/unit/test_forest_region.gd` | 정의·씬 검증, scaffold 그룹, 9-Slice 테마 4종, 스폰 슬롯, `forest_gate`, 새 게임 해금, 배경 3레이어 순서 |
+| Enemy 애니메이션 | `tests/unit/test_enemy_animation.gd` | 딱정벌레·개구리 profile 검증, clip 존재, frame이 서로 다른 sheet cell인지, 타격 frame과 공격 상태 시간의 정합, 상태→clip, 매 frame 재시작 방지, 좌우 반전이 visual child에만 적용되는지, death 1회 재생, 복제 actor의 표현, 서버 런타임 actor에 visual이 없는지 |
+| 개구리 AI | `tests/unit/test_frog_enemy.gd` | 실제 숲에서 실제 PlayerActor로: hop 순찰과 반경·지형 유지, 접지 상태에서만 발사, 탐지→alert→chase→attack, 도약당 최대 1회 피해, 쿨다운, 대상 상실 후 복귀, 가장자리 감지, hurt, death와 제거 |
+| 지역 런타임 | `python tools/playtest_region.py --godot <godot> --region forest_region` | 스폰·ENTRY·ESCAPE·채집·Enemy 4/4·정착지 복귀 |
+| ENet | `python tools/test_multiplayer_forest.py --godot <godot> --players 2`(3) | 서버 전용 스폰, client roster, 서버 개구리의 타깃·도약 피해(도약당 1회), replica의 jump_start/공중/attack clip, replica가 물리·hurtbox를 갖지 않는지, leash 복귀, 늦게 들어온 client(3인)와 host의 roster 복원, 가까운 플레이어로 재타깃, 딱정벌레·개구리의 death 표현과 제거 복제 |
+| Python Map Editor | `python tools/python_map_editor/check_forest_region_bridge.py --godot <godot> --artifacts <dir>` | 숲 import, Schema V5 왕복, 무변경 저장의 바이트 동일성, 편집 후 재로드, Enemy 스폰 marker 보존 |
+
+숲 지형을 고치면 실제 입력으로 입구→전망대 경로와 움푹한 구간 탈출을 다시 확인한다. 자동화된
+경로 검증은 Field Editor의 Traversal 분석을 쓴다.
