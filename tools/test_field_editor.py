@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from process_diagnostics import run_logged, engine_error
+from process_diagnostics import engine_error, new_log_directory, run_logged
 
 
 def main():
@@ -40,6 +40,9 @@ def main():
             env[name] = str(target)
         command = [args.godot, "--path", str(project), "--editor", "--rendering-method", "gl_compatibility"]
         mode = [] if args.rendered else ["--headless"]
+        audio_driver = env.get("RTC_VALIDATION_AUDIO_DRIVER")
+        if args.rendered and audio_driver:
+            mode += ["--audio-driver", audio_driver]
         # The probe starts only after the imported project is ready.
         probe_config = plugin.read_text(encoding="utf-8")
         plugin.write_text(probe_config.replace('script="probe.gd"', 'script="plugin.gd"'), encoding="utf-8")
@@ -57,10 +60,10 @@ def main():
         print(output)
         print(f"FIELD EDITOR PROCESS exit={result.returncode}")
         jobs = project / ".godot" / "rtc_traversal"
+        retained = new_log_directory("rtc-traversal-editor-logs-")
+        print(f"TRAVERSAL EDITOR LOGS {retained}")
         if jobs.exists():
-            retained = Path(tempfile.mkdtemp(prefix="rtc-traversal-editor-logs-"))
             shutil.copytree(jobs, retained, dirs_exist_ok=True)
-            print(f"TRAVERSAL EDITOR LOGS {retained}")
             for status_path in sorted(jobs.glob("*/status.json")):
                 try:
                     status = json.loads(status_path.read_text(encoding="utf-8"))
@@ -127,6 +130,7 @@ def main():
         if args.rendered:
             result = run_logged(
                 [args.godot, "--path", str(project), "--rendering-method", "gl_compatibility",
+                 *mode,
                  "res://tests/editor/region_interactive.tscn", "--", "--region", "sewer_region", "--smoke"],
                 env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
             )

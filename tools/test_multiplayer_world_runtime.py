@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import socket
 import subprocess
-import tempfile
 import time
 import json
 from contextlib import nullcontext
 from pathlib import Path
+from process_diagnostics import new_log_directory
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +45,7 @@ def main() -> int:
     ]
     processes: list[tuple[str, subprocess.Popen[bytes], Path, object]] = []
     # Keep failures and successful runs alike; later runs never overwrite them.
-    with nullcontext(tempfile.mkdtemp(prefix="return_to_cage_world_runtime_")) as temporary:
+    with nullcontext(new_log_directory("return_to_cage_world_runtime_")) as temporary:
         print(f"WORLD RUNTIME LOGS {temporary}", flush=True)
         records = []
         try:
