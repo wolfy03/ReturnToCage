@@ -439,6 +439,7 @@
           "move": "idle"
         },
         "sprite_frames_path": "res://assets/characters/enemies/frog/sprite_frames.tres",
+        "texture_filter": 1,
         "visual_offset": [
           4.0,
           -19.0
@@ -932,6 +933,7 @@
           "move": "move"
         },
         "sprite_frames_path": "res://assets/characters/enemies/sewer_beetle/sprite_frames.tres",
+        "texture_filter": 1,
         "visual_offset": [
           0.0,
           -13.0
