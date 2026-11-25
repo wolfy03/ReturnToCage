@@ -741,7 +741,9 @@ def test_the_layout_and_filters_come_back_in_the_next_session(app, tmp_path, dra
     path = tmp_path / "settings.json"
     first = MainWindow(Settings(path), ScriptedPrompts())
     first.show()
-    first.resize(1111, 777)
+    first.resize(940, 610)                    # small enough for a 1024x768 CI desktop
+    app.processEvents()
+    size = (first.width(), first.height())      # what the window system actually gave
     first.docks["validation"].hide()
     first.catalog_panel.search.setText("frog")
     first.catalog_panel.filter.setCurrentIndex(first.catalog_panel.filter.findData("draft"))
@@ -749,7 +751,7 @@ def test_the_layout_and_filters_come_back_in_the_next_session(app, tmp_path, dra
     second = MainWindow(Settings(path), ScriptedPrompts())
     second.show()
     app.processEvents()
-    assert (second.width(), second.height()) == (1111, 777) or app.platformName() == "offscreen"
+    assert (second.width(), second.height()) == size or app.platformName() == "offscreen"
     assert not second.docks["validation"].isVisible()
     assert second.catalog_panel.search.text() == "frog" and second.catalog_panel.filter.currentData() == "draft"
     second.close()
