@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=22 format=3]
 [ext_resource path="res://world/adventure/adventure_region.gd" type="Script" id="1"]
 [ext_resource path="res://world/region_point.gd" type="Script" id="2"]
 [ext_resource path="res://gameplay/components/climbable_area_2d.gd" type="Script" id="3"]
@@ -11,6 +11,8 @@
 [ext_resource path="res://world/multiplayer/enemy_spawn_manager.gd" type="Script" id="10"]
 [ext_resource path="res://world/adventure/field_enemy_spawn_point.gd" type="Script" id="11"]
 [ext_resource path="res://world/adventure/field_gather_point.gd" type="Script" id="12"]
+[ext_resource type="Script" path="res://world/adventure/field_platform.gd" id="13_platform"]
+[ext_resource type="Texture2D" path="res://assets/terrain/sewer_concrete.png" id="14_concrete"]
 [sub_resource type="RectangleShape2D" id="FloorShape"]
 resource_local_to_scene = true
 size = Vector2(1600, 70)
@@ -85,6 +87,15 @@ position = Vector2(0, -161)
 position = Vector2(0, 152)
 [node name="Landing" type="StaticBody2D" parent="."]
 position = Vector2(1370, 228)
+script = ExtResource("13_platform")
+size = Vector2(140, 12)
+tint = Color(0.25,0.4,0.4,1)
+one_way = true
+terrain_theme = "sewer_concrete"
+terrain_texture = ExtResource("14_concrete")
+terrain_margins = Vector4i(7, 6, 9, 5)
+metadata/rtc_map_object_id = "godot_a5cd3c2b3e0a592b011d9c548f7dc5bdf1c4cca2"
+metadata/terrain_stroke_protected = true
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Landing"]
 shape = SubResource("LandingShape")
 one_way_collision = true
@@ -112,6 +123,14 @@ position = Vector2(0, 72)
 position = Vector2(750, 570)
 collision_layer = 1
 collision_mask = 1
+script = ExtResource("13_platform")
+size = Vector2(1600, 70)
+tint = Color(0.14901960784313725, 0.23529411764705882, 0.24705882352941178, 1)
+terrain_theme = "sewer_concrete"
+terrain_texture = ExtResource("14_concrete")
+terrain_margins = Vector4i(7, 6, 9, 5)
+metadata/rtc_map_object_id = "godot_eb5caf0b82677079cedad409e2d8fac539d4de84"
+metadata/terrain_stroke_protected = true
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/Floor"]
 shape = SubResource("FloorShape")
@@ -124,6 +143,14 @@ polygon = PackedVector2Array(-800.0, -35.0, 800.0, -35.0, 800.0, 35.0, -800.0, 3
 position = Vector2(420, 440)
 collision_layer = 1
 collision_mask = 1
+script = ExtResource("13_platform")
+size = Vector2(240, 22)
+tint = Color(0.21568627450980393, 0.33725490196078434, 0.35294117647058826, 1)
+terrain_theme = "sewer_concrete"
+terrain_texture = ExtResource("14_concrete")
+terrain_margins = Vector4i(7, 6, 9, 5)
+metadata/rtc_map_object_id = "godot_ba77893a1beaba14f107aa65d4051411f694a926"
+metadata/terrain_stroke_protected = true
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/WestPlatform"]
 shape = SubResource("WestPlatformShape")
@@ -136,6 +163,14 @@ polygon = PackedVector2Array(-120.0, -11.0, 120.0, -11.0, 120.0, 11.0, -120.0, 1
 position = Vector2(760, 350)
 collision_layer = 1
 collision_mask = 1
+script = ExtResource("13_platform")
+size = Vector2(210, 22)
+tint = Color(0.21568627450980393, 0.33725490196078434, 0.35294117647058826, 1)
+terrain_theme = "sewer_concrete"
+terrain_texture = ExtResource("14_concrete")
+terrain_margins = Vector4i(7, 6, 9, 5)
+metadata/rtc_map_object_id = "godot_1f2ef2427a2d9480766472e9a3d6d9f285c499da"
+metadata/terrain_stroke_protected = true
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/MidPlatform"]
 shape = SubResource("MidPlatformShape")
@@ -148,6 +183,14 @@ polygon = PackedVector2Array(-105.0, -11.0, 105.0, -11.0, 105.0, 11.0, -105.0, 1
 position = Vector2(1080, 450)
 collision_layer = 1
 collision_mask = 1
+script = ExtResource("13_platform")
+size = Vector2(230, 22)
+tint = Color(0.21568627450980393, 0.33725490196078434, 0.35294117647058826, 1)
+terrain_theme = "sewer_concrete"
+terrain_texture = ExtResource("14_concrete")
+terrain_margins = Vector4i(7, 6, 9, 5)
+metadata/rtc_map_object_id = "godot_64267fe7fa6c904daa4f5907e3ef7bab11bcb3e9"
+metadata/terrain_stroke_protected = true
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Terrain/EastPlatform"]
 shape = SubResource("EastPlatformShape")

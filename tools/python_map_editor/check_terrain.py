@@ -88,7 +88,8 @@ def bridge(godot, evidence):
             binding = next(item for item in draft.source.bindings if item.path.endswith("/WestPlatform"))
             path = binding.path
             platform = next(obj for obj in draft.objects if obj.id == binding.id)
-            terrain = read_theme(project, "sewer_concrete")
+            terrain = replace(read_theme(project, "sewer_concrete"), margins=(8, 6, 8, 5))
+            assert platform.properties.terrain != terrain
             edited = replace(draft, objects=tuple(replace(obj, properties=replace(obj.properties, terrain=terrain))
                                                   if obj.id == platform.id else obj for obj in draft.objects))
             saved, receipt = session.stage_design(edited)
