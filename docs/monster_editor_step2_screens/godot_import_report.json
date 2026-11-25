@@ -1,0 +1,287 @@
+{
+  "checked_at": "2026-11-25T18:47:24+00:00",
+  "godot": "<home>\\Downloads\\Godot_v4.7.2-stable_win64.exe\\Godot_v4.7.2-stable_win64_console.exe",
+  "isolated_project": "checked",
+  "timings_ms": {
+    "inspect_monsters_ms": 1676,
+    "import_sewer_beetle_ms": 1688,
+    "import_frog_ms": 1692,
+    "isolated_first_import_ms": 13652,
+    "timeout_stop_ms": 63,
+    "cancel_stop_ms": 310
+  },
+  "passed": 45,
+  "failed": 0,
+  "checks": [
+    {
+      "group": "game",
+      "name": "the engine answering is the pinned version",
+      "status": "PASS",
+      "detail": "{'godot_version': '4.7.2-stable (official)', 'physics_ticks_per_second': 60, 'network_protocol_version': 20, 'gravity': 1100.0, 'target_keep_range_scale': 1.35, 'snapshot_states': ['IDLE', 'MOVING', 'ATTACKING', 'HURT', 'DEAD']}"
+    },
+    {
+      "group": "game",
+      "name": "every baseline monster is registered",
+      "status": "PASS",
+      "detail": "['frog', 'sewer_beetle']"
+    },
+    {
+      "group": "game",
+      "name": "the game's own content validation is clean",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: import support is reported as complete",
+      "status": "PASS",
+      "detail": "{'actor_scene_path': 'res://gameplay/actors/enemies/sewer_beetle.tscn', 'agent_script': 'res://gameplay/actors/enemies/enemy_agent.gd', 'definition_errors': [], 'definition_path': 'res://data/content/enemies/sewer_beetle.tres', 'display_name': 'Sewer Beetle', 'has_animation_profile': True, 'loot_table_id': 'sewer_beetle_loot', 'monster_id': 'sewer_beetle', 'import_support': 'complete'}"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: status, profile and unsupported notes",
+      "status": "PASS",
+      "detail": "('complete', 'ground_melee', [])"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: gameplay sections equal the verified example",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: animation clips, frames and image hashes equal the example",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: source binding equals the example",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: the imported document validates",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: publish is blocked exactly when something was not converted",
+      "status": "PASS",
+      "detail": "NOT_EVALUATED"
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: saved and reopened without change",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "game",
+      "name": "sewer_beetle: bound source files still have the recorded hashes",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "game",
+      "name": "frog: import support is reported as partial",
+      "status": "PASS",
+      "detail": "{'actor_scene_path': 'res://gameplay/actors/enemies/frog.tscn', 'agent_script': 'res://gameplay/actors/enemies/frog/frog_agent.gd', 'definition_errors': [], 'definition_path': 'res://data/content/enemies/frog.tres', 'display_name': 'Trail Frog', 'has_animation_profile': True, 'loot_table_id': 'frog_loot', 'monster_id': 'frog', 'import_support': 'partial'}"
+    },
+    {
+      "group": "game",
+      "name": "frog: status, profile and unsupported notes",
+      "status": "PASS",
+      "detail": "('partial', 'hopper', [\"attack_patterns[leap_bite].events[EnableHitbox]: FrogAttackState tests the target's origin against |dx| <= 44 and |dy| <= 40 on every tick of the leap. The 88x80 hitbox tests the target's hurtbox instead, which reaches further.\", 'behavior.states[return].params: FrogReturnState switches to the short patrol hop (0.6 x speed, lift 230) once the origin is closer than one chase hop. The Hop module has one speed and lift per state.'])"
+    },
+    {
+      "group": "game",
+      "name": "frog: gameplay sections equal the verified example",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "frog: animation clips, frames and image hashes equal the example",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "game",
+      "name": "frog: source binding equals the example",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "frog: the imported document validates",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "game",
+      "name": "frog: publish is blocked exactly when something was not converted",
+      "status": "PASS",
+      "detail": "FAIL"
+    },
+    {
+      "group": "game",
+      "name": "frog: saved and reopened without change",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "game",
+      "name": "frog: bound source files still have the recorded hashes",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "game",
+      "name": "inspecting and importing changed no project file",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "isolated",
+      "name": "the project copy opens in Godot",
+      "status": "PASS",
+      "detail": " \u001b[90m\u001b[1mreimport\u001b[22m | sun_moon_atlas_2048x1152.png\u001b[39m\u001b[0m\n[  60% ] \u001b[90m\u001b[1mreimport\u001b[22m | attack.png\u001b[39m\u001b[0m\n[  61% ] \u001b[90m\u001b[1mreimport\u001b[22m | death.png\u001b[39m\u001b[0m\n[  63% ] \u001b[90m\u001b[1mreimport\u001b[22m | fall.png\u001b[39m\u001b[0m\n[  65% ] \u001b[90m\u001b[1mreimport\u001b[22m | hurt.png\u001b[39m\u001b[0m\n[  66% ] \u001b[90m\u001b[1mreimport\u001b[22m | idle.png\u001b[39m\u001b[0m\n[  68% ] \u001b[90m\u001b[1mreimport\u001b[22m | jump.png\u001b[39m\u001b[0m\n[  70% ] \u001b[90m\u001b[1mreimport\u001b[22m | jump_start.png\u001b[39m\u001b[0m\n[  71% ] \u001b[90m\u001b[1mreimport\u001b[22m | land.png\u001b[39m\u001b[0m\n[  73% ] \u001b[90m\u001b[1mreimport\u001b[22m | attack.png\u001b[39m\u001b[0m\n[  75% ] \u001b[90m\u001b[1mreimport\u001b[22m | death.png\u001b[39m\u001b[0m\n[  76% ] \u001b[90m\u001b[1mreimport\u001b[22m | hurt.png\u001b[39m\u001b[0m\n[  78% ] \u001b[90m\u001b[1mreimport\u001b[22m | idle.png\u001b[39m\u001b[0m\n[  80% ] \u001b[90m\u001b[1mreimport\u001b[22m | move.png\u001b[39m\u001b[0m\n[  81% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_attack_2.png\u001b[39m\u001b[0m\n[  83% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_attack_one_handed.png\u001b[39m\u001b[0m\n[  85% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_climb_ladder.png\u001b[39m\u001b[0m\n[  86% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_death.png\u001b[39m\u001b[0m\n[  88% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_dodge.png\u001b[39m\u001b[0m\n[  90% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_fall.png\u001b[39m\u001b[0m\n[  91% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_hurt.png\u001b[39m\u001b[0m\n[  93% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_idle.png\u001b[39m\u001b[0m\n[  95% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_jump_jump.png\u001b[39m\u001b[0m\n[  96% ] \u001b[90m\u001b[1mreimport\u001b[22m | hamster_land.png\u001b[39m\u001b[0m\n[  98% ] \u001b[90m\u001b[1mreimport\u001b[22m | Finalizing Asset Import...\u001b[39m\u001b[0m\n\u001b[92m[ DONE ]\u001b[39m \u001b[1mreimport\u001b[22m\n\u001b[0m\n[   0% ] \u001b[90m\u001b[1mreimport\u001b[22m | Started (Re)Importing Assets (59 steps)\u001b[39m\u001b[0m\n[   0% ] \u001b[90m\u001b[1mreimport\u001b[22m | Executing post-reimport operations...\u001b[39m\u001b[0m\n\u001b[92m[ DONE ]\u001b[39m \u001b[1mreimport\u001b[22m\n\u001b[0m\n[   0% ] \u001b[90m\u001b[1mloading_editor_layout\u001b[22m | Started Loading editor (5 steps)\u001b[39m\u001b[0m\n[   0% ] \u001b[90m\u001b[1mloading_editor_layout\u001b[22m | Loading editor layout...\u001b[39m\u001b[0m\n[  16% ] \u001b[90m\u001b[1mloading_editor_layout\u001b[22m | Loading docks...\u001b[39m\u001b[0m\n\u001b[92m[ DONE ]\u001b[39m \u001b[1mloading_editor_layout\u001b[22m\n\u001b[0m\n"
+    },
+    {
+      "group": "isolated",
+      "name": "the copy has monsters the real project does not",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "isolated",
+      "name": "both added monsters are discovered without any code change",
+      "status": "PASS",
+      "detail": "['cave_beetle', 'frog', 'odd_bug', 'sewer_beetle']"
+    },
+    {
+      "group": "isolated",
+      "name": "a new monster on a known actor is importable",
+      "status": "PASS",
+      "detail": "{'actor_scene_path': 'res://gameplay/actors/enemies/sewer_beetle.tscn', 'agent_script': 'res://gameplay/actors/enemies/enemy_agent.gd', 'definition_errors': [], 'definition_path': 'res://data/content/enemies/cave_beetle.tres', 'display_name': 'Cave Beetle', 'has_animation_profile': True, 'loot_table_id': 'sewer_beetle_loot', 'monster_id': 'cave_beetle', 'import_support': 'complete'}"
+    },
+    {
+      "group": "isolated",
+      "name": "a monster on an unknown actor script is reported unsupported",
+      "status": "PASS",
+      "detail": "{'actor_scene_path': 'res://gameplay/actors/enemies/odd_bug.tscn', 'agent_script': 'res://gameplay/actors/enemies/odd_agent.gd', 'definition_errors': [], 'definition_path': 'res://data/content/enemies/odd_bug.tres', 'display_name': 'Odd Bug', 'has_animation_profile': True, 'loot_table_id': 'sewer_beetle_loot', 'monster_id': 'odd_bug', 'import_support': 'unsupported'}"
+    },
+    {
+      "group": "isolated",
+      "name": "the new monster imports completely under its own ID",
+      "status": "PASS",
+      "detail": "('complete', [])"
+    },
+    {
+      "group": "isolated",
+      "name": "its values are its own, not the baseline monster's",
+      "status": "PASS",
+      "detail": "{'max_health': 61, 'attack_damage': 13, 'move_speed': 71, 'chase_range': 310, 'attack_range': 52, 'faction': 'hostile', 'hit_invulnerability_seconds': 0.35, 'planned': {'defense': 0, 'attack_speed': 1, 'knockback_resistance': 0, 'stagger_resistance': 0, 'damage_resistances': {}, 'status_resistances': {}}}"
+    },
+    {
+      "group": "isolated",
+      "name": "the new monster's document validates against the copy",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "isolated",
+      "name": "an unknown actor is never called a successful import",
+      "status": "PASS",
+      "detail": "('unsupported', [\"behavior: the behaviour of actor script res://gameplay/actors/enemies/odd_agent.gd was not imported; the states in this document are a placeholder, not the monster's AI\", 'attack_patterns: attacks were not imported'])"
+    },
+    {
+      "group": "isolated",
+      "name": "its publish check fails instead of passing silently",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "isolated",
+      "name": "values Godot could read are still kept for the unknown actor",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "isolated",
+      "name": "the bridge changed no file in the copy",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "isolated",
+      "name": "an unknown monster ID is UNKNOWN_MONSTER",
+      "status": "PASS",
+      "detail": "got UNKNOWN_MONSTER: no_such_monster"
+    },
+    {
+      "group": "failures",
+      "name": "a missing executable is GODOT_MISSING",
+      "status": "PASS",
+      "detail": "got GODOT_MISSING: [WinError 2] 지정된 파일을 찾을 수 없습니다"
+    },
+    {
+      "group": "failures",
+      "name": "a folder that is not the project is PROJECT_INVALID",
+      "status": "PASS",
+      "detail": "got PROJECT_INVALID: not a ReturnToCage project with the monster bridge: <home>\\AppData\\Local\\Temp\\rtc-failures-qrnnie_s"
+    },
+    {
+      "group": "failures",
+      "name": "an engine of another version is GODOT_VERSION_MISMATCH",
+      "status": "PASS",
+      "detail": "got GODOT_VERSION_MISMATCH: the project needs Godot 9.9.9; this executable is 4.7.2.stable.official.ed1daf0bf"
+    },
+    {
+      "group": "failures",
+      "name": "the pinned version is accepted",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "group": "failures",
+      "name": "an unknown monster is UNKNOWN_MONSTER",
+      "status": "PASS",
+      "detail": "got UNKNOWN_MONSTER: no_such_monster"
+    },
+    {
+      "group": "failures",
+      "name": "an engine that takes too long is TIMEOUT",
+      "status": "PASS",
+      "detail": "got TIMEOUT: Godot did not finish within 0.05 s"
+    },
+    {
+      "group": "failures",
+      "name": "a cancelled call is CANCELLED",
+      "status": "PASS",
+      "detail": "got CANCELLED: the operation was cancelled"
+    },
+    {
+      "group": "failures",
+      "name": "stopped calls stop promptly",
+      "status": "PASS",
+      "detail": "{'inspect_monsters_ms': 1676, 'import_sewer_beetle_ms': 1688, 'import_frog_ms': 1692, 'isolated_first_import_ms': 13652, 'timeout_stop_ms': 63, 'cancel_stop_ms': 310}"
+    },
+    {
+      "group": "failures",
+      "name": "no request or result file is left behind",
+      "status": "PASS",
+      "detail": "[]"
+    },
+    {
+      "group": "failures",
+      "name": "the bridge works again after the failures",
+      "status": "PASS",
+      "detail": ""
+    }
+  ]
+}

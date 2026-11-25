@@ -538,6 +538,28 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 숲 지형을 고치면 실제 입력으로 입구→전망대 경로와 움푹한 구간 탈출을 다시 확인한다. 자동화된
 경로 검증은 Field Editor의 Traversal 분석을 쓴다.
 
+## Monster Editor GUI · Bridge · Import (MONSTER-STEP 2)
+
+편집기와 읽기 전용 Bridge의 검사다. 기록은 [monster_editor_step2.md](monster_editor_step2.md).
+의존성: `python -m pip install -r tools/python_monster_editor/requirements.txt` (PySide6-Essentials 6.11.3).
+
+| 검사 | 명령 | 범위 |
+|---|---|---|
+| Application (`tests/test_application.py`) | core와 같은 pytest 명령 | 문서 세션(dirty = fingerprint 비교, Undo/Redo, 저장·충돌·다시 열기), 프로젝트 설정의 전부-또는-전무 적용, ID 상태 3종, 초안끼리 ID 충돌, 링크로 프로젝트 밖을 가리키는 폴더, 설정 손상 복구, 검증 결과의 오래됨, 늦게 온 작업 결과 폐기, **하위 계층이 Qt를 import하지 않는지** |
+| Bridge (`tests/test_bridge.py`) | 〃 | 대역 실행 파일로 응답 대조(다른 요청·protocol·명령·프로젝트), crash·제한 시간·취소·손상 JSON·스크립트 오류의 오류 코드, 임시 파일 정리, 기록된 probe에서 Import한 문서가 예제와 같은지, profile 등록 |
+| GUI (`tests/test_gui.py`) | 〃 (Linux는 `QT_QPA_PLATFORM=offscreen`) | 실제 `QApplication`과 위젯. `test_input_…`은 `QTest` 키·마우스 입력이고 나머지는 창의 공개 메서드다. 창·메뉴·단축키, 새 몬스터 대화상자의 ID 상태, 열기 실패 5종, 필드 확정과 Undo 단계, 잘못된 입력, 저장·다른 이름 저장·충돌 4갈래·저장 실패, 닫기 보호, 복제, 초안 삭제, 스키마에서 생성된 Inspector, 읽기 전용 영역, 전리품, 검증 칩·오래됨·finding 이동, 카탈로그 검색·필터·선택 유지, 레이아웃·설정 복원, 썸네일(구조/디코딩 실패), 대역 Godot으로 Import·실패·늦은 결과 폐기·취소. 창 단위 단축키 테스트 2개는 offscreen에서 건너뛴다 |
+| GUI 스모크 | `python tools/python_monster_editor/main.py --smoke-report <json> --smoke-shots <dir> [--project . --godot <godot>]` | 네이티브 창에서 실제 입력으로 한 흐름 전체: 새 몬스터 → 편집 → 단축키 Undo/Redo → 전리품 → 검증과 finding 이동 → Ctrl+S → (Godot이 있으면) registry 확인과 두 몬스터 Import → 복제 → 닫기 보호 → 새 창에서 설정 복원과 재열기 → Small·Medium·Large 문서 응답 시간. 화면 9장과 시간을 남긴다. `--project/--godot`이 없으면 Import는 `NOT_EVALUATED`로 기록된다. 배율은 `QT_SCALE_FACTOR=1 / 1.5 / 2` |
+| Godot Import | `python tools/python_monster_editor/check_godot_import.py --godot <godot> --artifacts <dir>` | 실제 Godot. **game**: 두 기준 몬스터의 Import가 예제와 같고, 저장·재열기가 같고, 프로젝트 파일 해시가 전후 같다. **isolated**: 프로젝트 사본에 몬스터 둘을 추가 — 기존 actor의 새 몬스터는 자기 ID·값으로 완전 Import, 모르는 actor는 미지원으로 보고. **failures**: 실행 파일 없음·다른 버전·없는 몬스터·제한 시간·취소 |
+
+새 Godot 파일을 추가했으면 `git add` 한 뒤 `check_contract_extensibility.py`를 돌린다 — 이 검사는 추적되는 파일만
+복사하므로 스테이징 전에는 probe가 멈춘다. Windows의 Godot은 Bridge·probe 실행 뒤 종료 도중 드물게 crash한다
+(`0xC0000005`, 수 % 수준). Bridge client는 읽기 전용 호출을 최대 3회 다시 실행한다
+([monster_editor_bridge.md](monster_editor_bridge.md)).
+
+확인하지 않는 것: OS 네이티브 파일 대화상자(테스트는 `ScriptedPrompts`로 대체), 사람이 직접 조작하는 검사, macOS.
+GUI 테스트에서 `QTest.keyClicks`는 ASCII만 보낼 수 있다(그 밖의 문자는 프로세스가 중단된다). 한글 입력은
+`QInputMethodEvent`의 commit string으로 보낸다.
+
 ## Monster Editor core (MONSTER-STEP 1)
 
 `.rtcmonster` 문서 core와 실제 Godot 리소스의 계약 검사다. 설계는 [monster_editor_architecture.md](monster_editor_architecture.md).
@@ -554,7 +576,8 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 `NOT_EVALUATED`로 출력된다. 게임에 몬스터를 추가해도 예제 문서는 필요 없다(registry 계약이 검사한다). 기준 몬스터의
 스크립트·scene·리소스를 고치면 legacy 계약의 "source files" 항목이 실패한다 — 예제가 여전히 게임과 같은지 확인한 뒤
 `--refresh-bindings`로 해시를 갱신하고, `probe.json`을 `tests/fixtures/contract_probe.json`에 복사한다.
-CI는 `.github/workflows/python-monster-editor.yml`이다: Ubuntu·Windows의 pytest·예제 검증·스키마 문서 최신성·측정,
-Ubuntu의 Godot 계약 검사와 확장성 검사. JUnit XML, 계약 JSON, Godot 로그, 측정 결과를 artifact로 남긴다.
+CI는 `.github/workflows/python-monster-editor.yml`이다: Ubuntu·Windows의 pytest(core·application·bridge·GUI)·예제
+검증·스키마 문서 최신성·측정, Ubuntu의 Godot 계약 검사·확장성 검사·Import 검사, Windows의 GUI 스모크(3개 배율,
+실제 Godot)와 Import 검사. JUnit XML, 계약 JSON, Godot 로그, 측정 결과, 스모크 화면과 보고서를 artifact로 남긴다.
 Godot을 실행하는 검사는 순차로 돌린다. 실행 중에는 `.godot` 캐시나 `.uid` 파일을 지우지 않는다 — 지우면 다음 실행이
 "Missing .uid" 경고로 실패한다(코드 문제가 아니며 한 번 더 실행하면 사라진다).

@@ -411,8 +411,12 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
 - `tools/test_field_editor.py` — 격리된 Godot 에디터에서 배치, Undo/Redo, 저장과 런타임 사용을 검사한다.
 - `addons/rtc_field_editor/traversal_analysis.gd`, `traversal_controller.gd` — 이동 표면/방향 그래프 후보와 비동기 물리 검증을 관리한다.
 - `tests/editor/traversal_physics.gd`, `tools/analyze_traversal.py` — 실제 PlayerActor 입력을 별도 프로세스에서 검증한다. [STEP 7 가이드](traversal_analysis.md) 참조.
-- `tools/python_monster_editor/` — Monster Editor의 Python core(`.rtcmonster` 불변 문서·편집 API·저장·정적 검증·
-  콘텐츠 카탈로그)와 예제. `check_godot_contract.py`가 `tools/monster_bridge/contract_probe.tscn`으로 등록된 모든
+- `tools/python_monster_editor/` — Monster Editor. `rtcmonster/`(Python core: `.rtcmonster` 불변 문서·편집 API·저장·
+  정적 검증·콘텐츠 카탈로그), `application/`(Qt 없는 문서 세션·프로젝트·설정·작업 관리), `bridge/`(Godot 실행과
+  Legacy Import Profile), `gui/` + `main.py`(PySide6 편집기), 예제. `tools/monster_bridge/bridge.tscn`은 읽기 전용
+  Bridge(`inspect_monsters`, `import_monster`)이고 `check_godot_import.py`가 실제 Godot으로 검사한다.
+  [STEP 2 기록](monster_editor_step2.md), [Bridge](monster_editor_bridge.md),
+  [사용 가이드](monster_editor_user_guide.md). `check_godot_contract.py`가 `tools/monster_bridge/contract_probe.tscn`으로 등록된 모든
   Enemy를 범용 계약으로 검사하고, 기준 몬스터(딱정벌레·개구리)는 예제와 대조한다. 게임 런타임은 이 문서를 읽지
   않는다. [아키텍처](monster_editor_architecture.md), [안정화 기록](monster_editor_step1_stabilization.md) 참조.
 - `tools/test_multiplayer_*.py` — 실제 ENet + 분리된 OS 프로세스. restart(재접속/세이브),

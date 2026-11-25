@@ -13,7 +13,7 @@
 | STEP 6 | Godot Runtime Test / Map Editor Integration | 없음 | 없음 |
 | STEP 7 | Stabilization / Windows EXE Distribution | 없음 | 없음 |
 
-## MONSTER-STEP 1 — Architecture / Schema / Core Validation (이번 단계)
+## MONSTER-STEP 1 — Architecture / Schema / Core Validation (완료)
 
 - **범위**: 기존 시스템 분석, `.rtcmonster` Schema V1, Python core(문서·직렬화·저장·검증), 예제 3개, Godot 계약 검사,
   설계 문서 5개.
@@ -23,7 +23,11 @@
   API, 레지스트리 확장 계약, 규칙 등록형 검증과 선언된 finding 코드, 카탈로그·PNG 무결성, 계약 검사 분리, 저장
   장애 주입, 측정. STEP 2는 그 문서 §10의 공개 API 위에서 시작한다.
 
-## MONSTER-STEP 2 — Editor GUI Foundation / Monster Catalog
+## MONSTER-STEP 2 — Editor GUI Foundation / Monster Catalog (구현됨, 병합 대기)
+
+결과와 검증 기록은 [monster_editor_step2.md](monster_editor_step2.md)에 있다. 아래는 착수 전에 정한 범위이며,
+달라진 점은 두 가지다: 공통 Python 패키지는 추출하지 않았고(중복 유지), Bridge의 읽기 전용 명령은 프로젝트
+복사본이 아니라 실제 프로젝트에서 실행한다.
 
 **선행 조건**
 
@@ -67,7 +71,8 @@
 
 ## MONSTER-STEP 3 — Animation / Collision Editor
 
-- **선행**: STEP 2. 데이터 런타임은 아직 필요 없다.
+- **선행**: STEP 2. 데이터 런타임은 아직 필요 없다. 시작할 때 요약 패널의 부분 갱신을 먼저 한다 — Large 문서에서
+  편집 1회가 약 95 ms이고 대부분이 요약 전체 재생성이다(STEP 2 측정). 드래그 조작은 이 비용을 견디지 못한다.
 - **범위**: 이미지 등록(sheet 격자 분할 `slice_grid`, 개별 PNG, 크기·해시 기록), clip 편집(frame 순서·지속 시간·FPS·
   loop), 역할 연결, 재생 미리보기, `visual_offset`/`visual_scale`과 bottom-center 프리셋, body·hurtbox·hitbox 시각
   편집(사각형·원), 좌우 반전 미리보기, frame별 hurtbox override 편집.
@@ -127,7 +132,7 @@
 
 | 사항 | 언제까지 | 선택지 |
 |---|---|---|
-| 공통 Python 패키지 추출 | STEP 2 시작 | 추출(Map Editor EXE 재검증 필요) / 중복 유지 |
+| 공통 Python 패키지 추출 | **STEP 2에서 중복 유지로 결정** | 재검토는 STEP 7(EXE)에서 |
 | 개구리 접촉 판정 | **결정됨** | V2에서 `hitboxes[].target_test` 추가 (stabilization §6). 구현은 STEP 5 |
 | 개구리 근거리 도약 | **결정됨** | V2에서 `Hop.near_goal_speed_scale` / `near_goal_lift` 추가. 구현은 STEP 5 |
 | 연속 조작의 편집 비용 | STEP 3 | 조작 종료 시 1회 확정 / 부분 정규화 도입 — GUI에서 측정 후 결정 |

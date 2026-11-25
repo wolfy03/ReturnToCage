@@ -1,4 +1,4 @@
-# Monster Editor 아키텍처 (MONSTER-STEP 1)
+# Monster Editor 아키텍처 (MONSTER-STEP 1~2)
 
 몬스터마다 GDScript를 새로 쓰는 대신, 등록된 행동 모듈과 데이터의 조합으로 몬스터를 만들기 위한
 기반 설계다. 이 문서는 구조와 결정 이유를 다룬다. 필드 정의는
@@ -6,9 +6,12 @@
 [monster_editor_runtime_contract.md](monster_editor_runtime_contract.md), 기존 몬스터와의 관계는
 [monster_editor_compatibility.md](monster_editor_compatibility.md), 이후 단계는
 [monster_editor_roadmap.md](monster_editor_roadmap.md), 안정화에서 내린 결정·공개 API·확장 가이드는
-[monster_editor_step1_stabilization.md](monster_editor_step1_stabilization.md)에 있다.
+[monster_editor_step1_stabilization.md](monster_editor_step1_stabilization.md)에 있다. STEP 2의 편집기·카탈로그·
+Import는 [monster_editor_step2.md](monster_editor_step2.md), Bridge 규약은
+[monster_editor_bridge.md](monster_editor_bridge.md), 사용법은
+[monster_editor_user_guide.md](monster_editor_user_guide.md)에 있다.
 
-## 1. 이번 단계에서 실제로 있는 것과 없는 것
+## 1. 지금 실제로 있는 것과 없는 것
 
 | 구분 | 상태 |
 |---|---|
@@ -18,11 +21,14 @@
 | 예제 문서 3개 (Sewer Beetle, Frog, Sewer Rat Prototype) | **작성됨** (`tools/python_monster_editor/examples/`) |
 | Godot 계약 검사: 환경 / 등록된 모든 몬스터(registry) / 기준 몬스터(legacy) | **구현됨** (`tools/monster_bridge/contract_probe.gd`, `godot_contract.py`, `check_godot_contract.py`) |
 | 데이터 기반 AI·전투 런타임 (`DataEnemyAgent` 등) | **없음** — 계약만 확정. MONSTER-STEP 4~5 |
-| Godot Bridge의 Import / Export / Publish | **없음** — 인터페이스만 확정. MONSTER-STEP 2~6 |
-| Monster Editor GUI, EXE | **없음** — MONSTER-STEP 2~7 |
+| 읽기 전용 Godot Bridge `inspect_monsters` / `import_monster`, Legacy Import Profile | **구현됨** (STEP 2: `tools/monster_bridge/bridge.gd`, `bridge/`) |
+| 편집기 GUI: 카탈로그, 문서 세션, Undo/Redo, Inspector(기본 정보·능력치·이동·감지·전리품), 검증 패널 | **구현됨** (STEP 2: `application/`, `gui/`, `main.py`) |
+| 애니메이션·판정·공격 패턴·AI 편집기 | **없음** — 읽기 전용 요약만. MONSTER-STEP 3~5 |
+| Godot Bridge의 Export / Publish / Runtime Test | **없음** — 인터페이스만 확정. MONSTER-STEP 3~6 |
+| EXE | **없음** — MONSTER-STEP 7 |
 
-게임은 지금도 기존 GDScript로 몬스터를 실행한다. 이번 단계는 게임 런타임 코드를 한 줄도 바꾸지 않았다.
-추가된 Godot 파일은 읽기 전용 probe 하나뿐이다. 배포 preset `Windows Desktop`은 `tools/*`를 제외한다
+게임은 지금도 기존 GDScript로 몬스터를 실행한다. STEP 1과 STEP 2는 게임 런타임 코드를 한 줄도 바꾸지 않았다.
+추가된 Godot 파일은 읽기 전용 probe와 읽기 전용 Bridge뿐이다. 배포 preset `Windows Desktop`은 `tools/*`를 제외한다
 (`Windows Desktop 2` preset은 기존 `tools/map_bridge`와 마찬가지로 제외하지 않는다 — 이번 단계에서 preset은 바꾸지 않았다).
 
 ## 2. 기존 몬스터 시스템 분석
@@ -164,6 +170,11 @@ tools/python_monster_editor/
 │  ├─ validation/      report(코드·Finding·Report) · context(Context, ProjectView, @rule)
 │  │                   · structure · assets · animation · combat · behavior · compatibility
 │  └─ reference.py     schema·registry·코드 선언에서 문서 표를 생성
+├─ application/        (STEP 2, Qt 없음) session · project · settings · work
+├─ bridge/             (STEP 2, Qt 없음) client: Godot 실행과 응답 검사 · importer: LegacyImportProfile
+├─ gui/                (STEP 2, PySide6) main_window · inspector · panels · lists · dialogs · strings · testing
+├─ main.py             편집기 진입점, 스크립트된 GUI 스모크(--smoke-report)
+├─ check_godot_import.py            실제 Godot으로 Bridge·Import·격리 프로젝트·실패 경로 검사
 ├─ examples/           sewer_beetle · frog · sewer_rat_prototype
 ├─ tests/              pytest (표준 라이브러리 외 의존성 없음)
 ├─ validate.py         명령행 검증
@@ -172,7 +183,9 @@ tools/python_monster_editor/
 ├─ check_contract_extensibility.py  격리된 프로젝트 사본에서 신규 몬스터 시나리오
 └─ benchmark.py        규모별 측정
 tools/monster_bridge/
-└─ contract_probe.gd / .tscn   읽기 전용 probe
+├─ monster_inspector.gd        probe와 Bridge가 함께 쓰는 추출 코드
+├─ contract_probe.gd / .tscn   읽기 전용 probe
+└─ bridge.gd / .tscn           읽기 전용 Bridge (inspect_monsters, import_monster)
 ```
 
 의존 방향은 `spec ← modules ← schema ← document / editing ← validation ← 도구` 한쪽이다. 범용 코드(schema,
@@ -180,19 +193,22 @@ document, editing, validation, reference)는 모듈·조건·이벤트·몬스�
 플래그에 있고, `tests/test_extensibility.py`가 범용 코드에 그런 문자열이 없음을 검사한다. 새 몬스터 종류나 모듈이
 늘어도 이 코드들은 바뀌지 않는다.
 
-core는 Qt와 Godot를 import하지 않는다. GUI가 붙어도 이 경계는 유지한다. 빈 디렉터리나 stub 클래스는 만들지 않았다.
+core는 Qt와 Godot를 import하지 않는다. STEP 2의 `application`과 `bridge`도 Qt를 import하지 않으며
+(`tests/test_application.py`가 새 프로세스에서 확인), GUI는 `application`을 통해서만 문서를 바꾼다: `gui → application → rtcmonster`, `gui → bridge`. 빈 디렉터리나 stub 클래스는 만들지 않았다.
 
 ## 6. Godot Bridge 계약
 
-Map Editor Bridge(`tools/python_map_editor/godot_bridge.py`, `tools/map_bridge/`)의 실행 규약을 그대로 따른다:
-프로젝트 스냅샷 복사본에서 실행, 분리된 사용자 데이터, protocol·request_id·operation이 일치하는 JSON 결과,
-종료 코드 0, 엔진 오류 로그가 있으면 결과 파일이 있어도 실패.
+Map Editor Bridge(`tools/python_map_editor/godot_bridge.py`, `tools/map_bridge/`)의 판정 규약을 따른다:
+protocol·request_id·operation이 일치하는 JSON 결과, 종료 코드 0, 엔진 오류 로그가 있으면 결과 파일이 있어도 실패.
+파일을 쓰는 명령은 프로젝트 스냅샷 복사본에서 실행한다. STEP 2의 두 읽기 전용 명령은 아무것도 저장하지 않으므로
+실제 프로젝트에서 바로 실행하고, 응답의 `project_path`가 요청한 프로젝트인지 대조한다
+([monster_editor_bridge.md](monster_editor_bridge.md)).
 
 | 명령 | 입력 | 출력 / 검증 | 구현 단계 |
 |---|---|---|---|
 | `contract_probe` | 없음 | 모든 EnemyDefinition의 실제 값·scene 구조·필수 컴포넌트·profile·loot, 실행 결과. 특정 몬스터의 scene 구조를 전제하지 않는다 | **STEP 1 (구현됨)** |
-| `inspect_monsters` | 없음 | 게시된 몬스터 ID·이름·runtime 종류·원본 파일 해시 | STEP 2 |
-| `import_monster` | monster_id | legacy 몬스터의 편집 가능 범위와 값 (`source_binding` 포함) | STEP 2 |
+| `inspect_monsters` | 없음 | ContentRegistry에 등록된 몬스터 ID·이름·정의/scene 경로·actor 스크립트·정의 오류 | **STEP 2 (구현됨)** |
+| `import_monster` | monster_id | 한 몬스터의 실제 값. Python importer가 문서와 `source_binding`(파일 해시, 편집 가능 범위, 미지원 항목)으로 변환 | **STEP 2 (구현됨)** |
 | `validate_document` | 문서 | 리소스 참조, 타입, 모듈 ID를 엔진에서 확인 | STEP 3~5 |
 | `stage_monster` | 문서 | 복사본에 `DataEnemyDefinition`, profile, SpriteFrames, loot 생성 | STEP 3~5 |
 | `validate_export` | staging | 새 프로세스에서 재로드, ContentRegistry 검증, 스폰, 상태 진행 | STEP 6 |

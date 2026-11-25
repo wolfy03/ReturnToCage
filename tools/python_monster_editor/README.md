@@ -1,6 +1,23 @@
-# ReturnToCage Monster Editor — core (MONSTER-STEP 1)
+# ReturnToCage Monster Editor (MONSTER-STEP 2)
 
-`.rtcmonster` 문서의 Python core다. GUI는 아직 없다. 표준 라이브러리만 쓰고 Qt·Godot를 import하지 않는다.
+`.rtcmonster` 문서의 Python core와 그 위의 편집기다. 편집기는 초안을 만들고 게임 몬스터의 값을 읽어 올 뿐,
+게임을 바꾸지 않는다(게시는 이후 단계).
+
+```sh
+python -m pip install -r tools/python_monster_editor/requirements.txt    # Python 3.14.5, PySide6-Essentials 6.11.3
+python tools/python_monster_editor/main.py [문서.rtcmonster]
+```
+
+| 폴더 | 내용 | 의존성 |
+|---|---|---|
+| `rtcmonster/` | core: 문서, 편집, 저장, 검증, 카탈로그 | 표준 라이브러리 |
+| `application/` | 문서 세션·Undo/Redo, 프로젝트, 설정, 작업 관리 | 표준 라이브러리 |
+| `bridge/` | Godot 실행(`client`)과 legacy 몬스터 변환(`importer`) | 표준 라이브러리 |
+| `gui/`, `main.py` | 편집기 | PySide6 |
+
+- 사용법: [`docs/monster_editor_user_guide.md`](../../docs/monster_editor_user_guide.md)
+- STEP 2 기록: [`docs/monster_editor_step2.md`](../../docs/monster_editor_step2.md)
+- Bridge 규약: [`docs/monster_editor_bridge.md`](../../docs/monster_editor_bridge.md)
 
 - 설계: [`docs/monster_editor_architecture.md`](../../docs/monster_editor_architecture.md)
 - 필드 정의: [`docs/monster_editor_schema_v1.md`](../../docs/monster_editor_schema_v1.md)
@@ -8,7 +25,7 @@
 - 기존 몬스터·Map Editor: [`docs/monster_editor_compatibility.md`](../../docs/monster_editor_compatibility.md)
 - 이후 단계: [`docs/monster_editor_roadmap.md`](../../docs/monster_editor_roadmap.md)
 
-## 지금 되는 것
+## core API
 
 ```python
 from rtcmonster import (clone_document, insert_item, monster_catalog, new_document, parse_path, read_document,
@@ -48,7 +65,7 @@ copy = clone_document(document, "moss_slug_elder")           # 새 ID 필수, so
 ## 명령
 
 ```sh
-# 테스트 (pytest만 필요)
+# 테스트: core, application, bridge, GUI (Linux는 QT_QPA_PLATFORM=offscreen)
 python -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider
 
 # 문서 정적 검증
@@ -63,11 +80,17 @@ python tools/python_monster_editor/check_contract_extensibility.py --godot <godo
 # 스키마 문서의 표 갱신 (schema.py / modules.py / 검증 코드 선언을 고친 뒤)
 cd tools/python_monster_editor && python -m rtcmonster.reference --update ../../docs/monster_editor_schema_v1.md
 
+# GUI 스모크: 네이티브 창에서 실제 입력으로 전체 흐름, 화면과 시간 기록 (--project/--godot은 선택)
+python tools/python_monster_editor/main.py --smoke-report <report.json> --smoke-shots <dir> --project . --godot <godot>
+
+# 실제 Godot으로 Bridge와 Import 검사 (격리된 프로젝트 사본의 신규 몬스터, 실패 경로 포함)
+python tools/python_monster_editor/check_godot_import.py --godot <godot> --artifacts <dir>
+
 # 규모별 측정
 python tools/python_monster_editor/benchmark.py --output <result.json>
 ```
 
-`check_godot_contract.py`는 게임 파일을 바꾸지 않는다. 게임에 몬스터를 새로 추가해도 예제 문서를 쓸 필요는 없다 —
+두 Godot 검사는 게임 파일을 바꾸지 않는다. 게임에 몬스터를 새로 추가해도 예제 문서를 쓸 필요는 없다 —
 새 몬스터는 registry 계약이 검사한다. 예제와 비교되는 것은 `godot_contract.LEGACY_PROFILES`에 등록한 기준 몬스터뿐이다.
 기준 몬스터의 스크립트·scene·리소스를 고쳐서 "source files" 항목으로 실패하면, **예제가 여전히 게임과 같은지 먼저
 확인한 뒤** `--refresh-bindings`로 해시를 갱신한다(값이 다르면 갱신되지 않는다). 그때 `--artifacts`의 `probe.json`을
