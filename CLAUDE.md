@@ -365,7 +365,10 @@ func run(t: Node) -> void:            # 비동기가 필요하면 -> void 유지
   구조(manifest → builder → `SpriteFrames` → profile → presenter)와 production 햄스터 sheet가
   연결되어 기본 실행에서 `AnimatedSprite2D`로 그려진다. Polygon은 diagnostic fallback으로만
   남아 있다. 적은 표현 구조(`EnemyAnimationProfile` → `EnemyAnimationPresenter`)는 있고 아트는 임시다.
-  NPC·시설·아이템은 구조도 아트도 placeholder 다.
+  NPC·시설은 구조도 아트도 placeholder 다. 아이템은 필드의 전리품과 채집 지점이 **같은** 임시 스프라이트
+  (`assets/item/temp_*_item_img.png`, `ItemDisplayCategory` 종류별)로 그려진다. 소유자는
+  `LootActor.display_texture_for()` 하나이고, 서버 런타임은 이 텍스처를 로드하지 않는다. 사망 드롭은 내용물이
+  비공개라 종류를 알 수 없어 placeholder polygon 그대로다.
   배경만 `assets/backgrounds/` 에 실제 텍스처가 있다
   (단, `stars_overlay_3840x2160.png` 는 잘린 파일이라 임포트 실패 상태 — 재출력 필요).
 - `forest_region.tscn`은 `region_scaffold.tscn`과 같은 그룹 구조에 nine-slice `FieldPlatform`만으로

@@ -102,6 +102,12 @@ func detach_pickup_visual() -> Sprite2D:
 	visual.reparent(get_parent())
 	return visual
 
+## Texture an item is drawn with in the world: its own icon, or the temporary
+## sprite of its display category. Shared by dropped loot and gather points, so
+## the same item never looks different depending on where it lies.
+static func display_texture_for(definition: ItemDefinition) -> Texture2D:
+	return _texture_for(definition)
+
 static func _texture_for(definition: ItemDefinition) -> Texture2D:
 	if definition != null and definition.icon != null:
 		return definition.icon

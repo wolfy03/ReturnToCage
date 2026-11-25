@@ -162,6 +162,8 @@ func _create_gather(point: FieldGatherPoint) -> void:
 		return
 	var target := WorldHelpers.add_interaction(self, id, "Gather %s x%d" % [definition.display_name, point.amount], to_local(point.global_position), FieldGatherPoint.TARGET_SIZE, Color("8b6f47"), 2)
 	target.add_to_group(&"world_gather")
+	if not server_runtime_mode:
+		_show_gather_item(target, definition)
 	_gather_targets[id] = target
 	_gather_items[id] = point
 	target.activated.connect(func(actor: Node) -> void:
@@ -171,6 +173,26 @@ func _create_gather(point: FieldGatherPoint) -> void:
 		else:
 			NetworkManager.request_gather(id)
 	)
+
+## Presentation only: draws a gather point as the item it gives, with the same
+## texture a dropped stack of that item uses. The placeholder polygon stays in
+## the tree as the fallback and is only hidden once a sprite really exists.
+## Never called in server runtime mode, so no texture is loaded there.
+func _show_gather_item(target: InteractionTarget, definition: ItemDefinition) -> void:
+	var texture := LootActor.display_texture_for(definition)
+	if texture == null:
+		return
+	var sprite := Sprite2D.new()
+	sprite.name = "ItemVisual"
+	sprite.texture = texture
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var size := texture.get_size()
+	var limit := minf(FieldGatherPoint.TARGET_SIZE.x, FieldGatherPoint.TARGET_SIZE.y)
+	sprite.scale = Vector2.ONE / maxf(1.0, maxf(size.x, size.y) / limit)
+	target.add_child(sprite)
+	for child in target.get_children():
+		if child is Polygon2D:
+			(child as Polygon2D).hide()
 
 func _on_gather_requested(peer_id: int, world_id: StringName, interaction_id: StringName) -> void:
 	if server_runtime_mode and context != null \
