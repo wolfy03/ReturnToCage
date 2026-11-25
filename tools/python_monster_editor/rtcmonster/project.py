@@ -1,23 +1,20 @@
-"""Read-only inspection of a ReturnToCage project folder, without running Godot.
+"""Read-only inspection of files in a ReturnToCage project folder, without running Godot.
 
 These checks are static: they read files and never load a Godot resource. What
 only the engine can answer stays NOT_EVALUATED until check_godot_contract.py
-or the future bridge runs.
+or the future bridge runs. The content catalog itself lives in catalog.py.
 """
 
 import hashlib
 from pathlib import Path
-import re
 import stat
-import struct
 
+from . import png
+from .catalog import MAX_TEXT_RESOURCE_BYTES, _ID_LINE, scan_content
 from .schema import MAX_IMAGE_BYTES, MAX_IMAGE_EXTENT
-from .spec import ID_PATTERN, DocumentError, safe_relative_path
+from .spec import DocumentError, safe_relative_path
 
-_ID_LINE = re.compile(rf'^id = &"({ID_PATTERN})"$', re.MULTILINE)
-_NAME_LINE = re.compile(r'^display_name = "((?:[^"\\]|\\.)*)"$', re.MULTILINE)
-MAX_TEXT_RESOURCE_BYTES = 1024 * 1024
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+SOURCE_SUFFIXES = (".tres", ".tscn", ".gd", ".png")
 
 
 def _regular(path):
@@ -54,52 +51,46 @@ def file_sha256(path):
 
 
 def png_size(path):
-    """``(width, height)`` from the IHDR chunk. Raises DocumentError for anything that is not a PNG."""
+    """``(width, height)`` from the header only. Says nothing about whether the pixel data is intact."""
     with Path(path).open("rb") as stream:
-        header = stream.read(24)
-    if len(header) < 24 or header[:8] != PNG_SIGNATURE or header[12:16] != b"IHDR":
-        raise DocumentError("not a PNG image")
-    width, height = struct.unpack(">II", header[16:24])
-    if not 0 < width <= MAX_IMAGE_EXTENT or not 0 < height <= MAX_IMAGE_EXTENT:
-        raise DocumentError(f"image is {width}x{height}; the limit is {MAX_IMAGE_EXTENT}")
-    return width, height
+        header = stream.read(33)
+    try:
+        info = png.read_header(header, MAX_IMAGE_EXTENT)
+    except png.PngError as error:
+        raise DocumentError(str(error)) from error
+    return info.width, info.height
 
 
 def inspect_image(project, relative):
-    """``(width, height, sha256)`` of a project PNG."""
+    """``(width, height, sha256)`` of a project PNG that passed the path, header and integrity checks.
+
+    Raises FileNotFoundError, DocumentError (path) or png.PngError (header or integrity).
+    Whether Godot can import the image is not checked here.
+    """
     path = resolve_project_file(project, relative, (".png",), MAX_IMAGE_BYTES)
-    width, height = png_size(path)
-    return width, height, file_sha256(path)
+    payload = path.read_bytes()
+    info = png.read_header(payload, MAX_IMAGE_EXTENT)
+    png.verify(payload, info)
+    return info.width, info.height, hashlib.sha256(payload).hexdigest()
 
 
 def content_ids(project, folder):
-    """``{id: project-relative path}`` of the ContentDefinition .tres files in data/content/<folder>."""
-    found = {}
-    root = Path(project)
-    try:
-        for path in sorted((root / "data/content" / folder).glob("*.tres")):
-            if _regular(path) and path.stat().st_size <= MAX_TEXT_RESOURCE_BYTES:
-                match = _ID_LINE.search(path.read_text(encoding="utf-8"))
-                if match:
-                    found.setdefault(match[1], path.relative_to(root).as_posix())
-    except (OSError, UnicodeError):
-        return {}
-    return found
+    """``{id: project-relative path}`` for IDs defined by exactly one file.
+
+    Compatibility view of ``catalog.scan_content``: duplicated IDs and
+    unreadable files are left out here and reported by the scan's ``problems``.
+    """
+    return {content_id: entry.path for content_id, entry in scan_content(project, folder).entries.items()}
 
 
 def published_monsters(project):
-    """``{monster_id: {"display_name", "path"}}`` of the EnemyDefinitions the game ships.
+    """``{monster_id: {"display_name", "path"}}`` of the EnemyDefinitions found on disk, one file per ID.
 
-    This is the same catalog the Python Map Editor reads for enemy spawns, so a
-    monster is "published" exactly when a map can already reference it.
+    This is the list the Python Map Editor offers for enemy spawns. It means
+    "found", not "registered by the game"; see ``catalog.monster_catalog``.
     """
-    result = {}
-    root = Path(project)
-    for monster_id, relative in content_ids(project, "enemies").items():
-        text = (root / relative).read_text(encoding="utf-8")
-        name = _NAME_LINE.search(text)
-        result[monster_id] = {"display_name": name[1] if name else "", "path": relative}
-    return result
+    return {monster_id: {"display_name": entry.display_name, "path": entry.path}
+            for monster_id, entry in scan_content(project, "enemies").entries.items()}
 
 
 def bound_definition_id(project, relative):
@@ -121,7 +112,7 @@ def source_states(document, project):
     rows = []
     for entry in (binding or {}).get("files", ()):
         try:
-            path = resolve_project_file(project, entry["path"], (".tres", ".tscn", ".gd", ".png"), MAX_IMAGE_BYTES)
+            path = resolve_project_file(project, entry["path"], SOURCE_SUFFIXES, MAX_IMAGE_BYTES)
         except (OSError, DocumentError):
             rows.append((entry["path"], MISSING))
             continue
@@ -133,6 +124,6 @@ def bind_sources(document, project, paths):
     """Return the document with ``source_binding.files`` rebuilt from the files on disk."""
     files = []
     for relative in sorted(set(paths)):
-        path = resolve_project_file(project, relative, (".tres", ".tscn", ".gd", ".png"), MAX_IMAGE_BYTES)
+        path = resolve_project_file(project, relative, SOURCE_SUFFIXES, MAX_IMAGE_BYTES)
         files.append({"path": relative, "sha256": file_sha256(path)})
     return document.replace(("source_binding", "files"), files)

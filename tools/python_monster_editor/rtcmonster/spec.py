@@ -24,6 +24,30 @@ CONTRACT = "contract"    # defined for the data-driven runtime and mirrors legac
 PLANNED = "planned"      # stored and validated only; no runtime reads it
 EDITOR = "editor"        # editor bookkeeping, never part of the game
 
+# What "support" means stage by stage. A stage that is False has not been built
+# or not been verified; nothing here is aspirational.
+CAPABILITY_STAGES = ("contract_defined", "static_validation", "editor_editable", "godot_resource_export",
+                     "legacy_equivalent", "data_runtime", "multiplayer_verified")
+CAPABILITIES = {
+    APPLIED: {"contract_defined": True, "static_validation": True, "editor_editable": False,
+              "godot_resource_export": False, "legacy_equivalent": True, "data_runtime": False,
+              "multiplayer_verified": False},
+    CONTRACT: {"contract_defined": True, "static_validation": True, "editor_editable": False,
+               "godot_resource_export": False, "legacy_equivalent": True, "data_runtime": False,
+               "multiplayer_verified": False},
+    PLANNED: {"contract_defined": True, "static_validation": True, "editor_editable": False,
+              "godot_resource_export": False, "legacy_equivalent": False, "data_runtime": False,
+              "multiplayer_verified": False},
+    EDITOR: {"contract_defined": True, "static_validation": True, "editor_editable": False,
+             "godot_resource_export": False, "legacy_equivalent": False, "data_runtime": False,
+             "multiplayer_verified": False},
+}
+
+
+def capabilities(support):
+    """Stage-by-stage answer to "what can be done with a value of this support level today?"."""
+    return dict(CAPABILITIES[support])
+
 
 class DocumentError(ValueError):
     """The bytes or values cannot be read as a monster document."""
@@ -47,6 +71,9 @@ class Node:
     support = CONTRACT
     doc = ""
     required = False
+    hint = ""        # UI-neutral editing hint, e.g. "multiline", "color", "slider"; never a widget class
+    deprecated = ""  # non-empty = still read, no longer written by new editors; the text says what replaces it
+    ref = ""         # for identifiers: the kind of object this field points at (see schema.REFERENCE_SOURCES)
 
     def default(self):
         raise NotImplementedError
@@ -60,6 +87,27 @@ class Node:
     def describe(self):
         return {"type": type(self).__name__.lower()}
 
+    def info(self):
+        """Everything an inspector needs to build one form row, independent of any UI toolkit."""
+        described = self.describe()
+        return {
+            "type": described["type"],
+            "default": described.get("default"),
+            "required": self.required,
+            "minimum": getattr(self, "low", None) if "range" in described and hasattr(self, "low") else None,
+            "maximum": getattr(self, "high", None) if "range" in described and hasattr(self, "high") else None,
+            "exclusive_minimum": bool(getattr(self, "exclusive_low", False)),
+            "range": described.get("range", ""),
+            "unit": described.get("unit", ""),
+            "choices": tuple(getattr(self, "options", ())),
+            "reference": self.ref,
+            "description": self.doc,
+            "support": self.support,
+            "deprecated": self.deprecated,
+            "hint": self.hint,
+            "editable": not self.deprecated,
+        }
+
 
 @dataclass(frozen=True)
 class Num(Node):
@@ -72,6 +120,8 @@ class Num(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return self.value
@@ -108,6 +158,8 @@ class Bool(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return self.value
@@ -129,6 +181,8 @@ class Str(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return self.value
@@ -145,9 +199,12 @@ class Id(Node):
     """Stable snake_case identifier. ``empty`` allows "" to mean "none"."""
     value: str = ""
     empty: bool = False
+    ref: str = ""
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return self.value
@@ -169,6 +226,8 @@ class Choice(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return self.value
@@ -190,6 +249,8 @@ class ProjectPath(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return ""
@@ -232,6 +293,8 @@ class Vec(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return None if self.value is None else list(self.value)
@@ -260,6 +323,8 @@ class Opt(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return None
@@ -275,6 +340,12 @@ class Opt(Node):
         inner = self.node.describe()
         return {**inner, "type": f"{inner['type']} or null", "default": None}
 
+    def info(self):
+        return {**self.node.info(), **{key: value for key, value in super().info().items()
+                                       if key in ("type", "default", "required", "description", "support",
+                                                  "deprecated", "hint", "editable")},
+                "description": self.doc or self.node.doc}
+
 
 @dataclass(frozen=True)
 class Arr(Node):
@@ -283,6 +354,8 @@ class Arr(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return []
@@ -305,9 +378,12 @@ class Map(Node):
     """Object whose keys are identifiers, stored with sorted keys."""
     item: Node = None
     maximum: int = 64
+    key_ref: str = ""
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return {}
@@ -333,6 +409,8 @@ class Obj(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return self.normalize({}, "")
@@ -371,6 +449,8 @@ class Union(Node):
     support: str = CONTRACT
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         raise DocumentError("a tagged object has no default")
@@ -400,6 +480,8 @@ class AnyJson(Node):
     support: str = EDITOR
     doc: str = ""
     required: bool = False
+    hint: str = ""
+    deprecated: str = ""
 
     def default(self):
         return {}

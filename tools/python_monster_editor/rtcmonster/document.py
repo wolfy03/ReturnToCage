@@ -1,26 +1,127 @@
-"""The in-memory monster document and its canonical JSON form. No Qt, no Godot."""
+"""The in-memory monster document and its canonical JSON form. No Qt, no Godot.
+
+Immutability
+------------
+A ``MonsterDocument`` never changes after construction. Its data is stored in
+``FrozenDict`` / ``FrozenList``: real ``dict`` / ``list`` subclasses (so JSON
+encoding, equality and every reader keep working, and nothing is copied on
+read) whose mutating methods raise ``TypeError``. Every change goes through
+``replace`` / ``apply``, which rebuild the document through normalization, so a
+value of the wrong shape can never be stored.
+
+This was chosen over defensive deep copies (every read would copy the whole
+tree) and over persistent data structures (complexity without a measured
+need). See docs/monster_editor_step1_stabilization.md for the measurements.
+The guard is against accidents, not against an attacker: ``dict.__setitem__``
+called on the base class still bypasses it, as with any Python object.
+"""
 
 import copy
+import hashlib
 import json
 
-from .schema import DOCUMENT_TYPE, SCHEMA_VERSION, TOP_LEVEL_ORDER, normalize
+from .schema import DEFAULT_SCHEMA, DOCUMENT_TYPE, SCHEMA_VERSION
 from .spec import DocumentError
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 
 
+def _blocked(self, *args, **kwargs):
+    raise TypeError("MonsterDocument data is read-only; use document.replace() or document.apply()")
+
+
+class FrozenDict(dict):
+    """A dict that cannot be changed through its own methods."""
+    __slots__ = ()
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = __ior__ = _blocked
+
+    def __copy__(self):
+        return dict(self)
+
+    def __deepcopy__(self, memo):
+        return {key: copy.deepcopy(value, memo) for key, value in self.items()}
+
+    def __reduce__(self):
+        return (dict, (dict(self),))
+
+
+class FrozenList(list):
+    """A list that cannot be changed through its own methods."""
+    __slots__ = ()
+    __setitem__ = __delitem__ = __iadd__ = __imul__ = _blocked
+    append = extend = insert = pop = remove = clear = sort = reverse = _blocked
+
+    def __copy__(self):
+        return list(self)
+
+    def __deepcopy__(self, memo):
+        return [copy.deepcopy(value, memo) for value in self]
+
+    def __reduce__(self):
+        return (list, (list(self),))
+
+
+def _same(item, old):
+    """Identical object, or an equal scalar of the same type (1, 1.0 and True are different values here)."""
+    return item is old or (not isinstance(item, (dict, list)) and type(item) is type(old) and item == old)
+
+
+def freeze(value, previous=None):
+    """Freeze ``value``. Parts equal to the frozen ``previous`` tree are reused instead of copied.
+
+    Reuse is safe because frozen data cannot change, and it is what keeps an
+    undo history small: a snapshot only owns the path that was edited.
+    """
+    if isinstance(value, dict):
+        shared = type(previous) is FrozenDict
+        frozen = FrozenDict((key, freeze(item, previous.get(key) if shared else None))
+                            for key, item in value.items())
+        if shared and list(frozen) == list(previous) and all(_same(item, previous[key])
+                                                             for key, item in frozen.items()):
+            return previous
+        return frozen
+    if isinstance(value, (list, tuple)):
+        shared = type(previous) is FrozenList
+        frozen = FrozenList(freeze(item, previous[index] if shared and index < len(previous) else None)
+                            for index, item in enumerate(value))
+        if shared and len(frozen) == len(previous) and all(_same(item, old) for item, old in zip(frozen, previous)):
+            return previous
+        return frozen
+    return value
+
+
+def thaw(value):
+    """A plain, independent, mutable copy of frozen data."""
+    if isinstance(value, dict):
+        return {key: thaw(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [thaw(item) for item in value]
+    return value
+
+
 class MonsterDocument:
-    """An immutable, shape-checked document. Edits return a new document, which is what Undo/Redo stores."""
+    """An immutable, shape-checked document. Edits return a new document, which is what Undo/Redo stores.
 
-    __slots__ = ("_data",)
+    Public surface: ``data`` (read-only view), ``to_dict()`` (mutable copy), ``get(*path)`` (mutable copy of one
+    value), ``replace(path, value)``, ``apply(*edits)``, ``monster_id``, ``schema``, ``fingerprint``.
+    """
 
-    def __init__(self, data):
+    __slots__ = ("_data", "_schema", "_fingerprint")
+
+    def __init__(self, data, schema=DEFAULT_SCHEMA, _previous=None):
         if not isinstance(data, dict):
             raise DocumentError("$: expected an object")
-        object.__setattr__(self, "_data", normalize(copy.deepcopy(data)))
+        # thaw() copies the caller's objects, so later changes to them cannot reach the document.
+        object.__setattr__(self, "_data", freeze(schema.normalize(thaw(data)),
+                                                 None if _previous is None else _previous._data))
+        object.__setattr__(self, "_schema", schema)
+        object.__setattr__(self, "_fingerprint", None)
 
     def __setattr__(self, name, value):
-        raise AttributeError("MonsterDocument is immutable; use replace()")
+        raise AttributeError("MonsterDocument is immutable; use replace() or apply()")
+
+    def __delattr__(self, name):
+        raise AttributeError("MonsterDocument is immutable; use replace() or apply()")
 
     def __eq__(self, other):
         return isinstance(other, MonsterDocument) and self._data == other._data
@@ -32,38 +133,61 @@ class MonsterDocument:
 
     @property
     def data(self):
-        """The normalized body. Treat it as read-only; ``to_dict`` returns a private copy."""
+        """The normalized body as a read-only view. Nothing is copied; attempts to change it raise TypeError."""
         return self._data
+
+    @property
+    def schema(self):
+        return self._schema
 
     @property
     def monster_id(self):
         return self._data["monster_id"]
 
+    @property
+    def fingerprint(self):
+        """SHA-256 of the canonical bytes. Two documents with equal content share it; any edit changes it.
+
+        It is the same value ``write_document`` returns as the file revision, so a clean document has
+        ``document.fingerprint == revision``.
+        """
+        if self._fingerprint is None:
+            object.__setattr__(self, "_fingerprint", hashlib.sha256(encode(self)).hexdigest())
+        return self._fingerprint
+
     def to_dict(self):
-        return copy.deepcopy(self._data)
+        """A plain mutable copy of the whole body. Changing it never affects this document."""
+        return thaw(self._data)
 
     def get(self, *path):
+        """A plain mutable copy of the value at ``path``."""
         value = self._data
-        for key in path:
-            value = value[key]
-        return copy.deepcopy(value)
+        try:
+            for key in path:
+                value = value[key]
+        except (KeyError, IndexError, TypeError) as error:
+            raise DocumentError(f"no such field: {'/'.join(map(str, path))}") from error
+        return thaw(value)
 
     def replace(self, path, value):
         """Return a copy with the value at ``path`` (a sequence of keys and list indexes) replaced."""
-        data = self.to_dict()
-        target = data
-        try:
-            for key in path[:-1]:
-                target = target[key]
-            if isinstance(target, dict) and path[-1] not in target:
-                raise KeyError(path[-1])
-            target[path[-1]] = value
-        except (KeyError, IndexError, TypeError) as error:
-            raise DocumentError(f"no such field: {'/'.join(map(str, path))}") from error
-        return MonsterDocument(data)
+        from .editing import set_value
+
+        return self.apply(set_value(path, value))
+
+    def apply(self, *edits):
+        """Return a copy with every edit applied, or raise DocumentError and change nothing.
+
+        The edits are applied to a private copy in order and the result is
+        normalized once, so intermediate states never have to be valid and
+        never become a document.
+        """
+        from .editing import apply_edits
+
+        return MonsterDocument(apply_edits(self.to_dict(), edits, self._schema), self._schema, self)
 
 
-def new_document(monster_id, display_name):
+def new_document(monster_id, display_name, schema=DEFAULT_SCHEMA):
     """Smallest document that passes structural validation: it stands still, can be hit and can die."""
     def on_done(state):
         return [{"to": state, "priority": 0, "condition": {"type": "ActionCompleted"}}]
@@ -83,7 +207,28 @@ def new_document(monster_id, display_name):
                 {"id": "dead", "module": "Death"},
             ],
         },
-    })
+    }, schema)
+
+
+def clone_document(document, monster_id, display_name=None):
+    """A draft copy under a new ID.
+
+    The copy is never bound to Godot resources: ``source_binding`` is cleared,
+    because the files it listed belong to the original monster. The loot table
+    ID is cleared for the same reason when the rows are managed by the document
+    (two monsters must not write the same table); a reference to a table the
+    document does not manage is kept.
+    """
+    if monster_id == document.monster_id:
+        raise DocumentError("a copy needs a monster_id of its own")
+    data = document.to_dict()
+    data["monster_id"] = monster_id
+    if display_name is not None:
+        data["metadata"]["display_name"] = display_name
+    data["source_binding"] = None
+    if data["loot"]["entries"] is not None:
+        data["loot"]["loot_table_id"] = f"{monster_id}_loot"[:64]
+    return MonsterDocument(data, document.schema)
 
 
 def _dump(value, depth=0):
@@ -111,7 +256,7 @@ def encode(document):
     """
     body = document.data
     data = {"schema_version": SCHEMA_VERSION, "document_type": DOCUMENT_TYPE}
-    data.update((key, body[key]) for key in TOP_LEVEL_ORDER[2:])
+    data.update((key, body[key]) for key in document.schema.top_level_order[2:])
     payload = (_dump(data) + "\n").encode("utf-8")
     if len(payload) > MAX_FILE_BYTES:
         raise DocumentError("document exceeds the size limit")
@@ -139,13 +284,13 @@ def _v1(data):
 _MIGRATIONS = {1: _v1}
 
 
-def decode(payload):
+def decode(payload, schema=DEFAULT_SCHEMA):
     """Parse bytes into a document. Raises DocumentError for anything unreadable."""
-    document, _ = decode_versioned(payload)
+    document, _ = decode_versioned(payload, schema)
     return document
 
 
-def decode_versioned(payload):
+def decode_versioned(payload, schema=DEFAULT_SCHEMA):
     if not isinstance(payload, (bytes, bytearray)):
         raise DocumentError("expected bytes")
     if len(payload) > MAX_FILE_BYTES:
@@ -168,4 +313,4 @@ def decode_versioned(payload):
         newer = " (written by a newer editor)" if version > SCHEMA_VERSION else ""
         raise DocumentError(f"unsupported schema_version {version}{newer}; this editor reads {sorted(_MIGRATIONS)}")
     body = {key: value for key, value in data.items() if key not in ("schema_version", "document_type")}
-    return MonsterDocument(_MIGRATIONS[version](body)), version
+    return MonsterDocument(_MIGRATIONS[version](body), schema), version

@@ -14,10 +14,10 @@ from rtcmonster.project import (bind_sources, content_ids, inspect_image, png_si
 from rtcmonster.spec import safe_relative_path
 
 
-def png(path, width, height):
+def png(path, width, height, pixel=b"\x00\x00\x00\x00"):
     def chunk(kind, body):
         return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
-    rows = b"".join(b"\x00" + b"\x00\x00\x00\x00" * width for _ in range(height))
+    rows = b"".join(b"\x00" + pixel * width for _ in range(height))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
                      + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
@@ -102,8 +102,7 @@ def test_images_are_checked_against_the_files(mini):
 def test_an_image_changed_on_disk_is_noticed(mini):
     document = with_art(new_document("bee", "Bee"), digest=inspect_image(mini, "art/idle.png")[2])
     assert not validate(document, mini).select(WARNING, "assets")
-    png(mini / "art/idle.png", 128, 32)
-    (mini / "art/idle.png").write_bytes((mini / "art/idle.png").read_bytes() + b"\x00")
+    png(mini / "art/idle.png", 128, 32, pixel=b"\xff\x00\x00\xff")     # same size, repainted
     assert validate(document, mini).select(WARNING, "assets", "asset_changed")
 
 

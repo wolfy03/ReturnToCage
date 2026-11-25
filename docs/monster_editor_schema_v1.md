@@ -71,6 +71,21 @@ actor.y = (p.y − frame_h/2 + visual_offset.y + frame.offset.y) × visual_scale
 | `planned` | 저장·검증만 된다. 어떤 런타임도 읽지 않는다. 기본값이 아니면 `compatibility` 경고가 난다 |
 | `editor` | 편집기 전용. 게임과 무관하다 |
 
+지원 수준이 단계별로 뜻하는 바는 `rtcmonster.capabilities(support)`가 돌려준다. 아직 만들어지지 않았거나 검증되지
+않은 단계는 전부 `no`다 — GUI, Godot 리소스 내보내기, 데이터 런타임, 멀티플레이 검증이 그렇다.
+
+<!-- generated:capabilities -->
+| Support | contract_defined | static_validation | editor_editable | godot_resource_export | legacy_equivalent | data_runtime | multiplayer_verified |
+|---|---|---|---|---|---|---|---|
+| `applied` | yes | yes | no | no | yes | no | no |
+| `contract` | yes | yes | no | no | yes | no | no |
+| `planned` | yes | yes | no | no | no | no | no |
+| `editor` | yes | yes | no | no | no | no | no |
+<!-- /generated:capabilities -->
+
+`legacy_equivalent`는 "기존 GDScript 런타임에 같은 뜻의 값·동작이 있고 contract check가 대조한다"는 뜻이다.
+문서의 값이 게임으로 흘러 들어간다는 뜻이 아니다.
+
 ## 4. 필드
 
 경로의 `[]`는 리스트 항목, `.*`는 map 값이다. "required"는 생략할 수 없는 필드다. 컨테이너의 지원 수준은 따로
@@ -186,7 +201,7 @@ actor.y = (p.y − frame_h/2 + visual_offset.y + frame.offset.y) × visual_scale
 | `attack_patterns[].phases[].kind` | choice | required | windup \| active \| recovery |  | contract |  |
 | `attack_patterns[].phases[].start` | number | required | [0, 30] | s | contract |  |
 | `attack_patterns[].phases[].end` | number | required | [0, 30] | s | contract |  |
-| `attack_patterns[].events` | list of object by 'type' | [] | <= 128 items |  | contract |  |
+| `attack_patterns[].events` | list of object by 'type' | [] | <= 128 items |  | contract | Events of one tick run in the order they are listed here. |
 | `behavior.initial_state` | id | idle |  |  | contract |  |
 | `behavior.interrupts.hurt.state` | id or "" | hurt |  |  | contract |  |
 | `behavior.interrupts.hurt.policy` | choice | always | always \| never |  | contract |  |
@@ -366,22 +381,143 @@ Reserved module IDs (rejected by validation until they get a contract): `Walk`, 
 
 ## 9. 검증 규칙
 
-`validate(document, project=None, tick_rate=60)`가 내는 finding 코드다. 읽기 단계에서 거절되는 모양 오류는 모두
-`schema` 영역의 `unreadable_document` 하나로 보고된다(`validate_payload`).
+`validate(document, project=None, tick_rate=60)`가 내는 finding이다. 각 finding은 `status`, `domain`, `code`,
+`path`(문서 안의 필드 경로), `detail`(사람이 읽는 설명), `related`(관련 경로·파일), `subject`(대상 객체 ID)를 가진다.
+도구는 **`code`로 분기한다.** `detail`의 문장은 바뀌거나 번역될 수 있으므로 해석하지 않는다.
 
-| 영역 | FAIL | WARNING | NOT_EVALUATED |
-|---|---|---|---|
-| schema | `unreadable_document`, `out_of_range`(collision·attack·ai·animation 경로는 해당 영역으로 보고), `loot_amount_order`, `loot_table_id_missing` | | |
-| references | `duplicate_image_id`, `duplicate_animation_id`, `duplicate_hurtbox_id`, `duplicate_hitbox_id`, `duplicate_pattern_id`, `duplicate_state_id`, `duplicate_phase_id`, `duplicate_hurtbox_override`, `unknown_image`, `unknown_animation`, `unknown_hitbox`, `unknown_pattern`, `unknown_state`, `frame_out_of_range`, `duplicate_monster_id`, `binding_id_mismatch`, `unknown_loot_table`, `unknown_item` | | `monster_id_uniqueness_unchecked`, `loot_reference_unchecked` |
-| assets | `asset_missing`, `asset_invalid`, `asset_size_mismatch`, `invalid_hash` | `asset_changed`, `duplicate_image_path` | `asset_files_unchecked` |
-| animation | `clip_without_frames`, `source_rect_empty`, `source_rect_outside_image`, `required_role_missing`, `held_role_must_loop`, `one_shot_role_must_not_loop`, `attack_hit_frame_out_of_range` | `no_animation`, `mixed_frame_sizes`, `clip_longer_than_gameplay`, `hit_frame_mismatch` | |
-| collision | (shape의 `out_of_range`) | `no_enabled_hurtbox`, `nonstandard_body_layer`, `unused_hitbox` | |
-| attack | `phases_missing`, `phase_ends_before_it_starts`, `phases_not_contiguous`, `phases_do_not_fill_duration`, `event_after_pattern_end`, `strike_outside_active_phase`, `hitbox_already_enabled`, `hitbox_disabled_before_enabled`, `hitbox_outside_active_phase`, `window_shorter_than_one_tick`, `multi_hit_interval_below_one_tick`, `range_order` | `no_active_phase`, `pattern_without_hit`, `multi_hit_without_hitbox`, `landing_without_impulse` | |
-| ai | `no_states`, `initial_state_missing`, `unknown_module`, `module_not_available`, `state_never_exits`, `immediate_transition_cycle`, `death_state_not_terminal`, `hurt_state_missing`, `no_attack_patterns` | `transition_shadowed`, `transition_never_fires`, `completion_unhandled`, `unreachable_state`, `hurt_state_without_hurt_reaction` | |
-| compatibility | `source_missing`, `invalid_hash` | `value_not_applied_by_any_runtime`, `planned_module`, `planned_condition`, `planned_event`, `source_changed` | `source_files_unchecked` |
-| runtime | | | `godot_runtime_not_run` (항상) |
-| network | | | `network_replication_not_run` (항상) |
-| publish | `export_blocked_unsupported`, `publish_blocked_by_failures` | | `publish_not_implemented` (항상) |
+코드는 `rtcmonster/validation/`에서 `define()`으로 한 번씩 선언되며, 영역·상태·수정 위치가 코드에 고정된다.
+아래 표는 그 선언에서 생성한 것이다. "Fix in"은 원인을 고칠 곳이다: `document`(`path`의 필드를 편집),
+`project`(프로젝트 파일이 바뀌어야 함), `none`(고칠 것이 없는 상태 보고). 읽기 단계에서 거절되는 모양 오류는 모두
+`unreadable_document` 하나로 보고된다(`validate_payload`).
+
+<!-- generated:codes -->
+| Domain | Status | Code | Fix in | Meaning |
+|---|---|---|---|---|
+| by field | FAIL | `invalid_hash` | document | A recorded SHA-256 is not 64 lowercase hex digits. |
+| by field | FAIL | `out_of_range` | document | A number is outside the range its field allows. |
+| by field | NOT_EVALUATED | `document_unreadable` | none | Not examined because the document could not be read. |
+| schema | FAIL | `loot_amount_order` | document | A loot row's minimum amount is larger than its maximum. |
+| schema | FAIL | `loot_table_id_missing` | document | Loot rows are managed by the document but no loot table ID is set. |
+| schema | FAIL | `unreadable_document` | document | The bytes are not a readable .rtcmonster document. |
+| schema | PASS | `structure_valid` | none | Every value is inside its range. |
+| references | FAIL | `binding_id_mismatch` | document | The document's ID differs from the EnemyDefinition it is bound to. |
+| references | FAIL | `catalog_duplicate_id` | project | Several project files define this monster's ID; none of them is authoritative. |
+| references | FAIL | `duplicate_animation_id` | document | Two animation clips share an ID. |
+| references | FAIL | `duplicate_hitbox_id` | document | Two hitboxes share an ID. |
+| references | FAIL | `duplicate_hurtbox_id` | document | Two hurtboxes of one set share an ID. |
+| references | FAIL | `duplicate_hurtbox_override` | document | Two hurtbox overrides target the same clip and frame. |
+| references | FAIL | `duplicate_image_id` | document | Two images share an ID. |
+| references | FAIL | `duplicate_monster_id` | document | A draft uses the ID of a monster the game already has. |
+| references | FAIL | `duplicate_pattern_id` | document | Two attack patterns share an ID. |
+| references | FAIL | `duplicate_phase_id` | document | Two phases share an ID. |
+| references | FAIL | `duplicate_state_id` | document | Two states share an ID. |
+| references | FAIL | `frame_out_of_range` | document | A hurtbox override names a frame the clip does not have. |
+| references | FAIL | `unknown_animation` | document | A field names an animation clip that does not exist. |
+| references | FAIL | `unknown_hitbox` | document | An event names a hitbox that does not exist. |
+| references | FAIL | `unknown_image` | document | A frame names an image that is not registered. |
+| references | FAIL | `unknown_item` | project | A loot row names an item that does not exist in the project. |
+| references | FAIL | `unknown_loot_table` | project | The loot table ID does not exist in the project. |
+| references | FAIL | `unknown_pattern` | document | A field names an attack pattern that does not exist. |
+| references | FAIL | `unknown_state` | document | A field names a state that does not exist. |
+| references | WARNING | `catalog_problem` | project | A project content file could not be catalogued, so ID checks may be incomplete. |
+| references | NOT_EVALUATED | `loot_reference_unchecked` | none | No project folder was given, so loot references were not checked. |
+| references | NOT_EVALUATED | `monster_id_uniqueness_unchecked` | none | No project folder was given, so the ID was not compared with the game. |
+| references | PASS | `references_resolved` | none | Every reference points at something that exists. |
+| assets | FAIL | `asset_corrupt` | project | The PNG header is valid but the image data is damaged (integrity level). |
+| assets | FAIL | `asset_invalid` | project | The path is unsafe or the file is not a PNG the editor accepts (header level). |
+| assets | FAIL | `asset_missing` | document | The image file does not exist in the project. |
+| assets | FAIL | `asset_size_mismatch` | document | The image's real size differs from the size recorded in the document. |
+| assets | WARNING | `asset_changed` | project | The image's content changed since it was registered. |
+| assets | WARNING | `duplicate_image_path` | document | Two image entries point at the same file. |
+| assets | NOT_EVALUATED | `asset_files_unchecked` | none | No project folder was given, so no image file was opened. |
+| assets | PASS | `assets_verified` | none | Every image passed the path, header and integrity checks. |
+| animation | FAIL | `attack_hit_frame_out_of_range` | document | attack_hit_frame is beyond the attack clip's last frame. |
+| animation | FAIL | `clip_without_frames` | document | A clip has no frames. |
+| animation | FAIL | `held_role_must_loop` | document | A clip used for a held role (idle, move, jump, fall) does not loop. |
+| animation | FAIL | `one_shot_role_must_not_loop` | document | A clip used only for one-shot roles loops. |
+| animation | FAIL | `required_role_missing` | document | Clips exist but a role every enemy needs (idle, move, attack, hurt, death) is empty. |
+| animation | FAIL | `source_rect_empty` | document | A frame's source rectangle has no area. |
+| animation | FAIL | `source_rect_outside_image` | document | A frame's source rectangle does not fit inside its image. |
+| animation | WARNING | `clip_longer_than_gameplay` | document | A one-shot clip lasts longer than the gameplay time it illustrates. |
+| animation | WARNING | `hit_frame_mismatch` | document | The frame that shows the strike and the tick that deals it are more than half a tick apart. |
+| animation | WARNING | `mixed_frame_sizes` | document | Frames differ in size, but one visual_offset serves every clip. |
+| animation | WARNING | `no_animation` | document | No clips: the actor is drawn with its placeholder polygon. |
+| animation | PASS | `animation_consistent` | none | Clips and roles are consistent. |
+| collision | WARNING | `no_enabled_hurtbox` | document | No default hurtbox is enabled: nothing can hit this monster. |
+| collision | WARNING | `nonstandard_body_layer` | document | The body's collision layer or mask differs from the project convention (1 / 1). |
+| collision | WARNING | `unused_hitbox` | document | A hitbox is defined but no attack pattern arms it. |
+| collision | PASS | `collision_valid` | none | Collision shapes are valid. |
+| attack | FAIL | `event_after_pattern_end` | document | An event is scheduled after the pattern has ended. |
+| attack | FAIL | `hitbox_already_enabled` | document | A hitbox is armed again while it is still armed. |
+| attack | FAIL | `hitbox_disabled_before_enabled` | document | A hitbox is disarmed without having been armed. |
+| attack | FAIL | `hitbox_outside_active_phase` | document | A hitbox is armed outside a single active phase. |
+| attack | FAIL | `multi_hit_interval_below_one_tick` | document | The multi-hit interval is shorter than one physics tick. |
+| attack | FAIL | `phase_ends_before_it_starts` | document | A phase ends at or before its start. |
+| attack | FAIL | `phases_do_not_fill_duration` | document | The phases do not end where the pattern ends. |
+| attack | FAIL | `phases_missing` | document | An attack pattern has no phases. |
+| attack | FAIL | `phases_not_contiguous` | document | Phases leave a gap or overlap. |
+| attack | FAIL | `range_order` | document | The pattern's minimum range is larger than its maximum range. |
+| attack | FAIL | `strike_outside_active_phase` | document | An instant strike is neither in an active phase nor at the end of a windup. |
+| attack | FAIL | `window_shorter_than_one_tick` | document | A phase or hitbox window contains no physics tick at this tick rate. |
+| attack | WARNING | `event_order_differs_from_time` | document | Two events run in the same tick in an order that contradicts their times. |
+| attack | WARNING | `landing_without_impulse` | document | The pattern waits for a landing but nothing lifts the actor off the ground. |
+| attack | WARNING | `multi_hit_without_hitbox` | document | Multi-hit is selected, but only an armed hitbox can hit repeatedly. |
+| attack | WARNING | `no_active_phase` | document | The pattern has neither an active phase nor an instant strike. |
+| attack | WARNING | `pattern_deals_no_damage` | document | The pattern can hit, but its damage multiplier is 0. |
+| attack | WARNING | `pattern_without_hit` | document | No event of the pattern can hurt anything. |
+| attack | PASS | `attack_timelines_valid` | none | Attack timelines are consistent. |
+| ai | FAIL | `death_state_not_terminal` | document | The death interrupt points at a state whose module is not terminal. |
+| ai | FAIL | `hurt_state_missing` | document | The hurt interrupt is enabled but names no state. |
+| ai | FAIL | `immediate_transition_cycle` | document | Unconditional transitions form a cycle that never waits for anything. |
+| ai | FAIL | `initial_state_missing` | document | The initial state does not exist. |
+| ai | FAIL | `module_not_available` | document | A state names a module that is reserved but has no contract yet. |
+| ai | FAIL | `no_attack_patterns` | document | A state runs attack patterns but the document has none. |
+| ai | FAIL | `no_states` | document | The behaviour has no states. |
+| ai | FAIL | `state_never_exits` | document | A non-terminal state has no transition that can ever fire. |
+| ai | FAIL | `unknown_module` | document | A state names a module that is not registered. |
+| ai | WARNING | `completion_unhandled` | document | The module finishes, but no transition reacts to it. |
+| ai | WARNING | `hurt_state_without_hurt_reaction` | document | The hurt interrupt points at a state that is not a hurt reaction. |
+| ai | WARNING | `transition_never_fires` | document | The transition waits for a signal its state's module never raises. |
+| ai | WARNING | `transition_shadowed` | document | An earlier unconditional transition makes this one unreachable. |
+| ai | WARNING | `unreachable_state` | document | No transition or interrupt leads to this state. |
+| ai | PASS | `behavior_graph_valid` | none | The state graph is consistent. |
+| compatibility | FAIL | `source_missing` | project | A project file this document was derived from no longer exists. |
+| compatibility | WARNING | `planned_condition` | document | A transition uses a condition that is only planned. |
+| compatibility | WARNING | `planned_event` | document | An attack pattern uses an event that is only planned. |
+| compatibility | WARNING | `planned_module` | document | A state uses a module that is only planned. |
+| compatibility | WARNING | `source_changed` | project | A project file changed since this document was derived from it. |
+| compatibility | WARNING | `value_not_applied_by_any_runtime` | document | A planned field has a non-default value that no runtime reads. |
+| compatibility | NOT_EVALUATED | `source_files_unchecked` | none | No project folder was given, so the source files were not compared. |
+| compatibility | PASS | `no_static_incompatibility` | none | Nothing planned-only is used and sources are unchanged. |
+| runtime | NOT_EVALUATED | `asset_godot_import_not_run` | none | Whether Godot imports the images as textures was not checked (needs Godot). |
+| runtime | NOT_EVALUATED | `godot_runtime_not_run` | none | No Godot process ran this document. |
+| network | NOT_EVALUATED | `network_replication_not_run` | none | Replication was not exercised. |
+| publish | FAIL | `export_blocked_unsupported` | document | The source binding lists behaviour this schema cannot express. |
+| publish | FAIL | `publish_blocked_by_failures` | document | A static domain has a failure. |
+| publish | NOT_EVALUATED | `publish_not_implemented` | none | Publishing to game content does not exist yet. |
+<!-- /generated:codes -->
+
+### 상태와 게시
+
+| 상태 | 뜻 | 게시 |
+|---|---|---|
+| `PASS` | 그 영역을 검사했고 문제가 없다 | – |
+| `WARNING` | 열리고 저장되지만 의도와 다를 가능성이 높다 | 막지 않는다 |
+| `FAIL` | 잘못됐다 | 막는다 (`report.blocking`) |
+| `NOT_EVALUATED` | 검사하지 않았다. 통과가 아니다 | 정적 영역이면 막지 않고, `runtime`·`network`는 게시 기능이 생길 때 그 단계가 요구한다 (`report.unverified`) |
+
+영역 상태는 그 영역 finding 중 가장 나쁜 것이다(`FAIL` > `WARNING` > `NOT_EVALUATED` > `PASS`). 영역에 finding이
+하나도 없으면 `NOT_EVALUATED`다. `report.static_status`는 정적 8개 영역, `report.overall`은 11개 전부를 합친다.
+
+`NOT_EVALUATED`가 나오는 경우: 프로젝트 폴더 없이 검증(파일을 읽는 검사 전부), Godot이 필요한 것(`runtime`,
+`network`, 이미지의 Godot import), 아직 없는 기능(`publish`).
+
+### 결과의 유효 기간
+
+`Report`는 검사한 대상에 묶인다: `fingerprint`(문서의 정규 바이트 SHA-256), `inputs`(읽은 프로젝트 파일과 해시),
+`scans`(읽은 콘텐츠 폴더의 fingerprint), `tick_rate`. 문서를 편집하면 `report.matches(document)`가 거짓이 되고,
+프로젝트 파일이 바뀌면 `report.stale_inputs()`가 그 경로를 돌려준다. `report.is_current(document)`가 거짓인 결과를
+최신처럼 표시하면 안 된다.
 
 몇 가지 규칙의 정확한 뜻:
 

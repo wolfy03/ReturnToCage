@@ -106,7 +106,7 @@ def write_document(path, document, expected_revision=None):
     path = _document_path(path)
     payload = encode(document)
     with _save_lock(path):
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".rtcmonster-", delete=False) as stream:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=TEMPORARY_PREFIX, delete=False) as stream:
             temporary = Path(stream.name)
             try:
                 stream.write(payload)
@@ -132,3 +132,41 @@ def write_document(path, document, expected_revision=None):
                 stream.close()
                 temporary.unlink(missing_ok=True)
     return hashlib.sha256(payload).hexdigest()
+
+
+TEMPORARY_PREFIX = ".rtcmonster-"
+
+
+def stale_temporaries(folder, older_than_seconds=3600):
+    """Temporary files a killed save left behind in ``folder``.
+
+    A save that runs to its end always removes its temporary file, also when
+    it fails. Only a process that is killed between creating the file and
+    renaming it can leave one. Such a file is never a document (its name has no
+    ``.rtcmonster`` suffix) and is never read back. The age limit keeps a save
+    that is in progress right now from being listed.
+    """
+    import time
+
+    limit = time.time() - older_than_seconds
+    found = []
+    for path in Path(folder).iterdir():
+        try:
+            state = path.lstat()
+        except OSError:
+            continue
+        if path.name.startswith(TEMPORARY_PREFIX) and stat.S_ISREG(state.st_mode) and state.st_mtime <= limit:
+            found.append(path)
+    return sorted(found)
+
+
+def remove_stale_temporaries(folder, older_than_seconds=3600):
+    """Delete what ``stale_temporaries`` lists and return the paths that were removed."""
+    removed = []
+    for path in stale_temporaries(folder, older_than_seconds):
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        removed.append(path)
+    return removed
