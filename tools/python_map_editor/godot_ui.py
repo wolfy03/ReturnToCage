@@ -170,6 +170,7 @@ class GodotMixin:
         self._bridge_completion = None
         self._bridge_close = False
         self._regions = None
+        self._enemy_catalog = ()
         self.godot_import_action = self._action("godot_import", self._choose_region)
         self.godot_import_design_action = self._action("godot_import_design", lambda: self._choose_region(True))
         self.godot_export_action = self._action("godot_export", self._export_godot)
@@ -228,6 +229,7 @@ class GodotMixin:
         for key in ("project", "godot", "work"):
             self.settings.setValue(f"godot/{key}", str(getattr(settings, key)))
         self._regions = None
+        self._enemy_catalog = ()
         self.settings.remove("godot/version")
         self.settings.sync()
         self._set_project_root(settings.project)
@@ -245,6 +247,10 @@ class GodotMixin:
 
     def _select_import(self, result, design=False):
         regions = self._regions = result["regions"]
+        # ContentRegistry's own EnemyDefinition IDs; absent from an older bridge reply.
+        catalog = result.get("enemies", getattr(self, "_enemy_catalog", ()))
+        self._enemy_catalog = tuple(item for item in catalog if isinstance(item, str))
+        self._refresh_enemy_choices()
         if "version" in result:
             self.settings.setValue("godot/version", result["version"])
         self._refresh_region_choices()

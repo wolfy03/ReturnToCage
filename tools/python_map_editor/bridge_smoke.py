@@ -9,13 +9,17 @@ from PySide6.QtCore import QEventLoop, QPointF, QSettings, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QInputDialog, QMessageBox
 
-from document import read_document
+from document import encode, read_document
 from godot_bridge import file_hash
 from godot_ui import GodotSettingsDialog
 from region_design import RegionEnvironment
 from region_wizard import create_region
 from strings import tr
 from window import MainWindow
+
+
+def read_document_version(document):
+    return json.loads(encode(document))["schema_version"]
 
 
 def schedule_bridge_smoke(app, report, project, godot, include_design=False):
@@ -33,7 +37,8 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
     original_region = file_hash(region)
     new_scene = project / "world/adventure/v4_packaged.tscn"
     new_region = project / "data/content/regions/v4_packaged.tres"
-    review_answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+    # Publication reviews, in order: the V6 Sewer enemy edit, then the declined and the confirmed new pair.
+    review_answers = [QMessageBox.StandardButton.Yes, QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
     evidence = {"passed": False, "frozen": getattr(sys, "frozen", False), "checks": checks,
                 "godot": str(godot), "project": str(project), "initial_scene": original_scene,
                 "definition_hash": original_region}
@@ -121,6 +126,53 @@ def schedule_bridge_smoke(app, report, project, godot, include_design=False):
                 and window._physics_state in (PASS, WARNING) and window._publish_state == NOT_EVALUATED
                 and (file_hash(scene), file_hash(region)) == original,
                 "V4 validation measured spawn physics without publishing")
+
+        # Schema V6: place an enemy with the real tool and real input, publish it, read it back.
+        checkpoint("packaged V6 enemy placement requested")
+        authored = window.draft.design.enemy_spawns
+        offered = {window.enemy_palette.itemText(index) for index in range(window.enemy_palette.count())}
+        require(authored and {row.enemy_id for row in authored} == {"sewer_beetle"} and {"frog", "sewer_beetle"} <= offered
+                and read_document_version(window.draft) == 6,
+                "frozen V6 import read the Sewer enemy spawns and the registry's enemy list")
+        window.tool_actions["place_enemy"].trigger()
+        require(window.region_dock.isVisible() and window.enemy_palette.isVisibleTo(window) and window.enemy_palette.isEnabled(),
+                "enemy placement tool shows its kind selector")
+        kind = window.enemy_palette.lineEdit()
+        QTest.mouseClick(kind, Qt.MouseButton.LeftButton)
+        QTest.keyClick(kind, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(kind, "frog")
+        QTest.keyClick(kind, Qt.Key.Key_Return)
+        window.view.fit_map()
+        anchor = authored[0].position
+        spot = window.view.mapFromScene(QPointF(anchor[0] - 96, anchor[1]))
+        QTest.mouseClick(window.view.viewport(), Qt.MouseButton.LeftButton, pos=spot)
+        window.tool_actions["select"].trigger()
+        placed = window.draft.design.enemy_spawns[-1]
+        require(len(window.draft.design.enemy_spawns) == len(authored) + 1 and placed.enemy_id == "frog"
+                and placed.spawn_id == "frog_spawn_1" and placed.enabled, "real mouse and keyboard input placed a frog spawn")
+        checkpoint("packaged V6 enemy publication requested")
+        window.godot_export_action.trigger()
+        wait_job()
+        require(not errors and window._publish_state == PASS and (file_hash(scene), file_hash(region)) != original
+                and file_hash(scene) == window.draft.source.scene_hash
+                and file_hash(region) == window.draft.source.region_hash,
+                "V6 enemy placement published to the Sewer Scene and RegionDefinition")
+        enemy_path = report.parent / "하수구 Enemy 배치.rtcmap"
+        window.save_document(enemy_path)
+        published = window.draft
+        require(read_document_version(published) == 6 and not window.dirty, "V6 enemy draft saved")
+        checkpoint("packaged V6 enemy reload requested")
+        window.godot_import_design_action.trigger()
+        wait_job()
+        reloaded = {row.spawn_id: row for row in window.draft.design.enemy_spawns}
+        require(not errors and len(reloaded) == len(authored) + 1 and reloaded.get("frog_spawn_1") is not None
+                and (reloaded["frog_spawn_1"].enemy_id, reloaded["frog_spawn_1"].position) == ("frog", placed.position)
+                and all(reloaded[row.spawn_id].enemy_id == row.enemy_id and reloaded[row.spawn_id].position == row.position
+                        for row in authored),
+                "published frog and the authored beetles reloaded from Godot")
+        window.open_document(enemy_path)
+        require(window.draft.design.enemy_spawns == published.design.enemy_spawns and window.draft.source == published.source,
+                "V6 enemy draft reopened unchanged")
         draft = create_region("v4_packaged", "Packaged fixture", 1200, 600, "flat", 4, RegionEnvironment())
         from dataclasses import replace
         from terrain_atlas import read_theme

@@ -41,7 +41,7 @@ def _asset_exists(root, path):
         return False
 
 
-def validate_region(document, index=None, project=None):
+def validate_region(document, index=None, project=None, enemies=()):
     index = index or {}
     findings = []
 
@@ -146,7 +146,9 @@ def validate_region(document, index=None, project=None):
 
         if design.enemy_spawns is not None:
             from region_design import discover_enemies
-            known = set(discover_enemies(project))
+            # The reference must resolve whether or not the spawn is enabled: Godot
+            # validates every FieldEnemySpawnPoint, so a disabled one would still block publication.
+            known = set(discover_enemies(project)) | set(enemies)
             spawn_ids = Counter(row.spawn_id for row in design.enemy_spawns)
             for row in design.enemy_spawns:
                 target = f"marker:{row.id}"
@@ -154,7 +156,7 @@ def validate_region(document, index=None, project=None):
                     add(FAIL, "duplicate_enemy_spawn_id", row.spawn_id, target)
                 if not in_bounds(row.position):
                     add(FAIL, "outside_bounds", row.id, target)
-                if project is None:
+                if project is None and not enemies:
                     add(NOT_EVALUATED, "enemy_reference_unchecked", row.enemy_id, target, domain=RUNTIME)
                 elif row.enemy_id not in known:
                     add(FAIL, "enemy_reference", row.enemy_id, target)

@@ -109,6 +109,16 @@ EXE lifecycle도 `ipv6_mode="require"`를 쓰므로 기존 IPv6 검증은 약화
 `ready_action`(CombatAction IDLE + 접지)을 기다린다. dodge 실행 tick에는 속도가 아직 적용되지
 않아, 그 전에 정지를 판정하면 이어지는 dodge 이동을 위반으로 오판한다.
 
+lifecycle probe(`core/validation/session_recovery_probe.gd`)의 watchdog은 둘이다. 실행 중인 명령은
+60초(`COMMAND_TIMEOUT_MSEC`) 안에 끝나야 하고, 다음 명령을 기다리기만 하는 역할은 300초
+(`IDLE_TIMEOUT_MSEC`)까지 허용한다. controller가 다른 역할을 구동하는 동안 한 역할이 쉬는 시간은 느린
+rendered runner에서 1분을 넘는다 — 하나의 60초 watchdog이 이 대기까지 재던 것이 `windows-demo`의
+간헐적 `command timeout`(D `field_gear_ready`) 원인이었다. 명령 자체의 제한은 그대로다.
+
+release build(`tools/build_windows_demo.py`)는 검증 전후로 `git status`가 깨끗해야 한다. Godot import가
+만드는 `.gd.uid`가 커밋돼 있지 않으면 import 뒤에 untracked 파일이 생겨 "Release source is dirty"로
+실패하므로, 새 GDScript의 `.uid`는 반드시 같이 커밋한다(`tools/map_bridge/` 포함).
+
 러너는 실패 시 1을 반환한다. tools/check_project.py는 각 실행을 120초로 제한하고 종료 코드 외에도 SCRIPT ERROR, ERROR/WARNING, orphan/leak 경고와 성공 마커를 검사한다. GitHub Actions는 공식 Godot 4.7.2 Linux 바이너리로 같은 project check, 2-player valid/invalid 및 3-player valid process-restart E2E, 2/3-player individual-world E2E, 2/3-player world-runtime E2E를 실행한다. CI 원격 실행 결과는 실제 push 이후 별도로 확인해야 한다.
 
 ## 테스트 구성
@@ -521,7 +531,9 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 | ENet | `python tools/test_multiplayer_forest.py --godot <godot> --players 2`(3) | 서버 전용 스폰, client roster, 서버 개구리의 타깃·도약 피해(도약당 1회), replica의 jump_start/공중/attack clip, replica가 물리·hurtbox를 갖지 않는지, leash 복귀, 늦게 들어온 client(3인)와 host의 roster 복원, 가까운 플레이어로 재타깃, 딱정벌레·개구리의 death 표현과 제거 복제 |
 | 렌더링(GUI) | `python tools/test_forest_visual.py --godot <godot> --artifacts <dir>` | **창을 띄워** 숲에 들어가 실제 입력 action으로 걷고 공격한다. 네 Enemy의 presenter가 켜지고 placeholder polygon이 숨는지, 딱정벌레 5개·개구리 8개 clip이 실제로 재생됐는지, 네 마리가 실제 공격 입력으로 제거되는지 확인하고 screenshot을 남긴다. headless에서는 실패한다. Enemy 옆 배치만 합성이며, 아트 품질은 사람이 screenshot으로 본다. CI에는 넣지 않았다(로컬 검증용) |
 | Python Map Editor | `python tools/python_map_editor/check_forest_region_bridge.py --godot <godot> --artifacts <dir>` | 숲 import, Schema V6 왕복, 무변경 저장의 바이트 동일성, V6 이전 문서의 Enemy marker 보존, 편집 후 재로드, Enemy 스폰 이동·종류 변경·끄기·삭제·추가, 잘못된 Enemy 목록 거절 |
-| Python Map Editor 문서 | `python -m pytest tools/python_map_editor/tests/test_enemy_spawns.py` | V6 왕복, Enemy 없는 문서가 이전 버전 그대로 쓰이는지, V4/V5의 Enemy 필드와 목록 없는 V6 거절, 필드 검증, Enemy ID 카탈로그와 검증, 브리지 재로드 비교, Qt로 배치·수정·삭제·Undo |
+| Python Map Editor 문서·UI | `python -m pytest tools/python_map_editor/tests/test_enemy_spawns.py` | V6 왕복, Enemy 없는 문서가 이전 버전 그대로 쓰이는지, V4/V5의 Enemy 필드와 목록 없는 V6 거절, 필드 검증, 64자 Enemy ID의 스폰 ID 생성(번호 보존·삭제 후 재사용·같은 prefix), 깨진 리소스가 섞인 Enemy 카탈로그, 꺼진 스폰의 잘못된 참조, 브리지 재로드 비교, **실제 마우스·키보드 입력**으로 배치 종류 선택·연속 배치·수정·삭제·Undo, V6 이전 연결 문서의 재가져오기 안내와 미저장 편집 보존 |
+| V6 데이터 안전 | `python tools/python_map_editor/check_enemy_spawn_bridge.py --godot <godot> --artifacts <dir> --round-trips 10` | 일회용 프로젝트 사본에 실제 게시 후 재로드: V5 연결 문서의 Enemy 보존, 빈 목록의 전체 삭제와 `enemy_ids`, 재추가, 꺼진 스폰, Enemy가 있는 새 지역, 잘못된 목록 거절, 바뀐 원본 거절, 게시 취소, UID 보존, 반복 왕복 |
+| 패키징 EXE | `python tools/python_map_editor/verify_windows_package.py <zip> --artifacts <dir> --bridge-project . --godot <godot> --include-design` | OneDir EXE에서 실제 입력으로 개구리 배치 → Sewer 쌍 게시 → 재가져오기 → `.rtcmap` 재열기, 모든 Godot 자식 프로세스의 종료 코드·native crash·누수 감사 |
 
 숲 지형을 고치면 실제 입력으로 입구→전망대 경로와 움푹한 구간 탈출을 다시 확인한다. 자동화된
 경로 검증은 Field Editor의 Traversal 분석을 쓴다.

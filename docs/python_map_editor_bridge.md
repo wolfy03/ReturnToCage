@@ -28,6 +28,8 @@ Godot.exe --headless --path <project-copy> --log-file <log> --scene res://tools/
 | `import_v4_region`, `stage_v4_export` | V4 지역 설계 가져오기와 원본 기반의 Scene·RegionDefinition 편집 |
 | `stage_new_region`, `validate_v4_export` | 공식 Scaffold에 신규 쌍을 생성하고 새 프로세스에서 의미 비교와 물리 사전 검사 |
 
+`inspect_project`는 지역 목록과 함께 `ContentRegistry`의 `EnemyDefinition` ID를 `enemies`로 돌려준다(에디터의 배치 목록용).
+
 **Enemy 스폰(Schema V6).** `import_v4_region`은 항상 `design.enemy_spawns`(id, `spawn_id`, `enemy_id`, position,
 enabled)와 그 마커의 binding을 돌려준다. `stage_v4_export`/`stage_new_region`은 요청의 `design.enemy_spawns`가
 배열일 때만 `FieldEnemySpawnPoint`를 inventory·편집하고, `null`이면 Enemy 마커를 식별자 집합에도 넣지 않고

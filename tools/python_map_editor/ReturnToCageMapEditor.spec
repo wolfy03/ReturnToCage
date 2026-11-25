@@ -1,10 +1,17 @@
 from pathlib import Path
 
 source = Path(SPECPATH)
+bridge = source.parent / "map_bridge"
+# Ship the bridge scripts without Godot's .uid sidecars. The staged project
+# gets fresh ones, and a build folder inside the project would otherwise
+# duplicate the committed UIDs and make the editor scan warn.
+bridge_files = [(str(path), str(Path("map_bridge") / path.relative_to(bridge).parent))
+                for path in sorted(bridge.rglob("*"))
+                if path.is_file() and path.suffix != ".uid" and "__pycache__" not in path.parts]
 analysis = Analysis(
     [str(source / "main.py")],
     pathex=[str(source), str(source.parent)],
-    datas=[(str(source.parent / "map_bridge"), "map_bridge"),
+    datas=[*bridge_files,
            (str(source.parent.parent / "assets" / "terrain"), "assets/terrain")],
 )
 # Qt6Core uses Windows' unsuffixed ICU exports. A vendor ICU DLL collected

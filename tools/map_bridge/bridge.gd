@@ -31,12 +31,16 @@ func _run() -> void:
 		return
 	if request.operation == "inspect_project":
 		var regions: Array = []
+		var enemies: Array = []
 		for definition in ContentRegistry.all_definitions():
+			if definition is EnemyDefinition:
+				enemies.append(String(definition.id))
 			if definition is RegionDefinition:
 				regions.append({"id": String(definition.id), "name": definition.display_name,
 					"definition": definition.resource_path.trim_prefix("res://"), "scene": definition.scene_path.trim_prefix("res://")})
 		regions.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.id < b.id)
-		_finish({"regions": regions})
+		enemies.sort()
+		_finish({"regions": regions, "enemies": enemies})
 		return
 	if request.operation == "stage_new_region":
 		_stage_new_region()

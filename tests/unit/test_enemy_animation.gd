@@ -48,6 +48,9 @@ func _check_enemy(t: Node, enemy_id: StringName, expects_airborne: bool) -> void
 		enemy.free()
 		return
 	t.assert_true(not (enemy.get_node("Visual") as CanvasItem).visible, label + " hides the placeholder polygon behind the sprite")
+	if presenter != null and presenter.sprite != null:
+		t.assert_equal(presenter.sprite.texture_filter, profile.texture_filter, label + " sprite samples with the profile's texture filter")
+		t.assert_equal(profile.texture_filter, CanvasItem.TEXTURE_FILTER_NEAREST, label + " placeholder sheets keep nearest sampling")
 	enemy.set_physics_process(false)
 	presenter.set_process(false)
 	var body_shape := (enemy.get_node("CollisionShape2D") as CollisionShape2D).shape

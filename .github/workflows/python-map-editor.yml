@@ -90,8 +90,10 @@ jobs:
         run: python -u -X utf8 tools/python_map_editor/check_scene_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence"
       - name: V4 markers, new regions, runtime and pair publication
         run: python -u -X utf8 tools/python_map_editor/check_v4_region_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/v4"
-      - name: Forest Trail import, V5 round-trip and enemy marker preservation
+      - name: Forest Trail import, V6 round-trip and enemy spawn editing
         run: python -u -X utf8 tools/python_map_editor/check_forest_region_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/forest"
+      - name: V6 enemy spawn data safety, publication and reload
+        run: python -u -X utf8 tools/python_map_editor/check_enemy_spawn_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/enemy-spawns" --round-trips 2
       - name: Terrain conversion and publication using an isolated Sewer
         run: python -u -X utf8 tools/python_map_editor/check_terrain.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-map-evidence/terrain" --only bridge
       - name: Copy scene integration logs
@@ -105,7 +107,7 @@ jobs:
         if: ${{ !cancelled() && steps.godot.outcome == 'success' }}
         run: |
           & ./tools/python_map_editor/build_windows.ps1 -Python (Get-Command python).Source -OutputRoot build/map-editor-ci
-      - name: Run the packaged EXE on Windows
+      - name: Run the packaged EXE on Windows, including V6 enemy placement and publication
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: |
           $archives = @(Get-ChildItem -Path build/map-editor-ci -Recurse -Filter 'ReturnToCageMapEditor-PY-STEP6-win-x64.zip')
@@ -175,6 +177,9 @@ jobs:
           if ($env:RTC_PROCDUMP) { $capture = @('--procdump', $env:RTC_PROCDUMP) }
           python -u -X utf8 tools/python_map_editor/bridge_stability.py --godot $env:RTC_VALIDATION_GODOT --commands --round-trips 10 --artifacts "$env:RUNNER_TEMP/rtc-bridge-stability" @capture
           exit $LASTEXITCODE
+      - name: Ten V6 enemy spawn publish and reload round-trips
+        if: ${{ !cancelled() && steps.godot.outcome == 'success' }}
+        run: python -u -X utf8 tools/python_map_editor/check_enemy_spawn_bridge.py --godot $env:RTC_VALIDATION_GODOT --artifacts "$env:RUNNER_TEMP/rtc-bridge-stability/enemy-spawns" --round-trips 10
       - name: Build Windows OneDir for the stability gate
         id: stability-package
         if: ${{ !cancelled() && steps.godot.outcome == 'success' }}

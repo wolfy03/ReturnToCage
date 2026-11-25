@@ -1,6 +1,7 @@
 """Offline editing data for the RegionDefinition, marker and settlement link contracts."""
 
 from dataclasses import dataclass
+from pathlib import Path
 import re
 
 from objects import MAX_GEOMETRY, DocumentError, validate_id, validate_text, validate_vector
@@ -11,20 +12,53 @@ POINT_KINDS = ("ENTRY", "ESCAPE")
 MAX_MARKERS = 4096
 
 
+_ENEMY_HEADER = re.compile(r'^\[gd_resource\b[^\]\n]*\bscript_class="EnemyDefinition"', re.MULTILINE)
+_ENEMY_ID = re.compile(r'^id = &"([a-z][a-z0-9_]{0,63})"\s*$', re.MULTILINE)
+MAX_CATALOG_FILES = 4096
+SPAWN_ID_LIMIT = 64
+
+
 def discover_enemies(project):
-    """EnemyDefinition IDs authored under data/content/enemies, or () without a project."""
+    """EnemyDefinition IDs authored anywhere under data/content, or () without a project.
+
+    ContentRegistry loads that folder recursively, so the scan does too. It is a
+    text scan for offline use: one unreadable or malformed file is skipped and
+    never hides the others, and Godot remains the final authority at publication.
+    """
     if project is None:
         return ()
     found = set()
     try:
-        for path in sorted((project / "data/content/enemies").glob("*.tres")):
-            if path.is_file() and path.stat().st_size <= 1024 * 1024:
-                match = re.search(r'^id = &"([a-z][a-z0-9_]{0,63})"$', path.read_text(encoding="utf-8"), re.MULTILINE)
-                if match:
-                    found.add(match[1])
-    except (OSError, UnicodeError):
+        paths = sorted(Path(project, "data/content").rglob("*.tres"))[:MAX_CATALOG_FILES]
+    except OSError:
         return ()
+    for path in paths:
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        match = _ENEMY_ID.search(text) if _ENEMY_HEADER.search(text) else None
+        if match:
+            found.add(match[1])
     return tuple(sorted(found))
+
+
+def unique_spawn_id(enemy_id, taken):
+    """A free "<enemy>_spawn_<n>" within the 64-character ID limit.
+
+    The numeric suffix is never cut: a long enemy ID gives up its own tail
+    instead, so every candidate is distinct and a free one always exists.
+    """
+    validate_id(enemy_id)
+    taken = set(taken)
+    for index in range(1, len(taken) + 2):
+        suffix = f"_spawn_{index}"
+        candidate = enemy_id[:SPAWN_ID_LIMIT - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+    raise DocumentError("no free enemy spawn ID")
 
 
 @dataclass(frozen=True, slots=True)

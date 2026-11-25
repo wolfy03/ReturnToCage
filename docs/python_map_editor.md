@@ -122,22 +122,42 @@ Select a registered terrain theme in the platform Inspector or the platform brus
 
 ```powershell
 python tools/python_map_editor/check_forest_region_bridge.py --godot <godot-exe> --artifacts <output-directory>
+python tools/python_map_editor/check_enemy_spawn_bridge.py --godot <godot-exe> --artifacts <output-directory> --round-trips 10
 ```
 
 이 검사는 격리된 프로젝트 사본에서 숲을 가져와 V6 왕복, 무변경 저장 시 Scene/Resource
 바이트 동일성, V6 이전 문서(Enemy 목록 없음)의 무변경 저장, 플랫폼·장식·ESCAPE 편집 후 재로드,
 Enemy 스폰의 이동·종류 변경·끄기·삭제·추가, 잘못된 Enemy 목록 거절, 런타임 검증을 확인한다.
 
+`check_enemy_spawn_bridge.py`는 프로젝트의 일회용 사본에 **실제로 게시**한 뒤 다시 가져와 확인하는 데이터
+안전 검사다: V6 이전 연결 문서 게시 시 Enemy 보존, 빈 목록 게시 후 전체 삭제와 `enemy_ids` 갱신, 전부 지운 뒤
+재추가, 꺼진 스폰의 저장·재로드, Enemy가 있는 새 지역의 게시와 수정, 잘못된 목록 거절과 프로젝트 무변경,
+가져온 뒤 바뀐 원본의 staging·게시 거절, 게시 취소 시 원본 유지와 저널 없음, Scene·RegionDefinition UID 보존,
+게시·재로드 반복(`--round-trips`). 원본 프로젝트는 건드리지 않는다.
+
 ### Enemy 스폰 편집 (Schema V6)
 
-- **지역 > Enemy 스폰 배치** 도구로 맵을 클릭하면 `FieldEnemySpawnPoint` 하나가 놓인다. 종류는 지역 설계
-  dock **마커** 탭의 **Enemy ID**에서 고른다. 목록은 프로젝트 `data/content/enemies/*.tres`와 문서에 이미
-  놓인 Enemy에서 채우며, 직접 입력할 수도 있다(존재 여부는 Godot 브리지가 최종 확인한다).
-- 선택한 Enemy 마커는 같은 탭에서 Enemy ID, 스폰 ID(`spawn_id`), 위치, 사용 여부(`enabled`)를 고치고
+- **지역 > Enemy 스폰 배치** 도구를 켜면 지역 설계 dock의 **마커** 탭이 열리고 맨 위 **배치할 Enemy**에
+  포커스가 간다. 여기서 고른 종류가 맵을 클릭할 때마다 `FieldEnemySpawnPoint`로 놓인다. 이 선택은 배치하는
+  동안 유지되고, 마커 선택과 무관하다 — Enemy가 하나도 없는 맵이나 ENTRY·플레이어 스폰이 선택된 상태에서도
+  고를 수 있다. 종류를 바꿔 개구리와 딱정벌레를 이어서 놓을 수 있다.
+- **배치할 Enemy**와, 선택한 마커를 고치는 폼의 **Enemy ID**는 별개의 입력이다. 기존 Enemy를 고쳐도 다음에
+  놓일 종류는 바뀌지 않고, 반대도 마찬가지다.
+- 선택한 Enemy 마커는 폼에서 Enemy ID, 스폰 ID(`spawn_id`), 위치, 사용 여부(`enabled`)를 고치고
   **적용**한다. 선택 도구로 끌어서 옮길 수 있고, 모든 편집은 Undo/Redo된다. 꺼진 스폰은 속이 빈 마름모로 보인다.
-- Python 검증은 중복 스폰 ID, 맵 범위 밖 위치, 프로젝트에 없는 Enemy ID를 FAIL로 보고한다.
+- 스폰 ID는 `<enemy>_spawn_<n>` 형태로 자동으로 붙는다. 64자 제한 안에서 **번호를 자르지 않고 Enemy ID
+  쪽을 줄이며**, 비어 있는 가장 작은 번호를 쓴다. 잘못된 Enemy ID(대문자·공백·숫자로 시작)는 배치하지 않고
+  메시지로 알린다.
+- **Enemy 목록의 출처.** 프로젝트 폴더가 있으면 `data/content` 아래 전체에서 `EnemyDefinition` 리소스를
+  읽고(`ContentRegistry`와 같은 재귀 범위), Godot에 연결하면 브리지의 `inspect_project`가 돌려준
+  `ContentRegistry`의 실제 목록을 합친다. 읽을 수 없거나 깨진 `.tres` 하나는 건너뛸 뿐 나머지 목록을 숨기지
+  않는다. 목록에 없는 ID도 직접 입력할 수 있으며, 최종 판정은 게시할 때 Godot이 한다.
+- Python 검증은 중복 스폰 ID, 맵 범위 밖 위치, 알려진 목록에 없는 Enemy ID를 FAIL로 보고한다.
+  **꺼진(`enabled = false`) 스폰도 유효한 Enemy를 가리켜야 한다** — Godot이 모든 `FieldEnemySpawnPoint`의
+  참조를 검사하므로 꺼 두어도 게시는 거절된다. 프로젝트도 Godot 목록도 없으면 참조 검사는 NOT EVALUATED다.
 - 게시하면 브리지가 `SpawnPoints` 아래 마커를 만들거나 고치거나 지우고, `RegionDefinition.enemy_ids`에
   새로 쓰인 Enemy를 추가하고 더 이상 마커가 없는 Enemy를 뺀다(마커 없이 선언만 돼 있던 항목은 유지).
+  빈 목록을 게시하면 모든 Enemy 마커가 지워진다.
 
 ### Schema V6 호환성
 
@@ -151,5 +171,7 @@ Enemy 스폰의 이동·종류 변경·끄기·삭제·추가, 잘못된 Enemy �
 - V4/V5 문서에 `enemy_spawns` 필드가 있거나 V6 문서에 목록이 없으면 읽기를 거절한다.
 - **V6 이전에 가져온 연결 문서(source 있음)에는 Enemy를 배치할 수 없다.** 그 문서는 원본 Scene의 Enemy를
   읽은 적이 없어서, 관리를 시작하면 기존 Enemy를 지우게 된다. 지역을 다시 가져온 뒤 배치한다.
+  배치가 거절돼도 문서는 그대로이고, 다시 가져오기는 저장하지 않은 편집이 있으면 저장·버리기·취소를 먼저
+  묻는다. 취소하면 편집 중인 문서가 유지된다.
 - `.rtcmap`의 다른 필드, 객체, 마커 계약은 바뀌지 않았다. 채집 위치·사다리 등 나머지 Scene 노드는 여전히
   Godot Field Editor에서 편집하고 브리지가 보존한다.

@@ -10,6 +10,11 @@ if ($LASTEXITCODE -ne 0 -or $version -ne "3.14.5 64 AMD64") {
     throw "The Windows build requires Python 3.14.5 x64. Found: $version"
 }
 New-Item -ItemType Directory -Force $OutputRoot | Out-Null
+# The bundle carries copies of project scripts and imported textures. When the output
+# lives inside the Godot project, keep the editor from scanning it: the copies would
+# otherwise collide with the originals' UIDs and fail the project checks.
+$ignore = Join-Path $OutputRoot ".gdignore"
+if (-not (Test-Path -LiteralPath $ignore)) { New-Item -ItemType File $ignore | Out-Null }
 $root = Join-Path (Resolve-Path -LiteralPath $OutputRoot).Path ([guid]::NewGuid().ToString("N").Substring(0, 12))
 New-Item -ItemType Directory $root | Out-Null
 $originalPath = $env:PATH
@@ -28,7 +33,9 @@ Copy-Item -LiteralPath "$PSScriptRoot/README.txt" -Destination $distribution
 $notices = Join-Path $distribution "licenses"
 New-Item -ItemType Directory $notices | Out-Null
 Copy-Item -LiteralPath "$PSScriptRoot/upstream_licenses/LGPL-3.0-only.txt","$PSScriptRoot/upstream_licenses/GPL-3.0-only.txt" -Destination $notices
-& $pythonExe -c @'
+# Run the helper from a file: Windows PowerShell 5.1 strips the quotes of an inline -c script.
+$noticeScript = Join-Path $root "copy_notices.py"
+Set-Content -LiteralPath $noticeScript -Encoding UTF8 -Value @'
 import importlib.metadata as metadata
 from pathlib import Path
 import shutil
@@ -46,7 +53,8 @@ for name in ("PySide6-Essentials", "shiboken6", "PyInstaller"):
                 destination = target.joinpath(*entry.parts[-2:])
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(dist.locate_file(entry), destination)
-'@ $notices
+'@
+& $pythonExe $noticeScript $notices
 if ($LASTEXITCODE -ne 0) {
     throw "Failed to copy third-party license notices"
 }

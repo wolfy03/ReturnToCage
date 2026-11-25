@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from objects import MAX_GEOMETRY, DocumentError
 from placement_presets import capture_preset, load_preset
 from region_design import (
-    SPAWN_SLOTS, Connection, EnemySpawn, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint, discover_enemies,
+    SPAWN_SLOTS, Connection, EnemySpawn, RegionDesign, RegionEnvironment, RegionPoint, SpawnPoint, discover_enemies, unique_spawn_id,
 )
 from region_index import INDEXED, NOT_INDEXED, IndexedRegion
 from strings import tr
@@ -45,6 +45,18 @@ class RegionMixin:
         tabs = self.region_tabs = QTabWidget()
         panel = QWidget()
         marker_layout = QVBoxLayout(panel)
+        # Placement setting for the "place enemy" tool. It is independent of the
+        # selected marker: the form below edits an existing marker and is disabled
+        # without a selection, so it cannot double as the placement choice.
+        self.enemy_palette = QComboBox()
+        self.enemy_palette.setEditable(True)
+        self.enemy_palette.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.enemy_palette.setObjectName("enemy_palette")
+        self.enemy_palette.setToolTip(tr("enemy_palette_hint"))
+        self.enemy_palette.lineEdit().setMaxLength(64)
+        palette = QFormLayout()
+        palette.addRow(tr("enemy_palette"), self.enemy_palette)
+        marker_layout.addLayout(palette)
         self.marker_list = QListWidget()
         self.marker_list.currentRowChanged.connect(self._marker_clicked)
         marker_layout.addWidget(self.marker_list)
@@ -61,6 +73,7 @@ class RegionMixin:
         self.slot.setRange(1, SPAWN_SLOTS)
         self.enemy_id = QComboBox()
         self.enemy_id.setEditable(True)
+        self.enemy_id.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.enemy_spawn_id = QLineEdit()
         self.enemy_spawn_id.setMaxLength(64)
         self.enemy_enabled = QCheckBox()
@@ -118,7 +131,7 @@ class RegionMixin:
         menu = self.menuBar().addMenu(tr("region"))
         menu.addAction(self.wizard_action)
         for key in ("place_entry", "place_escape", "place_spawn", "place_enemy"):
-            action = self._action(key, lambda enabled, key=key: self._set_tool(key) if enabled else None,
+            action = self._action(key, lambda enabled, key=key: self._select_region_tool(key) if enabled else None,
                                   checked=False)
             self.tool_group.addAction(action)
             self.tool_actions[key] = action
@@ -127,6 +140,15 @@ class RegionMixin:
         presets.addAction(self._action("capture_preset", self._capture_placement))
         presets.addAction(self._action("apply_preset", self._apply_placement))
         return menu
+
+    def _select_region_tool(self, key):
+        self._set_tool(key)
+        if key == "place_enemy":
+            # Show where the enemy kind is chosen; the choice stays put while placing.
+            self.region_dock.show()
+            self.region_dock.raise_()
+            self.region_tabs.setCurrentIndex(0)
+            self.enemy_palette.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _capture_placement(self):
         models = sorted(self._selected_models(), key=lambda item: item.id)
@@ -261,11 +283,13 @@ class RegionMixin:
             if design.enemy_spawns is None and self.draft.source is not None:
                 # The linked Scene may already hold enemy markers this draft never read.
                 raise DocumentError(tr("enemy_reimport_required"))
-            enemy = self.enemy_id.currentText().strip()
+            enemy = self.enemy_palette.currentText().strip()
             if not enemy:
                 raise DocumentError(tr("enemy_id_required"))
-            taken = {row.spawn_id for row in design.enemy_spawns or ()}
-            spawn_id = next(name for name in (f"{enemy}_spawn_{i}"[:64] for i in range(1, 100000)) if name not in taken)
+            try:
+                spawn_id = unique_spawn_id(enemy, (row.spawn_id for row in design.enemy_spawns or ()))
+            except DocumentError as error:
+                raise DocumentError(tr("enemy_id_invalid")) from error
             row = EnemySpawn(self._new_id("enemy"), spawn_id, enemy, position)
             self._change_design(replace(design, enemy_spawns=(*(design.enemy_spawns or ()), row)), row.id)
             return
@@ -327,14 +351,24 @@ class RegionMixin:
 
     def _refresh_enemy_choices(self):
         """Offer the project's enemies and those already placed; any ID may still be typed."""
-        current = self.enemy_id.currentText()
         placed = {row.enemy_id for row in self._design().enemy_spawns or ()}
-        choices = sorted(placed | set(discover_enemies(self.view.textures.terrain_root)))
-        self.enemy_id.blockSignals(True)
-        self.enemy_id.clear()
-        self.enemy_id.addItems(choices)
-        self.enemy_id.setCurrentText(current or (choices[0] if choices else ""))
-        self.enemy_id.blockSignals(False)
+        known = set(discover_enemies(self.view.textures.terrain_root)) | set(getattr(self, "_enemy_catalog", ()))
+        choices = sorted(placed | known)
+        for combo, fallback in ((self.enemy_palette, choices[0] if choices else ""), (self.enemy_id, "")):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(choices)
+            # Keep the highlighted item in step with the text, so the arrow keys
+            # continue from the kind that is actually shown.
+            wanted = current or fallback
+            index = combo.findText(wanted)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            else:
+                combo.setCurrentIndex(-1)
+                combo.setEditText(wanted)
+            combo.blockSignals(False)
 
     def _save_environment(self):
         try:

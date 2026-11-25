@@ -21,6 +21,9 @@ extends Resource
 ## Applied to the visual child only, never to the actor, its body or hurtbox.
 @export var visual_scale: Vector2 = Vector2.ONE
 @export var visual_offset: Vector2 = Vector2.ZERO
+## Sampling for the sprite only. Nearest suits the small placeholder sheets;
+## hand-drawn production sheets that are scaled down need a linear filter.
+@export var texture_filter: CanvasItem.TextureFilter = CanvasItem.TEXTURE_FILTER_NEAREST
 ## First attack frame that shows the strike. The gameplay hit time is owned by
 ## the enemy's attack state; a test keeps this frame aligned with it.
 @export_range(0, 64, 1) var attack_hit_frame: int = 0

@@ -30,7 +30,7 @@ func setup(p_agent: EnemyAgent, p_profile: EnemyAnimationProfile) -> void:
 	sprite = AnimatedSprite2D.new()
 	sprite.name = "Sprite"
 	sprite.sprite_frames = profile.sprite_frames
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sprite.texture_filter = profile.texture_filter
 	sprite.position = profile.visual_offset
 	add_child(sprite)
 	_last_health = agent.health.current_health

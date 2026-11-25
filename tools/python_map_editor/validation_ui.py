@@ -74,7 +74,8 @@ class ValidationMixin:
         try:
             document = replace(self.draft, region_id=region_id, display_name=name, width=width, height=height)
             root = self.view.textures.root
-            findings = validate_region(document, self.region_index, root.resolve() if root else None)
+            findings = validate_region(document, self.region_index, root.resolve() if root else None,
+                                       getattr(self, "_enemy_catalog", ()))
         except (DocumentError, OSError, RuntimeError) as error:
             findings = [Finding(FAIL, "invalid_document", str(error))]
         self._python_state = summarize(item.status for item in findings if item.domain == STATIC)

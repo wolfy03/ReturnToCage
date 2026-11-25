@@ -312,7 +312,7 @@ class GodotSession:
             self.manifest = project_manifest(self.settings.project, self.cancel, self.stage)
             self.assert_source_unchanged()
             source = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "map_bridge"
-            shutil.copytree(source, self.stage / "tools/map_bridge", ignore=shutil.ignore_patterns("__pycache__", ".git"))
+            shutil.copytree(source, self.stage / "tools/map_bridge", ignore=shutil.ignore_patterns("__pycache__", ".git", "*.uid"))
             self.progress("Godot 리소스 읽기")
             self._prepare_resources()
             return self

@@ -124,7 +124,8 @@ def audit_bridge_processes(evidence, include_design):
     required = {"inspect_project": 1, "import_region": 1, "export_region": 2, "validate_export": 2,
                 "runtime": 2, "package-godot": 1}
     if include_design:
-        required.update(import_v4_region=1, stage_v4_export=1, validate_v4_export=3, stage_new_region=2)
+        # V4 preview, the V6 enemy publication and its reload, then two new-pair stagings.
+        required.update(import_v4_region=2, stage_v4_export=2, validate_v4_export=4, stage_new_region=2)
     return rows, (launches == exits and all(row["status"] != "FAIL" for row in rows)
                   and all(operations[label] == count for label, count in required.items()))
 
