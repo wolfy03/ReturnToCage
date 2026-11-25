@@ -1,0 +1,994 @@
+{
+  "schema_version": 1,
+  "document_type": "rtcmonster",
+  "monster_id": "frog",
+  "metadata": {
+    "display_name": "Trail Frog",
+    "description": "Moves only by hopping. Crouches before every hop, never jumps from mid-air, will not hop off a ledge, and attacks with a short leap.",
+    "category": "amphibian",
+    "rank": "normal",
+    "habitats": [
+      "forest_region"
+    ],
+    "tags": [
+      "hop",
+      "leap_attack"
+    ],
+    "thumbnail": ""
+  },
+  "stats": {
+    "max_health": 18,
+    "attack_damage": 6,
+    "move_speed": 150,
+    "chase_range": 260,
+    "attack_range": 72,
+    "faction": "hostile",
+    "hit_invulnerability_seconds": 0.35,
+    "planned": {
+      "defense": 0,
+      "attack_speed": 1,
+      "knockback_resistance": 0,
+      "stagger_resistance": 0,
+      "damage_resistances": {},
+      "status_resistances": {}
+    }
+  },
+  "movement": {
+    "locomotion": "hop",
+    "gravity": 1100,
+    "ground_brake": 1400,
+    "ground_grace_seconds": 0.06
+  },
+  "sensors": {
+    "target_policy": "nearest_player",
+    "target_keep_scale": 1.35,
+    "leash_distance": 520
+  },
+  "assets": {
+    "images": [
+      {
+        "id": "idle_strip",
+        "path": "assets/characters/enemies/frog/idle.png",
+        "width": 256,
+        "height": 64,
+        "sha256": "6f8135ba762db8a22440030bf7dd88de86d07c8d6a0c1751079a3349ff0ae522"
+      },
+      {
+        "id": "jump_start_strip",
+        "path": "assets/characters/enemies/frog/jump_start.png",
+        "width": 128,
+        "height": 64,
+        "sha256": "e8e33271aebe6154a69b66294b91e421c9d0a1081df348a389fa50b98c87402c"
+      },
+      {
+        "id": "jump_strip",
+        "path": "assets/characters/enemies/frog/jump.png",
+        "width": 128,
+        "height": 64,
+        "sha256": "1813b530e41cdf3a3b004fc28d4932584f028485a1b57b0d4bf6c8f17dcd005d"
+      },
+      {
+        "id": "fall_strip",
+        "path": "assets/characters/enemies/frog/fall.png",
+        "width": 128,
+        "height": 64,
+        "sha256": "465fa9b0b1966013a9d1cff446cd3d56b5d015eb79d9acc2ba11175ffaa01538"
+      },
+      {
+        "id": "land_strip",
+        "path": "assets/characters/enemies/frog/land.png",
+        "width": 128,
+        "height": 64,
+        "sha256": "129c2f467bf63f97eaf4aec6c85ddc994bf1132a44cc3b82b1041757057d210b"
+      },
+      {
+        "id": "attack_strip",
+        "path": "assets/characters/enemies/frog/attack.png",
+        "width": 384,
+        "height": 64,
+        "sha256": "0d6b5dd721a87b03ab3dea9ed9f3cdaee0e3e6c4bc1b0a6f8bd75ed7d8b8cb7a"
+      },
+      {
+        "id": "hurt_strip",
+        "path": "assets/characters/enemies/frog/hurt.png",
+        "width": 192,
+        "height": 64,
+        "sha256": "ab6c9c7135b3fc507790df73e780b62fc2fb895928578f19a89abdbce8be92d5"
+      },
+      {
+        "id": "death_strip",
+        "path": "assets/characters/enemies/frog/death.png",
+        "width": 320,
+        "height": 64,
+        "sha256": "1a625a2b0dcb82c0b3756498fa4e79ef53bbe82d6e183086fc9e95d0c2814a06"
+      }
+    ]
+  },
+  "animations": {
+    "clips": [
+      {
+        "id": "idle",
+        "display_name": "",
+        "fps": 5,
+        "loop": true,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "idle_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "idle_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "idle_strip",
+            "rect": [128, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "idle_strip",
+            "rect": [192, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "jump_start",
+        "display_name": "",
+        "fps": 12,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "jump_start_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "jump_start_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "jump",
+        "display_name": "",
+        "fps": 8,
+        "loop": true,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "jump_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "jump_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "fall",
+        "display_name": "",
+        "fps": 8,
+        "loop": true,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "fall_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "fall_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "land",
+        "display_name": "",
+        "fps": 12,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "land_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "land_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "attack",
+        "display_name": "",
+        "fps": 10,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "attack_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [128, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [192, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [256, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [320, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "hurt",
+        "display_name": "",
+        "fps": 12,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "hurt_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "hurt_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "hurt_strip",
+            "rect": [128, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "death",
+        "display_name": "",
+        "fps": 12,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "death_strip",
+            "rect": [0, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [64, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [128, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [192, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [256, 0, 64, 64],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      }
+    ]
+  },
+  "presentation": {
+    "faces_right_by_default": true,
+    "visual_scale": [1, 1],
+    "visual_offset": [4, -19],
+    "airborne_speed": 30,
+    "move_speed_threshold": 8,
+    "attack_hit_frame": 2,
+    "roles": {
+      "idle": "idle",
+      "move": "idle",
+      "attack": "attack",
+      "hurt": "hurt",
+      "death": "death",
+      "jump_start": "jump_start",
+      "jump": "jump",
+      "fall": "fall",
+      "land": "land"
+    }
+  },
+  "collision": {
+    "body": {
+      "shape": {
+        "type": "rectangle",
+        "center": [0, 0],
+        "size": [30, 22]
+      },
+      "layer": 1,
+      "mask": 1
+    },
+    "hurtboxes": [
+      {
+        "id": "body",
+        "shape": {
+          "type": "rectangle",
+          "center": [0, 0],
+          "size": [36, 28]
+        },
+        "enabled": true
+      }
+    ],
+    "hurtbox_overrides": [],
+    "hitboxes": [
+      {
+        "id": "leap_contact",
+        "shape": {
+          "type": "rectangle",
+          "center": [0, 0],
+          "size": [88, 80]
+        }
+      }
+    ]
+  },
+  "attack_patterns": [
+    {
+      "id": "leap_bite",
+      "display_name": "Leap bite",
+      "kind": "leap",
+      "clip": "attack",
+      "duration": 0.6,
+      "completion": {
+        "mode": "duration_and_landed",
+        "min_air_seconds": 0.08,
+        "max_air_seconds": 2.5
+      },
+      "range": {
+        "min": 0,
+        "max": {
+          "stat": "attack_range",
+          "scale": 1,
+          "offset": 0
+        },
+        "vertical": 40
+      },
+      "cooldown": 1.2,
+      "priority": 0,
+      "weight": 1,
+      "condition": null,
+      "movement_locked": true,
+      "facing_locked": true,
+      "interrupt": {
+        "on_hurt": "cancel"
+      },
+      "damage": {
+        "multiplier": 1,
+        "type": "physical",
+        "knockback": [100, -30],
+        "hit_policy": "once_per_target",
+        "multi_hit_interval": 0.25,
+        "status_effects": []
+      },
+      "phases": [
+        {
+          "kind": "windup",
+          "start": 0,
+          "end": 0.2
+        },
+        {
+          "kind": "active",
+          "start": 0.2,
+          "end": 0.6
+        }
+      ],
+      "events": [
+        {
+          "type": "ApplyImpulse",
+          "time": 0.2,
+          "velocity": [1.5, -250],
+          "x_scales_move_speed": true,
+          "mode": "set",
+          "requires_grounded": true
+        },
+        {
+          "type": "EnableHitbox",
+          "time": 0.2,
+          "hitbox": "leap_contact"
+        }
+      ]
+    }
+  ],
+  "behavior": {
+    "initial_state": "idle",
+    "interrupts": {
+      "hurt": {
+        "state": "hurt",
+        "policy": "always"
+      },
+      "death": {
+        "state": "dead"
+      }
+    },
+    "states": [
+      {
+        "id": "idle",
+        "display_name": "",
+        "module": "Wait",
+        "params": {
+          "seconds": 0.9
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "alert",
+            "priority": 10,
+            "condition": {
+              "all": [
+                {
+                  "type": "TargetOriginDistance",
+                  "op": "<=",
+                  "value": 520
+                },
+                {
+                  "type": "TargetDistance",
+                  "op": "<=",
+                  "value": {
+                    "stat": "chase_range",
+                    "scale": 1,
+                    "offset": 0
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "to": "patrol",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "patrol",
+        "display_name": "",
+        "module": "Hop",
+        "params": {
+          "toward": "patrol",
+          "count": 3,
+          "interval_seconds": 0.8,
+          "prepare_seconds": 0.18,
+          "speed_scale": 0.6,
+          "lift": 230,
+          "patrol_radius": 130,
+          "max_drop": 56,
+          "max_air_seconds": 2.5,
+          "stuck_seconds": 0,
+          "min_progress": 6,
+          "arrive_distance": 28,
+          "rehome_on_stuck": false,
+          "hold_in_attack_range": false
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "alert",
+            "priority": 10,
+            "condition": {
+              "all": [
+                {
+                  "type": "TargetOriginDistance",
+                  "op": "<=",
+                  "value": 520
+                },
+                {
+                  "type": "TargetDistance",
+                  "op": "<=",
+                  "value": {
+                    "stat": "chase_range",
+                    "scale": 1,
+                    "offset": 0
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "to": "idle",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          },
+          {
+            "to": "idle",
+            "priority": 0,
+            "condition": {
+              "type": "ActionFailed"
+            }
+          }
+        ]
+      },
+      {
+        "id": "alert",
+        "display_name": "",
+        "module": "FaceTarget",
+        "params": {
+          "seconds": 0.35
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "return",
+            "priority": 10,
+            "condition": {
+              "not": {
+                "type": "TargetOriginDistance",
+                "op": "<=",
+                "value": 520
+              }
+            }
+          },
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "chase",
+        "display_name": "",
+        "module": "Hop",
+        "params": {
+          "toward": "target",
+          "count": 0,
+          "interval_seconds": 0.3,
+          "prepare_seconds": 0.18,
+          "speed_scale": 1,
+          "lift": 340,
+          "patrol_radius": 130,
+          "max_drop": 56,
+          "max_air_seconds": 2.5,
+          "stuck_seconds": 2.5,
+          "min_progress": 6,
+          "arrive_distance": 28,
+          "rehome_on_stuck": false,
+          "hold_in_attack_range": true
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "return",
+            "priority": 30,
+            "condition": {
+              "any": [
+                {
+                  "type": "LostTarget"
+                },
+                {
+                  "not": {
+                    "type": "TargetOriginDistance",
+                    "op": "<=",
+                    "value": 520
+                  }
+                },
+                {
+                  "type": "DistanceFromOrigin",
+                  "op": ">",
+                  "value": 520
+                },
+                {
+                  "type": "TargetDistance",
+                  "op": ">",
+                  "value": {
+                    "stat": "chase_range",
+                    "scale": 1.35,
+                    "offset": 0
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "to": "attack",
+            "priority": 20,
+            "condition": {
+              "type": "AttackAvailable",
+              "pattern": "leap_bite"
+            }
+          },
+          {
+            "to": "return",
+            "priority": 0,
+            "condition": {
+              "type": "ActionFailed"
+            }
+          }
+        ]
+      },
+      {
+        "id": "attack",
+        "display_name": "",
+        "module": "ExecuteAttackPattern",
+        "params": {
+          "pattern": "leap_bite"
+        },
+        "animation": {
+          "mode": "pattern",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "AttackPatternCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "hurt",
+        "display_name": "",
+        "module": "HurtReaction",
+        "params": {
+          "seconds": 0.25
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "return",
+        "display_name": "",
+        "module": "Hop",
+        "params": {
+          "toward": "origin",
+          "count": 0,
+          "interval_seconds": 0.3,
+          "prepare_seconds": 0.18,
+          "speed_scale": 1,
+          "lift": 340,
+          "patrol_radius": 130,
+          "max_drop": 56,
+          "max_air_seconds": 2.5,
+          "stuck_seconds": 2.5,
+          "min_progress": 6,
+          "arrive_distance": 28,
+          "rehome_on_stuck": true,
+          "hold_in_attack_range": false
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "idle",
+            "priority": 20,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          },
+          {
+            "to": "alert",
+            "priority": 10,
+            "condition": {
+              "all": [
+                {
+                  "type": "TargetOriginDistance",
+                  "op": "<=",
+                  "value": 520
+                },
+                {
+                  "type": "TargetDistance",
+                  "op": "<=",
+                  "value": {
+                    "stat": "chase_range",
+                    "scale": 0.8,
+                    "offset": 0
+                  }
+                },
+                {
+                  "type": "DistanceFromOrigin",
+                  "op": "<",
+                  "value": 390
+                }
+              ]
+            }
+          },
+          {
+            "to": "idle",
+            "priority": 0,
+            "condition": {
+              "type": "ActionFailed"
+            }
+          }
+        ]
+      },
+      {
+        "id": "dead",
+        "display_name": "",
+        "module": "Death",
+        "params": {
+          "removal_seconds": 0.45
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": []
+      }
+    ],
+    "phases": []
+  },
+  "loot": {
+    "loot_table_id": "frog_loot",
+    "entries": [
+      {
+        "item_id": "moss_fiber",
+        "weight": 2,
+        "min_amount": 1,
+        "max_amount": 2
+      },
+      {
+        "item_id": "water_drop",
+        "weight": 1,
+        "min_amount": 1,
+        "max_amount": 1
+      }
+    ],
+    "apply_difficulty_multiplier": true
+  },
+  "source_binding": {
+    "runtime": "legacy",
+    "definition_path": "data/content/enemies/frog.tres",
+    "actor_scene_path": "gameplay/actors/enemies/frog.tscn",
+    "animation_profile_path": "presentation/enemy/profiles/frog_animation_profile.tres",
+    "sprite_frames_path": "assets/characters/enemies/frog/sprite_frames.tres",
+    "loot_table_path": "data/content/loot/frog_loot.tres",
+    "files": [
+      {
+        "path": "assets/characters/enemies/frog/sprite_frames.tres",
+        "sha256": "87d7ff0f1b82f05dbe77e72832ac63d5738c47f5eeca36ac5bfc3857ee7945f7"
+      },
+      {
+        "path": "core/models/network/enemy_runtime_snapshot.gd",
+        "sha256": "3c03e43e3c23a191f79f043cb3135ca04b81d83fe928148f1ac7f606f5e8089e"
+      },
+      {
+        "path": "data/content/enemies/frog.tres",
+        "sha256": "d1f2a05eb445327c1fb69541d8401eed18b20863545573e3b2368b1178b13db2"
+      },
+      {
+        "path": "data/content/loot/frog_loot.tres",
+        "sha256": "444ace86d000393bb0f7477b6322ef0b2f226e82ba7ca8567fd1f67aedfb842c"
+      },
+      {
+        "path": "data/definitions/enemy_definition.gd",
+        "sha256": "5679d99ff1a1df2905165207b2e654592c158a0c765f98a0cbb3060ec169bb2a"
+      },
+      {
+        "path": "gameplay/actors/enemies/dead_state.gd",
+        "sha256": "5ae728ffd57747944aa95bb849a28bc154b4c023dce95b1cbcee7606ee5e96e0"
+      },
+      {
+        "path": "gameplay/actors/enemies/enemy_agent.gd",
+        "sha256": "18fa1d14e1f7e73d5b08a8df27a94f8c0ffe8187bc70b91f30cf3d7070c007ef"
+      },
+      {
+        "path": "gameplay/actors/enemies/enemy_state.gd",
+        "sha256": "e23da2023ca1b3ec6c92d3b83ff5b8c84fb8088c9c2e4a43a76e65daace4cc05"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog.tscn",
+        "sha256": "26fd158eb9f24267d3337968278692640d34f36dcaeae681a7ef0ca6d99de9d3"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_agent.gd",
+        "sha256": "035560a49e99cae7de48a04f07d2b7c8d45a75442436be26c923e671563453e8"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_alert_state.gd",
+        "sha256": "a3fc55ef78b66748b1623a6e5530a277342a2c02f5a3858996309f52696cbc25"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_attack_state.gd",
+        "sha256": "f405eb996fd0b0d16639ac0789b7e38f4335ff3e78caabb6e01cfd71087f3145"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_chase_state.gd",
+        "sha256": "a6663d304e1c47ff5c7ffbce3dfdefd599163822d267c24ac2cc3027acfee478"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_hop_state.gd",
+        "sha256": "6a5e86f3246531bb3ccc8c2c36c740d2dfaeb3278b49c33490cec13bbc624eb1"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_idle_state.gd",
+        "sha256": "df103c41ec326a759d3bd47eec0ec5646b9d5e637fb9e03992fde7d1c1a757a2"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_patrol_state.gd",
+        "sha256": "9a1690112208a851d6d023e21a5cf4acb321ef691aba13aa3718f3b542ac2944"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_prepare_state.gd",
+        "sha256": "f7736c7b6e4d81833bb6a32cae5c206565acd01734135fbffdabe2f2d168ffa2"
+      },
+      {
+        "path": "gameplay/actors/enemies/frog/frog_return_state.gd",
+        "sha256": "b56db74bf4f1eba62e9cacef3beecf0ef0e61dfeebb64a447a9df9766ea74823"
+      },
+      {
+        "path": "gameplay/actors/enemies/hurt_state.gd",
+        "sha256": "8fd65a6b4ebded4603a593f0450c346f2d1ef95678ad18f3fed75ffe22a5ee41"
+      },
+      {
+        "path": "gameplay/components/network_enemy_component.gd",
+        "sha256": "3066d076069135b4aaec9be7512eec4830f0cb93a262fd0c9200cc6581c0a0f2"
+      },
+      {
+        "path": "presentation/definitions/enemy_animation_profile.gd",
+        "sha256": "76d18613d67329afd3ed616024011f3dec80edc621b7dde836c8e990e525216e"
+      },
+      {
+        "path": "presentation/enemy/enemy_animation_presenter.gd",
+        "sha256": "e10c1733a2c8aadaea40b225497be7224c9e13ed6100794e12a82901ea609a09"
+      },
+      {
+        "path": "presentation/enemy/profiles/frog_animation_profile.tres",
+        "sha256": "fe9227aa4ac81a15f254420c2999ee0ca4faac149e4014d78cef4f42074ec079"
+      }
+    ],
+    "editability": {
+      "animations": "read_only",
+      "assets": "read_only",
+      "attack_patterns": "read_only",
+      "behavior": "read_only",
+      "collision": "read_only",
+      "loot": "editable",
+      "metadata": "editable",
+      "movement": "read_only",
+      "presentation": "read_only",
+      "sensors": "read_only",
+      "stats": "editable"
+    },
+    "unsupported": [
+      {
+        "path": "attack_patterns[leap_bite].events[EnableHitbox]",
+        "reason": "FrogAttackState tests the target's origin against |dx| <= 44 and |dy| <= 40 on every tick of the leap. The 88x80 hitbox tests the target's hurtbox instead, which reaches further."
+      },
+      {
+        "path": "behavior.states[return].params",
+        "reason": "FrogReturnState switches to the short patrol hop (0.6 x speed, lift 230) once the origin is closer than one chase hop. The Hop module has one speed and lift per state."
+      }
+    ],
+    "passthrough": {
+      "folded_states": [
+        "prepare",
+        "hop"
+      ]
+    }
+  },
+  "editor_metadata": {
+    "notes": "Mirrors the shipped legacy frog (FrogAgent + ten state nodes). The legacy Prepare and Hop states are folded into the Hop module. Numbers are the game's values and are checked by check_godot_contract.py; the two entries under source_binding.unsupported are the parts Schema V1 cannot express exactly.",
+    "estimated": [],
+    "ui": {}
+  }
+}

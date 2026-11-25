@@ -525,3 +525,18 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 
 숲 지형을 고치면 실제 입력으로 입구→전망대 경로와 움푹한 구간 탈출을 다시 확인한다. 자동화된
 경로 검증은 Field Editor의 Traversal 분석을 쓴다.
+
+## Monster Editor core (MONSTER-STEP 1)
+
+`.rtcmonster` 문서 core와 실제 Godot 리소스의 계약 검사다. 설계는 [monster_editor_architecture.md](monster_editor_architecture.md).
+
+| 검사 | 명령 | 확인하는 것 |
+|---|---|---|
+| Python core | `python -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider` | 문서 생성·기본값, 정규 직렬화와 무변경 왕복, 손상 JSON·미지원 버전·NaN·모르는 필드 거절, 원자 저장과 외부 변경 감지, 저장 실패 시 원본 보호, 영역별 검증 규칙(FAIL 코드 44종·WARNING 코드 18종), tick 양자화, 좌표 변환, 프로젝트 파일 검사, 스키마 문서의 표가 코드와 같은지 |
+| 예제 정적 검증 | `python tools/python_monster_editor/validate.py tools/python_monster_editor/examples/*.rtcmonster --project .` | 세 예제의 영역별 상태. `runtime`·`network`는 항상 `NOT_EVALUATED` |
+| Godot 계약 | `python tools/python_monster_editor/check_godot_contract.py --godot <godot>` | `tools/monster_bridge/contract_probe.tscn`을 실제 엔진에서 실행해 딱정벌레·개구리의 EnemyDefinition 값, scene의 body·hurtbox shape, 상태 시간과 FrogAgent export, profile과 SpriteFrames의 clip·frame·region, loot, 복제 상태 매핑, 프로토콜 버전(20), physics tick(60)을 예제와 대조한다. actor를 headless 권위로 150 frame 실행해 idle → patrol 진행과 서버 모드에서 presenter가 없는지도 본다 |
+
+이 검사들이 **확인하지 않는 것**: 데이터 기반 몬스터의 실행. 그런 런타임은 아직 없고, 해당 항목은
+`NOT_EVALUATED`로 출력된다. 기존 몬스터의 스크립트·scene·리소스를 고치면 Godot 계약 검사의 "source files" 항목이
+실패한다 — 예제가 여전히 게임과 같은지 확인한 뒤 `--refresh-bindings`로 해시를 갱신한다.
+CI는 `.github/workflows/python-monster-editor.yml`(Ubuntu·Windows의 pytest, Ubuntu의 Godot 계약 검사)이다.

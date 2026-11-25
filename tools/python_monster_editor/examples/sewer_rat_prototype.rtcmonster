@@ -1,0 +1,491 @@
+{
+  "schema_version": 1,
+  "document_type": "rtcmonster",
+  "monster_id": "sewer_rat_prototype",
+  "metadata": {
+    "display_name": "Sewer Rat (prototype)",
+    "description": "Design fixture for the data-driven runtime: a ground enemy with two attack patterns. It is not game content and must not be published.",
+    "category": "rodent",
+    "rank": "normal",
+    "habitats": [
+      "sewer_region"
+    ],
+    "tags": [
+      "ground",
+      "melee",
+      "fixture"
+    ],
+    "thumbnail": ""
+  },
+  "stats": {
+    "max_health": 16,
+    "attack_damage": 5,
+    "move_speed": 90,
+    "chase_range": 220,
+    "attack_range": 40,
+    "faction": "hostile",
+    "hit_invulnerability_seconds": 0.35,
+    "planned": {
+      "defense": 0,
+      "attack_speed": 1,
+      "knockback_resistance": 0,
+      "stagger_resistance": 0,
+      "damage_resistances": {},
+      "status_resistances": {}
+    }
+  },
+  "movement": {
+    "locomotion": "ground",
+    "gravity": 1100,
+    "ground_brake": 0,
+    "ground_grace_seconds": 0
+  },
+  "sensors": {
+    "target_policy": "nearest_player",
+    "target_keep_scale": 1.35,
+    "leash_distance": null
+  },
+  "assets": {
+    "images": []
+  },
+  "animations": {
+    "clips": []
+  },
+  "presentation": {
+    "faces_right_by_default": true,
+    "visual_scale": [1, 1],
+    "visual_offset": [0, 0],
+    "airborne_speed": 30,
+    "move_speed_threshold": 8,
+    "attack_hit_frame": 0,
+    "roles": {
+      "idle": "",
+      "move": "",
+      "attack": "",
+      "hurt": "",
+      "death": "",
+      "jump_start": "",
+      "jump": "",
+      "fall": "",
+      "land": ""
+    }
+  },
+  "collision": {
+    "body": {
+      "shape": {
+        "type": "rectangle",
+        "center": [0, 0],
+        "size": [30, 18]
+      },
+      "layer": 1,
+      "mask": 1
+    },
+    "hurtboxes": [
+      {
+        "id": "body",
+        "shape": {
+          "type": "rectangle",
+          "center": [0, 0],
+          "size": [34, 22]
+        },
+        "enabled": true
+      },
+      {
+        "id": "head",
+        "shape": {
+          "type": "circle",
+          "center": [16, -4],
+          "radius": 8
+        },
+        "enabled": true
+      }
+    ],
+    "hurtbox_overrides": [],
+    "hitboxes": [
+      {
+        "id": "bite_box",
+        "shape": {
+          "type": "rectangle",
+          "center": [24, 0],
+          "size": [26, 18]
+        }
+      },
+      {
+        "id": "lunge_box",
+        "shape": {
+          "type": "rectangle",
+          "center": [26, 0],
+          "size": [34, 20]
+        }
+      }
+    ]
+  },
+  "attack_patterns": [
+    {
+      "id": "bite",
+      "display_name": "Bite",
+      "kind": "melee",
+      "clip": "",
+      "duration": 0.5,
+      "completion": {
+        "mode": "duration",
+        "min_air_seconds": 0.08,
+        "max_air_seconds": 2.5
+      },
+      "range": {
+        "min": 0,
+        "max": {
+          "stat": "attack_range",
+          "scale": 1,
+          "offset": 0
+        },
+        "vertical": null
+      },
+      "cooldown": 0.4,
+      "priority": 0,
+      "weight": 1,
+      "condition": null,
+      "movement_locked": true,
+      "facing_locked": true,
+      "interrupt": {
+        "on_hurt": "cancel"
+      },
+      "damage": {
+        "multiplier": 1,
+        "type": "physical",
+        "knockback": [90, -20],
+        "hit_policy": "once_per_target",
+        "multi_hit_interval": 0.25,
+        "status_effects": []
+      },
+      "phases": [
+        {
+          "kind": "windup",
+          "start": 0,
+          "end": 0.15
+        },
+        {
+          "kind": "active",
+          "start": 0.15,
+          "end": 0.25
+        },
+        {
+          "kind": "recovery",
+          "start": 0.25,
+          "end": 0.5
+        }
+      ],
+      "events": [
+        {
+          "type": "EnableHitbox",
+          "time": 0.15,
+          "hitbox": "bite_box"
+        },
+        {
+          "type": "DisableHitbox",
+          "time": 0.25,
+          "hitbox": "bite_box"
+        }
+      ]
+    },
+    {
+      "id": "lunge_bite",
+      "display_name": "Lunge bite",
+      "kind": "melee",
+      "clip": "",
+      "duration": 0.9,
+      "completion": {
+        "mode": "duration",
+        "min_air_seconds": 0.08,
+        "max_air_seconds": 2.5
+      },
+      "range": {
+        "min": 60,
+        "max": 140,
+        "vertical": 24
+      },
+      "cooldown": 3,
+      "priority": 1,
+      "weight": 1,
+      "condition": null,
+      "movement_locked": true,
+      "facing_locked": true,
+      "interrupt": {
+        "on_hurt": "cancel"
+      },
+      "damage": {
+        "multiplier": 1.5,
+        "type": "physical",
+        "knockback": [160, -40],
+        "hit_policy": "once_per_target",
+        "multi_hit_interval": 0.25,
+        "status_effects": []
+      },
+      "phases": [
+        {
+          "kind": "windup",
+          "start": 0,
+          "end": 0.3
+        },
+        {
+          "kind": "active",
+          "start": 0.3,
+          "end": 0.55
+        },
+        {
+          "kind": "recovery",
+          "start": 0.55,
+          "end": 0.9
+        }
+      ],
+      "events": [
+        {
+          "type": "LockFacing",
+          "time": 0
+        },
+        {
+          "type": "ApplyMovement",
+          "time": 0.3,
+          "speed_scale": 3,
+          "seconds": 0.25
+        },
+        {
+          "type": "EnableHitbox",
+          "time": 0.3,
+          "hitbox": "lunge_box"
+        },
+        {
+          "type": "DisableHitbox",
+          "time": 0.55,
+          "hitbox": "lunge_box"
+        },
+        {
+          "type": "UnlockFacing",
+          "time": 0.55
+        }
+      ]
+    }
+  ],
+  "behavior": {
+    "initial_state": "idle",
+    "interrupts": {
+      "hurt": {
+        "state": "hurt",
+        "policy": "always"
+      },
+      "death": {
+        "state": "dead"
+      }
+    },
+    "states": [
+      {
+        "id": "idle",
+        "display_name": "",
+        "module": "Wait",
+        "params": {
+          "seconds": 1
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 10,
+            "condition": {
+              "type": "TargetDistance",
+              "op": "<=",
+              "value": {
+                "stat": "chase_range",
+                "scale": 1,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "to": "patrol",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "patrol",
+        "display_name": "",
+        "module": "GroundPatrol",
+        "params": {
+          "radius": 110,
+          "speed_scale": 0.5
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "TargetDistance",
+              "op": "<=",
+              "value": {
+                "stat": "chase_range",
+                "scale": 1,
+                "offset": 0
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "chase",
+        "display_name": "",
+        "module": "ChaseTarget",
+        "params": {
+          "speed_scale": 1
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "patrol",
+            "priority": 20,
+            "condition": {
+              "type": "TargetDistance",
+              "op": ">",
+              "value": {
+                "stat": "chase_range",
+                "scale": 1.35,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "to": "attack",
+            "priority": 10,
+            "condition": {
+              "type": "AttackAvailable",
+              "pattern": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": "attack",
+        "display_name": "",
+        "module": "ExecuteAttackPattern",
+        "params": {
+          "pattern": ""
+        },
+        "animation": {
+          "mode": "pattern",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "AttackPatternCompleted"
+            }
+          },
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "ActionFailed"
+            }
+          }
+        ]
+      },
+      {
+        "id": "hurt",
+        "display_name": "",
+        "module": "HurtReaction",
+        "params": {
+          "seconds": 0.2
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "dead",
+        "display_name": "",
+        "module": "Death",
+        "params": {
+          "removal_seconds": 0.5
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": []
+      }
+    ],
+    "phases": []
+  },
+  "loot": {
+    "loot_table_id": "sewer_rat_prototype_loot",
+    "entries": [
+      {
+        "item_id": "moss_fiber",
+        "weight": 2,
+        "min_amount": 1,
+        "max_amount": 1
+      },
+      {
+        "item_id": "rusty_scrap",
+        "weight": 1,
+        "min_amount": 1,
+        "max_amount": 1
+      }
+    ],
+    "apply_difficulty_multiplier": true
+  },
+  "source_binding": null,
+  "editor_metadata": {
+    "notes": "Every number in this document is an estimate chosen for the fixture, not a value from the game. There is no art, no Godot resource and no runtime that can execute it yet.",
+    "estimated": [
+      "stats",
+      "collision",
+      "attack_patterns",
+      "behavior",
+      "loot"
+    ],
+    "ui": {}
+  }
+}

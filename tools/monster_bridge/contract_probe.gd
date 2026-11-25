@@ -1,0 +1,245 @@
+extends Node
+## Read-only probe for the Monster Editor data contract.
+##
+## Dumps what the game actually ships for every EnemyDefinition - stats, actor
+## scene structure, state timings, collision shapes, animation profile and loot -
+## and runs each actor for a moment as a headless authority. Python compares the
+## result with the .rtcmonster example documents, so the contract is checked
+## against real Godot resources instead of a mock.
+##
+## It writes exactly one file: the JSON path given after `--`. It never saves a
+## resource and never touches user:// state.
+##
+##   godot --headless --path . res://tools/monster_bridge/contract_probe.tscn -- <output.json>
+
+const PROTOCOL := 1
+const RUN_FRAMES := 150
+
+func _ready() -> void:
+	var args := OS.get_cmdline_user_args()
+	if args.size() != 1 or not args[0].ends_with(".json"):
+		push_error("contract_probe needs one argument: the output .json path")
+		get_tree().quit(2)
+		return
+	var result := {
+		"protocol": PROTOCOL,
+		"godot_version": Engine.get_version_info().string,
+		"physics_ticks_per_second": Engine.physics_ticks_per_second,
+		"network_protocol_version": NetworkProtocol.VERSION,
+		"gravity": EnemyAgent.GRAVITY,
+		"target_keep_range_scale": EnemyAgent.TARGET_KEEP_RANGE_SCALE,
+		"snapshot_states": EnemyRuntimeSnapshot.State.keys(),
+		"content_errors": Array(ContentRegistry.validate_all()),
+		"items": [],
+		"enemies": {},
+	}
+	var definitions: Array[EnemyDefinition] = []
+	for definition in ContentRegistry.all_definitions():
+		if definition is ItemDefinition:
+			result.items.append(String(definition.id))
+		elif definition is EnemyDefinition:
+			definitions.append(definition)
+	result.items.sort()
+	for definition in definitions:
+		var entry := _describe(definition)
+		entry["run"] = await _run(definition)
+		result.enemies[String(definition.id)] = entry
+	var file := FileAccess.open(args[0], FileAccess.WRITE)
+	if file == null:
+		push_error("contract_probe cannot write %s" % args[0])
+		get_tree().quit(1)
+		return
+	file.store_string(JSON.stringify(result, "  "))
+	file.close()
+	print("MONSTER CONTRACT PROBE PASS (%d enemies)" % definitions.size())
+	get_tree().quit(0)
+
+func _describe(definition: EnemyDefinition) -> Dictionary:
+	var entry := {
+		"definition_path": definition.resource_path,
+		"display_name": definition.display_name,
+		"max_health": definition.max_health,
+		"attack_damage": definition.attack_damage,
+		"move_speed": definition.move_speed,
+		"chase_range": definition.chase_range,
+		"attack_range": definition.attack_range,
+		"faction": String(definition.faction),
+		"loot_table_id": String(definition.loot_table_id),
+		"definition_errors": Array(definition.validate_definition(ContentRegistry)),
+		"actor_scene_path": definition.actor_scene.resource_path if definition.actor_scene != null else "",
+	}
+	var table := ContentRegistry.get_definition(definition.loot_table_id) as LootTableDefinition
+	if table != null:
+		entry["loot"] = {
+			"path": table.resource_path,
+			"item_ids": table.item_ids.map(func(id: StringName) -> String: return String(id)),
+			"weights": Array(table.weights),
+			"min_amounts": Array(table.min_amounts),
+			"max_amounts": Array(table.max_amounts),
+			"apply_difficulty_multiplier": table.apply_difficulty_multiplier,
+		}
+	if definition.actor_scene == null:
+		return entry
+	# Not added to the tree: _ready does not run, only the authored scene data is read.
+	var actor := definition.actor_scene.instantiate() as EnemyAgent
+	if actor == null:
+		return entry
+	entry["agent_script"] = (actor.get_script() as Script).resource_path
+	entry["agent_properties"] = _exported(actor)
+	entry["agent_constants"] = _constants(actor)
+	entry["collision_layer"] = actor.collision_layer
+	entry["collision_mask"] = actor.collision_mask
+	entry["body"] = _shapes(actor)
+	var hurtbox := actor.get_node_or_null("%Hurtbox") as HurtboxComponent
+	if hurtbox != null:
+		entry["hurtbox"] = {
+			"collision_layer": hurtbox.collision_layer,
+			"collision_mask": hurtbox.collision_mask,
+			"shapes": _shapes(hurtbox),
+		}
+	var health := actor.get_node_or_null("%Health") as HealthComponent
+	if health != null:
+		entry["invulnerability_seconds"] = health.invulnerability_seconds
+	var states: Array[Dictionary] = []
+	var states_root := actor.get_node_or_null("%States")
+	if states_root != null:
+		for child in states_root.get_children():
+			if child is EnemyState:
+				states.append({
+					"id": child.name.to_snake_case(),
+					"script": (child.get_script() as Script).resource_path,
+					"snapshot_state": child.snapshot_state(),
+					"properties": _exported(child),
+					"constants": _constants(child),
+				})
+	entry["states"] = states
+	entry["animation_profile_path"] = actor.animation_profile_path
+	actor.free()
+	if not String(entry.animation_profile_path).is_empty():
+		entry["profile"] = _profile(entry.animation_profile_path)
+	return entry
+
+## Exported script variables with plain values, which is what a designer can tune.
+func _exported(node: Object) -> Dictionary:
+	var values := {}
+	for property in node.get_property_list():
+		var usage: int = property.usage
+		if usage & PROPERTY_USAGE_SCRIPT_VARIABLE == 0 or usage & PROPERTY_USAGE_STORAGE == 0:
+			continue
+		var value: Variant = node.get(property.name)
+		if value is float or value is int or value is bool:
+			values[property.name] = value
+		elif value is String or value is StringName:
+			values[property.name] = String(value)
+	return values
+
+## Numeric script constants, including the ones inherited from base scripts.
+func _constants(node: Object) -> Dictionary:
+	var values := {}
+	var script := node.get_script() as Script
+	while script != null:
+		var constants := script.get_script_constant_map()
+		for key in constants:
+			var value: Variant = constants[key]
+			if (value is float or value is int) and not values.has(key):
+				values[key] = value
+		script = script.get_base_script()
+	return values
+
+func _shapes(parent: Node) -> Array[Dictionary]:
+	var shapes: Array[Dictionary] = []
+	for child in parent.get_children():
+		var collision := child as CollisionShape2D
+		if collision == null or collision.shape == null:
+			continue
+		var shape := {
+			"class": collision.shape.get_class(),
+			"position": [collision.position.x, collision.position.y],
+			"disabled": collision.disabled,
+		}
+		if collision.shape is RectangleShape2D:
+			var size: Vector2 = (collision.shape as RectangleShape2D).size
+			shape["size"] = [size.x, size.y]
+		elif collision.shape is CircleShape2D:
+			shape["radius"] = (collision.shape as CircleShape2D).radius
+		shapes.append(shape)
+	return shapes
+
+func _profile(path: String) -> Dictionary:
+	var profile := ResourceLoader.load(path) as EnemyAnimationProfile
+	if profile == null:
+		return {"error": "cannot load %s" % path}
+	var data := {
+		"errors": Array(profile.validation_errors()),
+		"sprite_frames_path": profile.sprite_frames.resource_path if profile.sprite_frames != null else "",
+		"faces_right_by_default": profile.faces_right_by_default,
+		"visual_scale": [profile.visual_scale.x, profile.visual_scale.y],
+		"visual_offset": [profile.visual_offset.x, profile.visual_offset.y],
+		"attack_hit_frame": profile.attack_hit_frame,
+		"attack_hit_seconds": profile.frame_start_seconds(profile.attack_animation, profile.attack_hit_frame),
+		"airborne_speed": profile.airborne_speed,
+		"move_speed_threshold": profile.move_speed_threshold,
+		"roles": {
+			"idle": String(profile.idle_animation), "move": String(profile.move_animation),
+			"attack": String(profile.attack_animation), "hurt": String(profile.hurt_animation),
+			"death": String(profile.death_animation), "jump_start": String(profile.jump_start_animation),
+			"jump": String(profile.jump_animation), "fall": String(profile.fall_animation),
+			"land": String(profile.land_animation),
+		},
+		"animations": {},
+	}
+	if profile.sprite_frames == null:
+		return data
+	var frames := profile.sprite_frames
+	for animation in frames.get_animation_names():
+		var rows: Array[Dictionary] = []
+		for index in frames.get_frame_count(animation):
+			var texture := frames.get_frame_texture(animation, index)
+			var atlas := texture as AtlasTexture
+			var row := {"duration": frames.get_frame_duration(animation, index)}
+			if atlas != null and atlas.atlas != null:
+				row["texture_path"] = atlas.atlas.resource_path
+				row["region"] = [atlas.region.position.x, atlas.region.position.y, atlas.region.size.x, atlas.region.size.y]
+			elif texture != null:
+				row["texture_path"] = texture.resource_path
+				row["region"] = [0.0, 0.0, float(texture.get_width()), float(texture.get_height())]
+			rows.append(row)
+		data.animations[String(animation)] = {
+			"fps": frames.get_animation_speed(animation),
+			"loop": frames.get_animation_loop(animation),
+			"seconds": profile.animation_seconds(animation),
+			"frames": rows,
+		}
+	return data
+
+## Runs the real actor scene as an authority with no player and no floor: it must
+## instantiate, run its state machine and stay free of presentation nodes.
+func _run(definition: EnemyDefinition) -> Dictionary:
+	var report := {"instantiated": false, "states_seen": [], "presenter_in_server_mode": false,
+		"presenter_in_presentation_mode": false, "max_health": 0.0}
+	if definition.actor_scene == null:
+		return report
+	var holder := Node2D.new()
+	add_child(holder)
+	for presentation in [false, true]:
+		var actor := definition.actor_scene.instantiate() as EnemyAgent
+		if actor == null:
+			break
+		actor.setup_enemy(definition, 1, true, &"", presentation)
+		if not presentation:
+			actor.state_changed.connect(func(id: StringName) -> void: report.states_seen.append(String(id)))
+		holder.add_child(actor)
+		report.instantiated = true
+		if presentation:
+			await get_tree().process_frame
+			report.presenter_in_presentation_mode = actor.animation_presenter != null
+		else:
+			for frame in RUN_FRAMES:
+				await get_tree().physics_frame
+			report.presenter_in_server_mode = actor.animation_presenter != null
+			report.max_health = actor.health.max_health
+		holder.remove_child(actor)
+		actor.free()
+	remove_child(holder)
+	holder.free()
+	return report
