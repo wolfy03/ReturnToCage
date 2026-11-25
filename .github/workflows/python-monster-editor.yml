@@ -1,35 +1,59 @@
 name: Python Monster Editor
 
+# Everything the monster contract depends on. A change to any of these can make
+# the example documents or the registry contract wrong, so each one runs the checks.
 on:
   push:
     paths:
       - 'tools/python_monster_editor/**'
       - 'tools/monster_bridge/**'
       - 'docs/monster_editor*.md'
-      - 'gameplay/actors/enemies/**'
-      - 'gameplay/components/network_enemy_component.gd'
+      - 'project.godot'
+      - '.godot-version'
+      - 'autoload/content_registry.gd'
+      - 'core/network/network_protocol.gd'
       - 'core/models/network/enemy_runtime_snapshot.gd'
+      - 'data/definitions/content_definition.gd'
+      - 'data/definitions/enemy_definition.gd'
+      - 'data/definitions/loot_table_definition.gd'
       - 'data/content/enemies/**'
       - 'data/content/loot/**'
-      - 'data/definitions/enemy_definition.gd'
+      - 'data/content/items/**'
+      - 'gameplay/actors/enemies/**'
+      - 'gameplay/components/health_component.gd'
+      - 'gameplay/components/hurtbox_component.gd'
+      - 'gameplay/components/damage_context.gd'
+      - 'gameplay/components/network_enemy_component.gd'
       - 'presentation/enemy/**'
       - 'presentation/definitions/enemy_animation_profile.gd'
       - 'assets/characters/enemies/**'
+      - 'world/multiplayer/enemy_spawn_manager.gd'
       - '.github/workflows/python-monster-editor.yml'
   pull_request:
     paths:
       - 'tools/python_monster_editor/**'
       - 'tools/monster_bridge/**'
       - 'docs/monster_editor*.md'
-      - 'gameplay/actors/enemies/**'
-      - 'gameplay/components/network_enemy_component.gd'
+      - 'project.godot'
+      - '.godot-version'
+      - 'autoload/content_registry.gd'
+      - 'core/network/network_protocol.gd'
       - 'core/models/network/enemy_runtime_snapshot.gd'
+      - 'data/definitions/content_definition.gd'
+      - 'data/definitions/enemy_definition.gd'
+      - 'data/definitions/loot_table_definition.gd'
       - 'data/content/enemies/**'
       - 'data/content/loot/**'
-      - 'data/definitions/enemy_definition.gd'
+      - 'data/content/items/**'
+      - 'gameplay/actors/enemies/**'
+      - 'gameplay/components/health_component.gd'
+      - 'gameplay/components/hurtbox_component.gd'
+      - 'gameplay/components/damage_context.gd'
+      - 'gameplay/components/network_enemy_component.gd'
       - 'presentation/enemy/**'
       - 'presentation/definitions/enemy_animation_profile.gd'
       - 'assets/characters/enemies/**'
+      - 'world/multiplayer/enemy_spawn_manager.gd'
       - '.github/workflows/python-monster-editor.yml'
   workflow_dispatch:
 
@@ -51,34 +75,72 @@ jobs:
           python-version: '3.14.5'
       - name: Install pinned pytest
         run: python -m pip install -r tools/python_monster_editor/requirements.txt
-      - name: Document, storage, validation and contract tests
-        run: python -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider
+      - name: Core tests (document, edits, registry, validation, catalog, assets, storage, geometry, timing, contract)
+        run: python -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider --junitxml=monster-editor-tests.xml
       - name: Static validation of the example documents
         shell: bash
-        run: python -X utf8 tools/python_monster_editor/validate.py tools/python_monster_editor/examples/*.rtcmonster --project .
+        run: python -X utf8 tools/python_monster_editor/validate.py tools/python_monster_editor/examples/*.rtcmonster --project . | tee monster-editor-examples.txt
+      - name: Schema reference in the documentation is current
+        shell: bash
+        run: |
+          cd tools/python_monster_editor
+          python -X utf8 -m rtcmonster.reference --update ../../docs/monster_editor_schema_v1.md
+          git diff --exit-code -- ../../docs/monster_editor_schema_v1.md
+      - name: Core measurements (informational)
+        run: python -X utf8 tools/python_monster_editor/benchmark.py --output monster-editor-benchmark.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Monster-Editor-core-${{ matrix.os }}
+          path: |
+            monster-editor-tests.xml
+            monster-editor-examples.txt
+            monster-editor-benchmark.json
 
   godot-contract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14.5'
-      - name: Install pinned Godot
+      - name: Install the pinned Godot and confirm its version
         shell: bash
         run: |
           version=$(cat .godot-version)
           archive="Godot_v${version}-stable_linux.x86_64.zip"
           curl --fail --location --retry 3 "https://github.com/godotengine/godot-builds/releases/download/${version}-stable/${archive}" -o "$RUNNER_TEMP/godot.zip"
           unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
-          chmod +x "$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64"
-          echo "GODOT=$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64" >> "$GITHUB_ENV"
+          godot="$RUNNER_TEMP/godot/Godot_v${version}-stable_linux.x86_64"
+          chmod +x "$godot"
+          actual=$("$godot" --version)
+          echo "Godot $actual"
+          case "$actual" in "$version".*) ;; *) echo "expected Godot $version, got $actual"; exit 1 ;; esac
+          echo "GODOT=$godot" >> "$GITHUB_ENV"
       - name: Import project resources
+        shell: bash
         run: |
-          "$GODOT" --headless --path . --editor --quit
-      - name: Compare the example documents with the real Godot resources
-        run: python -u -X utf8 tools/python_monster_editor/check_godot_contract.py --godot "$GODOT" --artifacts "$RUNNER_TEMP/monster-contract"
+          mkdir -p "$RUNNER_TEMP/monster-contract"
+          timeout 600 "$GODOT" --headless --path . --editor --quit 2>&1 | tee "$RUNNER_TEMP/monster-contract/import.log"
+          if grep -E "SCRIPT ERROR:|Parse Error" "$RUNNER_TEMP/monster-contract/import.log"; then
+            echo "the project import reported script errors"; exit 1
+          fi
+      - name: Environment, registry and legacy contracts against the real engine
+        run: python -u -X utf8 tools/python_monster_editor/check_godot_contract.py --godot "$GODOT" --artifacts "$RUNNER_TEMP/monster-contract/live"
+      - name: A new enemy needs no example, and a broken one is caught (isolated project copy)
+        run: python -u -X utf8 tools/python_monster_editor/check_contract_extensibility.py --godot "$GODOT" --artifacts "$RUNNER_TEMP/monster-contract/extensibility"
+      - name: Record what was verified
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "ref=$GITHUB_REF"
+            echo "godot=$("$GODOT" --version 2>/dev/null || echo unknown)"
+            echo "python=$(python --version)"
+            echo "runner=$RUNNER_OS $RUNNER_ARCH"
+          } > "$RUNNER_TEMP/monster-contract/environment.txt"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
