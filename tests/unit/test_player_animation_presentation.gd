@@ -120,6 +120,16 @@ func _test_scene_separation(t: Node) -> void:
 	presented._setup_presentation()
 	t.assert_equal(presented.presentation_anchor.get_child_count(), 1, "presentation setup is idempotent")
 	t.assert_true(visual.presenter.sprite.visible and not visual.presenter.placeholder.visible, "the shipped profile displays the production sprite instead of the Polygon placeholder")
+	presented.movement.mode = MovementComponent.Mode.AIR
+	presented.velocity = Vector2(80, 100)
+	visual.presenter.refresh()
+	t.assert_equal(visual.presenter.current_animation(), &"fall", "player falls before touching the ground")
+	presented.movement.mode = MovementComponent.Mode.GROUND
+	presented.velocity.y = 0.0
+	visual.presenter.refresh()
+	t.assert_equal(visual.presenter.current_animation(), &"land", "air-to-ground transition plays the landing sprite")
+	visual.presenter.refresh(0.31)
+	t.assert_equal(visual.presenter.current_animation(), &"run", "landing returns to locomotion after playing once")
 	layer.queue_free()
 	await t.get_tree().process_frame
 	await t.get_tree().process_frame

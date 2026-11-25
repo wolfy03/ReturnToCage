@@ -10,6 +10,7 @@ extends Resource
 @export var run_animation: StringName = &"run"
 @export var jump_animation: StringName = &"jump"
 @export var fall_animation: StringName = &"fall"
+@export var land_animation: StringName = &""
 @export var climb_animation: StringName = &"climb"
 @export var climb_idle_animation: StringName = &"climb_idle"
 @export var dodge_animation: StringName = &"dodge"
@@ -83,5 +84,10 @@ func validation_errors() -> PackedStringArray:
 			errors.append("%s animation '%s' is missing" % [semantic, animation])
 		elif sprite_frames.get_frame_count(animation) <= 0:
 			errors.append("%s animation '%s' must contain frames" % [semantic, animation])
+	if not land_animation.is_empty():
+		if not sprite_frames.has_animation(land_animation) or sprite_frames.get_frame_count(land_animation) <= 0:
+			errors.append("land animation '%s' must contain frames" % land_animation)
+		elif sprite_frames.get_animation_loop(land_animation):
+			errors.append("land animation '%s' must play once" % land_animation)
 	return errors
 

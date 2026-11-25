@@ -8,13 +8,13 @@ The nine-slice occupies the same rectangle as the collision shape. The whole rec
 
 A draft containing a terrain surface writes Schema V5. The surface stores the theme ID, texture, source dimensions and effective margins. This captures overrides and allows geometry validation without a project or Godot. Legacy drafts continue writing their original V2, V3 or V4 shape. Unknown fields cause a read error before a document can be replaced. The bridge checks that the theme is registered and the PNG exists in the same project snapshot before publishing. Atlas files are project dependencies and remain outside the Scene/RegionDefinition transaction.
 
-The two shipped diagnostic atlases exercise sewer and forest registrations. They are test patterns; production art should replace them only after repeat seams and metadata have been checked.
+The sewer theme uses the hand-edited concrete atlas on the floor, the three platforms and the ladder landing. Its normalized texture keeps the registered 29 × 22 canvas and existing margins. The forest diagnostic theme continues to exercise nine-slice rendering in the editor tests.
 
 ## Editing and verification
 
 Use the library's platform brush theme for Paint, Rectangle and drag placement. With a platform selected, the Inspector switches between legacy and a registered atlas, and accepts an optional PNG or margin override. The margin order is left, top, right, bottom. Applying an appearance does not resize an existing platform; enlarge it first if its current size is below the border minimum. Drag resize clamps to the minimum. Brush creation fits the minimum before committing. Appearance edits and placement presets use the existing undo stack.
 
-The Windows bundle includes the two diagnostic themes for use without Godot. Selecting a project folder loads that project's registrations. A missing or invalid atlas is shown as a crossed red platform and reported by Python validation. Godot conversion verifies the actual project assets and imported texture UID before staging the two-file transaction. The PNG must have its Godot-generated .png.import sidecar in the target project. The bridge rejects settings or UIDs that its isolated import had to rewrite.
+The Windows bundle includes both the sewer and forest themes for use without Godot. Selecting a project folder loads that project's registrations. A missing or invalid atlas is shown as a crossed red platform and reported by Python validation. Godot conversion verifies the actual project assets and imported texture UID before staging the two-file transaction. The PNG must have its Godot-generated .png.import sidecar in the target project. The bridge rejects settings or UIDs that its isolated import had to rewrite.
 
 From the repository root, run the paired pixel comparison and isolated Sewer publication with the official Windows Godot executable:
 

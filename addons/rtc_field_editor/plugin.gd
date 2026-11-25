@@ -636,7 +636,7 @@ func _begin_stroke(world: Vector2) -> void:
 	var platforms: Array[FieldPlatform] = []
 	if _mode.selected != Stroke.Mode.RECTANGLE:
 		for node in root.find_children("*", "StaticBody2D", true, false):
-			if node is FieldPlatform and node.owner == root:
+			if node is FieldPlatform and node.owner == root and not node.get_meta(&"terrain_stroke_protected", false):
 				platforms.append(node)
 	if _mode.selected == Stroke.Mode.DECORATION:
 		if not _prepare_decoration(root, world):

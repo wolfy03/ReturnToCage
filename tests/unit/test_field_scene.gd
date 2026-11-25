@@ -13,12 +13,15 @@ func run(t: Node) -> void:
 	}
 	t.assert_equal(scene.get_node("Terrain").get_child_count(), 4, "four platforms are authored exactly once")
 	for platform in expected:
-		var body := scene.get_node("Terrain/" + platform) as StaticBody2D
+		var body := scene.get_node("Terrain/" + platform) as FieldPlatform
+		t.assert_true(body != null and body.has_terrain(), "sewer platform uses the concrete atlas")
 		var collision := body.get_node("CollisionShape2D") as CollisionShape2D
 		t.assert_equal(body.position, expected[platform][0], "authored platform position " + platform)
 		t.assert_equal((collision.shape as RectangleShape2D).size, expected[platform][1], "authored platform size " + platform)
 		t.assert_equal(Vector2i(body.collision_layer, body.collision_mask), Vector2i(1, 1), "authored platform collision bits")
 		t.assert_true(not collision.one_way_collision, "original platforms remain solid")
+	var landing := scene.get_node("Landing") as FieldPlatform
+	t.assert_true(landing != null and landing.has_terrain(), "ladder landing uses the concrete atlas")
 	t.assert_true(scene.get_node("Landing/CollisionShape2D").one_way_collision, "ladder landing remains one-way")
 	var enemy := scene.get_node("SpawnPoints/SewerBeetle") as FieldEnemySpawnPoint
 	t.assert_equal([enemy.enemy_id, enemy.position], [&"sewer_beetle", Vector2(970, 525)], "original enemy placement preserved")

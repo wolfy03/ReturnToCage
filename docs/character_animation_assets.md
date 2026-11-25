@@ -239,22 +239,22 @@ complete manifest, deterministic generated resource, and activated production pr
 | Semantic | Source sheet | Grid | Frames | FPS | Loop |
 |---|---|---:|---:|---:|---:|
 | `idle` | `hamster_idle.png` | 4×2 | 8 | 9 | yes |
-| `run` | `hamster_run_run.png` | 4×2 | 8 | 14 | yes |
+| `run` | `hamster_walk.png` | 4×2 | 8 | 14 | yes |
 | `jump` | `hamster_jump_jump.png` | 3×2 | 6 | 11 | no |
 | `fall` | `hamster_fall.png` | 3×2 | 6 | 9 | yes |
+| `land` | `hamster_land.png` | 3×2 | 6 | 20 | no |
 | `climb` | `hamster_climb_ladder.png` | 4×2 | 8 | 10 | yes |
 | `climb_idle` | `hamster_climb_ladder.png` | 4×2 | 8 | 6 | no |
 | `dodge` | `hamster_dodge.png` | 4×2 | 8 | 12 | no |
 | `hurt` | `hamster_hurt.png` | 4×2 | 8 | 12 | no |
 | `death` | `hamster_death.png` | 4×2 | 8 | 10 | no |
 | `attack_1` | `hamster_attack_one_handed.png` | 4×2 | 8 | 12 | no |
-| `attack_2` | `hamster_attack_one_handed.png` | 4×2 | 8 | 12 | no |
+| `attack_2` | `hamster_attack_2.png` | 4×2 | 8 | 12 | no |
 | `attack_3` | `hamster_attack_one_handed.png` | 4×2 | 8 | 12 | no |
 
-`climb_idle → climb` and `attack_2/attack_3 → attack_1` are explicit temporary semantic aliases.
-They are separate manifest entries, not gameplay or presenter branches, so a dedicated sheet can
-replace only the corresponding texture later. `hamster_walk.png` is retained as an unused source
-asset; there is no walk semantic or walk/run gameplay split yet.
+`climb_idle → climb` and `attack_3 → attack_1` are explicit temporary semantic
+aliases. The hand-aligned walk sheet drives the existing moving-ground clip.
+The optional `land` clip plays once after an air-to-ground transition.
 
 The production profile uses `visual_scale = (0.35, 0.35)` and `visual_offset = (0, -72)`. These
 transforms affect only the presentation child. Attack clips use frame partitions `[0,3)`, `[3,5)`,
@@ -290,7 +290,7 @@ back to the manifest.
 
 Do not hide missing art in gameplay or presenter code. A temporary semantic alias must be an explicit
 manifest entry and documented in the shipped mapping. The currently approved aliases are only
-`climb_idle → climb` and `attack_2/attack_3 → attack_1`.
+`climb_idle → climb` and `attack_3 → attack_1`.
 
 ### Asset readiness checklist
 

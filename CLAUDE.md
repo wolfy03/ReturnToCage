@@ -158,7 +158,7 @@ python tools/test_multiplayer_forest.py       --godot <godot> --players 3
   바꾼다(그래야 이후 누락이 CI 에서 바로 드러난다). 일부만 있으면 placeholder 를 그대로 쓴다 —
   Polygon clip과 sprite clip을 섞지 않는다. 전용 sheet가 아직 없는 semantic은 manifest에서
   명시적인 별도 entry로 같은 texture를 임시 참조할 수 있다. 현재 `climb_idle → climb`,
-  `attack_2/attack_3 → attack_1`만 문서화된 temporary alias이며 gameplay/presenter 코드에 alias
+  `attack_3 → attack_1`만 문서화된 temporary alias이며 gameplay/presenter 코드에 alias
   분기를 만들지 않는다. `PlaceholderVisual` 은 활성화 후에도 diagnostic fallback으로 씬에 남긴다.
 - **art 때문에 gameplay 를 바꾸지 않는다.** production pose 가 timing 과 안 맞아 보이면
   `AttackAnimationBinding` 의 frame partition 을 먼저 맞춘다 — `AttackDefinition` 의
