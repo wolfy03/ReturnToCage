@@ -15,8 +15,8 @@ active_end_frame = 5
 script = ExtResource("2_binding")
 presentation_key = &"attack_2"
 animation_name = &"attack_2"
-startup_end_frame = 3
-active_end_frame = 5
+startup_end_frame = 4
+active_end_frame = 6
 
 [sub_resource type="Resource" id="Attack3"]
 script = ExtResource("2_binding")
@@ -28,6 +28,7 @@ active_end_frame = 5
 [resource]
 script = ExtResource("1_profile")
 sprite_frames = ExtResource("3_frames")
+land_animation = &"land"
 visual_scale = Vector2(0.35, 0.35)
 visual_offset = Vector2(0, -72)
 attack_bindings = Array[AttackAnimationBinding]([SubResource("Attack1"), SubResource("Attack2"), SubResource("Attack3")])

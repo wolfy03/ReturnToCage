@@ -3,7 +3,7 @@
 KO = {
     "terrain_brush": "플랫폼 브러시 · 단색",
     "terrain_theme": "지형 표시 / 테마", "terrain_legacy": "기존 단색",
-    "theme_sewer_concrete": "하수구 콘크리트 · 테스트", "theme_forest_ground": "숲 지형 · 테스트",
+    "theme_sewer_concrete": "하수구 콘크리트", "theme_forest_ground": "숲 지형 · 테스트",
     "theme_forest_grass_dirt": "숲 풀·흙 · 임시", "theme_forest_soil": "숲 흙 · 임시",
     "theme_forest_tree_root": "나무뿌리 · 임시", "theme_forest_fallen_log": "쓰러진 통나무 · 임시",
     "terrain_texture": "지형 PNG", "terrain_margins": "여백 (좌, 상, 우, 하)",

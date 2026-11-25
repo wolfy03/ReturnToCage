@@ -737,9 +737,7 @@ func _test_shipped_profile_state(t: Node) -> void:
 	t.assert_true(manifest != null, "the production player sprite manifest loads")
 	t.assert_true(manifest.validation_errors().is_empty(), "the production player sprite manifest validates")
 	t.assert_true(manifest.production_readiness_errors().is_empty(), "the production manifest provides all required semantics")
-	t.assert_equal(manifest.animations.size(), PlayerSpriteManifest.REQUIRED_SEMANTICS.size(), "the production manifest authors exactly the 12 required semantic clips")
 	t.assert_true(frames != null, "the generated production SpriteFrames resource loads")
-	t.assert_equal(frames.get_animation_names().size(), PlayerSpriteManifest.REQUIRED_SEMANTICS.size(), "the generated resource contains exactly 12 semantic animations")
 	t.assert_true(profile != null, "the shipped player animation profile loads")
 	t.assert_true(profile.validation_errors().is_empty(), "the active production animation profile validates")
 	t.assert_true(profile.sprite_frames == frames, "the shipped profile uses the generated production SpriteFrames")
@@ -749,19 +747,22 @@ func _test_shipped_profile_state(t: Node) -> void:
 
 	var expected := {
 		&"idle": [4, 2, 8, 9.0, true, "hamster_idle.png"],
-		&"run": [4, 2, 8, 14.0, true, "hamster_run_run.png"],
+		&"run": [4, 2, 8, 14.0, true, "hamster_walk.png"],
 		&"jump": [3, 2, 6, 11.0, false, "hamster_jump_jump.png"],
 		&"fall": [3, 2, 6, 9.0, true, "hamster_fall.png"],
+		&"land": [3, 2, 6, 20.0, false, "hamster_land.png"],
 		&"climb": [4, 2, 8, 10.0, true, "hamster_climb_ladder.png"],
 		&"climb_idle": [4, 2, 8, 6.0, false, "hamster_climb_ladder.png"],
 		&"dodge": [4, 2, 8, 12.0, false, "hamster_dodge.png"],
 		&"hurt": [4, 2, 8, 12.0, false, "hamster_hurt.png"],
 		&"death": [4, 2, 8, 10.0, false, "hamster_death.png"],
 		&"attack_1": [4, 2, 8, 12.0, false, "hamster_attack_one_handed.png"],
-		&"attack_2": [4, 2, 8, 12.0, false, "hamster_attack_one_handed.png"],
+		&"attack_2": [4, 2, 8, 12.0, false, "hamster_attack_2.png"],
 		&"attack_3": [4, 2, 8, 12.0, false, "hamster_attack_one_handed.png"],
 	}
-	for semantic: StringName in PlayerSpriteManifest.REQUIRED_SEMANTICS:
+	t.assert_equal(manifest.animations.size(), expected.size(), "the production manifest contains every expected clip")
+	t.assert_equal(frames.get_animation_names().size(), expected.size(), "the generated resource contains every expected clip")
+	for semantic: StringName in expected:
 		var entry := manifest.entry(semantic)
 		var authored: Array = expected[semantic]
 		t.assert_true(entry != null, "the production manifest authors '%s'" % semantic)
@@ -779,7 +780,7 @@ func _test_shipped_profile_state(t: Node) -> void:
 		t.assert_true(binding != null and not binding.animation_name.is_empty(), "'%s' names a clip" % key)
 
 	# Everything the presenter can ask for must be there.
-	for semantic in PlayerSpriteManifest.REQUIRED_SEMANTICS:
+	for semantic: StringName in expected:
 		t.assert_true(profile.sprite_frames.has_animation(semantic), "production art provides the '%s' clip" % semantic)
 		t.assert_true(profile.sprite_frames.get_frame_count(semantic) > 0, "production clip '%s' has frames" % semantic)
 	for binding in profile.attack_bindings:

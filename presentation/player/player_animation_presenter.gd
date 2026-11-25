@@ -26,6 +26,8 @@ var _attack_active: float = 0.0
 var _attack_recovery: float = 0.0
 var _dodge_direction: float = 1.0
 var _restart_requested: bool = false
+var _was_airborne := false
+var _land_remaining := 0.0
 ## Magnitude only. Facing sets the sign of x around it, so an authored visual
 ## scale and a left-facing actor compose instead of overwriting each other.
 var _base_scale: Vector2 = Vector2.ONE
@@ -34,6 +36,8 @@ var _warned_missing: Dictionary[StringName, bool] = {}
 func configure(p_actor: PlayerActor) -> void:
 	_disconnect_actor()
 	actor = p_actor
+	_was_airborne = false
+	_land_remaining = 0.0
 	_apply_profile()
 	if actor == null:
 		set_process(false)
@@ -66,7 +70,10 @@ func refresh(delta: float = 0.0) -> void:
 		return
 	if not actor.is_simulation_authority():
 		_advance_remote_transient(delta)
+	_update_landing(delta)
 	_resolve_presentation()
+	if _current_animation != profile.land_animation:
+		_land_remaining = 0.0
 
 func current_animation() -> StringName:
 	return _current_animation
@@ -153,6 +160,19 @@ func _resolve_presentation() -> void:
 				return
 	_apply_locomotion()
 
+func _update_landing(delta: float) -> void:
+	_land_remaining = maxf(0.0, _land_remaining - delta)
+	var mode := actor.movement.mode
+	if mode == MovementComponent.Mode.GROUND and _was_airborne:
+		var frame_count := _frame_count(profile.land_animation)
+		if frame_count > 0:
+			var frames := profile.sprite_frames
+			var fps := frames.get_animation_speed(profile.land_animation)
+			if fps > 0.0:
+				for index in frame_count:
+					_land_remaining += frames.get_frame_duration(profile.land_animation, index) / fps
+	_was_airborne = mode == MovementComponent.Mode.AIR
+
 func _apply_locomotion() -> void:
 	var animation := profile.idle_animation
 	var ignore_facing := false
@@ -164,8 +184,10 @@ func _apply_locomotion() -> void:
 		MovementComponent.Mode.AIR:
 			animation = profile.jump_animation if actor.velocity.y < 0.0 else profile.fall_animation
 		MovementComponent.Mode.GROUND:
-			animation = profile.run_animation if absf(actor.velocity.x) > RUN_VELOCITY_THRESHOLD \
-					else profile.idle_animation
+			if _land_remaining > 0.0:
+				animation = profile.land_animation
+			elif absf(actor.velocity.x) > RUN_VELOCITY_THRESHOLD:
+				animation = profile.run_animation
 	_apply_animation(animation, false, 0)
 	_apply_facing(_canonical_facing() if ignore_facing else actor.facing)
 
