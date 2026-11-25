@@ -85,6 +85,13 @@ func _describe(definition: EnemyDefinition) -> Dictionary:
 	if actor == null:
 		return entry
 	entry["agent_script"] = (actor.get_script() as Script).resource_path
+	# What every enemy actor must have, whatever kind of monster it is.
+	entry["components"] = {
+		"health": actor.get_node_or_null("%Health") is HealthComponent,
+		"hurtbox": actor.get_node_or_null("%Hurtbox") is HurtboxComponent,
+		"network_enemy": actor.get_node_or_null("%NetworkEnemy") is NetworkEnemyComponent,
+		"states": actor.get_node_or_null("%States") != null,
+	}
 	entry["agent_properties"] = _exported(actor)
 	entry["agent_constants"] = _constants(actor)
 	entry["collision_layer"] = actor.collision_layer

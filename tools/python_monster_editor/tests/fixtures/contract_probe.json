@@ -1,0 +1,1032 @@
+{
+  "content_errors": [],
+  "enemies": {
+    "frog": {
+      "actor_scene_path": "res://gameplay/actors/enemies/frog.tscn",
+      "agent_constants": {
+        "GRAVITY": 1100.0,
+        "GROUND_BRAKE": 1400.0,
+        "GROUND_GRACE_SECONDS": 0.06,
+        "TARGET_KEEP_RANGE_SCALE": 1.35
+      },
+      "agent_properties": {
+        "alert_seconds": 0.35,
+        "animation_profile_path": "res://presentation/enemy/profiles/frog_animation_profile.tres",
+        "attack_contact_distance": 44.0,
+        "attack_cooldown_seconds": 1.2,
+        "attack_leap_lift": 250.0,
+        "attack_leap_speed_scale": 1.5,
+        "attack_vertical_reach": 40.0,
+        "chase_hop_interval": 0.3,
+        "chase_hop_lift": 340.0,
+        "leash_distance": 520.0,
+        "max_air_seconds": 2.5,
+        "max_drop": 56.0,
+        "patrol_hop_interval": 0.8,
+        "patrol_hop_lift": 230.0,
+        "patrol_radius": 130.0,
+        "patrol_speed_scale": 0.6,
+        "prepare_seconds": 0.18,
+        "stuck_seconds": 2.5
+      },
+      "agent_script": "res://gameplay/actors/enemies/frog/frog_agent.gd",
+      "animation_profile_path": "res://presentation/enemy/profiles/frog_animation_profile.tres",
+      "attack_damage": 6.0,
+      "attack_range": 72.0,
+      "body": [
+        {
+          "class": "RectangleShape2D",
+          "disabled": false,
+          "position": [
+            0.0,
+            0.0
+          ],
+          "size": [
+            30.0,
+            22.0
+          ]
+        }
+      ],
+      "chase_range": 260.0,
+      "collision_layer": 1,
+      "collision_mask": 1,
+      "components": {
+        "health": true,
+        "hurtbox": true,
+        "network_enemy": true,
+        "states": true
+      },
+      "definition_errors": [],
+      "definition_path": "res://data/content/enemies/frog.tres",
+      "display_name": "Trail Frog",
+      "faction": "hostile",
+      "hurtbox": {
+        "collision_layer": 2,
+        "collision_mask": 4,
+        "shapes": [
+          {
+            "class": "RectangleShape2D",
+            "disabled": false,
+            "position": [
+              0.0,
+              0.0
+            ],
+            "size": [
+              36.0,
+              28.0
+            ]
+          }
+        ]
+      },
+      "invulnerability_seconds": 0.35,
+      "loot": {
+        "apply_difficulty_multiplier": true,
+        "item_ids": [
+          "moss_fiber",
+          "water_drop"
+        ],
+        "max_amounts": [
+          2,
+          1
+        ],
+        "min_amounts": [
+          1,
+          1
+        ],
+        "path": "res://data/content/loot/frog_loot.tres",
+        "weights": [
+          2.0,
+          1.0
+        ]
+      },
+      "loot_table_id": "frog_loot",
+      "max_health": 18.0,
+      "move_speed": 150.0,
+      "profile": {
+        "airborne_speed": 30.0,
+        "animations": {
+          "attack": {
+            "fps": 10.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  256.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  320.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/attack.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.6
+          },
+          "death": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  256.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/death.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.416666666666667
+          },
+          "fall": {
+            "fps": 8.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/fall.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/fall.png"
+              }
+            ],
+            "loop": true,
+            "seconds": 0.25
+          },
+          "hurt": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/hurt.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/hurt.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/hurt.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.25
+          },
+          "idle": {
+            "fps": 5.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/idle.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/idle.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/idle.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/idle.png"
+              }
+            ],
+            "loop": true,
+            "seconds": 0.8
+          },
+          "jump": {
+            "fps": 8.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/jump.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/jump.png"
+              }
+            ],
+            "loop": true,
+            "seconds": 0.25
+          },
+          "jump_start": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/jump_start.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/jump_start.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.166666666666667
+          },
+          "land": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/land.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  64.0
+                ],
+                "texture_path": "res://assets/characters/enemies/frog/land.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.166666666666667
+          }
+        },
+        "attack_hit_frame": 2,
+        "attack_hit_seconds": 0.2,
+        "errors": [],
+        "faces_right_by_default": true,
+        "move_speed_threshold": 8.0,
+        "roles": {
+          "attack": "attack",
+          "death": "death",
+          "fall": "fall",
+          "hurt": "hurt",
+          "idle": "idle",
+          "jump": "jump",
+          "jump_start": "jump_start",
+          "land": "land",
+          "move": "idle"
+        },
+        "sprite_frames_path": "res://assets/characters/enemies/frog/sprite_frames.tres",
+        "visual_offset": [
+          4.0,
+          -19.0
+        ],
+        "visual_scale": [
+          1.0,
+          1.0
+        ]
+      },
+      "run": {
+        "instantiated": true,
+        "max_health": 18.0,
+        "presenter_in_presentation_mode": true,
+        "presenter_in_server_mode": false,
+        "states_seen": [
+          "idle",
+          "patrol"
+        ]
+      },
+      "states": [
+        {
+          "constants": {},
+          "id": "idle",
+          "properties": {
+            "wait_seconds": 0.9
+          },
+          "script": "res://gameplay/actors/enemies/frog/frog_idle_state.gd",
+          "snapshot_state": 0
+        },
+        {
+          "constants": {},
+          "id": "patrol",
+          "properties": {
+            "hops_per_patrol": 3
+          },
+          "script": "res://gameplay/actors/enemies/frog/frog_patrol_state.gd",
+          "snapshot_state": 0
+        },
+        {
+          "constants": {},
+          "id": "alert",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/frog/frog_alert_state.gd",
+          "snapshot_state": 0
+        },
+        {
+          "constants": {},
+          "id": "chase",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/frog/frog_chase_state.gd",
+          "snapshot_state": 0
+        },
+        {
+          "constants": {},
+          "id": "prepare",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/frog/frog_prepare_state.gd",
+          "snapshot_state": 1
+        },
+        {
+          "constants": {
+            "MIN_AIR_SECONDS": 0.08
+          },
+          "id": "hop",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/frog/frog_hop_state.gd",
+          "snapshot_state": 1
+        },
+        {
+          "constants": {},
+          "id": "attack",
+          "properties": {
+            "duration_seconds": 0.6,
+            "recovery_seconds": 0.4
+          },
+          "script": "res://gameplay/actors/enemies/frog/frog_attack_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {},
+          "id": "hurt",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/hurt_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {
+            "ARRIVE_DISTANCE": 28.0
+          },
+          "id": "return",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/frog/frog_return_state.gd",
+          "snapshot_state": 0
+        },
+        {
+          "constants": {},
+          "id": "dead",
+          "properties": {
+            "removal_seconds": 0.45
+          },
+          "script": "res://gameplay/actors/enemies/dead_state.gd",
+          "snapshot_state": -1
+        }
+      ]
+    },
+    "sewer_beetle": {
+      "actor_scene_path": "res://gameplay/actors/enemies/sewer_beetle.tscn",
+      "agent_constants": {
+        "GRAVITY": 1100.0,
+        "TARGET_KEEP_RANGE_SCALE": 1.35
+      },
+      "agent_properties": {
+        "animation_profile_path": "res://presentation/enemy/profiles/sewer_beetle_animation_profile.tres"
+      },
+      "agent_script": "res://gameplay/actors/enemies/enemy_agent.gd",
+      "animation_profile_path": "res://presentation/enemy/profiles/sewer_beetle_animation_profile.tres",
+      "attack_damage": 7.0,
+      "attack_range": 46.0,
+      "body": [
+        {
+          "class": "RectangleShape2D",
+          "disabled": false,
+          "position": [
+            0.0,
+            0.0
+          ],
+          "size": [
+            34.0,
+            22.0
+          ]
+        }
+      ],
+      "chase_range": 240.0,
+      "collision_layer": 1,
+      "collision_mask": 1,
+      "components": {
+        "health": true,
+        "hurtbox": true,
+        "network_enemy": true,
+        "states": true
+      },
+      "definition_errors": [],
+      "definition_path": "res://data/content/enemies/sewer_beetle.tres",
+      "display_name": "Sewer Beetle",
+      "faction": "hostile",
+      "hurtbox": {
+        "collision_layer": 2,
+        "collision_mask": 4,
+        "shapes": [
+          {
+            "class": "RectangleShape2D",
+            "disabled": false,
+            "position": [
+              0.0,
+              0.0
+            ],
+            "size": [
+              40.0,
+              28.0
+            ]
+          }
+        ]
+      },
+      "invulnerability_seconds": 0.35,
+      "loot": {
+        "apply_difficulty_multiplier": true,
+        "item_ids": [
+          "moss_fiber",
+          "clean_pebble"
+        ],
+        "max_amounts": [
+          2,
+          1
+        ],
+        "min_amounts": [
+          1,
+          1
+        ],
+        "path": "res://data/content/loot/sewer_beetle_loot.tres",
+        "weights": [
+          3.0,
+          1.0
+        ]
+      },
+      "loot_table_id": "sewer_beetle_loot",
+      "max_health": 24.0,
+      "move_speed": 58.0,
+      "profile": {
+        "airborne_speed": 30.0,
+        "animations": {
+          "attack": {
+            "fps": 10.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  256.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  320.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  384.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/attack.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.7
+          },
+          "death": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/death.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  256.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/death.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.416666666666667
+          },
+          "hurt": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/hurt.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/hurt.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/hurt.png"
+              }
+            ],
+            "loop": false,
+            "seconds": 0.25
+          },
+          "idle": {
+            "fps": 5.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/idle.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/idle.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/idle.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/idle.png"
+              }
+            ],
+            "loop": true,
+            "seconds": 0.8
+          },
+          "move": {
+            "fps": 12.0,
+            "frames": [
+              {
+                "duration": 1.0,
+                "region": [
+                  0.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/move.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  64.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/move.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  128.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/move.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  192.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/move.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  256.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/move.png"
+              },
+              {
+                "duration": 1.0,
+                "region": [
+                  320.0,
+                  0.0,
+                  64.0,
+                  48.0
+                ],
+                "texture_path": "res://assets/characters/enemies/sewer_beetle/move.png"
+              }
+            ],
+            "loop": true,
+            "seconds": 0.5
+          }
+        },
+        "attack_hit_frame": 2,
+        "attack_hit_seconds": 0.2,
+        "errors": [],
+        "faces_right_by_default": true,
+        "move_speed_threshold": 8.0,
+        "roles": {
+          "attack": "attack",
+          "death": "death",
+          "fall": "",
+          "hurt": "hurt",
+          "idle": "idle",
+          "jump": "",
+          "jump_start": "",
+          "land": "",
+          "move": "move"
+        },
+        "sprite_frames_path": "res://assets/characters/enemies/sewer_beetle/sprite_frames.tres",
+        "visual_offset": [
+          0.0,
+          -13.0
+        ],
+        "visual_scale": [
+          1.0,
+          1.0
+        ]
+      },
+      "run": {
+        "instantiated": true,
+        "max_health": 24.0,
+        "presenter_in_presentation_mode": true,
+        "presenter_in_server_mode": false,
+        "states_seen": [
+          "idle",
+          "patrol"
+        ]
+      },
+      "states": [
+        {
+          "constants": {},
+          "id": "idle",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/idle_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {},
+          "id": "patrol",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/patrol_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {},
+          "id": "chase",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/chase_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {},
+          "id": "attack",
+          "properties": {
+            "duration_seconds": 0.7,
+            "recovery_seconds": 0.5
+          },
+          "script": "res://gameplay/actors/enemies/attack_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {},
+          "id": "hurt",
+          "properties": {},
+          "script": "res://gameplay/actors/enemies/hurt_state.gd",
+          "snapshot_state": -1
+        },
+        {
+          "constants": {},
+          "id": "dead",
+          "properties": {
+            "removal_seconds": 0.45
+          },
+          "script": "res://gameplay/actors/enemies/dead_state.gd",
+          "snapshot_state": -1
+        }
+      ]
+    }
+  },
+  "godot_version": "4.7.2-stable (official)",
+  "gravity": 1100.0,
+  "items": [
+    "acorn_necklace",
+    "berry",
+    "clean_pebble",
+    "leaf_hat",
+    "leaf_vest",
+    "moss_fiber",
+    "mushroom_stew",
+    "return_seed",
+    "rusty_scrap",
+    "seed_ring",
+    "twig_sword",
+    "water_drop"
+  ],
+  "network_protocol_version": 20,
+  "physics_ticks_per_second": 60,
+  "protocol": 1,
+  "snapshot_states": [
+    "IDLE",
+    "MOVING",
+    "ATTACKING",
+    "HURT",
+    "DEAD"
+  ],
+  "target_keep_range_scale": 1.35
+}
