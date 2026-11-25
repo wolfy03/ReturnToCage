@@ -9,3 +9,6 @@ __pycache__/
 # Map Editor publication backups and journals
 .rtc-map-publish/
 .rtc-publish-*.part
+
+# Monster Editor save locks
+.*.rtcmonster.lock

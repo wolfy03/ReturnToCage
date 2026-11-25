@@ -1,0 +1,708 @@
+{
+  "schema_version": 1,
+  "document_type": "rtcmonster",
+  "monster_id": "sewer_beetle",
+  "metadata": {
+    "display_name": "Sewer Beetle",
+    "description": "Ground melee enemy. Waits, patrols around its spawn point, walks at a detected player and bites after a short wind-up.",
+    "category": "beetle",
+    "rank": "normal",
+    "habitats": [
+      "sewer_region",
+      "forest_region"
+    ],
+    "tags": [
+      "ground",
+      "melee"
+    ],
+    "thumbnail": ""
+  },
+  "stats": {
+    "max_health": 24,
+    "attack_damage": 7,
+    "move_speed": 58,
+    "chase_range": 240,
+    "attack_range": 46,
+    "faction": "hostile",
+    "hit_invulnerability_seconds": 0.35,
+    "planned": {
+      "defense": 0,
+      "attack_speed": 1,
+      "knockback_resistance": 0,
+      "stagger_resistance": 0,
+      "damage_resistances": {},
+      "status_resistances": {}
+    }
+  },
+  "movement": {
+    "locomotion": "ground",
+    "gravity": 1100,
+    "ground_brake": 0,
+    "ground_grace_seconds": 0
+  },
+  "sensors": {
+    "target_policy": "nearest_player",
+    "target_keep_scale": 1.35,
+    "leash_distance": null
+  },
+  "assets": {
+    "images": [
+      {
+        "id": "idle_strip",
+        "path": "assets/characters/enemies/sewer_beetle/idle.png",
+        "width": 256,
+        "height": 48,
+        "sha256": "96bd8b6f711dee05338103c336a050f49389f6b78ccbdeb4c4ae60b0ba3421aa"
+      },
+      {
+        "id": "move_strip",
+        "path": "assets/characters/enemies/sewer_beetle/move.png",
+        "width": 384,
+        "height": 48,
+        "sha256": "23e761bc3fc21c19e8abf3e2a2e883b92982f7469469e6c62ae7ffc69ce93a69"
+      },
+      {
+        "id": "attack_strip",
+        "path": "assets/characters/enemies/sewer_beetle/attack.png",
+        "width": 448,
+        "height": 48,
+        "sha256": "670655b284b52214c0bad2640348431e0204fe2e0112570e5fb1def8d667521c"
+      },
+      {
+        "id": "hurt_strip",
+        "path": "assets/characters/enemies/sewer_beetle/hurt.png",
+        "width": 192,
+        "height": 48,
+        "sha256": "56fa505a0cf6bdc00c6d0b125927967845a33efc072d69b7057b8eb4c2fbc7f5"
+      },
+      {
+        "id": "death_strip",
+        "path": "assets/characters/enemies/sewer_beetle/death.png",
+        "width": 320,
+        "height": 48,
+        "sha256": "dd36341a85c2835953607da23fb88f8a944eaaed83150bbf14bbee88a71e1f82"
+      }
+    ]
+  },
+  "animations": {
+    "clips": [
+      {
+        "id": "idle",
+        "display_name": "",
+        "fps": 5,
+        "loop": true,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "idle_strip",
+            "rect": [0, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "idle_strip",
+            "rect": [64, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "idle_strip",
+            "rect": [128, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "idle_strip",
+            "rect": [192, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "move",
+        "display_name": "",
+        "fps": 12,
+        "loop": true,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "move_strip",
+            "rect": [0, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "move_strip",
+            "rect": [64, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "move_strip",
+            "rect": [128, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "move_strip",
+            "rect": [192, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "move_strip",
+            "rect": [256, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "move_strip",
+            "rect": [320, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "attack",
+        "display_name": "",
+        "fps": 10,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "attack_strip",
+            "rect": [0, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [64, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [128, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [192, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [256, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [320, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "attack_strip",
+            "rect": [384, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "hurt",
+        "display_name": "",
+        "fps": 12,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "hurt_strip",
+            "rect": [0, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "hurt_strip",
+            "rect": [64, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "hurt_strip",
+            "rect": [128, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      },
+      {
+        "id": "death",
+        "display_name": "",
+        "fps": 12,
+        "loop": false,
+        "on_finish": "hold_last_frame",
+        "priority": 0,
+        "frames": [
+          {
+            "image": "death_strip",
+            "rect": [0, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [64, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [128, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [192, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          },
+          {
+            "image": "death_strip",
+            "rect": [256, 0, 64, 48],
+            "duration": 1,
+            "offset": [0, 0]
+          }
+        ]
+      }
+    ]
+  },
+  "presentation": {
+    "faces_right_by_default": true,
+    "visual_scale": [1, 1],
+    "visual_offset": [0, -13],
+    "airborne_speed": 30,
+    "move_speed_threshold": 8,
+    "attack_hit_frame": 2,
+    "roles": {
+      "idle": "idle",
+      "move": "move",
+      "attack": "attack",
+      "hurt": "hurt",
+      "death": "death",
+      "jump_start": "",
+      "jump": "",
+      "fall": "",
+      "land": ""
+    }
+  },
+  "collision": {
+    "body": {
+      "shape": {
+        "type": "rectangle",
+        "center": [0, 0],
+        "size": [34, 22]
+      },
+      "layer": 1,
+      "mask": 1
+    },
+    "hurtboxes": [
+      {
+        "id": "body",
+        "shape": {
+          "type": "rectangle",
+          "center": [0, 0],
+          "size": [40, 28]
+        },
+        "enabled": true
+      }
+    ],
+    "hurtbox_overrides": [],
+    "hitboxes": []
+  },
+  "attack_patterns": [
+    {
+      "id": "bite",
+      "display_name": "Bite",
+      "kind": "melee",
+      "clip": "attack",
+      "duration": 0.7,
+      "completion": {
+        "mode": "duration",
+        "min_air_seconds": 0.08,
+        "max_air_seconds": 2.5
+      },
+      "range": {
+        "min": 0,
+        "max": {
+          "stat": "attack_range",
+          "scale": 1,
+          "offset": 0
+        },
+        "vertical": null
+      },
+      "cooldown": 0,
+      "priority": 0,
+      "weight": 1,
+      "condition": null,
+      "movement_locked": true,
+      "facing_locked": true,
+      "interrupt": {
+        "on_hurt": "cancel"
+      },
+      "damage": {
+        "multiplier": 1,
+        "type": "physical",
+        "knockback": [100, -30],
+        "hit_policy": "once_per_target",
+        "multi_hit_interval": 0.25,
+        "status_effects": []
+      },
+      "phases": [
+        {
+          "kind": "windup",
+          "start": 0,
+          "end": 0.2
+        },
+        {
+          "kind": "recovery",
+          "start": 0.2,
+          "end": 0.7
+        }
+      ],
+      "events": [
+        {
+          "type": "RangeStrike",
+          "time": 0.2,
+          "reach": {
+            "stat": "attack_range",
+            "scale": 1,
+            "offset": 0
+          },
+          "slack": 12
+        }
+      ]
+    }
+  ],
+  "behavior": {
+    "initial_state": "idle",
+    "interrupts": {
+      "hurt": {
+        "state": "hurt",
+        "policy": "always"
+      },
+      "death": {
+        "state": "dead"
+      }
+    },
+    "states": [
+      {
+        "id": "idle",
+        "display_name": "",
+        "module": "Wait",
+        "params": {
+          "seconds": 1
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 10,
+            "condition": {
+              "type": "TargetDistance",
+              "op": "<=",
+              "value": {
+                "stat": "chase_range",
+                "scale": 1,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "to": "patrol",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "patrol",
+        "display_name": "",
+        "module": "GroundPatrol",
+        "params": {
+          "radius": 90,
+          "speed_scale": 0.55
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "TargetDistance",
+              "op": "<=",
+              "value": {
+                "stat": "chase_range",
+                "scale": 1,
+                "offset": 0
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "chase",
+        "display_name": "",
+        "module": "ChaseTarget",
+        "params": {
+          "speed_scale": 1
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "patrol",
+            "priority": 20,
+            "condition": {
+              "type": "TargetDistance",
+              "op": ">",
+              "value": {
+                "stat": "chase_range",
+                "scale": 1.35,
+                "offset": 0
+              }
+            }
+          },
+          {
+            "to": "attack",
+            "priority": 10,
+            "condition": {
+              "type": "TargetDistance",
+              "op": "<=",
+              "value": {
+                "stat": "attack_range",
+                "scale": 1,
+                "offset": 0
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": "attack",
+        "display_name": "",
+        "module": "ExecuteAttackPattern",
+        "params": {
+          "pattern": "bite"
+        },
+        "animation": {
+          "mode": "pattern",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "AttackPatternCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "hurt",
+        "display_name": "",
+        "module": "HurtReaction",
+        "params": {
+          "seconds": 0.25
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": [
+          {
+            "to": "chase",
+            "priority": 0,
+            "condition": {
+              "type": "ActionCompleted"
+            }
+          }
+        ]
+      },
+      {
+        "id": "dead",
+        "display_name": "",
+        "module": "Death",
+        "params": {
+          "removal_seconds": 0.45
+        },
+        "animation": {
+          "mode": "auto",
+          "clip": ""
+        },
+        "snapshot_state": "auto",
+        "max_seconds": null,
+        "interruptible": true,
+        "transitions": []
+      }
+    ],
+    "phases": []
+  },
+  "loot": {
+    "loot_table_id": "sewer_beetle_loot",
+    "entries": [
+      {
+        "item_id": "moss_fiber",
+        "weight": 3,
+        "min_amount": 1,
+        "max_amount": 2
+      },
+      {
+        "item_id": "clean_pebble",
+        "weight": 1,
+        "min_amount": 1,
+        "max_amount": 1
+      }
+    ],
+    "apply_difficulty_multiplier": true
+  },
+  "source_binding": {
+    "runtime": "legacy",
+    "definition_path": "data/content/enemies/sewer_beetle.tres",
+    "actor_scene_path": "gameplay/actors/enemies/sewer_beetle.tscn",
+    "animation_profile_path": "presentation/enemy/profiles/sewer_beetle_animation_profile.tres",
+    "sprite_frames_path": "assets/characters/enemies/sewer_beetle/sprite_frames.tres",
+    "loot_table_path": "data/content/loot/sewer_beetle_loot.tres",
+    "files": [
+      {
+        "path": "assets/characters/enemies/sewer_beetle/sprite_frames.tres",
+        "sha256": "b2c01bb9cfa4195d5083dc77fc4f4fff71e4d7511d751d8357b72c05e96987b8"
+      },
+      {
+        "path": "core/models/network/enemy_runtime_snapshot.gd",
+        "sha256": "3c03e43e3c23a191f79f043cb3135ca04b81d83fe928148f1ac7f606f5e8089e"
+      },
+      {
+        "path": "data/content/enemies/sewer_beetle.tres",
+        "sha256": "a5b17a4501bb5bfef1fec9e00ca5df27cbd10455fba1330e1a3e45a1739ae840"
+      },
+      {
+        "path": "data/content/loot/sewer_beetle_loot.tres",
+        "sha256": "be3d5c86ed29d3e71729385c3e4cd8570ef5541331fd0d9f99b8bff00d5f832e"
+      },
+      {
+        "path": "data/definitions/enemy_definition.gd",
+        "sha256": "5679d99ff1a1df2905165207b2e654592c158a0c765f98a0cbb3060ec169bb2a"
+      },
+      {
+        "path": "gameplay/actors/enemies/attack_state.gd",
+        "sha256": "3ff1e226948c9b6a007244eca2bc65a4b8c4862c8f902e38ea9cb16a38b0fb3d"
+      },
+      {
+        "path": "gameplay/actors/enemies/chase_state.gd",
+        "sha256": "6358cddb9aaaa77ea381bcff9cbd000934423ad977e598f7904ce52831525e93"
+      },
+      {
+        "path": "gameplay/actors/enemies/dead_state.gd",
+        "sha256": "5ae728ffd57747944aa95bb849a28bc154b4c023dce95b1cbcee7606ee5e96e0"
+      },
+      {
+        "path": "gameplay/actors/enemies/enemy_agent.gd",
+        "sha256": "18fa1d14e1f7e73d5b08a8df27a94f8c0ffe8187bc70b91f30cf3d7070c007ef"
+      },
+      {
+        "path": "gameplay/actors/enemies/enemy_state.gd",
+        "sha256": "e23da2023ca1b3ec6c92d3b83ff5b8c84fb8088c9c2e4a43a76e65daace4cc05"
+      },
+      {
+        "path": "gameplay/actors/enemies/hurt_state.gd",
+        "sha256": "8fd65a6b4ebded4603a593f0450c346f2d1ef95678ad18f3fed75ffe22a5ee41"
+      },
+      {
+        "path": "gameplay/actors/enemies/idle_state.gd",
+        "sha256": "8b23151c2035761c5f74400559d54141ebc3983d5f5130fee1cb73d97a7a680b"
+      },
+      {
+        "path": "gameplay/actors/enemies/patrol_state.gd",
+        "sha256": "a392f2011d5695811b1e3ccb8e2725a36ce4d820ec05b97f2aa175804cab78bf"
+      },
+      {
+        "path": "gameplay/actors/enemies/sewer_beetle.tscn",
+        "sha256": "3d5387d234d9350c5871a5442dba934f86184ab71cf13d7e1f5f81c9cf8540d4"
+      },
+      {
+        "path": "gameplay/components/network_enemy_component.gd",
+        "sha256": "3066d076069135b4aaec9be7512eec4830f0cb93a262fd0c9200cc6581c0a0f2"
+      },
+      {
+        "path": "presentation/definitions/enemy_animation_profile.gd",
+        "sha256": "76d18613d67329afd3ed616024011f3dec80edc621b7dde836c8e990e525216e"
+      },
+      {
+        "path": "presentation/enemy/enemy_animation_presenter.gd",
+        "sha256": "e10c1733a2c8aadaea40b225497be7224c9e13ed6100794e12a82901ea609a09"
+      },
+      {
+        "path": "presentation/enemy/profiles/sewer_beetle_animation_profile.tres",
+        "sha256": "37165815cab88f820f6203a853afcd879ca297b53d016843dfc62b4fc006ecfe"
+      }
+    ],
+    "editability": {
+      "animations": "read_only",
+      "assets": "read_only",
+      "attack_patterns": "read_only",
+      "behavior": "read_only",
+      "collision": "read_only",
+      "loot": "editable",
+      "metadata": "editable",
+      "movement": "read_only",
+      "presentation": "read_only",
+      "sensors": "read_only",
+      "stats": "editable"
+    },
+    "unsupported": [],
+    "passthrough": {}
+  },
+  "editor_metadata": {
+    "notes": "Mirrors the shipped legacy beetle (EnemyAgent + state nodes). Every number is the game's value and is checked by check_godot_contract.py. The game still runs the GDScript; this document does not drive it.",
+    "estimated": [],
+    "ui": {}
+  }
+}
