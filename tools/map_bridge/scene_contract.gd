@@ -164,6 +164,28 @@ static func storage(object: Object, root: Node, chain: Array = []) -> Dictionary
 			properties[key] = canonical(object.get(key), root, chain)
 	return properties
 
+## FieldPlatform reconciles its children in _ready(), which a staged scene never
+## reaches. Write the same geometry here so the saved collision shape and visual
+## agree with the platform's size instead of waiting for the next load to fix them.
+static func _sync_platform_children(platform: FieldPlatform) -> void:
+	var collision := platform.get_node_or_null("CollisionShape2D") as CollisionShape2D
+	var visual := platform.get_node_or_null("Visual") as Polygon2D
+	if collision == null or visual == null:
+		return
+	# Children of an instanced platform scene are not saved with this scene;
+	# only children authored inline (the Sewer platforms) carry stored geometry.
+	if collision.owner != platform.owner or visual.owner != platform.owner:
+		return
+	var shape := collision.shape as RectangleShape2D
+	if shape == null or not shape.size.is_equal_approx(platform.size):
+		shape = RectangleShape2D.new() if shape == null else shape.duplicate() as RectangleShape2D
+		shape.size = platform.size
+		collision.shape = shape
+		var half := platform.size / 2.0
+		visual.polygon = PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])
+	if collision.one_way_collision != platform.one_way:
+		collision.one_way_collision = platform.one_way
+
 static func inventory_node(node: Node, root: Node, rows: Dictionary, order: Array) -> void:
 	var path := String(root.get_path_to(node))
 	var groups := Array(node.get_groups())
@@ -419,6 +441,7 @@ static func apply(root: Node2D, node: Node2D, object: Dictionary) -> String:
 				node.terrain_theme = ""
 				node.terrain_texture = null
 				node.terrain_margins = Vector4i.ZERO
+			_sync_platform_children(node)
 		else:
 			var collision := node.get_node("CollisionShape2D") as CollisionShape2D
 			var visual := node.get_node("Visual") as Polygon2D

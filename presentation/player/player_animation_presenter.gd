@@ -171,7 +171,10 @@ func _update_landing(delta: float) -> void:
 			if fps > 0.0:
 				for index in frame_count:
 					_land_remaining += frames.get_frame_duration(profile.land_animation, index) / fps
-	_was_airborne = mode == MovementComponent.Mode.AIR
+	# AIR alone is not a fall: a remote actor reports AIR until its first
+	# snapshot arrives, and playing a landing then would hide its first run.
+	# Only an actor that has actually moved vertically in the air can land.
+	_was_airborne = mode == MovementComponent.Mode.AIR 			and (_was_airborne or not is_zero_approx(actor.velocity.y))
 
 func _apply_locomotion() -> void:
 	var animation := profile.idle_animation
