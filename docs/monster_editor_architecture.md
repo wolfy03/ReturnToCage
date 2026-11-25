@@ -5,16 +5,18 @@
 [monster_editor_schema_v1.md](monster_editor_schema_v1.md), 실행 규칙은
 [monster_editor_runtime_contract.md](monster_editor_runtime_contract.md), 기존 몬스터와의 관계는
 [monster_editor_compatibility.md](monster_editor_compatibility.md), 이후 단계는
-[monster_editor_roadmap.md](monster_editor_roadmap.md)에 있다.
+[monster_editor_roadmap.md](monster_editor_roadmap.md), 안정화에서 내린 결정·공개 API·확장 가이드는
+[monster_editor_step1_stabilization.md](monster_editor_step1_stabilization.md)에 있다.
 
 ## 1. 이번 단계에서 실제로 있는 것과 없는 것
 
 | 구분 | 상태 |
 |---|---|
 | `.rtcmonster` Schema V1, Python 문서 모델, 정규 직렬화, 안전한 파일 저장 | **구현됨** (`tools/python_monster_editor/rtcmonster/`) |
-| 정적 검증기 (11개 영역, 4개 상태) | **구현됨** |
+| 정적 검증기 (11개 영역, 4개 상태, 선언된 finding 코드) | **구현됨** (`rtcmonster/validation/`) |
+| 불변 문서, 원자적 편집 API, 모듈 레지스트리 확장, 콘텐츠 카탈로그, PNG 무결성 검사 | **구현됨** (안정화) |
 | 예제 문서 3개 (Sewer Beetle, Frog, Sewer Rat Prototype) | **작성됨** (`tools/python_monster_editor/examples/`) |
-| 실제 Godot 리소스와 예제를 대조하는 계약 검사 | **구현됨** (`tools/monster_bridge/contract_probe.gd` + `check_godot_contract.py`) |
+| Godot 계약 검사: 환경 / 등록된 모든 몬스터(registry) / 기준 몬스터(legacy) | **구현됨** (`tools/monster_bridge/contract_probe.gd`, `godot_contract.py`, `check_godot_contract.py`) |
 | 데이터 기반 AI·전투 런타임 (`DataEnemyAgent` 등) | **없음** — 계약만 확정. MONSTER-STEP 4~5 |
 | Godot Bridge의 Import / Export / Publish | **없음** — 인터페이스만 확정. MONSTER-STEP 2~6 |
 | Monster Editor GUI, EXE | **없음** — MONSTER-STEP 2~7 |
@@ -148,23 +150,35 @@ ContentRegistry → Python Map Editor 카탈로그 → Enemy Spawn 배치
 ```text
 tools/python_monster_editor/
 ├─ rtcmonster/
-│  ├─ spec.py          필드 node (Num, Id, Choice, Vec, Obj, Arr, Map, Union …)와 경로 안전 규칙
-│  ├─ schema.py        Schema V1 트리, Quantity(stat 참조), 조건·이벤트·상태 node
-│  ├─ modules.py       Action Module / Condition / Timeline Event 레지스트리와 메타데이터
-│  ├─ document.py      MonsterDocument(불변), new_document, 정규 encode/decode, 버전 migration 표
-│  ├─ storage.py       원자적 저장, 잠금, 해시 기반 외부 변경 감지
-│  ├─ timing.py        초 ↔ tick, clip 시간, 타임라인 표
-│  ├─ geometry.py      좌우 반전, sprite ↔ actor 변환, Godot shape 값, sheet 격자 분할
-│  ├─ project.py       프로젝트 폴더 정적 검사 (게시된 몬스터, PNG 크기·해시, 원본 파일 상태)
-│  ├─ validation.py    11개 영역 정적 검증
-│  └─ reference.py     schema에서 문서 표를 생성
+│  ├─ spec.py          필드 node와 UI 중립 메타데이터(info), 경로 안전 규칙, 지원 수준별 capability
+│  ├─ modules.py       Registry: Action Module / Condition / Event 항목과 그 의미 플래그·검증 콜백
+│  ├─ schema.py        Schema(registry): 문서 트리, 참조 선언(Id.ref), 범용 순회 fields()
+│  ├─ document.py      MonsterDocument(불변 FrozenDict/FrozenList), 정규 encode/decode, fingerprint, clone
+│  ├─ editing.py       Edit 5종과 원자 적용(apply), ID 이름 변경
+│  ├─ storage.py       원자적 저장, 잠금, 해시 기반 외부 변경 감지, 남은 임시 파일 정리
+│  ├─ timing.py        초 ↔ tick, clip 시간, 같은 tick 이벤트 순서(schedule), 타임라인 표
+│  ├─ geometry.py      SHAPES 레지스트리, 좌우 반전, sprite ↔ actor 변환, sheet 격자 분할
+│  ├─ catalog.py       콘텐츠 폴더 scan(중복·오류 보고), 몬스터 카탈로그(발견 / Godot 확인 / 초안)
+│  ├─ png.py           PNG 헤더와 무결성 검사
+│  ├─ project.py       프로젝트 파일 접근(경로 안전, 이미지 검사, 원본 파일 상태)
+│  ├─ validation/      report(코드·Finding·Report) · context(Context, ProjectView, @rule)
+│  │                   · structure · assets · animation · combat · behavior · compatibility
+│  └─ reference.py     schema·registry·코드 선언에서 문서 표를 생성
 ├─ examples/           sewer_beetle · frog · sewer_rat_prototype
 ├─ tests/              pytest (표준 라이브러리 외 의존성 없음)
 ├─ validate.py         명령행 검증
-└─ check_godot_contract.py   실제 Godot과 예제 대조
+├─ godot_contract.py   probe 결과 평가(순수 함수): environment / registry / legacy / data_driven / behavior
+├─ check_godot_contract.py          probe 실행과 보고, contract_report.json
+├─ check_contract_extensibility.py  격리된 프로젝트 사본에서 신규 몬스터 시나리오
+└─ benchmark.py        규모별 측정
 tools/monster_bridge/
 └─ contract_probe.gd / .tscn   읽기 전용 probe
 ```
+
+의존 방향은 `spec ← modules ← schema ← document / editing ← validation ← 도구` 한쪽이다. 범용 코드(schema,
+document, editing, validation, reference)는 모듈·조건·이벤트·몬스터의 **이름을 모른다** — 의미는 레지스트리 항목의
+플래그에 있고, `tests/test_extensibility.py`가 범용 코드에 그런 문자열이 없음을 검사한다. 새 몬스터 종류나 모듈이
+늘어도 이 코드들은 바뀌지 않는다.
 
 core는 Qt와 Godot를 import하지 않는다. GUI가 붙어도 이 경계는 유지한다. 빈 디렉터리나 stub 클래스는 만들지 않았다.
 
@@ -176,7 +190,7 @@ Map Editor Bridge(`tools/python_map_editor/godot_bridge.py`, `tools/map_bridge/`
 
 | 명령 | 입력 | 출력 / 검증 | 구현 단계 |
 |---|---|---|---|
-| `contract_probe` | 없음 | 모든 EnemyDefinition의 실제 값·scene 구조·profile·loot, 실행 결과 | **STEP 1 (구현됨)** |
+| `contract_probe` | 없음 | 모든 EnemyDefinition의 실제 값·scene 구조·필수 컴포넌트·profile·loot, 실행 결과. 특정 몬스터의 scene 구조를 전제하지 않는다 | **STEP 1 (구현됨)** |
 | `inspect_monsters` | 없음 | 게시된 몬스터 ID·이름·runtime 종류·원본 파일 해시 | STEP 2 |
 | `import_monster` | monster_id | legacy 몬스터의 편집 가능 범위와 값 (`source_binding` 포함) | STEP 2 |
 | `validate_document` | 문서 | 리소스 참조, 타입, 모듈 ID를 엔진에서 확인 | STEP 3~5 |

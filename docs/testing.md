@@ -532,11 +532,17 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 
 | 검사 | 명령 | 확인하는 것 |
 |---|---|---|
-| Python core | `python -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider` | 문서 생성·기본값, 정규 직렬화와 무변경 왕복, 손상 JSON·미지원 버전·NaN·모르는 필드 거절, 원자 저장과 외부 변경 감지, 저장 실패 시 원본 보호, 영역별 검증 규칙(FAIL 코드 44종·WARNING 코드 18종), tick 양자화, 좌표 변환, 프로젝트 파일 검사, 스키마 문서의 표가 코드와 같은지 |
+| Python core | `python -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider` | 문서 생성·기본값, 정규 직렬화와 무변경 왕복, 손상 JSON·미지원 버전·NaN·모르는 필드 거절, **문서 불변성과 Undo/Redo 스냅샷 독립성, 원자적 편집과 ID 이름 변경**, 원자 저장과 외부 변경 감지, **저장 장애 주입 7종과 스레드·프로세스 동시 저장**, 영역별 검증 규칙, **레지스트리 확장(테스트 전용 모듈·조건·이벤트)과 범용 코드에 이름이 없는지, finding 코드 선언, 결과 무효화**, **카탈로그 중복·부분 실패, PNG 손상 19종**, tick 양자화(30/60/120 Hz)와 좌표 변환 조합, **기록된 probe에 대한 계약 평가(신규 몬스터 추가 포함)**, 스키마 문서의 표가 코드와 같은지 |
 | 예제 정적 검증 | `python tools/python_monster_editor/validate.py tools/python_monster_editor/examples/*.rtcmonster --project .` | 세 예제의 영역별 상태. `runtime`·`network`는 항상 `NOT_EVALUATED` |
-| Godot 계약 | `python tools/python_monster_editor/check_godot_contract.py --godot <godot>` | `tools/monster_bridge/contract_probe.tscn`을 실제 엔진에서 실행해 딱정벌레·개구리의 EnemyDefinition 값, scene의 body·hurtbox shape, 상태 시간과 FrogAgent export, profile과 SpriteFrames의 clip·frame·region, loot, 복제 상태 매핑, 프로토콜 버전(20), physics tick(60)을 예제와 대조한다. actor를 headless 권위로 150 frame 실행해 idle → patrol 진행과 서버 모드에서 presenter가 없는지도 본다 |
+| Godot 계약 | `python tools/python_monster_editor/check_godot_contract.py --godot <godot> --artifacts <dir>` | `tools/monster_bridge/contract_probe.tscn`을 실제 엔진에서 실행하고 다섯 계약으로 나눠 판정한다. **environment**: 엔진 버전, physics tick(60), 프로토콜(20), 깨끗한 엔진 로그. **registry**: 등록된 **모든** 몬스터의 정의 유효성, actor scene, 필수 컴포넌트, shape, loot, profile, headless 실행, 서버 모드 presenter 없음 — 예제 문서 없이. **legacy**: 기준 몬스터(딱정벌레·개구리)의 예제를 실제 값과 대조. **data_driven**·**behavior**: 런타임이 없어 `NOT_EVALUATED`. Godot 종료 코드 0만으로는 통과가 아니다(완료 표시와 유효한 결과 필요). `contract_report.json`에 commit·버전·영역별 상태·개별 결과를 남긴다 |
+| 계약 확장성 | `python tools/python_monster_editor/check_contract_extensibility.py --godot <godot>` | 추적 파일만 복사한 격리 프로젝트에 새 `EnemyDefinition`을 추가해 실제 Godot으로 확인한다: 예제 없이도 통과하고 registry가 새 몬스터를 검사한다 / 정의를 깨뜨리면 registry에서 실패하고 legacy는 영향받지 않는다 |
+| 측정 | `python tools/python_monster_editor/benchmark.py --output <json>` | Small·Medium·Large 문서의 생성·편집·직렬화·검증·저장 시간과 Undo 스냅샷 메모리. 통과/실패 기준이 아니라 기록이다 |
 
 이 검사들이 **확인하지 않는 것**: 데이터 기반 몬스터의 실행. 그런 런타임은 아직 없고, 해당 항목은
-`NOT_EVALUATED`로 출력된다. 기존 몬스터의 스크립트·scene·리소스를 고치면 Godot 계약 검사의 "source files" 항목이
-실패한다 — 예제가 여전히 게임과 같은지 확인한 뒤 `--refresh-bindings`로 해시를 갱신한다.
-CI는 `.github/workflows/python-monster-editor.yml`(Ubuntu·Windows의 pytest, Ubuntu의 Godot 계약 검사)이다.
+`NOT_EVALUATED`로 출력된다. 게임에 몬스터를 추가해도 예제 문서는 필요 없다(registry 계약이 검사한다). 기준 몬스터의
+스크립트·scene·리소스를 고치면 legacy 계약의 "source files" 항목이 실패한다 — 예제가 여전히 게임과 같은지 확인한 뒤
+`--refresh-bindings`로 해시를 갱신하고, `probe.json`을 `tests/fixtures/contract_probe.json`에 복사한다.
+CI는 `.github/workflows/python-monster-editor.yml`이다: Ubuntu·Windows의 pytest·예제 검증·스키마 문서 최신성·측정,
+Ubuntu의 Godot 계약 검사와 확장성 검사. JUnit XML, 계약 JSON, Godot 로그, 측정 결과를 artifact로 남긴다.
+Godot을 실행하는 검사는 순차로 돌린다. 실행 중에는 `.godot` 캐시나 `.uid` 파일을 지우지 않는다 — 지우면 다음 실행이
+"Missing .uid" 경고로 실패한다(코드 문제가 아니며 한 번 더 실행하면 사라진다).

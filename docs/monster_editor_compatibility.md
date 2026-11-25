@@ -83,9 +83,11 @@ legacy의 `prepare`와 `hop` 상태는 `Hop` 모듈 안으로 접었다(`source_
 | 1 | `FrogAttackState`는 도약 중 매 tick **대상의 원점**이 `|dx| ≤ 44, |dy| ≤ 40` 안인지 본다 | 88×80 hitbox `leap_contact` | hitbox는 대상의 **hurtbox**와 겹침을 본다. 대상 hurtbox 크기만큼 더 멀리서 맞는다 |
 | 2 | `FrogReturnState`는 origin이 chase hop 한 번 거리보다 가까우면 짧은 순찰 hop(0.6배, lift 230)으로 바꾼다 | `Hop`은 상태당 속도·lift가 하나 | 마지막 hop이 origin을 지나칠 수 있다 |
 
-해결 방향: (1) 대상 원점 기준의 `ContactStrike` 이벤트를 추가하거나 hitbox를 더 작게 잡아 근사한다. (2) `Hop`에
-"목표가 가까우면 쓰는 두 번째 속도·lift"를 추가한다. 둘 다 V2 후보이며, 개구리를 데이터 런타임으로 옮기기 전에
-결정해야 한다.
+**확정된 방향** (안정화에서 결정, 근거와 대안 비교는 [stabilization §6](monster_editor_step1_stabilization.md)):
+(1) hitbox마다 판정 방식을 고르는 `hitboxes[].target_test`(`hurtbox_overlap` 기본 / `origin_inside`)를 V2에 추가한다
+— 88×80 상자가 대상 원점을 포함하는지가 기존 식과 정확히 같다. (2) `Hop`에 `near_goal_speed_scale`·
+`near_goal_lift`를 V2에 추가한다. 둘 다 Frog 전용이 아니라 모든 도약·돌진형이 쓸 수 있는 형태다. Schema V1에는
+넣지 않았고, 실행할 런타임이 생기는 STEP 5에서 V1→V2 migration과 함께 넣는다.
 
 ### 기존 런타임의 알려진 특성 (문서가 그대로 기술하는 것)
 
@@ -143,7 +145,7 @@ Data-Driven Enemy   DataEnemyDefinition.actor_scene = data_enemy.tscn → DataEn
 |---|---|---|
 | 1 | 기존 몬스터의 동작·파라미터 분석 | 완료 (이 문서) |
 | 2 | 데이터 표현 가능 여부 검토 | 완료 (딱정벌레 전부, 개구리 2건 제외) |
-| 3 | `.rtcmonster` 예제 작성과 실제 값 대조 | 완료 (contract check 173항목) |
+| 3 | `.rtcmonster` 예제 작성과 실제 값 대조 | 완료 (contract check 205항목: environment 7, registry 39, legacy 158, behavior 1) |
 | 4 | 데이터 런타임에서 지상형 fixture 검증 (Sewer Rat Prototype) | STEP 4~5 |
 | 5 | 딱정벌레: 같은 시나리오에서 legacy와 상태 기록 비교 | STEP 5 |
 | 6 | `Hop` 구현, 개구리 미지원 2건 해결, 상태 기록 비교 | STEP 5 |
@@ -189,6 +191,20 @@ Monster Editor → 정적 검증 → Godot 검증 → 게시 (data/content/enemi
 | 게시되지 않은 몬스터 | Map Editor 카탈로그에 나오지 않는다. 초안은 `.rtcmonster` 파일일 뿐 게임 콘텐츠가 아니다 |
 | 카탈로그 갱신 | Map Editor는 지역을 검증할 때마다 프로젝트 폴더의 Enemy 목록을 다시 읽는다(`discover_enemies`). 파일 감시는 하지 않는다 |
 
-초안과 게시본의 구분은 문서의 `source_binding`(null = 초안)과 `rtcmonster.project.published_monsters()`(게임에 실제로
-있는 ID)로 한다. 초안의 ID가 게시된 ID와 같으면 `duplicate_monster_id` FAIL이다. `sewer_rat_prototype`은 초안이고,
-contract check가 ContentRegistry에 없음을 확인한다.
+초안과 게시본의 구분은 문서의 `source_binding`(null = 초안)과 `rtcmonster.monster_catalog()`로 한다. 카탈로그의 각
+항목은 다음 중 하나다.
+
+| 상태 | 뜻 | 근거 |
+|---|---|---|
+| `draft` | `.rtcmonster` 파일일 뿐 게임 콘텐츠가 아니다 | 문서를 읽음 |
+| `discovered` | `data/content/enemies`에 파일이 있다. 게임이 등록했는지는 모른다 | 파일 scan (Python) |
+| `registry_verified` | `ContentRegistry`가 그 ID를 보고했다 | Godot probe |
+| `not_in_registry` | 파일은 있는데 `ContentRegistry`에 없다 | Godot probe |
+
+파일이 있다는 것만으로 "등록됨"이라고 하지 않는다. 같은 ID를 여러 파일이 정의하면 **어느 것도 채택하지 않고** 모든
+경로를 문제로 보고하며, 그 ID는 Import와 신규 등록이 막힌다(`MonsterCatalog.is_id_free`). 파일 하나가 깨져도
+(인코딩 오류, ID 없음, 링크, 크기 초과) 나머지 목록은 유지된다. `published_monsters()`는 Map Editor와 같은 범위의
+호환 뷰로 남아 있으며 중복·오류 파일을 제외한다.
+
+초안의 ID가 게임에 있는 ID와 같으면 `duplicate_monster_id` FAIL이다. `sewer_rat_prototype`은 초안이고, contract
+check가 ContentRegistry에 없음을 확인한다.

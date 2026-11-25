@@ -19,16 +19,19 @@
   설계 문서 5개.
 - **완료 기준**: Python 테스트 통과, contract check 통과, `check_project.py`와 Map Editor 테스트 무회귀.
 - **남긴 것**: 데이터 런타임, Bridge의 Import/Export/Publish, GUI — 전부 아래 단계.
+- **안정화**([monster_editor_step1_stabilization.md](monster_editor_step1_stabilization.md)): 불변 문서와 원자적 편집
+  API, 레지스트리 확장 계약, 규칙 등록형 검증과 선언된 finding 코드, 카탈로그·PNG 무결성, 계약 검사 분리, 저장
+  장애 주입, 측정. STEP 2는 그 문서 §10의 공개 API 위에서 시작한다.
 
 ## MONSTER-STEP 2 — Editor GUI Foundation / Monster Catalog
 
 **선행 조건**
 
-1. STEP 1 병합.
-2. 공통 코드 추출 결정: `storage.py`(원자 저장·잠금), 경로 안전 규칙, `GodotSession`/`run_child`/`ProcessScope`를
-   Map Editor와 공유할지. Map Editor는 flat module로 PyInstaller에 묶이므로, 추출한다면 Map Editor EXE 빌드·패키지
-   검증(`verify_windows_package.py`)을 같은 변경에서 다시 통과시켜야 한다. 추출하지 않으면 중복을 유지하고 양쪽
-   테스트로 동등성을 지킨다.
+1. STEP 1과 안정화 병합. 그 커밋에서 GitHub Actions(`Python Monster Editor`)가 통과한 것을 확인한다.
+2. 공통 코드 추출 결정. 후보와 조건은 [stabilization §7](monster_editor_step1_stabilization.md)에 정리했다: 1순위는
+   원자 저장·잠금, Godot 프로세스 실행(`run_child`/`ProcessScope`)은 Import가 실제로 필요로 할 때. Map Editor는
+   flat module로 PyInstaller에 묶이므로, 추출한다면 Map Editor EXE 빌드·패키지 검증
+   (`verify_windows_package.py`)을 같은 변경에서 다시 통과시켜야 한다. 추출하지 않으면 중복을 유지한다.
 3. PySide6 버전은 Map Editor의 pin(`PySide6-Essentials==6.11.3`)을 그대로 쓴다.
 
 **구현 범위**
@@ -38,10 +41,13 @@
 - **Monster Catalog**: 게시된 몬스터(`project.published_monsters`)와 초안(`.rtcmonster` 폴더)을 구분해 표시.
   분류·태그·rank로 필터. 초안은 게임 콘텐츠처럼 보이지 않는다.
 - 새로 만들기(`new_document`), 복제(새 `monster_id` 필수), 열기, 저장, 다른 이름으로 저장, 삭제(초안 파일만).
-- **Inspector 자동 구성**: `schema.DOCUMENT`와 `modules.MODULES`의 `describe()`에서 폼을 만든다. 타입·범위·단위·
-  기본값·지원 수준을 표시하고, `planned` 필드는 "게임에 적용되지 않음"으로 표시한다. 필드별 하드코딩 금지.
+- **Inspector 자동 구성**: `document.schema.fields(document.data)`가 주는 `(path, node, value)`와 `node.info()`
+  (타입·기본값·최소/최대·단위·선택지·참조 대상·지원 수준·hint)에서 폼을 만든다. `planned` 필드는 "게임에 적용되지
+  않음"으로 표시한다. 필드별·몬스터별 하드코딩 금지. 편집은 전부 `document.apply(...)`로 한다.
 - 편집 대상: `metadata`, `stats`, `loot`, `movement`, `sensors`. (애니메이션·판정·공격·AI는 값 표시만)
-- Undo/Redo: `MonsterDocument`가 불변이므로 문서 스냅샷 스택.
+- Undo/Redo: 문서 스냅샷 목록과 커서. 스냅샷은 불변이고 바뀌지 않은 부분을 공유한다(Large 문서에서 스냅샷당
+  약 1.2 KiB, 실측). 편집 1회는 문서 전체를 정규화하므로(Large 약 29 ms) 드래그처럼 연속되는 조작은 끝날 때 한 번만
+  편집으로 확정한다.
 - 저장 안전: 외부 변경 감지(`DocumentConflict`) 시 덮어쓰기·다시 열기·다른 이름 저장 선택. 저장 실패 시 원본 유지.
 - 검증 패널: 11개 영역 상태, finding 클릭 시 해당 필드로 이동. `NOT_EVALUATED`를 회색 "미검사"로 표시(통과 아님).
 - **Bridge `inspect_monsters` / `import_monster`**: `tools/monster_bridge/`에 읽기 전용 명령 추가. Import는 legacy
@@ -122,7 +128,9 @@
 | 사항 | 언제까지 | 선택지 |
 |---|---|---|
 | 공통 Python 패키지 추출 | STEP 2 시작 | 추출(Map Editor EXE 재검증 필요) / 중복 유지 |
-| 개구리 접촉 판정 | STEP 5 | `ContactStrike` 이벤트 추가(V2) / hitbox 근사 수용 |
+| 개구리 접촉 판정 | **결정됨** | V2에서 `hitboxes[].target_test` 추가 (stabilization §6). 구현은 STEP 5 |
+| 개구리 근거리 도약 | **결정됨** | V2에서 `Hop.near_goal_speed_scale` / `near_goal_lift` 추가. 구현은 STEP 5 |
+| 연속 조작의 편집 비용 | STEP 3 | 조작 종료 시 1회 확정 / 부분 정규화 도입 — GUI에서 측정 후 결정 |
 | `causes_hurt` 존중 여부 | STEP 5 | 데이터 몬스터만 존중 / legacy도 수정 / 현행 유지 |
 | 정수 tick 타이머를 legacy에도 적용할지 | STEP 5 | 적용(경계 tick이 바뀔 수 있음) / 데이터 몬스터만 |
 | 기존 두 몬스터의 전환 시점 | STEP 6 이후 | 전환 / legacy 유지 |

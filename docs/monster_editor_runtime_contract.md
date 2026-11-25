@@ -38,8 +38,17 @@
   tick_of(t) = max(0, ceil(t × tick_rate − 1e-6))
   ```
 
-- 순간 이벤트(시각 `t`)는 시작 후 `tick_of(t)`번째 tick에 실행된다. tick 0은 상태·패턴이 시작된 tick이다.
+- 순간 이벤트(시각 `t`)는 시작 후 `tick_of(t)`번째 tick에 **한 번** 실행된다. tick 0은 상태·패턴이 시작된 tick이고,
+  `t ≤ 0`인 이벤트는 그 tick에 실행된다.
 - 구간 `[start, end)`는 `tick_of(start) ≤ n < tick_of(end)`인 tick에서 유효하다(반열림 — 플레이어 전투 window와 같다).
+  시작 tick은 포함하고 끝 tick은 포함하지 않는다. tick을 하나도 포함하지 않는 구간은 검증 실패다
+  (`window_shorter_than_one_tick`).
+- **같은 tick에 떨어진 이벤트는 문서에 나열된 순서로 실행된다**(`timing.schedule`). 저장된 초의 대소는 동률을 가르지
+  않는다. 나열 순서가 초의 순서와 어긋나면 검증기가 `event_order_differs_from_time`으로 경고한다.
+- 패턴은 `tick_of(duration)` tick에 끝난다. 그 tick의 이벤트는 완료 판정 전에 실행된다. `duration`을 넘는 시각의
+  이벤트는 검증 실패다(`event_after_pattern_end`).
+- 긴 프레임은 tick을 건너뛰지 않는다. 엔진이 밀린 physics tick을 차례로 실행하므로 모든 tick 번호를 순서대로 지난다.
+- 비정상 입력(0 이하·비유한 tick rate, 비유한 시간)은 `ValueError`다. 조용히 0으로 처리하지 않는다.
 - 타이머는 tick 수를 센다. **[변경]** 기존 상태는 `remaining -= delta` 후 비교라, `0.7 − 12 × (1/60)`이 `0.5`와
   정확히 같지 않아 경계 tick이 반올림에 좌우된다. 정수 tick은 이 흔들림이 없다. 60 Hz에서 기존 수치는 모두 같은
   tick에 대응한다: 0.2초 = 12, 0.25초 = 15, 0.45초 = 27, 0.7초 = 42. 0.18초(개구리 웅크림)는 11 tick = 0.1833초다.
@@ -176,6 +185,10 @@ tick n (패턴 시작 후 n번째):
 - **Hitbox**는 패턴 이벤트로만 켜진다. 켤 때 shape와 위치를 facing에 맞춰 구성한다(중심 x만 반전).
 - 좌우 반전은 body·hurtbox·hitbox 모두 같은 규칙이다. actor root는 뒤집지 않는다. **[기존]**
 - `hurtbox_overrides`와 `hitboxes`는 V1에서 `planned`다(기존 런타임에 없다).
+- V1의 hitbox는 대상의 **hurtbox와의 겹침**만 판정한다. 대상 원점 기준 판정(개구리의 접촉 판정)은 V2에서
+  `hitboxes[].target_test`로 추가하기로 결정했다
+  ([stabilization §6](monster_editor_step1_stabilization.md)).
+- shape 종류는 `geometry.SHAPES` 레지스트리가 정한다. 런타임의 shape 생성도 같은 표를 기준으로 한다.
 
 ## 6. 서버 권위
 
