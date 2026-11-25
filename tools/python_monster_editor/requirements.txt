@@ -1,3 +1,5 @@
-# The core uses only the Python 3.14 standard library. pytest is the single
-# development dependency and is pinned to the Map Editor's version.
+# rtcmonster (the core), application/ and bridge/ use only the Python 3.14 standard library.
+# PySide6 is needed by gui/ and main.py only; the versions are the Map Editor's pins.
+PySide6-Essentials==6.11.3
+shiboken6==6.11.3
 pytest==9.2.0
