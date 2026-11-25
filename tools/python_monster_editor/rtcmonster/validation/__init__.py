@@ -78,7 +78,7 @@ def validate(document, project=None, tick_rate=DEFAULT_TICK_RATE):
         if not any(item.domain == domain for item in context.findings):
             context.add(code)
     context.add("godot_runtime_not_run",
-                detail="No Godot process ran. A data-driven runtime does not exist in MONSTER-STEP 1.")
+                detail="No Godot process ran. A data-driven runtime does not exist yet (MONSTER-STEP 4-5).")
     context.add("network_replication_not_run")
     binding = context.data["source_binding"]
     for index, row in enumerate((binding or {}).get("unsupported", ())):
@@ -86,7 +86,7 @@ def validate(document, project=None, tick_rate=DEFAULT_TICK_RATE):
                     f"{row['path']}: {row['reason']}")
     if context.has_failures(STATIC_DOMAINS):
         context.add("publish_blocked_by_failures")
-    context.add("publish_not_implemented", detail="Publishing to Godot content is outside MONSTER-STEP 1.")
+    context.add("publish_not_implemented", detail="Publishing to Godot content is not implemented yet (MONSTER-STEP 6).")
     view = context.project
     return Report(tuple(context.findings), document.fingerprint, tick_rate,
                   "" if view is None else str(view.root),

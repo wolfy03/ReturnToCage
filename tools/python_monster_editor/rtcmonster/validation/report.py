@@ -133,14 +133,17 @@ class Report:
             return []
         from pathlib import Path
         from ..catalog import scan_content
-        from ..project import file_sha256
+        from ..project import SOURCE_SUFFIXES, file_sha256, resolve_project_file
+        from ..schema import MAX_IMAGE_BYTES
+        from ..spec import DocumentError
 
         changed = []
         root = Path(self.project)
         for relative, digest in self.inputs:
             try:
-                current = file_sha256(root / relative)
-            except OSError:
+                # Same rule as the first read: a path that is now a link or leaves the project counts as gone.
+                current = file_sha256(resolve_project_file(root, relative, SOURCE_SUFFIXES, MAX_IMAGE_BYTES))
+            except (OSError, DocumentError):
                 current = ""
             if current != digest:
                 changed.append(relative)

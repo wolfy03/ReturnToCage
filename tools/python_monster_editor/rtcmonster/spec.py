@@ -49,6 +49,24 @@ def capabilities(support):
     return dict(CAPABILITIES[support])
 
 
+# Document sections the desktop editor can edit since MONSTER-STEP 2. The other
+# sections are shown read-only until their editors exist (STEP 3 to 5).
+EDITOR_EDITABLE_SECTIONS = ("metadata", "stats", "movement", "sensors", "loot")
+
+
+def field_capabilities(path, support):
+    """Capabilities of one field: its support level, refined by whether the editor can edit its section.
+
+    ``path`` is a tuple path or its first element. Being editable in the
+    editor says nothing about the game: ``data_runtime`` and
+    ``multiplayer_verified`` stay as the support level says.
+    """
+    section = path if isinstance(path, str) else (path[0] if path else "")
+    stages = capabilities(support)
+    stages["editor_editable"] = section in EDITOR_EDITABLE_SECTIONS
+    return stages
+
+
 class DocumentError(ValueError):
     """The bytes or values cannot be read as a monster document."""
 

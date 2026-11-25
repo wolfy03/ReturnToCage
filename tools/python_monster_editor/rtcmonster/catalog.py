@@ -40,6 +40,7 @@ TOO_LARGE = "too_large"
 FOLDER_UNAVAILABLE = "folder_unavailable"
 DRAFT_UNREADABLE = "draft_unreadable"
 DRAFT_SHADOWS_PUBLISHED = "draft_shadows_published"
+DRAFT_DUPLICATE_ID = "draft_duplicate_id"
 
 DISCOVERED, REGISTRY_VERIFIED, NOT_IN_REGISTRY, DRAFT = "discovered", "registry_verified", "not_in_registry", "draft"
 
@@ -94,8 +95,15 @@ def scan_content(project, folder):
     directory = root / "data/content" / folder
     name = f"data/content/{folder}"
     try:
+        # The folder itself must be a real directory inside the project: a link or junction on the way
+        # could make the scan read files that are not part of this project.
+        for parent in (root / "data", root / "data/content", directory):
+            if parent.is_symlink() or parent.is_junction():
+                raise OSError(f"linked directory is not followed: {parent.relative_to(root).as_posix()}")
+        if not directory.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
+            raise OSError("content folder is outside the project")
         paths = sorted(path for path in directory.iterdir() if path.suffix == ".tres")
-    except OSError as error:
+    except (OSError, ValueError) as error:
         return ContentScan(folder, False, {}, {}, (CatalogProblem(FOLDER_UNAVAILABLE, name, str(error)),), ())
     found, problems, files = {}, [], []
     for path in paths:
@@ -144,6 +152,9 @@ def scan_content(project, folder):
     return ContentScan(folder, True, entries, duplicates, tuple(problems), tuple(files))
 
 
+AVAILABLE, CONFLICT, UNKNOWN = "available", "conflict", "unknown"
+
+
 @dataclass(frozen=True)
 class MonsterEntry:
     monster_id: str
@@ -153,11 +164,26 @@ class MonsterEntry:
     registration: str         # discovered / registry_verified / not_in_registry / draft
     sha256: str = ""
     uid: str = ""
+    category: str = ""        # drafts only: from the document's metadata
+    rank: str = ""
+    tags: tuple = ()
+    bound_to: str = ""        # drafts only: the EnemyDefinition the document mirrors ("" = new content)
+
+
+@dataclass(frozen=True)
+class IdCheck:
+    """Answer to "may a new monster take this ID?"."""
+    status: str               # AVAILABLE / CONFLICT / UNKNOWN
+    conflicts: tuple = ()     # paths of the game files or drafts that already use the ID
+    detail: str = ""
+
+    def __bool__(self):
+        raise TypeError("compare IdCheck.status; UNKNOWN is neither free nor taken")
 
 
 @dataclass(frozen=True)
 class MonsterCatalog:
-    available: bool
+    available: bool           # False = the project's enemy folder could not be read (or no project was given)
     entries: tuple
     problems: tuple
     registry_checked: bool    # True only when IDs from a real Godot run were supplied
@@ -165,22 +191,60 @@ class MonsterCatalog:
     def find(self, monster_id):
         return [entry for entry in self.entries if entry.monster_id == monster_id]
 
+    def id_status(self, monster_id, ignore_path=None):
+        """Whether a *new* monster may use ``monster_id``.
+
+        ``ignore_path`` is the draft being edited, so a document does not
+        conflict with its own file. A conflict that was found is always
+        reported, even when the project could not be read. Without a readable
+        project the absence of a conflict proves nothing: UNKNOWN.
+        """
+        ignored = None if ignore_path is None else str(ignore_path)
+        conflicts = [entry.path for entry in self.find(monster_id) if entry.path != ignored]
+        conflicts += [problem.path for problem in self.problems
+                      if problem.id == monster_id and problem.path != ignored and problem.path not in conflicts]
+        if conflicts:
+            return IdCheck(CONFLICT, tuple(conflicts), "the ID is already used")
+        if not self.available:
+            return IdCheck(UNKNOWN, (), "the project's monsters could not be read, so uniqueness is not confirmed")
+        return IdCheck(AVAILABLE)
+
     def is_id_free(self, monster_id):
-        """True when a new monster may take this ID: nothing uses it and no duplicate claims it."""
-        return not self.find(monster_id) and not any(problem.id == monster_id for problem in self.problems)
+        """True only when the catalog was readable and nothing uses the ID. UNKNOWN is not free."""
+        return self.id_status(monster_id).status == AVAILABLE
+
+
+def find_drafts(folder):
+    """``.rtcmonster`` files directly inside ``folder``. Links and directories are skipped."""
+    from .schema import SUFFIX
+
+    try:
+        return sorted(path for path in Path(folder).iterdir() if path.suffix.lower() == SUFFIX and _regular(path))
+    except OSError:
+        return []
 
 
 def monster_catalog(project, drafts=(), registry_ids=None):
     """Game monsters found on disk plus draft documents.
 
+    ``project=None`` lists drafts only; the catalog is then not ``available``
+    and no ID can be confirmed free.
+
     ``registry_ids`` are the IDs a Godot probe reported from ContentRegistry.
     Without them every game monster stays ``discovered``: a file on disk does
     not prove the game registered it.
+
+    Two drafts with the same ID conflict only when both describe *new*
+    content. Several drafts bound to the same EnemyDefinition are working
+    copies of one existing monster and are not a conflict.
     """
     from .storage import read_document
     from .spec import DocumentError
 
-    scan = scan_content(project, "enemies")
+    if project is None:
+        scan = ContentScan("enemies", False, {}, {}, (), ())
+    else:
+        scan = scan_content(project, "enemies")
     checked = registry_ids is not None
     entries = [MonsterEntry(entry.id, entry.display_name, entry.path, "game",
                             DISCOVERED if not checked else
@@ -189,15 +253,28 @@ def monster_catalog(project, drafts=(), registry_ids=None):
                for entry in scan.entries.values()]
     problems = list(scan.problems)
     taken = set(scan.entries) | set(scan.duplicates)
+    new_drafts = {}
     for path in drafts:
         try:
             document, revision = read_document(path)
         except (OSError, DocumentError) as error:
             problems.append(CatalogProblem(DRAFT_UNREADABLE, str(path), str(error)))
             continue
-        if document.data["source_binding"] is None and document.monster_id in taken:
-            problems.append(CatalogProblem(DRAFT_SHADOWS_PUBLISHED, str(path),
-                                           "a published monster already uses this ID", document.monster_id))
-        entries.append(MonsterEntry(document.monster_id, document.data["metadata"]["display_name"], str(path),
-                                    "draft", DRAFT, revision))
+        data = document.data
+        binding = data["source_binding"]
+        if binding is None:
+            new_drafts.setdefault(document.monster_id, []).append(str(path))
+            if document.monster_id in taken:
+                problems.append(CatalogProblem(DRAFT_SHADOWS_PUBLISHED, str(path),
+                                               "a published monster already uses this ID", document.monster_id))
+        entries.append(MonsterEntry(document.monster_id, data["metadata"]["display_name"], str(path), "draft",
+                                    DRAFT, revision, "", data["metadata"]["category"], data["metadata"]["rank"],
+                                    tuple(data["metadata"]["tags"]),
+                                    "" if binding is None else binding["definition_path"]))
+    for monster_id, paths in new_drafts.items():
+        if len(paths) > 1:
+            problems.extend(CatalogProblem(DRAFT_DUPLICATE_ID, path,
+                                           "another new draft uses this ID: "
+                                           + ", ".join(other for other in paths if other != path), monster_id)
+                            for path in paths)
     return MonsterCatalog(scan.available, tuple(entries), tuple(problems), checked)
