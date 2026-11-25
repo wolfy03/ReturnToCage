@@ -945,11 +945,11 @@
       },
       {
         "path": "presentation/definitions/enemy_animation_profile.gd",
-        "sha256": "76d18613d67329afd3ed616024011f3dec80edc621b7dde836c8e990e525216e"
+        "sha256": "0488764042c6d18269619e9f5c54895e5cf3cf120f068f82a6f3121e80c9ce4c"
       },
       {
         "path": "presentation/enemy/enemy_animation_presenter.gd",
-        "sha256": "e10c1733a2c8aadaea40b225497be7224c9e13ed6100794e12a82901ea609a09"
+        "sha256": "4e9226f6aaba537e678f2ad4430f388ab13dbbbb68e6a7476e23a2f477cf872c"
       },
       {
         "path": "presentation/enemy/profiles/frog_animation_profile.tres",
