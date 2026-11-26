@@ -164,4 +164,9 @@ STAGE = {
     "passed": "Staging 통과: Godot이 Clip {clips}개의 SpriteFrames와 EnemyAnimationProfile을 만들었고 문서와 일치합니다 "
               "(확인용 actor: {carrier}). 프로젝트 파일은 바뀌지 않았습니다.",
     "differs": "Godot이 만든 리소스가 문서와 다릅니다. 프로젝트 파일은 바뀌지 않았습니다.",
+    "crashed": "(Godot이 {count}회 비정상 종료해 다시 실행했습니다. 그 실행의 결과는 쓰지 않았습니다.)",
+    "notes": "(참고 {count}건)",
+    "leftover": "Staging 작업 폴더를 지우지 못했습니다. 실제 프로젝트에는 영향이 없습니다.\n\n{detail}",
+    "state": {"none": "Staging: 미실행", "passed": "Staging: 구조 일치 (실제 렌더링·전투는 미검사)",
+              "differs": "Staging: 문서와 다름", "stale": "Staging: 오래됨 (문서나 프로젝트가 바뀜)"},
 }

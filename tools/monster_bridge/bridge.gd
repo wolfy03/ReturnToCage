@@ -5,7 +5,8 @@ extends Node
 ##
 ## The request names an operation and where to write the result:
 ##
-##   {"protocol": 1, "request_id": "...", "operation": "inspect_monsters" | "import_monster" | "stage_monster",
+##   {"protocol": 1, "request_id": "...",
+##    "operation": "inspect_monsters" | "import_monster" | "stage_monster" | "read_stage",
 ##    "monster_id": "...", "result_path": "<absolute path>.json", "stage": {...}}
 ##
 ## The result repeats protocol, request_id and operation, so the editor can tell
@@ -14,13 +15,15 @@ extends Node
 ## inspect_monsters and import_monster only read: they write that one result
 ## file and nothing else. stage_monster also saves a SpriteFrames and an
 ## EnemyAnimationProfile, and only in a staging copy of the project
-## (monster_stager.gd refuses a project without the staging marker).
+## (monster_stager.gd refuses a project whose marker does not carry the
+## request's staging session). read_stage reads those two files back; the
+## editor runs it in a second process so the answer comes from the disk.
 
 const Inspector := preload("res://tools/monster_bridge/monster_inspector.gd")
 const Stager := preload("res://tools/monster_bridge/monster_stager.gd")
 ## stage_monster was added in MONSTER-STEP 3 without a version change: an older bridge answers it with UNKNOWN_OPERATION.
 const PROTOCOL := 1
-const OPERATIONS := ["inspect_monsters", "import_monster", "stage_monster"]
+const OPERATIONS := ["inspect_monsters", "import_monster", "stage_monster", "read_stage"]
 
 var _request: Dictionary = {}
 
@@ -43,8 +46,15 @@ func _ready() -> void:
 		_finish({}, "UNKNOWN_OPERATION", String(_request.operation))
 	elif _request.operation == "inspect_monsters":
 		_finish(_inspect_monsters())
-	elif _request.operation == "stage_monster":
-		var staged := Stager.stage(String(_request.get("monster_id", "")), _request.get("stage"), self)
+	elif _request.operation == "stage_monster" or _request.operation == "read_stage":
+		var monster_id: Variant = _request.get("monster_id", "")
+		var staged: Dictionary
+		if not monster_id is String:
+			staged = {"error_code": "INVALID_REQUEST", "message": "monster_id is not text"}
+		elif _request.operation == "stage_monster":
+			staged = Stager.stage(monster_id, _request.get("stage"), self)
+		else:
+			staged = Stager.read_back(monster_id, _request.get("stage"))
 		if staged.has("error_code"):
 			_finish({}, String(staged.error_code), String(staged.message))
 		else:

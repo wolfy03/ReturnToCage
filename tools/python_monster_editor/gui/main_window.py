@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self._engine_version = ""
         self._last_message = ""
         self.last_stage = None
+        self._stage_project = None          # (project generation, source fingerprint) the result was made against
         self.setObjectName("MonsterEditorMainWindow")
         self.resize(1360, 860)
 
@@ -370,6 +371,7 @@ class MainWindow(QMainWindow):
         else:
             text = f"정적 검증: {strings.STATUS[report.static_status]}" + (" (오래됨)" if state == "stale" else "") \
                 + f" · 전체: {strings.STATUS[report.overall]}"
+        text += " · " + strings.STAGE["state"][self.stage_state()]
         self.overview.show_session(session, self.project.root, self._binding_state(), text)
         self._update_actions()
 
@@ -745,22 +747,43 @@ class MainWindow(QMainWindow):
             return None
         godot, root, document = self.project.godot, self.project.root, self.session.document
 
+        generation = self.project.generation
+
         def work(cancel):
-            result = staging.stage_presentation(godot, root, document, carrier=carrier, cancel=cancel)
-            staging.remove_staging_copy(result.staging_root)
-            return result
+            # The copy is made, used and removed inside this call, whatever happens in between.
+            return staging.stage_presentation(godot, root, document, carrier=carrier, cancel=cancel)
 
         def done(result):
-            self.last_stage = result
+            self.last_stage, self._stage_project = result, (generation, result.project_fingerprint)
             if result.passed:
-                self.status(strings.STAGE["passed"].format(clips=len(result.profile.get("animations", {})),
-                                                           carrier=result.attach.get("carrier", "–")), 15000)
+                text = strings.STAGE["passed"].format(clips=len(result.profile.get("animations", {})),
+                                                      carrier=result.attach.get("carrier", "–"))
+                if result.process.get("crash_exit_codes"):
+                    text += " " + strings.STAGE["crashed"].format(count=len(result.process["crash_exit_codes"]))
+                if result.notes:
+                    text += " " + strings.STAGE["notes"].format(count=len(result.notes))
+                self.status(text, 15000)
             else:
                 shown = list(result.differences[:12])
                 if len(result.differences) > 12:
                     shown.append(f"… 외 {len(result.differences) - 12}건")
                 self.prompts.error("Staging", strings.STAGE["differs"] + "\n\n" + "\n".join(shown))
+            if result.cleanup_error:
+                # The check ran; a folder was left behind. Say so, with the path.
+                self.prompts.error("Staging", strings.STAGE["leftover"].format(detail=result.cleanup_error))
+            self._show_session()
         return self._start_job("stage_monster", work, done, same_document=True, label="표현 리소스 Staging")
+
+    def stage_state(self):
+        """``none`` / ``passed`` / ``differs`` / ``stale``. A result counts only for the document and the
+        project state it was made against: any edit, another document or another project makes it stale."""
+        result = self.last_stage
+        if result is None or self.session is None or result.monster_id != self.session.document.data["monster_id"]:
+            return "none"
+        if not result.is_current(self.session.document) or self._stage_project is None \
+                or self._stage_project[0] != self.project.generation:
+            return "stale"
+        return "passed" if result.passed else "differs"
 
     def wait_for_jobs(self, timeout_ms=200000):
         """Block until background jobs have delivered their results. For tests and for closing."""

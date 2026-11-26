@@ -41,7 +41,7 @@ def rat():
 
 # A stand-in for the Godot executable: a real child process that can misbehave on request.
 FAKE = textwrap.dedent('''
-    import json, os, signal, sys, time
+    import hashlib, json, os, signal, sys, time
     mode = os.environ.get("RTC_FAKE_MODE", "ok")
     args = sys.argv[1:]
     if args == ["--version"]:
@@ -55,15 +55,42 @@ FAKE = textwrap.dedent('''
     project = args[args.index("--path") + 1]
     if os.environ.get("RTC_FAKE_ECHO"):   # lets a test read the request the client really sent
         json.dump({"request": request, "project": project}, open(os.environ["RTC_FAKE_ECHO"], "w", encoding="utf-8"))
-    for relative in json.loads(os.environ.get("RTC_FAKE_TOUCH", "[]")):
-        os.makedirs(os.path.dirname(os.path.join(project, relative)), exist_ok=True)
-        open(os.path.join(project, relative), "w").close()
+    operation = request["operation"]
+    mode = os.environ.get("RTC_FAKE_MODE_" + operation.upper(), mode)      # one operation may misbehave alone
+    once = os.environ.get("RTC_FAKE_CRASH_ONCE")       # crash the first time, behave afterwards
+    if once and not os.path.exists(once):
+        open(once, "w").close()
+        mode = "crash"
+    if operation == "stage_monster":
+        for relative in json.loads(os.environ.get("RTC_FAKE_TOUCH", "[]")):
+            os.makedirs(os.path.dirname(os.path.join(project, relative)), exist_ok=True)
+            with open(os.path.join(project, relative), "w", encoding="utf-8") as stream:
+                stream.write("[gd_resource] " + relative)
     result = {"protocol": 1, "request_id": request["request_id"], "operation": request["operation"],
               "project_path": project, "status": "PASS", "error_code": "", "message": "",
               "godot_version": "4.7.2-stable (official)", "physics_ticks_per_second": 60,
               "network_protocol_version": 20, "gravity": 1100.0, "target_keep_range_scale": 1.35,
               "snapshot_states": ["IDLE", "MOVING", "ATTACKING", "HURT", "DEAD"],
               "data": json.loads(os.environ.get("RTC_FAKE_DATA", '{"monsters": []}'))}
+    if operation in ("stage_monster", "read_stage"):
+        # Like the real stager: the answer carries the session ID found in the copy's marker.
+        data = result["data"]
+        try:
+            session = json.load(open(os.path.join(project, ".rtc_monster_staging"), encoding="utf-8"))["session"]
+        except (OSError, ValueError, KeyError):
+            session = ""
+        if os.environ.get("RTC_FAKE_SESSION") != "omit":
+            data["staging_session"] = os.environ.get("RTC_FAKE_SESSION", session)
+        if operation == "read_stage":
+            override = os.environ.get("RTC_FAKE_READ_PROFILE")
+            hashes = {}
+            for key in ("sprite_frames_path", "profile_path"):
+                path = os.path.join(project, str(data.get(key, ""))[len("res://"):])
+                if os.path.isfile(path):
+                    hashes[data[key]] = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            result["data"] = {"monster_id": data.get("monster_id"), "staging_session": data.get("staging_session"),
+                              "profile": json.loads(override) if override else data.get("profile"),
+                              "resources": json.loads(os.environ.get("RTC_FAKE_READ_RESOURCES", "null")) or hashes}
     if mode == "hang":
         time.sleep(float(os.environ.get("RTC_FAKE_SECONDS", "20")))
     if mode == "crash":

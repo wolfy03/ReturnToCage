@@ -27,7 +27,8 @@ import time
 import uuid
 
 PROTOCOL = 1
-OPERATIONS = ("inspect_monsters", "import_monster", "stage_monster")
+OPERATIONS = ("inspect_monsters", "import_monster", "stage_monster", "read_stage")
+STAGE_OPERATIONS = ("stage_monster", "read_stage")      # carry a ``stage`` payload; only run in a staging copy
 DEFAULT_TIMEOUT = 180
 CRASH_ATTEMPTS = 3
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -42,11 +43,12 @@ INVALID_RESPONSE, RESPONSE_MISMATCH, UNKNOWN_MONSTER = "INVALID_RESPONSE", "RESP
 
 
 class BridgeError(RuntimeError):
-    def __init__(self, code, message, log=""):
+    def __init__(self, code, message, log="", exit_code=None):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.detail = message
         self.log = log
+        self.exit_code = exit_code      # the process's exit code, when the failure is about the process
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,15 @@ class BridgeResponse:
     log: str
     seconds: float
     attempts: int = 1        # more than 1 when the engine crashed on exit and the read was repeated
+    # What the *process* did, kept apart from what the bridge answered: the exit codes of the attempts that
+    # crashed (their answers were thrown away) and the engine log of the first of them.
+    crashes: tuple = ()
+    crash_log: str = ""
+
+    @property
+    def process_result(self):
+        """``CLEAN`` or ``CRASHED_THEN_RETRIED``. A crash is never folded into a plain success."""
+        return "CRASHED_THEN_RETRIED" if self.crashes else "CLEAN"
 
 
 def engine_binary(godot):
@@ -70,6 +81,28 @@ def engine_binary(godot):
         if companion.is_file():
             return companion
     return godot
+
+
+def _stop(process):
+    """End the process this module started, and anything it started in turn. Nothing else is touched.
+
+    A child left running keeps its working directory open, and on Windows that makes the staging copy it
+    ran in impossible to delete. The tree is found from this process's own PID, never by name.
+    """
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(process.pid, 9)          # the child was started in its own session
+        except (OSError, AttributeError):
+            pass
+    if process.poll() is None:
+        process.kill()
 
 
 def _run(command, cwd, cancel, timeout):
@@ -96,7 +129,7 @@ def _run(command, cwd, cancel, timeout):
                     break
         finally:
             if process.poll() is None:
-                process.kill()
+                _stop(process)
             process.wait(timeout=15)
         output.seek(0)
         log = output.read().decode("utf-8", errors="replace")
@@ -135,21 +168,30 @@ def call(godot, project, operation, monster_id="", cancel=None, timeout=DEFAULT_
     Godot 4.7.2 on Windows sometimes dies with an access violation while shutting down, after the bridge
     has finished (measured: a few runs in a hundred, also with the STEP 1 probe; never with the game's main
     scene). A crashed run is never trusted, whatever it wrote. The read operations change nothing, and
-    ``stage_monster`` only overwrites its own output inside a disposable staging copy, so the call is simply
-    made again, at most ``CRASH_ATTEMPTS`` times; ``BridgeResponse.attempts`` says how many it took.
+    ``stage_monster`` first deletes, then rewrites, its own output folder inside a disposable staging copy
+    (so a half-written file of a crashed attempt cannot pass for a result), so the call is simply made
+    again, at most ``CRASH_ATTEMPTS`` times. Nothing that writes to the real project is ever retried here.
 
-    ``stage`` is the payload of ``stage_monster`` and is sent only with that operation.
+    The functional answer and the process outcome are reported separately: ``BridgeResponse.attempts``,
+    ``.crashes`` (exit codes of the discarded attempts), ``.crash_log`` and ``.process_result``. An exit
+    code alone does not prove *which* crash it was; the log of the first crashed attempt is kept so that
+    can be looked at. Cancelling stops the retries, and each attempt has its own ``timeout``.
+
+    ``stage`` is the payload of the stage operations and is sent only with those.
     """
     if operation not in OPERATIONS:
         raise ValueError(f"unknown bridge operation: {operation}")
+    crashes, crash_log = [], ""
     for attempt in range(1, CRASH_ATTEMPTS + 1):
         try:
             response = _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage)
         except BridgeError as error:
             if error.code != PROCESS_CRASH or attempt == CRASH_ATTEMPTS:
                 raise
+            crashes.append(error.exit_code)
+            crash_log = crash_log or error.log
             continue
-        return replace(response, attempts=attempt)
+        return replace(response, attempts=attempt, crashes=tuple(crashes), crash_log=crash_log)
 
 
 def _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage=None):
@@ -164,7 +206,7 @@ def _call_once(godot, project, operation, monster_id, cancel, timeout, work_fold
         request_path, result_path = Path(folder) / "request.json", Path(folder) / "result.json"
         request = {"protocol": PROTOCOL, "request_id": request_id, "operation": operation, "monster_id": monster_id,
                    "result_path": str(result_path)}
-        if operation == "stage_monster":
+        if operation in STAGE_OPERATIONS:
             request["stage"] = stage
         request_path.write_text(json.dumps(request), encoding="utf-8")
         code, log = _run([str(godot), "--headless", "--path", str(project), BRIDGE_SCENE, "--",
@@ -172,7 +214,7 @@ def _call_once(godot, project, operation, monster_id, cancel, timeout, work_fold
         if cancel is not None and cancel.is_set():
             raise BridgeError(CANCELLED, "the operation was cancelled", log)
         if code < 0 or code > 255:
-            raise BridgeError(PROCESS_CRASH, f"Godot crashed (exit {code}, 0x{code & 0xffffffff:08X})", log)
+            raise BridgeError(PROCESS_CRASH, f"Godot crashed (exit {code}, 0x{code & 0xffffffff:08X})", log, code)
         if ENGINE_ERRORS.search(log):
             raise BridgeError(ENGINE_ERROR, "Godot reported script errors or leaks", log)
         result = _read_result(result_path, code, log)

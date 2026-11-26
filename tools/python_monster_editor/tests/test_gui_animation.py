@@ -311,8 +311,9 @@ def test_closing_the_document_empties_the_workspace(window):
 # -------------------------------------------------------------------------------------------------- staging
 def test_the_stage_action_reports_what_godot_built(app, tmp_path, fake):
     import json
-    from test_staging import OUTPUTS, stage_data
+    from test_staging import OUTPUTS, stage_data, with_art
     godot, project, set_mode = fake
+    with_art(project, load("sewer_beetle"))
     for name in ("autoload/content_registry.gd", "data/definitions/enemy_definition.gd"):
         (project / name).parent.mkdir(parents=True, exist_ok=True)
         (project / name).write_text("", encoding="utf-8")
@@ -331,12 +332,21 @@ def test_the_stage_action_reports_what_godot_built(app, tmp_path, fake):
         view.wait_for_jobs()
         assert view.last_stage is not None and view.last_stage.passed and not view.last_stage.staging_root.exists()
         assert prompts.last_error() is None and not (project / "monster_stage").exists()
+        assert view.stage_state() == "passed" and "구조 일치" in view.overview.values["validation"].text()
+        assert "미검사" in view.overview.values["validation"].text()              # never "everything verified"
+        view.apply_edits([logic.set_value(("stats", "max_health"), 77)], "edit")       # any edit: the result is old
+        assert view.stage_state() == "stale" and "오래됨" in view.overview.values["validation"].text()
+        view.undo()
+        assert view.stage_state() == "passed"
+        view.apply_project_settings({"project_root": str(project), "godot_path": str(godot), "drafts_folder": ""})
+        assert view.stage_state() == "stale"                                     # another project state
         data = stage_data(beetle)
         data["profile"]["roles"]["move"] = "idle"
         set_mode("ok", data=json.dumps(data), touch=OUTPUTS)
         view.stage_presentation()
         view.wait_for_jobs()
         assert not view.last_stage.passed and "role move" in prompts.last_error()[1]
+        assert view.stage_state() == "differs"
         view.set_session(DocumentSession(load("sewer_rat_prototype")))      # no clips: nothing to stage
         assert not view.actions_by_name["stage"].isEnabled()
     finally:
