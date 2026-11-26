@@ -9,15 +9,11 @@ var result_path: String
 var _sequence := 0
 var _busy := false
 var _failed := false
-var _deadline: int
-## A running command must finish within COMMAND_TIMEOUT_MSEC (_deadline). A role
-## that is only waiting for its next command gets the longer idle allowance: the
-## controller drives other roles in between, and on a slow rendered runner that
-## alone has exceeded a minute. The idle watchdog still ends an orphaned process.
-## It is refreshed from _process, never from the command coroutine.
+## Command and idle limits; see CommandWatchdog. Driven from _process only,
+## never from the command coroutine.
 const COMMAND_TIMEOUT_MSEC := 60000
 const IDLE_TIMEOUT_MSEC := 300000
-var _idle_deadline: int
+var _watchdog: CommandWatchdog
 var _player_id: StringName
 var _watched_id: StringName
 var _watch_origin: Vector2
@@ -64,8 +60,7 @@ func _ready() -> void:
 			command_path = argument.trim_prefix("--command=")
 		elif argument.begins_with("--result="):
 			result_path = argument.trim_prefix("--result=")
-	_deadline = Time.get_ticks_msec() + COMMAND_TIMEOUT_MSEC
-	_idle_deadline = Time.get_ticks_msec() + IDLE_TIMEOUT_MSEC
+	_watchdog = CommandWatchdog.new(COMMAND_TIMEOUT_MSEC, IDLE_TIMEOUT_MSEC, Time.get_ticks_msec())
 	if app == null:
 		app = (load("res://core/boot.tscn") as PackedScene).instantiate() as AppRoot
 		add_child(app)
@@ -101,11 +96,9 @@ func _process(_delta: float) -> void:
 		_saw_motion = _saw_motion or (watched.position.x - _watch_origin.x) * _watch_direction > 12.0
 		var visual := watched.player_visual().get_node("PlayerAnimationPresenter") as PlayerAnimationPresenter
 		_saw_run = _saw_run or visual != null and visual.current_animation() == &"run" and watched.facing == _watch_direction
-	var now := Time.get_ticks_msec()
-	if _busy:
-		_idle_deadline = now + IDLE_TIMEOUT_MSEC
-	if now > (_deadline if _busy else _idle_deadline):
-		_fail("command timeout")
+	if _watchdog.observe(Time.get_ticks_msec(), _busy):
+		_fail("command timeout while running sequence %d" % _sequence if _busy
+			else "idle timeout: no command for %d s after sequence %d" % [IDLE_TIMEOUT_MSEC / 1000, _sequence])
 		return
 	if _busy or not FileAccess.file_exists(command_path):
 		return
@@ -117,7 +110,7 @@ func _process(_delta: float) -> void:
 	if int(command.get("sequence", 0)) <= _sequence:
 		return
 	_sequence = int(command.sequence)
-	_deadline = Time.get_ticks_msec() + COMMAND_TIMEOUT_MSEC
+	_watchdog.command_started(Time.get_ticks_msec())
 	_busy = true
 	if _gui_mode:
 		print("SESSION STEP %d %s %s" % [_sequence, command.get("action", ""), JSON.stringify(_state_dump())])
