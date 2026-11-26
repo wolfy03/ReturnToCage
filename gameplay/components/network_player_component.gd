@@ -32,6 +32,10 @@ var _has_sent_combat: bool = false
 var _last_sent_stamina: float = 0.0
 var _last_sent_max_stamina: float = 0.0
 var _has_snapshot: bool = false
+## Diagnostics only: how many transform snapshots this actor applied, and how many
+## it ignored because their sequence was not newer than the last applied one.
+var snapshots_applied: int = 0
+var snapshots_stale: int = 0
 var _target_position: Vector2
 var _target_velocity: Vector2
 var _target_facing: float = 1.0
@@ -265,11 +269,15 @@ func _on_transform_snapshot_received(
 	movement_mode: int,
 	sequence: int
 ) -> void:
-	if actor == null or actor.is_simulation_authority() or actor.peer_id != peer_id or sequence <= _snapshot_sequence:
+	if actor == null or actor.is_simulation_authority() or actor.peer_id != peer_id:
+		return
+	if sequence <= _snapshot_sequence:
+		snapshots_stale += 1
 		return
 	if not NetworkProtocol.valid_snapshot(position, replicated_velocity, replicated_facing, movement_mode):
 		return
 	_snapshot_sequence = sequence
+	snapshots_applied += 1
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
 	if runtime != null:
 		runtime.transform_sequence = sequence
