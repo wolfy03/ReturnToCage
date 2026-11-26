@@ -148,6 +148,11 @@ def test_input_roles_and_the_bottom_centre_preset(window):
     panel.scale_y.setValue(0.5)
     panel.scale_y.editingFinished.emit()
     assert list(data(window)["presentation"]["visual_scale"]) == [0.5, 0.5]
+    window.prompts.expect("confirm", False)                    # the role binding is named before it is cleared
+    QTest.mouseClick(panel.remove_clip_button, Qt.MouseButton.LeftButton)
+    assert "presentation.roles.idle" in window.prompts.asked("confirm")[-1][1]
+    assert data(window)["presentation"]["roles"]["idle"] == "idle" and len(data(window)["animations"]["clips"]) == 1
+    window.prompts.expect("confirm", True)
     QTest.mouseClick(panel.remove_clip_button, Qt.MouseButton.LeftButton)
     assert data(window)["presentation"]["roles"]["idle"] == "" and data(window)["animations"]["clips"] == []
 

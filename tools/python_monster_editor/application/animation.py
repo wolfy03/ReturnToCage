@@ -7,9 +7,12 @@ come from ``rtcmonster.geometry`` and ``rtcmonster.timing``; this module adds
 no formula of its own.
 """
 
-from rtcmonster import DocumentError, insert_item, inspect_image, remove_item, set_value
+from rtcmonster import DocumentError, insert_item, inspect_image, move_item, remove_item, set_value
 from rtcmonster.geometry import bottom_center_offset, shape_bounds, slice_grid
 from rtcmonster.schema import ROLES
+
+from . import references
+from .references import ReferenceBlocked
 
 IMAGES = ("assets", "images")
 CLIPS = ("animations", "clips")
@@ -81,11 +84,28 @@ def register_image(data, project_root, relative, image_id=None):
                                            "sha256": digest})]
 
 
+def frames_outside(data, image_id, width, height):
+    """``[(clip id, frame index, rect)]`` of the frames whose source rect does not fit a ``width x height`` image."""
+    return [(clip["id"], index, list(frame["rect"]))
+            for clip in _rows(data, CLIPS) for index, frame in enumerate(clip["frames"])
+            if frame["image"] == image_id and frame["rect"] is not None
+            and (frame["rect"][0] + frame["rect"][2] > width or frame["rect"][1] + frame["rect"][3] > height)]
+
+
 def refresh_image(data, project_root, image_id):
-    """Edits that record the file's current size and hash. Empty when the record is already current."""
+    """Edits that record the file's current size and hash. Empty when the record is already current.
+
+    A file whose new size no longer contains a frame's source rect is refused: the rect would have to be
+    invented, and shrinking it to fit would silently change what the frame shows.
+    """
     index = image_index(data, image_id)
     row = _rows(data, IMAGES)[index]
     width, height, digest = inspect_image(project_root, row["path"])
+    outside = frames_outside(data, image_id, width, height)
+    if outside:
+        listed = ", ".join(f"{clip}[{frame}] {rect}" for clip, frame, rect in outside[:6])
+        raise DocumentError(f"{row['path']} is now {width}x{height}; these frames no longer fit inside it: {listed}"
+                            + (f" (+{len(outside) - 6} more)" if len(outside) > 6 else ""))
     return [set_value(IMAGES + (index, key), value)
             for key, value in (("width", width), ("height", height), ("sha256", digest)) if row[key] != value]
 
@@ -95,12 +115,28 @@ def image_users(data, image_id):
     return [clip["id"] for clip in _rows(data, CLIPS) if any(frame["image"] == image_id for frame in clip["frames"])]
 
 
-def remove_image(data, image_id):
-    """Edits that drop an unused image. An image a clip still draws from is not removed."""
-    users = image_users(data, image_id)
-    if users:
-        raise DocumentError(f"image {image_id!r} is used by clip {', '.join(users)}")
-    return [remove_item(IMAGES + (image_index(data, image_id),))]
+def remove_image(document, image_id, replace_with=None):
+    """Edits that drop an image. Frames are never deleted to make that possible.
+
+    An image a frame still draws from is refused (``ReferenceBlocked``) unless ``replace_with`` names
+    another registered image; then those frames draw from it instead - provided every source rect fits
+    inside it, and whole-image frames keep their size.
+    """
+    data = document.data
+    position = image_index(data, image_id)
+    usages = references.incoming(document, "image", image_id)
+    if not usages:
+        return [remove_item(IMAGES + (position,))]
+    if replace_with is None:
+        raise ReferenceBlocked(f"image {image_id!r} is used by clip {', '.join(image_users(data, image_id))}", usages)
+    old, new = _rows(data, IMAGES)[position], _rows(data, IMAGES)[image_index(data, replace_with)]
+    if frames_outside(data, image_id, new["width"], new["height"]):
+        raise DocumentError(f"image {replace_with!r} is too small for the frames that use {image_id!r}")
+    whole = any(frame["image"] == image_id and frame["rect"] is None
+                for clip in _rows(data, CLIPS) for frame in clip["frames"])
+    if whole and (old["width"], old["height"]) != (new["width"], new["height"]):
+        raise DocumentError(f"image {replace_with!r} is a different size and {image_id!r} is used as a whole image")
+    return references.retarget(document, "image", image_id, replace_with, usages) + [remove_item(IMAGES + (position,))]
 
 
 # --------------------------------------------------------------------------------------------------- clips
@@ -146,37 +182,118 @@ def clip_roles(data, clip_id):
     return [role for role in ROLES if roles[role] == clip_id]
 
 
-def remove_clip(data, clip_id):
-    """Edits that remove a clip together with what points at it: its role bindings and hurtbox overrides.
+def clip_usages(document, clip_id):
+    """Everything that names a clip (``references.Usage`` rows): roles, hurtbox overrides, attack patterns,
+    behaviour states, events."""
+    clip_index(document.data, clip_id)
+    return references.incoming(document, "animation", clip_id)
 
-    Overrides are removed from the last one backwards so each index is still valid when its edit runs.
+
+def remove_clip(document, clip_id, replace_with=None):
+    """Edits that remove a clip.
+
+    What belongs to the clip's own presentation goes with it: its role bindings are cleared and its
+    hurtbox overrides are removed (their frame numbers mean nothing for another clip). A reference with
+    gameplay meaning - an attack pattern, a behaviour state, an event - is never dropped: the removal is
+    refused (``ReferenceBlocked``) unless ``replace_with`` names the clip those references should use
+    instead. No pattern or state is ever deleted here.
     """
-    edits = [set_value(ROLE_PATH + (role,), "") for role in clip_roles(data, clip_id)]
+    data = document.data
+    usages = clip_usages(document, clip_id)
+    hard = references.blocking(usages)
+    if hard and replace_with is None:
+        raise ReferenceBlocked(f"clip {clip_id!r} is still used by " + ", ".join(references.describe(hard)), hard)
+    edits = references.retarget(document, "animation", clip_id, replace_with, hard) if hard else []
+    edits += [set_value(ROLE_PATH + (role,), "") for role in clip_roles(data, clip_id)]
     overrides = [index for index, row in enumerate(_rows(data, OVERRIDES)) if row["clip"] == clip_id]
+    # From the last one backwards, so each index is still valid when its edit runs.
     edits += [remove_item(OVERRIDES + (index,)) for index in reversed(overrides)]
     return edits + [remove_item(CLIPS + (clip_index(data, clip_id),))]
 
 
-def remove_frame(data, clip_id, frame):
-    """Edits that remove one frame and keep the frame overrides pointing at the frames they were made for.
+def rename_clip(document, clip_id, new_id):
+    """Edits that rename a clip and every reference to it. ``[]`` when the name is unchanged."""
+    return references.rename(document, "animation", clip_id, new_id)
 
-    The removed frame's own override goes with it, and overrides of later frames move down by one.
-    """
+
+# -------------------------------------------------------------------------------------------------- frames
+def _clip(data, clip_id):
     position = clip_index(data, clip_id)
-    clip = _rows(data, CLIPS)[position]
+    return position, _rows(data, CLIPS)[position]
+
+
+def move_frame(data, clip_id, source, target):
+    """Edits that move one frame so it ends at index ``target``, with every frame index following it.
+
+    The frame order, the hurtbox overrides made for single frames and ``attack_hit_frame`` change in the
+    same edit list: applied together they are one undo step and no half-moved document ever exists.
+    ``[]`` when the frame already is where it should go.
+    """
+    position, clip = _clip(data, clip_id)
+    mapping = references.move_mapping(len(clip["frames"]), source, target)
+    if source == target:
+        return []
+    return references.remap_frames(data, clip_id, mapping) + [move_item(CLIPS + (position, "frames", source), target)]
+
+
+def frame_removal_impact(data, clip_id, frame):
+    """What removing a frame takes with it or needs decided: ``{"override", "hit_frame", "last"}`` booleans."""
+    _position, clip = _clip(data, clip_id)
     if not 0 <= frame < len(clip["frames"]):
         raise DocumentError(f"clip {clip_id!r} has no frame {frame}")
+    used = {usage.what for usage in references.frame_usages(data, clip_id) if usage.frame == frame}
+    return {"override": "hurtbox_override" in used, "hit_frame": "attack_hit_frame" in used,
+            "last": len(clip["frames"]) == 1}
+
+
+def remove_frame(data, clip_id, frame, hit_frame=None):
+    """Edits that remove one frame and keep every other frame index on the frame it was made for.
+
+    * The removed frame's own hurtbox override goes with it; overrides of later frames move down by one.
+    * When the frame is the one ``attack_hit_frame`` names, the strike has to be shown by some other
+      frame, and which one is a decision, not arithmetic: the removal is refused (``ReferenceBlocked``)
+      until ``hit_frame`` gives the index, counted in the clip as it will be after the removal.
+    * The last frame of a clip is not removed - an empty clip cannot be drawn. Remove the clip instead.
+    """
+    position, clip = _clip(data, clip_id)
+    impact = frame_removal_impact(data, clip_id, frame)
+    if impact["last"]:
+        raise DocumentError(f"frame {frame} is the only frame of {clip_id!r}; remove the clip instead")
+    mapping = references.remove_mapping(len(clip["frames"]), frame)
     edits = []
+    if impact["hit_frame"]:
+        if hit_frame is None:
+            usage = [row for row in references.frame_usages(data, clip_id) if row.what == "attack_hit_frame"]
+            raise ReferenceBlocked(f"frame {frame} of {clip_id!r} is the attack hit frame", usage)
+        if not 0 <= hit_frame < len(clip["frames"]) - 1:
+            raise DocumentError(f"the clip will have no frame {hit_frame} after the removal")
+        edits.append(set_value(references.HIT_FRAME, hit_frame))
+    # Surviving indexes first (override rows keep their positions), then the override that dies with the frame.
+    del mapping[frame]
+    edits += references.remap_frames(data, clip_id, mapping)
     own = override_index(data, clip_id, frame)
     if own is not None:
         edits.append(remove_item(OVERRIDES + (own,)))
-    later = sorted((row["frame"], index) for index, row in enumerate(_rows(data, OVERRIDES))
-                   if row["clip"] == clip_id and row["frame"] is not None and row["frame"] > frame)
-    for number, index in later:
-        # Lower frames first, so no two overrides ever share a frame; indexes follow the removal above.
-        index -= 1 if own is not None and index > own else 0
-        edits.append(set_value(OVERRIDES + (index, "frame"), number - 1))
     return edits + [remove_item(CLIPS + (position, "frames", frame))]
+
+
+def insert_frame(data, clip_id, index, frame):
+    """Edits that insert a frame row at ``index``; frame indexes at or after it move up by one."""
+    position, clip = _clip(data, clip_id)
+    mapping = references.insert_mapping(len(clip["frames"]), index)
+    image_index(data, frame["image"])
+    return references.remap_frames(data, clip_id, mapping) + [insert_item(CLIPS + (position, "frames"), dict(frame), index)]
+
+
+def duplicate_frame(data, clip_id, frame):
+    """Edits that repeat a frame right after itself. The copy starts without a hurtbox override of its own."""
+    _position, clip = _clip(data, clip_id)
+    if not 0 <= frame < len(clip["frames"]):
+        raise DocumentError(f"clip {clip_id!r} has no frame {frame}")
+    source = clip["frames"][frame]
+    row = {"image": source["image"], "rect": list(source["rect"]) if source["rect"] is not None else None,
+           "duration": source["duration"], "offset": list(source["offset"])}
+    return insert_frame(data, clip_id, frame + 1, row)
 
 
 def frame_size(data, clip, index):
@@ -209,8 +326,18 @@ def bind_role(data, role, clip_id):
     return [set_value(ROLE_PATH + (role,), clip_id)]
 
 
+def frame_sizes_differ(data, clip_id):
+    """True when the clip's frames are not all the same size (one ``visual_offset`` then fits only some)."""
+    clip = _rows(data, CLIPS)[clip_index(data, clip_id)]
+    return len({frame_size(data, clip, index) for index in range(len(clip["frames"]))}) > 1
+
+
 def bottom_center_edits(data, clip_id, foot_margin=0):
-    """Edits that put the bottom-centre of a clip's first frame on the bottom of the body shape."""
+    """Edits that put the bottom-centre of a clip's first frame on the bottom of the body shape.
+
+    Schema V1 has one ``visual_offset`` for the whole monster and no per-frame anchor: frames of another
+    size, or with the feet elsewhere in the frame, are not aligned by this (see ``frame_sizes_differ``).
+    """
     clip = _rows(data, CLIPS)[clip_index(data, clip_id)]
     if not clip["frames"]:
         raise DocumentError(f"clip {clip_id!r} has no frames")
@@ -381,11 +508,54 @@ def add_box(data, kind, shape_kind="rectangle"):
     return box_id, [insert_item(path, row)]
 
 
-def remove_box(slot):
-    """Edits that remove the box a slot belongs to. The body cannot be removed."""
+def box_id(data, slot):
+    value = data
+    for key in slot.path[:-1]:
+        value = value[key]
+    return value["id"]
+
+
+def hitbox_usages(document, hitbox_id):
+    """The attack pattern events that arm or disarm a hitbox."""
+    return references.incoming(document, "hitbox", hitbox_id)
+
+
+def remove_box(document, slot, replace_with=None):
+    """Edits that remove the box a slot belongs to. The body cannot be removed.
+
+    A hitbox an attack pattern event still names is refused (``ReferenceBlocked``) unless ``replace_with``
+    names the hitbox those events should use instead. Hurtboxes are not referenced by ID from anywhere:
+    an override holds its own complete copy of the set, so removing a default hurtbox changes no override.
+    """
     if slot.kind == "body":
         raise DocumentError("the body shape cannot be removed")
-    return [remove_item(slot.path[:-1])]
+    edits = []
+    if slot.kind == "hitbox":
+        name = box_id(document.data, slot)
+        usages = hitbox_usages(document, name)
+        if usages and replace_with is None:
+            raise ReferenceBlocked(f"hitbox {name!r} is still used by " + ", ".join(references.describe(usages)), usages)
+        if usages:
+            edits = references.retarget(document, "hitbox", name, replace_with, usages)
+    return edits + [remove_item(slot.path[:-1])]
+
+
+def rename_box(document, slot, new_id):
+    """Edits that rename a box. A hitbox takes its references along; a hurtbox ID is local to its own set."""
+    if slot.kind == "body":
+        raise DocumentError("the body shape has no ID")
+    data = document.data
+    old = box_id(data, slot)
+    if slot.kind == "hitbox":
+        return references.rename(document, "hitbox", old, new_id)
+    if new_id == old:
+        return []
+    siblings = data
+    for key in slot.path[:-2]:
+        siblings = siblings[key]
+    if any(row["id"] == new_id for row in siblings):
+        raise DocumentError(f"hurtbox {new_id!r} already exists in this set")
+    return [set_value(slot.path[:-1] + ("id",), new_id)]
 
 
 def create_override(data, clip_id, frame=None):

@@ -56,6 +56,17 @@ def image_digest(project_root, relative):
     return _inspected[key]
 
 
+def forget_image_checks(project_root=None, relative=None):
+    """Forget structural-check answers so the files are read and hashed again.
+
+    The cache key is the file's size and modification time: fast, and wrong only for a file rewritten
+    with both unchanged. An explicit refresh calls this, so "refresh" always means a real re-read.
+    """
+    for key in [key for key in _inspected if (project_root is None or key[0] == str(project_root))
+                and (relative is None or key[1] == relative)]:
+        del _inspected[key]
+
+
 def load_thumbnail(project_root, relative, rect=None):
     """``(QPixmap or None, state)`` for a project image. Never raises.
 

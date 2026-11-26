@@ -15,6 +15,9 @@ from dataclasses import dataclass
 import itertools
 from pathlib import Path
 
+from rtcmonster.schema import REFERENCE_SOURCES
+from rtcmonster.spec import Id
+
 from rtcmonster import (DocumentError, EDITOR_EDITABLE_SECTIONS, clone_document, document_revision, new_document,
                         read_document, write_document)
 
@@ -153,6 +156,28 @@ class DocumentSession:
     def is_editable(self, path):
         return bool(path) and self.editability(path[0]) == "editable"
 
+    def _follows_a_reference(self, path):
+        """True for a reference field in a section that merely has no editor yet.
+
+        Attack patterns and behaviour states are not editable in this editor, but they name clips and
+        hitboxes that are. When such an object is replaced, the field that names it has to follow, or the
+        document would be left pointing at nothing. Only ``Id(ref=...)`` fields qualify, and never in a
+        section an imported document declares read-only: those belong to the game's own scripts.
+        """
+        section = path[0]
+        if section in EDITOR_EDITABLE_SECTIONS:
+            return False
+        if (self.binding or {}).get("editability", {}).get(section, "editable") != "editable":
+            return False
+        try:
+            node = self.document.schema.field(self.document.data, tuple(path))[0]
+        except (DocumentError, KeyError, IndexError, TypeError):
+            return False
+        # ... and only a reference to something this editor edits (a clip, an image, a hitbox). A state
+        # or pattern reference names an object in a section that has no editor at all.
+        return (isinstance(node, Id) and node.ref in REFERENCE_SOURCES
+                and REFERENCE_SOURCES[node.ref][0] in EDITOR_EDITABLE_SECTIONS)
+
     def subscribe(self, listener):
         """``listener(session, reason)`` with reason in edit / undo / redo / saved / replaced."""
         self._listeners.append(listener)
@@ -168,8 +193,13 @@ class DocumentSession:
         when an edit is not allowed or structurally invalid."""
         for edit in edits:
             path = getattr(edit, "path", ())
-            if path and not self.is_editable(path):
+            if path and not self.is_editable(path) and not self._follows_a_reference(path):
                 raise DocumentError(f"{path[0]} is {self.editability(path[0])} in this document")
+            kind = getattr(edit, "reference", "")
+            if not path and kind in REFERENCE_SOURCES and not self.is_editable(REFERENCE_SOURCES[kind]):
+                # A rename has no path of its own; it is an edit of the section that defines the object.
+                section = REFERENCE_SOURCES[kind][0]
+                raise DocumentError(f"{section} is {self.editability(section)} in this document")
         changed = self.document.apply(*edits)
         if changed.fingerprint == self.document.fingerprint:
             return False

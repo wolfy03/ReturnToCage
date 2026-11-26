@@ -10,7 +10,7 @@ from collections import deque
 
 class ScriptedPrompts:
     METHODS = ("unsaved_changes", "conflict", "confirm", "open_path", "save_path", "new_monster", "clone",
-               "project_settings", "image_path", "error", "info")
+               "project_settings", "image_path", "error", "info", "choose", "text")
 
     def __init__(self):
         self.answers = {name: deque() for name in self.METHODS}

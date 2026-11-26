@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self.overview = OverviewPanel()
         self.workspaces.addTab(self.overview, "Monster Overview")
         self.animation = AnimationWorkspace()
+        self.animation.prompts = self.prompts
         self.workspaces.addTab(self.animation, strings.ANIMATION["title"])
         self.setCentralWidget(self.workspaces)
         self.catalog_panel, self.inspector = CatalogPanel(), InspectorPanel()

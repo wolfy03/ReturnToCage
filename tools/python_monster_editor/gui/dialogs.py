@@ -8,7 +8,7 @@ while the real dialogs below stay small enough to be tested on their own.
 from pathlib import Path
 import re
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QInputDialog, QLabel,
                                QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from rtcmonster import SUFFIX
@@ -220,6 +220,16 @@ class Prompts:
 
     def confirm(self, title, text):
         return QMessageBox.question(self.parent, title, text) == QMessageBox.StandardButton.Yes
+
+    def choose(self, title, text, options):
+        """One of ``options`` (strings), or None when the user backs out."""
+        chosen, accepted = QInputDialog.getItem(self.parent, title, text, list(options), 0, False)
+        return chosen if accepted and chosen in options else None
+
+    def text(self, title, text, initial=""):
+        """A line of text, or None when the user backs out."""
+        value, accepted = QInputDialog.getText(self.parent, title, text, text=initial)
+        return value if accepted else None
 
     def open_path(self, folder):
         path, _ = QFileDialog.getOpenFileName(self.parent, "몬스터 문서 열기", str(folder or ""),

@@ -93,7 +93,33 @@ ANIMATION = {
     "clip_id": "새 Clip ID", "clip_id_hint": "비우면 자동 (clip, clip_2 …)",
     "columns": "열", "rows": "행", "count": "frame 수", "all_frames": "전체",
     "clip_from_grid": "격자로 Clip 만들기", "clip_from_images": "선택 이미지로 Clip 만들기",
-    "play": "재생", "pause": "정지", "flip": "좌우 반전 미리보기", "zoom": "배율",
+    "play": "재생", "pause": "일시정지", "stop": "처음으로", "flip": "좌우 반전 미리보기", "zoom": "배율",
+    "play_tip": "재생하거나 일시정지한 곳에서 이어서 재생합니다. 끝난 one-shot Clip은 처음부터 재생합니다.",
+    "stop_tip": "재생을 멈추고 첫 frame으로 돌아갑니다.",
+    "playback_state": {"stopped": "정지", "playing": "재생 중", "paused": "일시정지"},
+    "playing_read_only": "재생 중에는 판정을 편집할 수 없습니다. 일시정지한 뒤 편집하세요.",
+    "drag_cancelled": "드래그를 취소했습니다. 문서는 바뀌지 않았습니다.",
+    "rename": "ID 변경…", "rename_clip": "Clip '{clip}'의 새 ID (참조하는 곳도 함께 바뀝니다)",
+    "rename_box": "판정 '{box}'의 새 ID",
+    "duplicate_frame": "복제", "duplicate_frame_tip": "이 frame을 바로 뒤에 한 번 더 넣습니다. 전용 Hurtbox는 복사하지 않습니다.",
+    "hit_frame": "타격 frame", "hit_frame_tip": "공격 역할 Clip에서 타격이 보이는 첫 frame 번호입니다. 표현 전용이며 "
+                                              "실제 피해 시각을 정하지 않습니다.",
+    "last_frame": "Clip의 마지막 frame은 삭제할 수 없습니다. Clip을 삭제하세요.",
+    "frame_option": "frame {frame}",
+    "hit_frame_removed": "frame {frame}은 공격의 타격 frame입니다.\n삭제하면 어느 frame이 타격을 보여 줄지 선택하세요. "
+                         "(번호는 삭제 전 기준)",
+    "hit_frame_blocked": "적용하지 않았습니다: frame {frame}은 타격 frame입니다. 타격 frame을 먼저 다른 frame으로 정하세요.",
+    "frame_override_removed": "frame {frame}에는 전용 Hurtbox 세트가 있습니다.\nframe을 삭제하면 그 세트도 함께 삭제됩니다. 계속할까요?",
+    "clip_removal": "Clip '{clip}'을 삭제하면 다음도 함께 정리됩니다.\n{usages}\n\n역할 연결은 비워지고 전용 Hurtbox 세트는 삭제됩니다. 계속할까요?",
+    "clip_in_use": "Clip '{clip}'을 공격 패턴·AI가 사용하고 있습니다.\n{usages}\n\n이 참조들이 대신 사용할 Clip을 선택하세요. "
+                   "공격 패턴이나 상태는 삭제되지 않습니다.",
+    "clip_blocked": "적용하지 않았습니다: Clip '{clip}'을 {usages}가 사용 중입니다. 먼저 그쪽을 고치거나 대체 Clip을 선택하세요.",
+    "image_in_use": "이미지 '{image}'를 Clip {clips}의 frame {count}개가 사용 중입니다.\nframe은 삭제하지 않습니다. "
+                    "대신 사용할 이미지를 선택하세요. (크기가 맞아야 합니다)",
+    "hitbox_in_use": "Hitbox '{hitbox}'를 공격 이벤트가 사용하고 있습니다.\n{usages}\n\n대신 사용할 Hitbox를 선택하세요.",
+    "anchor_mixed": "이 Clip은 frame 크기가 서로 다릅니다. 첫 frame 기준으로 맞췄습니다. Schema V1에는 frame별 기준점이 없어 "
+                    "다른 frame은 발 위치가 어긋날 수 있습니다.",
+    "runtime_note": "Hitbox와 전용 Hurtbox 세트는 문서에 저장만 됩니다. 현재 게임 런타임은 이 값을 사용하지 않습니다.",
     "duration": "지속", "frame_earlier": "◀", "frame_later": "▶", "remove_frame": "삭제",
     "duration_tip": "frame 지속 시간의 배수입니다. 초 = 지속 ÷ FPS.", "frame_earlier_tip": "이 frame을 앞으로 옮깁니다.",
     "frame_later_tip": "이 frame을 뒤로 옮깁니다.", "remove_frame_tip": "이 frame을 Clip에서 뺍니다.",
@@ -112,12 +138,13 @@ ANIMATION = {
     "select_one_image": "격자로 나눌 이미지를 하나만 선택하세요.", "select_images": "Clip에 넣을 이미지를 선택하세요.",
     "read_only": "기존 게임 리소스에서 가져온 문서입니다. 이미지·Clip·판정은 읽기 전용이며 미리보기만 할 수 있습니다.",
     "refused": "적용하지 않았습니다: {error}",
-    "time": "frame {frame} / {count} · 전체 {seconds:.3f} s",
+    "time": "frame {frame} / {count} · {position:.3f} / {seconds:.3f} s · {state}",
     "labels": {"register": "이미지 등록", "refresh": "이미지 정보 갱신", "remove_image": "이미지 삭제", "clip": "Clip 추가",
                "remove_clip": "Clip 삭제", "fps": "FPS 변경", "loop": "loop 변경", "duration": "frame 지속 변경",
                "move_frame": "frame 순서 변경", "remove_frame": "frame 삭제", "role": "역할 연결", "visual": "화면 배치 변경",
                "anchor": "Bottom-center 맞춤", "shape": "판정 도형 수정", "add_box": "판정 추가", "remove_box": "판정 삭제",
-               "override": "전용 Hurtbox 변경"},
+               "override": "전용 Hurtbox 변경", "duplicate_frame": "frame 복제", "rename": "ID 변경",
+               "hit_frame": "타격 frame 변경"},
 }
 
 

@@ -65,9 +65,9 @@ def test_an_image_in_use_cannot_be_removed(rat):
     document, image_id = with_clip(rat)
     assert animation.image_users(document.data, image_id) == ["walk"]
     with pytest.raises(DocumentError, match="used by clip walk"):
-        animation.remove_image(document.data, image_id)
-    emptied = applied(document, animation.remove_clip(document.data, "walk"))
-    assert applied(emptied, animation.remove_image(emptied.data, image_id)).data["assets"]["images"] == []
+        animation.remove_image(document, image_id)
+    emptied = applied(document, animation.remove_clip(document, "walk"))
+    assert applied(emptied, animation.remove_image(emptied, image_id)).data["assets"]["images"] == []
 
 
 # ----------------------------------------------------------------------------------------------------- clips
@@ -119,7 +119,7 @@ def test_removing_a_clip_removes_what_pointed_at_it(rat):
     document = applied(document, animation.create_override(document.data, "walk", 2))
     document = applied(document, animation.create_override(document.data, "walk"))
     assert animation.clip_roles(document.data, "walk") == ["idle", "move"]
-    removed = applied(document, animation.remove_clip(document.data, "walk"))
+    removed = applied(document, animation.remove_clip(document, "walk"))
     assert removed.data["animations"]["clips"] == [] and removed.data["collision"]["hurtbox_overrides"] == []
     assert set(removed.data["presentation"]["roles"].values()) == {""}
 
@@ -218,9 +218,9 @@ def test_boxes_are_added_edited_and_removed_through_slots(rat):
     assert slots[-1].label == box_id and box_id not in [box["id"] for box in rat.data["collision"]["hitboxes"]]
     moved = applied(document, animation.set_shape(slots[-1], animation.moved_shape(animation.shape_at(document.data, slots[-1]), (3.333, 0))))
     assert moved.data["collision"]["hitboxes"][-1]["shape"]["center"][0] == 3.33
-    assert len(applied(moved, animation.remove_box(slots[-1])).data["collision"]["hitboxes"]) == existing
+    assert len(applied(moved, animation.remove_box(moved, slots[-1])).data["collision"]["hitboxes"]) == existing
     with pytest.raises(DocumentError, match="body"):
-        animation.remove_box(slots[0])
+        animation.remove_box(moved, slots[0])
     hurt_id, edits = animation.add_box(document.data, "hurtbox")
     added = applied(document, edits).data["collision"]["hurtboxes"][-1]
     assert added["enabled"] is True and added["id"] == hurt_id

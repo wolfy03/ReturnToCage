@@ -1,7 +1,9 @@
 """Animation and collision workspace (MONSTER-STEP 3).
 
-Three columns over one ``DocumentSession``: images and clips on the left, the preview canvas with the
-frame strip in the middle, clip settings, roles, the visual transform and the shape list on the right.
+Controls in a tabbed side column, the preview canvas with the frame strip beside it, all over the one
+``DocumentSession`` the rest of the editor uses. The canvas (``preview_canvas``), the decoded-frame cache
+(``frame_cache``) and the playback clock (``application.playback``) are separate so other workspaces can
+use the same ones.
 
 The workspace never changes the document. Every action becomes edits from ``application.animation`` (or a
 plain ``set_value``) emitted as ``edits_requested(edits, label)``; the window applies them, so one action
@@ -9,247 +11,35 @@ is one undo step. A drag on the canvas shows a preview shape and emits once, whe
 a document edit normalises the whole document and is too slow to run on every mouse move.
 
 All geometry comes from ``rtcmonster.geometry``: the canvas only maps actor space to the screen.
+
+Selection is ``(clip, frame, shape slot)`` and belongs to the workspace. Other views drive it with
+``select_clip`` / ``select_frame`` / ``select_shape`` / ``highlight_box`` / ``seek`` and follow it through
+``selection_changed``.
+
+While the clip is playing the frame under the cursor changes by itself, so shapes cannot be edited then:
+the canvas is read-only until playback is paused or stopped.
 """
 
-from pathlib import Path
-
-from PySide6.QtCore import QElapsedTimer, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QImageReader, QPainter, QPen, QPixmap, QTransform
+from PySide6.QtCore import QElapsedTimer, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QPushButton,
                                QScrollArea, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from application import animation as logic
-from rtcmonster import DocumentError, move_item, png, set_value
-from rtcmonster.geometry import mirror_point, mirror_shape, shape_bounds, sprite_to_actor
+from application.playback import Playback
+from application.references import ReferenceBlocked
+from rtcmonster import DocumentError, png, set_value
 from rtcmonster.schema import LOOPING_ROLES, REQUIRED_ROLES, ROLES
-from rtcmonster.timing import clip_seconds, frame_at
 
-from . import strings
-from .panels import DECODE_LIMIT_MB, image_digest
+from . import frame_cache, strings
+from .frame_cache import load_frame
+from .preview_canvas import HANDLE_PIXELS, KIND_COLORS, PreviewCanvas
 
-KIND_COLORS = {"body": "#5aa9e6", "hurtbox": "#7fd18b", "override": "#d9a03f", "hitbox": "#e0605f"}
-HANDLE_PIXELS = 7
+__all__ = ["AnimationWorkspace", "HANDLE_PIXELS", "KIND_COLORS", "PreviewCanvas", "load_frame"]
+
 STRIP_ICON = 56
 TICK_MS = 16
-# Full-resolution frames are kept, so the limit is what bounds memory: 128 frames of 256x256 RGBA is 32 MiB.
-FRAME_CACHE = 128
-
-
-# ------------------------------------------------------------------------------------------------- frames
-_frames = {}
-
-
-def load_frame(project_root, relative, rect=None):
-    """``(QPixmap or None, state)`` of one frame at full resolution. Never raises.
-
-    Same two checks as the overview thumbnail (structure, then a Qt decode limited in memory), cached by
-    file content, but not scaled down: the canvas places collision shapes against these pixels.
-    """
-    if not relative:
-        return None, "none"
-    if project_root is None:
-        return None, "unchecked"
-    digest, state = image_digest(project_root, relative)
-    if digest is None:
-        return None, state
-    key = (str(project_root), relative, digest, tuple(rect) if rect else None)
-    if key not in _frames:
-        reader = QImageReader(str(Path(project_root) / relative))
-        reader.setAllocationLimit(DECODE_LIMIT_MB)
-        if rect:
-            reader.setClipRect(QRect(*rect))
-        image = reader.read()
-        _frames[key] = (None, "decode_failed") if image.isNull() else (QPixmap.fromImage(image), "ok")
-        while len(_frames) > FRAME_CACHE:
-            _frames.pop(next(iter(_frames)))
-    return _frames[key]
-
-
-# -------------------------------------------------------------------------------------------------- canvas
-class PreviewCanvas(QWidget):
-    """Draws one frame in actor space with the shapes over it, and edits the selected shape by dragging.
-
-    The actor origin is the centre of the widget. ``facing`` -1 shows the monster turned left: the frame
-    is mirrored by the document's own transform and every shape by ``mirror_shape``. A drag is converted
-    back to the authored (facing right) space before it is reported.
-    """
-
-    shape_selected = Signal(object)            # ShapeSlot or None
-    shape_committed = Signal(object, dict)     # ShapeSlot, new shape (authored space)
-
-    def __init__(self):
-        super().__init__()
-        self.setMinimumSize(200, 160)
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.zoom = 4.0
-        self.facing = 1
-        self.pixmap = None
-        self.frame_size = None
-        self.presentation = None
-        self.shapes = []                       # (ShapeSlot, shape) in drawing order
-        self.selected = None
-        self.editable = False
-        self.message = ""
-        self._drag = None                      # (mode, handle, start actor point, start shape)
-        self._preview = None
-
-    # ---- content
-    def show_frame(self, pixmap, frame_size, presentation, shapes, editable, message=""):
-        self.pixmap, self.frame_size, self.presentation = pixmap, frame_size, presentation
-        self.shapes, self.editable, self.message = list(shapes), editable, message
-        if self.selected is not None and self.selected not in [slot for slot, _shape in self.shapes]:
-            self.selected = None
-        self.update()
-
-    def select(self, slot):
-        self.selected = slot
-        self.update()
-
-    def shape_of(self, slot):
-        if self._preview is not None and slot == self.selected:
-            return self._preview
-        for candidate, shape in self.shapes:
-            if candidate == slot:
-                return shape
-        return None
-
-    # ---- coordinates
-    def to_view(self, point):
-        return QPointF(self.width() / 2 + point[0] * self.zoom, self.height() / 2 + point[1] * self.zoom)
-
-    def to_actor(self, position):
-        return [(position.x() - self.width() / 2) / self.zoom, (position.y() - self.height() / 2) / self.zoom]
-
-    def to_authored(self, position):
-        """Widget position -> actor point in the authored (facing right) space."""
-        return mirror_point(self.to_actor(position), self.facing)
-
-    def frame_rect(self):
-        """Where the frame is drawn, in widget coordinates, or None."""
-        if self.frame_size is None or self.presentation is None:
-            return None
-        try:
-            first = sprite_to_actor([0, 0], self.frame_size, self.presentation, self.facing)
-            second = sprite_to_actor(list(self.frame_size), self.frame_size, self.presentation, self.facing)
-        except ValueError:
-            return None
-        return QRectF(self.to_view(first), self.to_view(second)).normalized()
-
-    def _view_shape_rect(self, shape):
-        left, top, right, bottom = shape_bounds(mirror_shape(shape, self.facing))
-        return QRectF(self.to_view([left, top]), self.to_view([right, bottom]))
-
-    def handle_positions(self, slot):
-        """``{handle: QPointF}`` of a shape's edge handles on screen, named in authored space."""
-        shape = self.shape_of(slot)
-        if shape is None:
-            return {}
-        return {handle: self.to_view(mirror_point(point, self.facing))
-                for handle, point in logic.handle_points(shape).items()}
-
-    # ---- painting
-    def paintEvent(self, _event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#1b202a"))
-        rect = self.frame_rect()
-        if self.pixmap is not None and rect is not None:
-            mirrored = self.facing < 0
-            if self.presentation is not None and not self.presentation["faces_right_by_default"]:
-                mirrored = not mirrored
-            picture = self.pixmap.transformed(QTransform().scale(-1, 1)) if mirrored else self.pixmap
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-            painter.drawPixmap(rect, picture, QRectF(picture.rect()))
-            painter.setPen(QPen(QColor("#44506a"), 1, Qt.PenStyle.DotLine))
-            painter.drawRect(rect)
-        centre = self.to_view([0, 0])
-        painter.setPen(QPen(QColor("#9aa5b8"), 1))
-        painter.drawLine(QPointF(centre.x() - 8, centre.y()), QPointF(centre.x() + 8, centre.y()))
-        painter.drawLine(QPointF(centre.x(), centre.y() - 8), QPointF(centre.x(), centre.y() + 8))
-        for slot, shape in self.shapes:
-            shape = self.shape_of(slot) or shape
-            colour = QColor(KIND_COLORS[slot.kind])
-            chosen = slot == self.selected
-            pen = QPen(colour, 2 if chosen else 1, Qt.PenStyle.SolidLine if slot.enabled else Qt.PenStyle.DashLine)
-            painter.setPen(pen)
-            fill = QColor(colour)
-            fill.setAlpha(70 if chosen else 28)
-            painter.setBrush(fill)
-            bounds = self._view_shape_rect(shape)
-            if shape["type"] == "circle":
-                painter.drawEllipse(bounds)
-            else:
-                painter.drawRect(bounds)
-            if chosen and self.editable:
-                painter.setBrush(QColor("#f2f2f2"))
-                painter.setPen(QPen(QColor("#202020"), 1))
-                for position in self.handle_positions(slot).values():
-                    painter.drawRect(QRectF(position.x() - HANDLE_PIXELS / 2, position.y() - HANDLE_PIXELS / 2,
-                                            HANDLE_PIXELS, HANDLE_PIXELS))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        if self.message:
-            painter.setPen(QColor("#c9a227"))
-            painter.drawText(self.rect().adjusted(8, 6, -8, -6), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
-                             self.message)
-        painter.end()
-
-    # ---- input
-    def _hit(self, position):
-        """``(slot, handle or None)`` under a widget position.
-
-        The selected shape wins - its handles first, then its area - so a shape chosen in the list can be
-        dragged even where another shape lies over it. Otherwise the shape drawn last is on top.
-        """
-        if self.selected is not None:
-            if self.editable:
-                for handle, point in self.handle_positions(self.selected).items():
-                    if abs(point.x() - position.x()) <= HANDLE_PIXELS and abs(point.y() - position.y()) <= HANDLE_PIXELS:
-                        return self.selected, handle
-            chosen = self.shape_of(self.selected)
-            if chosen is not None and self._view_shape_rect(chosen).contains(position):
-                return self.selected, None
-        for slot, shape in reversed(self.shapes):        # the shape drawn last is on top
-            if self._view_shape_rect(self.shape_of(slot) or shape).contains(position):
-                return slot, None
-        return None, None
-
-    def mousePressEvent(self, event):
-        if event.button() != Qt.MouseButton.LeftButton:
-            return
-        slot, handle = self._hit(event.position())
-        if slot != self.selected:
-            self.selected = slot
-            self.shape_selected.emit(slot)
-        if slot is not None and self.editable:
-            self._drag = ("resize" if handle else "move", handle, self.to_authored(event.position()),
-                          dict(self.shape_of(slot)))
-        self.update()
-
-    def mouseMoveEvent(self, event):
-        self._drag_to(event.position())
-
-    def _drag_to(self, position):
-        if self._drag is None:
-            return
-        mode, handle, start, original = self._drag
-        point = self.to_authored(position)
-        if mode == "resize":
-            self._preview = logic.resized_shape(original, handle, point)
-        else:
-            self._preview = logic.moved_shape(original, (point[0] - start[0], point[1] - start[1]))
-        self.update()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() != Qt.MouseButton.LeftButton or self._drag is None:
-            return
-        if self._preview is not None or self.to_authored(event.position()) != self._drag[2]:
-            self._drag_to(event.position())       # the gesture ends where the button was released
-        preview, original, slot = self._preview, self._drag[3], self.selected
-        self._drag = self._preview = None
-        if preview is not None and slot is not None and logic.rounded_shape(preview) != logic.rounded_shape(original):
-            self.shape_committed.emit(slot, logic.rounded_shape(preview))     # one edit for the whole gesture
-        self.update()
 
 
 # ----------------------------------------------------------------------------------------------- workspace
@@ -265,6 +55,7 @@ def _spin(low, high, decimals=2, step=1.0):
 class AnimationWorkspace(QWidget):
     edits_requested = Signal(list, str)
     browse_requested = Signal()                 # the window answers with set_image_path
+    selection_changed = Signal(str, int, object)     # clip id, frame, ShapeSlot or None
 
     def __init__(self):
         super().__init__()
@@ -275,6 +66,9 @@ class AnimationWorkspace(QWidget):
         self._frame = 0
         self._slot = None
         self._shown = None
+        self._announced = None
+        self.prompts = None                     # set by the window; without it nothing that needs an answer runs
+        self.playback = Playback()
         self._clock = QElapsedTimer()
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
@@ -295,6 +89,7 @@ class AnimationWorkspace(QWidget):
         self.count.setSpecialValueText(text["all_frames"])
         self.grid_button, self.images_button = QPushButton(text["clip_from_grid"]), QPushButton(text["clip_from_images"])
         self.remove_clip_button = QPushButton(text["remove"])
+        self.rename_clip_button = QPushButton(text["rename"])
         self.image_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         images = QGroupBox(text["images"])
         layout = QVBoxLayout(images)
@@ -319,7 +114,11 @@ class AnimationWorkspace(QWidget):
         form.addRow(grid)
         layout.addLayout(form)
         row = QHBoxLayout()
-        for button in (self.grid_button, self.images_button, self.remove_clip_button):
+        for button in (self.grid_button, self.images_button):
+            row.addWidget(button)
+        layout.addLayout(row)
+        row = QHBoxLayout()
+        for button in (self.rename_clip_button, self.remove_clip_button):
             row.addWidget(button)
         layout.addLayout(row)
 
@@ -327,6 +126,9 @@ class AnimationWorkspace(QWidget):
         self.canvas = PreviewCanvas()
         self.play_button = QPushButton(text["play"])
         self.play_button.setCheckable(True)
+        self.stop_button = QPushButton(text["stop"])
+        self.stop_button.setToolTip(text["stop_tip"])
+        self.play_button.setToolTip(text["play_tip"])
         self.flip = QCheckBox(text["flip"])
         self.zoom = _spin(0.25, 32, 2, 0.5)
         self.zoom.setValue(self.canvas.zoom)
@@ -340,14 +142,17 @@ class AnimationWorkspace(QWidget):
         self.strip.setMovement(QListView.Movement.Static)
         self.duration = _spin(0.01, 100, 2, 0.25)
         self.frame_left, self.frame_right = QPushButton(text["frame_earlier"]), QPushButton(text["frame_later"])
+        self.duplicate_frame_button = QPushButton(text["duplicate_frame"])
         self.remove_frame_button = QPushButton(text["remove_frame"])
         for widget, tip in ((self.duration, "duration_tip"), (self.frame_left, "frame_earlier_tip"),
-                            (self.frame_right, "frame_later_tip"), (self.remove_frame_button, "remove_frame_tip")):
+                            (self.frame_right, "frame_later_tip"), (self.remove_frame_button, "remove_frame_tip"),
+                            (self.duplicate_frame_button, "duplicate_frame_tip")):
             widget.setToolTip(text[tip])
         middle = QWidget()
         column = QVBoxLayout(middle)
         row = QHBoxLayout()
         row.addWidget(self.play_button)
+        row.addWidget(self.stop_button)
         row.addWidget(self.flip)
         row.addWidget(QLabel(text["zoom"]))
         row.addWidget(self.zoom)
@@ -359,7 +164,7 @@ class AnimationWorkspace(QWidget):
         row = QHBoxLayout()
         row.addWidget(QLabel(text["duration"]))
         row.addWidget(self.duration)
-        for button in (self.frame_left, self.frame_right, self.remove_frame_button):
+        for button in (self.frame_left, self.frame_right, self.duplicate_frame_button, self.remove_frame_button):
             row.addWidget(button)
         row.addStretch(1)
         column.addLayout(row)
@@ -371,6 +176,10 @@ class AnimationWorkspace(QWidget):
         form = QFormLayout(clip_box)
         form.addRow(text["fps"], self.fps)
         form.addRow(self.loop)
+        self.hit_frame = QSpinBox()
+        self.hit_frame.setKeyboardTracking(False)
+        self.hit_frame.setToolTip(text["hit_frame_tip"])
+        form.addRow(text["hit_frame"], self.hit_frame)
         self.roles = {}
         role_box = QGroupBox(text["roles"])
         form = QFormLayout(role_box)
@@ -407,6 +216,7 @@ class AnimationWorkspace(QWidget):
         self.enabled = QCheckBox(text["enabled"])
         self.add_hurtbox, self.add_hitbox = QPushButton(text["add_hurtbox"]), QPushButton(text["add_hitbox"])
         self.remove_shape = QPushButton(text["remove"])
+        self.rename_shape = QPushButton(text["rename"])
         self.override_frame, self.override_clip = QPushButton(text["override_frame"]), QPushButton(text["override_clip"])
         self.override_clear = QPushButton(text["override_clear"])
         self.override_label = QLabel()
@@ -427,9 +237,16 @@ class AnimationWorkspace(QWidget):
         form.addRow(self.enabled)
         layout.addLayout(form)
         row = QHBoxLayout()
-        for button in (self.add_hurtbox, self.add_hitbox, self.remove_shape):
+        for button in (self.add_hurtbox, self.add_hitbox):
             row.addWidget(button)
         layout.addLayout(row)
+        row = QHBoxLayout()
+        for button in (self.rename_shape, self.remove_shape):
+            row.addWidget(button)
+        layout.addLayout(row)
+        self.runtime_note = QLabel(text["runtime_note"])
+        self.runtime_note.setWordWrap(True)
+        layout.addWidget(self.runtime_note)
         layout.addWidget(self.override_label)
         row = QHBoxLayout()
         for button in (self.override_frame, self.override_clip, self.override_clear):
@@ -477,11 +294,18 @@ class AnimationWorkspace(QWidget):
         self.grid_button.clicked.connect(self.add_grid_clip)
         self.images_button.clicked.connect(self.add_image_clip)
         self.remove_clip_button.clicked.connect(self.remove_clip)
+        self.rename_clip_button.clicked.connect(self.rename_clip)
         self.clip_list.currentRowChanged.connect(self._clip_row_changed)
         self.strip.currentRowChanged.connect(self._frame_row_changed)
         self.play_button.toggled.connect(self._set_playing)
+        self.stop_button.clicked.connect(self.stop)
         self.flip.toggled.connect(self._view_changed)
         self.zoom.valueChanged.connect(self._view_changed)
+        self.canvas.zoom_requested.connect(self.zoom.setValue)
+        self.canvas.drag_cancelled.connect(self._drag_cancelled)
+        self.hit_frame.editingFinished.connect(self._hit_frame_edited)
+        self.duplicate_frame_button.clicked.connect(self.duplicate_frame)
+        self.rename_shape.clicked.connect(self.rename_selected_shape)
         self.duration.editingFinished.connect(self._duration_edited)
         self.frame_left.clicked.connect(lambda: self.move_frame(-1))
         self.frame_right.clicked.connect(lambda: self.move_frame(1))
@@ -508,14 +332,21 @@ class AnimationWorkspace(QWidget):
 
     # ------------------------------------------------------------------------------------------- state
     def set_session(self, session, project_root=None):
+        self.canvas.cancel_drag("document")     # a drag belongs to the document it started in
+        self.stop()
+        if project_root != self._project_root and self._project_root is not None:
+            frame_cache.forget_project(self._project_root)
         self._session, self._project_root = session, project_root
         self._clip_id, self._frame, self._slot, self._shown = "", 0, None, None
-        self.play_button.setChecked(False)
         self.notice.setText("")                 # a refusal belongs to the document it was about
         self.refresh()
 
     def set_project_root(self, project_root):
         if project_root != self._project_root:
+            self.canvas.cancel_drag("project")
+            self.stop()
+            if self._project_root is not None:
+                frame_cache.forget_project(self._project_root)
             self._project_root, self._shown = project_root, None
             self.refresh()
 
@@ -540,9 +371,29 @@ class AnimationWorkspace(QWidget):
     def editable(self, section):
         return self._session is not None and self._session.is_editable((section,))
 
-    def _request(self, edits, label):
-        if edits and not self._loading:
-            self.edits_requested.emit(list(edits), strings.ANIMATION["labels"].get(label, label))
+    @property
+    def document(self):
+        return self._session.document if self._session is not None else None
+
+    def _request(self, edits, label, select=None):
+        """Ask the window to apply edits as one undo step. Returns True when the document changed.
+
+        ``select`` is ``(clip id, frame)`` to show afterwards. It is adopted for the refresh the window
+        triggers, and put back when the edit is refused: the selection never runs ahead of the document.
+        """
+        if not edits or self._loading or self._session is None:
+            return False
+        self.canvas.cancel_drag("edit")
+        before, previous = self._session.document, (self._clip_id, self._frame)
+        if select is not None:
+            self._clip_id, self._frame = select
+        self.edits_requested.emit(list(edits), strings.ANIMATION["labels"].get(label, label))
+        if self._session is not None and self._session.document is not before:
+            return True
+        if select is not None:
+            self._clip_id, self._frame = previous
+            self.refresh()
+        return False
 
     def _attempt(self, build):
         """Run a helper that may refuse; show the refusal instead of raising into Qt."""
@@ -553,6 +404,21 @@ class AnimationWorkspace(QWidget):
             return None
         self.notice.setText("")
         return edits
+
+    def _confirm(self, text):
+        return self.prompts is not None and bool(self.prompts.confirm(strings.ANIMATION["title"], text))
+
+    def _choose(self, text, options):
+        """One of ``options`` picked by the user, or None."""
+        if self.prompts is None or not options:
+            return None
+        return self.prompts.choose(strings.ANIMATION["title"], text, list(options))
+
+    def _announce(self):
+        state = (self._clip_id, self._frame, self._slot)
+        if state != self._announced:
+            self._announced = state
+            self.selection_changed.emit(self._clip_id, self._frame, self._slot)
 
     # ----------------------------------------------------------------------------------------- refresh
     def refresh(self):
@@ -627,6 +493,19 @@ class AnimationWorkspace(QWidget):
             self.loop.setChecked(clip["loop"])
             if clip["frames"]:
                 self.duration.setValue(clip["frames"][self._frame]["duration"])
+        if self.playback.clip is not clip:
+            # Another clip, or this clip after an edit: keep playing through an edit of the same clip.
+            same = self.playback.clip is not None and clip is not None and self.playback.clip["id"] == clip["id"]
+            state, time = self.playback.state, self.playback.time
+            self.playback.set_clip(clip)
+            if same and self.playback.available:
+                self.playback.state = state
+                self.playback.seek(time)
+            if not self.playback.playing:
+                self._sync_play_button()
+        attack = clip is not None and data["presentation"]["roles"]["attack"] == clip["id"]
+        self.hit_frame.setRange(0, max(0, len(clip["frames"]) - 1) if attack else 64)
+        self.hit_frame.setValue(data["presentation"]["attack_hit_frame"])
         presentation = data["presentation"]
         for box, value in ((self.scale_x, presentation["visual_scale"][0]), (self.scale_y, presentation["visual_scale"][1]),
                            (self.offset_x, presentation["visual_offset"][0]), (self.offset_y, presentation["visual_offset"][1])):
@@ -635,6 +514,21 @@ class AnimationWorkspace(QWidget):
         self._show_canvas()
         self._enable()
         self._loading = False
+        self._announce()
+
+    def _show_frame(self):
+        """The cheap path for "another frame of the same clip": no list is rebuilt."""
+        self._loading = True
+        clip = self.current_clip()
+        if clip is not None and clip["frames"]:
+            self._frame = max(0, min(self._frame, len(clip["frames"]) - 1))
+            self.strip.setCurrentRow(self._frame)
+            self.duration.setValue(clip["frames"][self._frame]["duration"])
+        self._show_shapes()
+        self._show_canvas()
+        self._enable()
+        self._loading = False
+        self._announce()
 
     def _slots(self):
         return logic.shape_slots(self.data, self._clip_id or None, self._frame if self._clip_id else None)
@@ -663,7 +557,7 @@ class AnimationWorkspace(QWidget):
         slot = self._slot
         shape = logic.shape_at(self.data, slot) if slot is not None else None
         for widget in (self.shape_type, self.center_x, self.center_y, self.extent_a, self.extent_b, self.enabled):
-            widget.setEnabled(shape is not None and self.editable("collision"))
+            widget.setEnabled(shape is not None and self.editable("collision") and not self.playback.playing)
         circle = shape is not None and shape["type"] == "circle"
         self.extent_label.setText(strings.ANIMATION["radius" if circle else "size"])
         self.extent_b.setVisible(not circle)
@@ -692,13 +586,23 @@ class AnimationWorkspace(QWidget):
         elif clip is None:
             message = strings.ANIMATION["no_clip_selected"]
         shapes = [(slot, logic.shape_at(data, slot)) for slot in self._slots()]
-        self.canvas.facing = -1 if self.flip.isChecked() else 1
-        self.canvas.zoom = self.zoom.value()
-        self.canvas.show_frame(pixmap, size, data["presentation"], shapes, self.editable("collision"), message)
+        self.canvas.set_facing(-1 if self.flip.isChecked() else 1)
+        self.canvas.set_zoom(self.zoom.value())
+        playing = self.playback.playing
+        if playing and not message:
+            message = strings.ANIMATION["playing_read_only"]
+        # The context names what the shapes belong to. A drag started against another one is cancelled.
+        context = (id(self._session), self._clip_id, self._frame)
+        self.canvas.show_frame(pixmap, size, data["presentation"], shapes, self.editable("collision") and not playing,
+                               message, context)
         self.canvas.select(self._slot)
         if clip is not None and clip["frames"]:
+            start, end = self.playback.frame_window if self.playback.clip is clip and self.playback.frame == self._frame \
+                else (0.0, 0.0)
             self.time_label.setText(strings.ANIMATION["time"].format(
-                frame=self._frame, count=len(clip["frames"]), seconds=clip_seconds(clip)))
+                frame=self._frame, count=len(clip["frames"]), seconds=self.playback.duration,
+                position=self.playback.position, start=start, end=end,
+                state=strings.ANIMATION["playback_state"][self.playback.state]))
         else:
             self.time_label.setText("")
 
@@ -714,6 +618,11 @@ class AnimationWorkspace(QWidget):
                 (self.clip_id, "animations", True), (self.columns, "animations", True), (self.rows, "animations", True),
                 (self.count, "animations", True), (self.grid_button, "animations", True),
                 (self.images_button, "animations", True), (self.remove_clip_button, "animations", clip is not None),
+                (self.rename_clip_button, "animations", clip is not None),
+                (self.duplicate_frame_button, "animations", frames),
+                (self.hit_frame, "presentation",
+                 clip is not None and self.data["presentation"]["roles"]["attack"] == clip["id"]),
+                (self.rename_shape, "collision", self._slot is not None and self._slot.kind != "body"),
                 (self.fps, "animations", clip is not None), (self.loop, "animations", clip is not None),
                 (self.duration, "animations", frames), (self.frame_left, "animations", frames),
                 (self.frame_right, "animations", frames), (self.remove_frame_button, "animations", frames),
@@ -728,6 +637,7 @@ class AnimationWorkspace(QWidget):
         for combo in self.roles.values():
             combo.setEnabled(has and self.editable("presentation"))
         self.play_button.setEnabled(frames)
+        self.stop_button.setEnabled(frames)
         if has and not self.editable("animations"):
             self.notice.setText(strings.ANIMATION["read_only"])
 
@@ -747,17 +657,38 @@ class AnimationWorkspace(QWidget):
     def refresh_image(self):
         edits = []
         for image_id in self.selected_images():
+            # An explicit refresh re-reads the file even when its size and time did not move.
+            row = self.data["assets"]["images"][logic.image_index(self.data, image_id)]
+            frame_cache.forget_image(self._project_root, row["path"])
             more = self._attempt(lambda image_id=image_id: logic.refresh_image(self.data, self._project_root, image_id))
             if more is None:
                 return
             edits += more
-        self._request(edits, "refresh")
+        self._shown = None                      # the strip shows these pixels; draw it again
+        if not self._request(edits, "refresh"):
+            self.refresh()
 
     def remove_image(self):
         ids = self.selected_images()
-        if len(ids) == 1:
-            self._request(self._attempt(lambda: logic.remove_image(self.data, ids[0])) or [],
-                          "remove_image")
+        if len(ids) != 1 or self.document is None:
+            return
+        text = strings.ANIMATION
+        try:
+            edits = logic.remove_image(self.document, ids[0])
+        except ReferenceBlocked as blocked:
+            # Frames are never deleted to free an image. The user may point them at another image instead.
+            others = [row["id"] for row in self.data["assets"]["images"] if row["id"] != ids[0]]
+            chosen = self._choose(text["image_in_use"].format(image=ids[0], count=len(blocked.usages),
+                                                              clips=", ".join(logic.image_users(self.data, ids[0]))),
+                                  others)
+            if chosen is None:
+                self.notice.setText(text["refused"].format(error=blocked))
+                return
+            edits = self._attempt(lambda: logic.remove_image(self.document, ids[0], replace_with=chosen))
+        except DocumentError as error:
+            self.notice.setText(text["refused"].format(error=error))
+            return
+        self._request(edits or [], "remove_image")
 
     # ------------------------------------------------------------------------------------------- clips
     def _new_clip_id(self):
@@ -790,25 +721,73 @@ class AnimationWorkspace(QWidget):
             self.clip_id.clear()
 
     def remove_clip(self):
-        if self.current_clip() is not None:
-            self._request(self._attempt(lambda: logic.remove_clip(self.data, self._clip_id)) or [],
-                          "remove_clip")
+        """Remove the selected clip, after showing what goes with it.
+
+        Roles and hurtbox overrides are the clip's own presentation: they are listed and removed with it
+        once the user agrees. An attack pattern, a behaviour state or an event that names the clip is
+        never dropped - the user picks the clip those should use instead, or the removal does not happen.
+        """
+        if self.current_clip() is None or self.document is None:
+            return
+        text, clip_id = strings.ANIMATION, self._clip_id
+        usages = logic.clip_usages(self.document, clip_id)
+        hard = [usage for usage in usages if not usage.soft]
+        replacement = None
+        if hard:
+            others = [clip["id"] for clip in self.data["animations"]["clips"] if clip["id"] != clip_id]
+            replacement = self._choose(text["clip_in_use"].format(
+                clip=clip_id, usages="\n".join("· " + usage.where for usage in hard)), others)
+            if replacement is None:
+                self.notice.setText(text["clip_blocked"].format(clip=clip_id, usages=", ".join(u.where for u in hard)))
+                return
+        soft = [usage for usage in usages if usage.soft]
+        if soft and not self._confirm(text["clip_removal"].format(
+                clip=clip_id, usages="\n".join("· " + usage.where for usage in soft))):
+            return
+        edits = self._attempt(lambda: logic.remove_clip(self.document, clip_id, replace_with=replacement))
+        self._request(edits or [], "remove_clip")
+
+    def rename_clip(self):
+        if self.current_clip() is None or self.prompts is None:
+            return
+        old = self._clip_id
+        new = self.prompts.text(strings.ANIMATION["title"], strings.ANIMATION["rename_clip"].format(clip=old), old)
+        if not new or new == old:
+            return
+        edits = self._attempt(lambda: logic.rename_clip(self.document, old, new.strip()))
+        if edits:
+            self._request(edits, "rename", select=(new.strip(), self._frame))
 
     def select_clip(self, clip_id, frame=0):
+        self.canvas.cancel_drag("clip")
+        self.stop()
         self._clip_id, self._frame, self._slot = clip_id, frame, None
         self.refresh()
+
+    def select_frame(self, frame):
+        """Show one frame of the current clip. Playback, if running, continues from that frame."""
+        clip = self.current_clip()
+        if clip is None or not clip["frames"]:
+            return
+        self._frame = max(0, min(int(frame), len(clip["frames"]) - 1))
+        self.playback.seek_frame(self._frame)
+        self._show_frame()
+
+    def seek(self, seconds):
+        """Show the frame ``seconds`` into the current clip (for a timeline view)."""
+        self.playback.seek(seconds)
+        self._frame = self.playback.frame
+        self._show_frame()
 
     def _clip_row_changed(self, row):
         if self._loading or row < 0:
             return
-        self.play_button.setChecked(False)
         self.select_clip(self.clip_list.item(row).data(Qt.ItemDataRole.UserRole))
 
     def _frame_row_changed(self, row):
         if self._loading or row < 0:
             return
-        self._frame = row
-        self.refresh()
+        self.select_frame(row)
 
     def _clip_path(self):
         return logic.CLIPS + (logic.clip_index(self.data, self._clip_id),)
@@ -828,41 +807,123 @@ class AnimationWorkspace(QWidget):
             self._request([set_value(self._clip_path() + ("frames", self._frame, "duration"), value)], "duration")
 
     def move_frame(self, delta):
+        """Move the selected frame one place. Its hurtbox override and the attack hit frame move with it,
+        in the same undo step; the moved frame stays selected."""
         clip = self.current_clip()
         target = self._frame + delta
         if clip is None or not 0 <= target < len(clip["frames"]):
-            return
-        source, self._frame = self._frame, target
-        self._request([move_item(self._clip_path() + ("frames", source), target)], "move_frame")
+            return False
+        edits = self._attempt(lambda: logic.move_frame(self.data, self._clip_id, self._frame, target))
+        return self._request(edits or [], "move_frame", select=(self._clip_id, target))
+
+    def duplicate_frame(self):
+        if self.current_clip() is None:
+            return False
+        edits = self._attempt(lambda: logic.duplicate_frame(self.data, self._clip_id, self._frame))
+        return self._request(edits or [], "duplicate_frame", select=(self._clip_id, self._frame + 1))
 
     def remove_frame(self):
-        if self.current_clip() is not None:
-            self._request(self._attempt(lambda: logic.remove_frame(self.data, self._clip_id, self._frame)) or [], "remove_frame")
+        """Remove the selected frame, after saying what goes with it or has to be decided."""
+        clip = self.current_clip()
+        if clip is None or not clip["frames"]:
+            return False
+        text, frame = strings.ANIMATION, self._frame
+        impact = self._attempt(lambda: logic.frame_removal_impact(self.data, self._clip_id, frame))
+        if impact is None:
+            return False
+        if impact["last"]:
+            self.notice.setText(text["last_frame"])
+            return False
+        hit_frame = None
+        if impact["hit_frame"]:
+            # Which frame shows the strike now is a decision about the attack, so it is asked, not guessed.
+            remaining = [index for index in range(len(clip["frames"])) if index != frame]
+            labels = [text["frame_option"].format(frame=index) for index in remaining]
+            chosen = self._choose(text["hit_frame_removed"].format(frame=frame), labels)
+            if chosen is None:
+                self.notice.setText(text["hit_frame_blocked"].format(frame=frame))
+                return False
+            old = remaining[labels.index(chosen)]
+            hit_frame = old - (1 if old > frame else 0)
+        if impact["override"] and not self._confirm(text["frame_override_removed"].format(frame=frame)):
+            return False
+        edits = self._attempt(lambda: logic.remove_frame(self.data, self._clip_id, frame, hit_frame=hit_frame))
+        return self._request(edits or [], "remove_frame")
+
+    def _hit_frame_edited(self):
+        if self._loading or self.data is None:
+            return
+        value = self.hit_frame.value()
+        if value != self.data["presentation"]["attack_hit_frame"]:
+            self._request([set_value(("presentation", "attack_hit_frame"), value)], "hit_frame")
 
     # ---------------------------------------------------------------------------------------- playback
-    def _set_playing(self, playing):
-        self.play_button.setText(strings.ANIMATION["pause" if playing else "play"])
-        if playing:
-            self._clock.start()
-            self._timer.start()
-        else:
+    def _sync_play_button(self):
+        self.play_button.blockSignals(True)
+        self.play_button.setChecked(self.playback.playing)
+        self.play_button.blockSignals(False)
+        self.play_button.setText(strings.ANIMATION["pause" if self.playback.playing else "play"])
+        if not self.playback.playing:
             self._timer.stop()
 
+    def _set_playing(self, playing):
+        """The play button: play or continue, and pause. Stop is its own button."""
+        if playing:
+            self.canvas.cancel_drag("playback")       # the frame is about to change under the cursor
+            if self.playback.state != "paused" or self.playback.finished:
+                self.playback.seek_frame(0)
+            elif self.playback.frame != self._frame:
+                self.playback.seek_frame(self._frame)  # the user picked another frame while paused
+            if self.playback.play():
+                self._clock.start()
+                self._timer.start()
+        else:
+            self.playback.pause()
+        self._sync_play_button()
+        if self.data is not None:
+            self._frame = self.playback.frame if self.playback.available else self._frame
+            self._show_frame()
+
+    def stop(self):
+        """Stop and go back to the first frame."""
+        was = self.playback.state
+        self.playback.stop()
+        self._sync_play_button()
+        if was != "stopped" and self.data is not None and self.current_clip() is not None:
+            self._frame = 0
+            self._show_frame()
+
     def _tick(self):
-        self.show_time(self._clock.elapsed() / 1000)
+        self.advance(self._clock.restart() / 1000)
+
+    def advance(self, seconds):
+        """Let ``seconds`` of real time pass (the timer calls this; tests call it directly)."""
+        if self.current_clip() is None:
+            self.stop()
+            return
+        changed = self.playback.advance(seconds)
+        if changed or not self.playback.playing:
+            self._frame = self.playback.frame
+            self._sync_play_button()
+            self._show_frame()
 
     def show_time(self, seconds):
         """Show the frame ``seconds`` into the clip, by the same rule the game uses (one-shot clips hold)."""
         clip = self.current_clip()
         if clip is None or not clip["frames"]:
-            self.play_button.setChecked(False)
+            self.stop()
             return
-        frame = frame_at(clip, seconds)
-        if frame != self._frame:
-            self._frame = frame
-            self.refresh()
-        if not clip["loop"] and seconds >= clip_seconds(clip):
-            self.play_button.setChecked(False)
+        self.playback.seek(seconds)
+        if self.playback.finished:
+            self.playback.pause()
+            self._sync_play_button()
+        if self.playback.frame != self._frame:
+            self._frame = self.playback.frame
+            self._show_frame()
+
+    def _drag_cancelled(self, reason):
+        if reason in ("escape", "focus", "capture", "button"):
+            self.notice.setText(strings.ANIMATION["drag_cancelled"])
 
     def _view_changed(self, *_args):
         if not self._loading and self.data is not None:
@@ -887,14 +948,26 @@ class AnimationWorkspace(QWidget):
 
     def apply_bottom_center(self):
         if self.current_clip() is not None:
+            mixed = logic.frame_sizes_differ(self.data, self._clip_id)
             self._request(self._attempt(lambda: logic.bottom_center_edits(self.data, self._clip_id,
                                                                           self.foot_margin.value())) or [],
                           "anchor")
+            if mixed:
+                # One visual_offset serves every frame in Schema V1; say so instead of pretending otherwise.
+                self.notice.setText(strings.ANIMATION["anchor_mixed"])
 
     # ------------------------------------------------------------------------------------------ shapes
     def select_shape(self, slot):
+        self.canvas.cancel_drag("selection")
         self._slot = slot
         self.refresh()
+
+    def highlight_box(self, kind, box_id):
+        """Emphasise a box by ID without selecting it (an attack event pointing at its hitbox). Returns the slot."""
+        slot = next((slot for slot in self._slots() if slot.kind == kind and slot.label == box_id), None) \
+            if self.data is not None else None
+        self.canvas.highlight(slot)
+        return slot
 
     def _canvas_selected(self, slot):
         self._slot = slot
@@ -906,6 +979,7 @@ class AnimationWorkspace(QWidget):
         self._show_shape_fields()
         self._enable()
         self._loading = False
+        self._announce()
 
     def _shape_row_changed(self, row):
         if self._loading:
@@ -939,9 +1013,43 @@ class AnimationWorkspace(QWidget):
                 self._request(result[1], "add_box")
 
     def remove_selected_shape(self):
-        if self._slot is not None:
-            slot, self._slot = self._slot, None
-            self._request(self._attempt(lambda: logic.remove_box(slot)) or [], "remove_box")
+        """Remove the selected box. A hitbox an attack event still names needs a replacement first."""
+        slot = self._slot
+        if slot is None or self.document is None:
+            return False
+        text = strings.ANIMATION
+        try:
+            edits = logic.remove_box(self.document, slot)
+        except ReferenceBlocked as blocked:
+            name = logic.box_id(self.data, slot)
+            others = [box["id"] for box in self.data["collision"]["hitboxes"] if box["id"] != name]
+            chosen = self._choose(text["hitbox_in_use"].format(
+                hitbox=name, usages="\n".join("· " + usage.where for usage in blocked.usages)), others)
+            if chosen is None:
+                self.notice.setText(text["refused"].format(error=blocked))
+                return False
+            edits = self._attempt(lambda: logic.remove_box(self.document, slot, replace_with=chosen))
+        except DocumentError as error:
+            self.notice.setText(text["refused"].format(error=error))
+            return False
+        self.notice.setText("")
+        previous, self._slot = self._slot, None
+        if not self._request(edits or [], "remove_box"):
+            self._slot = previous
+            self.refresh()
+            return False
+        return True
+
+    def rename_selected_shape(self):
+        slot = self._slot
+        if slot is None or slot.kind == "body" or self.prompts is None:
+            return
+        old = logic.box_id(self.data, slot)
+        new = self.prompts.text(strings.ANIMATION["title"], strings.ANIMATION["rename_box"].format(box=old), old)
+        if not new or new.strip() == old:
+            return
+        edits = self._attempt(lambda: logic.rename_box(self.document, slot, new.strip()))
+        self._request(edits or [], "rename")
 
     def create_override(self, for_frame):
         if self.current_clip() is not None:
