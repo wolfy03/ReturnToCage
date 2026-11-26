@@ -67,7 +67,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,6 +86,14 @@ jobs:
       # window-level shortcuts are skipped and say so; Windows runs them on the native platform.
       - name: Core, application, bridge and GUI tests
         run: python -X faulthandler -m pytest tools/python_monster_editor/tests -q -rs -p no:cacheprovider --junitxml=monster-editor-tests.xml
+      # The STEP 3 stabilization gates by name, so a regression is visible without reading the whole log:
+      # frame / clip / image / hitbox reference integrity, staging path safety, ownership and cleanup on every
+      # failure path, bridge response and resource path validation, texture filter and readback comparison,
+      # stale results, the playback contract and the byte-budget frame cache. (Also part of the run above.)
+      - name: Stabilization gates (reference integrity, staging safety, response validation, playback, cache)
+        run: python -X faulthandler -m pytest tools/python_monster_editor/tests/test_reference_integrity.py tools/python_monster_editor/tests/test_staging.py tools/python_monster_editor/tests/test_rendering.py tools/python_monster_editor/tests/test_playback_cache.py tools/python_monster_editor/tests/test_gui_stabilization.py -q -rs -p no:cacheprovider
+      - name: Frame cache budget against the process's real memory
+        run: python -X utf8 tools/python_monster_editor/check_frame_cache.py --output monster-editor-frame-cache.json
       - name: Static validation of the example documents
         shell: bash
         run: python -X utf8 tools/python_monster_editor/validate.py tools/python_monster_editor/examples/*.rtcmonster --project . | tee monster-editor-examples.txt
@@ -105,10 +113,11 @@ jobs:
             monster-editor-tests.xml
             monster-editor-examples.txt
             monster-editor-benchmark.json
+            monster-editor-frame-cache.json
 
   gui-windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     defaults:
       run:
         shell: pwsh
@@ -139,7 +148,9 @@ jobs:
             throw 'the project import reported script errors'
           }
       # Real key presses and clicks on the native platform: new monster, edit, undo/redo, loot, validation,
-      # save, registry check and both legacy imports through the real Godot, clone, close protection, reopen.
+      # save, registry check and both legacy imports through the real Godot, clone, close protection, reopen,
+      # then the animation and collision workspace: cut clips, move a frame with its hurtbox set and hit frame,
+      # drag a shape, cancel a drag with Esc, play and pause.
       - name: GUI workflow with real input and real Godot at 100%, 150% and 200% scale
         run: |
           foreach ($scale in @('1', '1.5', '2')) {
@@ -152,11 +163,26 @@ jobs:
         run: python -u -X utf8 tools/python_monster_editor/check_godot_import.py --godot $env:RTC_GODOT_CONSOLE --artifacts "$env:RUNNER_TEMP/monster-gui/import"
       - name: Stage presentation resources in a project copy with the real Godot and compare the readback
         run: python -u -X utf8 tools/python_monster_editor/check_godot_stage.py --godot $env:RTC_GODOT_CONSOLE --artifacts "$env:RUNNER_TEMP/monster-gui/stage"
+      # The real renderer, with a window. A runner that cannot render reports NOT_EVALUATED (and the job
+      # summary says so); it is never replaced by a headless check. A failed comparison fails the job.
+      - name: Draw the staged monsters with Godot's renderer and compare with the editor preview
+        run: |
+          python -u -X utf8 tools/python_monster_editor/check_godot_render.py --godot $env:RTC_GODOT --artifacts "$env:RUNNER_TEMP/monster-gui/render" --allow-no-renderer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content "$env:RUNNER_TEMP/monster-gui/render/render_report.json" -Raw | ConvertFrom-Json
+          "### Godot rendering check: $($report.status)" >> $env:GITHUB_STEP_SUMMARY
+          "renderer: $($report.renderer.rendering_method) / $($report.renderer.rendering_driver) / $($report.renderer.video_adapter)" >> $env:GITHUB_STEP_SUMMARY
+          if ($report.unavailable) { "not evaluated here: $($report.unavailable)" >> $env:GITHUB_STEP_SUMMARY }
       - name: The checks left the working tree untouched
         shell: bash
         run: |
           git status --porcelain
           test -z "$(git status --porcelain)"
+      - name: Record what was verified
+        if: always()
+        run: |
+          @("commit=$env:GITHUB_SHA", "ref=$env:GITHUB_REF", "python=$(python --version)", "runner=$env:RUNNER_OS $env:RUNNER_ARCH") |
+            Set-Content "$env:RUNNER_TEMP/monster-gui/environment.txt"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -165,7 +191,7 @@ jobs:
 
   godot-contract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
