@@ -259,6 +259,104 @@ def run_smoke(app, args):
         check("the catalog lists the saved drafts", {"cave_spider", "cave_spider_elder"} <= drafts_listed,
               drafts_listed)
 
+        # ---- animation and collision workspace, with the project's own art when a project is connected
+        if args.project:
+            from PySide6.QtCore import QPoint
+            from application import animation as logic
+            panel, canvas = second.animation, second.animation.canvas
+            timings["workspace"] = {}
+
+            def clocked(name, action):
+                start = time.perf_counter()
+                value = action()
+                app.processEvents()
+                timings["workspace"][name] = round((time.perf_counter() - start) * 1000, 2)
+                return value
+            clocked("switch_to_workspace", lambda: second.workspaces.setCurrentWidget(panel))
+            art = "assets/characters/enemies/sewer_beetle"
+            for name, clip_id, columns in (("idle", "idle", 4), ("attack", "bite", 7)):
+                panel.image_path.setText(f"{art}/{name}.png")
+                QTest.mouseClick(panel.register_button, Qt.MouseButton.LeftButton)
+                image_id = second.session.document.data["assets"]["images"][-1]["id"]
+                for row in range(panel.image_list.count()):
+                    item = panel.image_list.item(row)
+                    item.setSelected(item.data(Qt.ItemDataRole.UserRole) == image_id)
+                panel.clip_id.setText(clip_id)
+                panel.columns.setValue(columns)
+                QTest.mouseClick(panel.grid_button, Qt.MouseButton.LeftButton)
+            data = lambda: second.session.document.data          # noqa: E731
+            check("two clips were cut from the project's sheets with the buttons",
+                  [clip["id"] for clip in data()["animations"]["clips"]] == ["idle", "bite"], panel.notice.text())
+            combo = panel.roles["attack"]
+            combo.setCurrentIndex(combo.findData("bite"))
+            combo.activated.emit(combo.currentIndex())
+            panel.hit_frame.setValue(2)
+            panel.hit_frame.editingFinished.emit()
+            clocked("select_frame", lambda: panel.strip.setCurrentRow(2))
+            QTest.mouseClick(panel.override_frame, Qt.MouseButton.LeftButton)
+            rect = list(panel.current_clip()["frames"][2]["rect"])
+            history = len(second.session.history)
+            clocked("move_frame", lambda: QTest.mouseClick(panel.frame_right, Qt.MouseButton.LeftButton))
+            clip = panel.current_clip()
+            overrides = [row["frame"] for row in data()["collision"]["hurtbox_overrides"] if row["clip"] == "bite"]
+            check("moving a frame took its hurtbox set and the attack hit frame along, in one undo step",
+                  list(clip["frames"][3]["rect"]) == rect and overrides == [3]
+                  and data()["presentation"]["attack_hit_frame"] == 3 and panel.current_frame() == 3
+                  and len(second.session.history) == history + 1, (overrides, data()["presentation"]["attack_hit_frame"]))
+            clocked("undo_move_frame", second.undo)
+            check("undoing the move restores the frame, the hurtbox set and the hit frame together",
+                  [row["frame"] for row in data()["collision"]["hurtbox_overrides"]] == [2]
+                  and data()["presentation"]["attack_hit_frame"] == 2
+                  and list(panel.current_clip()["frames"][2]["rect"]) == rect)
+            shot(second, "09_animation_workspace")
+            panel.side.setCurrentIndex(2)
+            body = panel._slots()[0]
+            panel.select_shape(body)
+            before = logic.shape_at(data(), body)
+            centre = canvas.to_view(before["center"]).toPoint()
+            fingerprint = second.session.document.fingerprint
+            QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=centre)
+            start = time.perf_counter()
+            for step in range(1, 21):
+                QTest.mouseMove(canvas, centre + QPoint(step * 2, step))
+            app.processEvents()
+            timings["workspace"]["drag_20_moves"] = round((time.perf_counter() - start) * 1000, 2)
+            check("nothing is written to the document while a shape is dragged",
+                  second.session.document.fingerprint == fingerprint and canvas.dragging)
+            clocked("drag_commit", lambda: QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=centre + QPoint(40, 20)))
+            moved = logic.shape_at(data(), body)
+            check("releasing the mouse commits the drag as one edit",
+                  moved["center"] == [before["center"][0] + 40 / canvas.zoom, before["center"][1] + 20 / canvas.zoom])
+            QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=canvas.to_view(moved["center"]).toPoint())
+            QTest.mouseMove(canvas, canvas.to_view(moved["center"]).toPoint() + QPoint(30, 30))
+            QTest.keyClick(canvas, Qt.Key.Key_Escape)
+            QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=canvas.to_view(moved["center"]).toPoint() + QPoint(30, 30))
+            check("Esc cancels a drag and the document keeps its shape", logic.shape_at(data(), body) == moved
+                  and not canvas.dragging)
+            shot(second, "10_collision_workspace")
+            QTest.mouseClick(panel.play_button, Qt.MouseButton.LeftButton)
+            start = time.perf_counter()
+            frames_seen = set()
+            while time.perf_counter() - start < 0.5:
+                app.processEvents()
+                frames_seen.add(panel.current_frame())
+            check("playback advances frames and the canvas is read-only meanwhile",
+                  len(frames_seen) > 1 and not canvas.editable, frames_seen)
+            QTest.mouseClick(panel.play_button, Qt.MouseButton.LeftButton)
+            paused = panel.current_frame()
+            QTest.qWait(120)
+            check("pause keeps the frame and makes the canvas editable again",
+                  panel.current_frame() == paused and panel.playback.state == "paused" and canvas.editable)
+            QTest.mouseClick(panel.stop_button, Qt.MouseButton.LeftButton)
+            from gui import frame_cache
+            timings["workspace"]["frame_cache"] = frame_cache.FRAMES.stats()
+            check("the frame cache is inside its byte budget",
+                  frame_cache.FRAMES.bytes <= frame_cache.FRAMES.max_bytes and len(frame_cache.FRAMES) > 0)
+            second.workspaces.setCurrentIndex(0)
+        else:
+            checks.append({"name": "animation workspace", "passed": None, "detail": "NOT_EVALUATED: no --project"})
+            print("NOT_EVALUATED animation workspace (no --project)")
+
         # ---- responsiveness with larger documents (sizes shared with benchmark.py)
         import benchmark
         from application.session import DocumentSession

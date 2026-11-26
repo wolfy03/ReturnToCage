@@ -10,6 +10,11 @@ falls later; ``check_frame_cache.py`` measures both.
 
 One cache (``FRAMES``) is shared by every workspace, so an animation view and an attack-timeline view of
 the same sheet decode it once.
+
+A PNG cannot be read from the middle: cutting one frame out of a sheet decodes the whole sheet. Doing that
+once per frame made a 256-frame strip of a 4096x4096 sheet cost about 160 ms *per frame* (measured). The
+cache therefore also holds the one sheet decoded last (``SHEET_LIMIT`` at most, on top of the frame
+budget) and cuts further frames out of it in memory.
 """
 
 from collections import OrderedDict
@@ -26,6 +31,8 @@ DEFAULT_ENTRIES = 512
 # A frame larger than this share of the budget is shown but not kept: it would push everything else out.
 LARGEST_SHARE = 0.5
 BYTES_PER_PIXEL = 4
+# The decoded sheet kept between frames. A larger sheet is read frame by frame instead, slowly but bounded.
+SHEET_LIMIT = 64 * MiB
 
 
 def pixel_bytes(width, height):
@@ -38,6 +45,14 @@ class FrameCache:
         self._rows = OrderedDict()              # key -> (value, bytes); the first row is the oldest
         self.bytes = 0
         self.hits = self.misses = self.evictions = self.uncached = 0
+        self.sheet_key, self.sheet, self.sheet_bytes = None, None, 0     # the sheet decoded last, if small enough
+        self.sheet_decodes = 0
+
+    def keep_sheet(self, key, image, size):
+        self.sheet_key, self.sheet, self.sheet_bytes = key, image, size
+
+    def drop_sheet(self):
+        self.sheet_key, self.sheet, self.sheet_bytes = None, None, 0
 
     def __len__(self):
         return len(self._rows)
@@ -79,16 +94,20 @@ class FrameCache:
         doomed = [key for key in self._rows if predicate(key)]
         for key in doomed:
             self.discard(key)
+        if self.sheet_key is not None and predicate(self.sheet_key + (None,)):
+            self.drop_sheet()
         return len(doomed)
 
     def clear(self):
         self._rows.clear()
         self.bytes = 0
+        self.drop_sheet()
 
     def stats(self):
         return {"entries": len(self._rows), "bytes": self.bytes, "max_bytes": self.max_bytes,
                 "max_entries": self.max_entries, "hits": self.hits, "misses": self.misses,
-                "evictions": self.evictions, "uncached": self.uncached}
+                "evictions": self.evictions, "uncached": self.uncached, "sheet_bytes": self.sheet_bytes,
+                "sheet_decodes": self.sheet_decodes}
 
 
 FRAMES = FrameCache()
@@ -114,16 +133,31 @@ def load_frame(project_root, relative, rect=None, cache=None):
     pixmap = cache.get(key)
     if pixmap is not None:
         return pixmap, "ok"
-    reader = QImageReader(str(Path(project_root) / relative))
-    reader.setAllocationLimit(DECODE_LIMIT_MB)
-    if rect:
-        reader.setClipRect(QRect(*rect))
-    image = reader.read()
-    if image.isNull():
+    image = _decode(Path(project_root) / relative, key[:3], rect, cache)
+    if image is None or image.isNull():
         return None, "decode_failed"
     pixmap = QPixmap.fromImage(image)
     cache.put(key, pixmap, pixel_bytes(pixmap.width(), pixmap.height()))
     return pixmap, "ok"
+
+
+def _decode(path, sheet_key, rect, cache):
+    """The frame's pixels: cut from the sheet decoded last when that is this file, else read from disk."""
+    if rect and cache.sheet_key == sheet_key:
+        return cache.sheet.copy(QRect(*rect))
+    reader = QImageReader(str(path))
+    reader.setAllocationLimit(DECODE_LIMIT_MB)
+    size = reader.size()
+    if rect and size.isValid() and pixel_bytes(size.width(), size.height()) <= SHEET_LIMIT:
+        sheet = reader.read()                       # the whole sheet, once
+        if sheet.isNull():
+            return None
+        cache.sheet_decodes += 1
+        cache.keep_sheet(sheet_key, sheet, pixel_bytes(sheet.width(), sheet.height()))
+        return sheet.copy(QRect(*rect))
+    if rect:
+        reader.setClipRect(QRect(*rect))            # too large to keep: decode, cut, forget
+    return reader.read()
 
 
 def forget_project(project_root, cache=None):

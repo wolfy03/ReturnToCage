@@ -207,3 +207,27 @@ def test_the_shared_cache_is_bounded_while_a_large_clip_plays(app, tmp_path):
         load_frame(PROJECT, f"{BEETLE}/move.png", [64 * (index % 6 if index % 2 else 0), 0, 64, 48], cache)
         assert cache.bytes <= cache.max_bytes and len(cache) <= 3
     assert cache.evictions > 0 and cache.hits > 0
+
+
+def test_a_sheet_is_decoded_once_for_all_the_frames_cut_from_it(app, tmp_path, monkeypatch):
+    cache = FrameCache()
+    for index in range(6):
+        pixmap, state = load_frame(PROJECT, f"{BEETLE}/move.png", [64 * index, 0, 64, 48], cache)
+        assert state == "ok" and (pixmap.width(), pixmap.height()) == (64, 48)
+    assert cache.sheet_decodes == 1 and len(cache) == 6 and cache.sheet_bytes == pixel_bytes(384, 48)
+    assert cache.stats()["sheet_bytes"] == cache.sheet_bytes
+    load_frame(PROJECT, f"{BEETLE}/idle.png", [0, 0, 64, 48], cache)             # another sheet takes the slot
+    assert cache.sheet_decodes == 2 and cache.sheet_key[1] == f"{BEETLE}/idle.png"
+    load_frame(PROJECT, f"{BEETLE}/idle.png", None, cache)                       # a whole image is not a sheet read
+    assert cache.sheet_decodes == 2
+    assert frame_cache.forget_image(PROJECT, f"{BEETLE}/idle.png", cache) == 2 and cache.sheet is None
+    load_frame(PROJECT, f"{BEETLE}/move.png", [0, 0, 64, 48], cache)
+    load_frame(PROJECT, f"{BEETLE}/attack.png", [0, 0, 64, 48], cache)
+    assert frame_cache.forget_project(PROJECT, cache) == 7 and cache.sheet is None and cache.sheet_bytes == 0
+    # A sheet too large to keep is still read, frame by frame, and never kept.
+    monkeypatch.setattr(frame_cache, "SHEET_LIMIT", 1024)
+    large = FrameCache()
+    assert load_frame(PROJECT, f"{BEETLE}/move.png", [64, 0, 64, 48], large)[1] == "ok"
+    assert large.sheet is None and large.sheet_decodes == 0 and len(large) == 1
+    large.clear()
+    assert large.sheet is None
