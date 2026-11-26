@@ -247,6 +247,10 @@ class Prompts:
         dialog = ProjectSettingsDialog(self.parent, values)
         return dialog.values() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
+    def image_path(self, project_root):
+        path, _ = QFileDialog.getOpenFileName(self.parent, "PNG 이미지 선택", str(project_root), "PNG (*.png)")
+        return Path(path) if path else None
+
     def error(self, title, text):
         QMessageBox.critical(self.parent, title, text)
 

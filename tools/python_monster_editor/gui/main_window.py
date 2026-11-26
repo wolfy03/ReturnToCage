@@ -25,6 +25,7 @@ from rtcmonster import SUFFIX, DocumentConflict, DocumentError, document_revisio
 from rtcmonster.catalog import CONFLICT
 
 from . import strings
+from .animation import AnimationWorkspace
 from .dialogs import DISCARD, OVERWRITE, RELOAD, SAVE, SAVE_AS, Prompts
 from .inspector import InspectorPanel
 from .lists import CatalogPanel, ValidationPanel
@@ -72,6 +73,8 @@ class MainWindow(QMainWindow):
         self.workspaces = QTabWidget()
         self.overview = OverviewPanel()
         self.workspaces.addTab(self.overview, "Monster Overview")
+        self.animation = AnimationWorkspace()
+        self.workspaces.addTab(self.animation, strings.ANIMATION["title"])
         self.setCentralWidget(self.workspaces)
         self.catalog_panel, self.inspector = CatalogPanel(), InspectorPanel()
         self.validation_panel, self.loot_editor, self.summary = ValidationPanel(), LootEditor(), SummaryPanel()
@@ -99,6 +102,8 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self.inspector.edit_requested.connect(self._on_field_edit)
         self.loot_editor.edits_requested.connect(self.apply_edits)
+        self.animation.edits_requested.connect(self.apply_edits)
+        self.animation.browse_requested.connect(self._browse_image)
         self.catalog_panel.entry_activated.connect(self.activate_entry)
         self.catalog_panel.selection_changed.connect(lambda _entry: self._update_actions())
         self.validation_panel.finding_activated.connect(self.navigate_to)
@@ -267,6 +272,7 @@ class MainWindow(QMainWindow):
         self._import_support = {}
         self._engine_version = ""
         self.loot_editor.set_items(self.project.content_ids("items"))
+        self.animation.set_project_root(self.project.root)
         self.refresh_catalog()
         if self.session is not None:
             self._schedule_validation()
@@ -315,6 +321,7 @@ class MainWindow(QMainWindow):
         self.inspector.build(session, self.loot_editor, self.summary)
         self.loot_editor.set_session(session)
         self.summary.set_session(session)
+        self.animation.set_session(session, self.project.root)
         self.document_changed.emit(session)
         if session is not None:
             self.validate_now()
@@ -329,6 +336,7 @@ class MainWindow(QMainWindow):
         self.inspector.refresh()
         self.loot_editor.refresh()
         self.summary.refresh()
+        self.animation.refresh()
         self._show_validation()
         self._schedule_validation()
         self._show_session()
@@ -374,8 +382,25 @@ class MainWindow(QMainWindow):
             self.status(f"입력을 적용하지 않았습니다: {error}")
             self.inspector.refresh()         # put the field back; every other field keeps its value
             self.loot_editor.refresh(force=True)
+            self.animation.refresh()
             return False
         return changed
+
+    def _browse_image(self):
+        """Pick a PNG inside the project for the animation workspace; a file elsewhere is refused there."""
+        root = self.project.root
+        if root is None:
+            self.status("프로젝트를 먼저 연결하세요.")
+            return
+        chosen = self.prompts.image_path(root)
+        if chosen is None:
+            return
+        try:
+            relative = Path(chosen).resolve().relative_to(Path(root).resolve()).as_posix()
+        except ValueError:
+            self.status("프로젝트 폴더 안의 PNG만 등록할 수 있습니다.")
+            return
+        self.animation.set_image_path(relative)
 
     def undo(self):
         if self.session is not None and self.session.undo():

@@ -95,7 +95,7 @@ def click(checkbox):
 def test_the_window_starts_empty_and_closes(window):
     assert window.session is None and not window.project.connected
     assert window.windowTitle() == strings.APP_NAME and window.overview.empty.isVisible()
-    assert set(window.docks) == {"catalog", "inspector", "validation"} and window.workspaces.count() == 1
+    assert set(window.docks) == {"catalog", "inspector", "validation"} and window.workspaces.count() == 2
     actions = window.actions_by_name
     for name, shortcut in (("new", "Ctrl+N"), ("open", "Ctrl+O"), ("save", "Ctrl+S"), ("save_as", "Ctrl+Shift+S"),
                            ("undo", "Ctrl+Z"), ("refresh", "F5")):
@@ -113,7 +113,7 @@ def test_the_window_starts_empty_and_closes(window):
 def test_a_workspace_can_be_added_next_to_the_overview(window):
     from PySide6.QtWidgets import QLabel
     index = window.add_workspace(QLabel("future editor"), "Animation Editor")
-    assert index == 1 and window.workspaces.tabText(1) == "Animation Editor"
+    assert index == window.workspaces.count() - 1 and window.workspaces.tabText(index) == "Animation Editor"
     assert window.workspaces.widget(0) is window.overview
 
 

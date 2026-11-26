@@ -75,3 +75,56 @@ def field_label(path):
 
 def choice_label(value):
     return CHOICES.get(value, value)
+
+
+# ------------------------------------------------------------------------------- animation workspace (STEP 3)
+ROLE_LABELS = {"idle": "대기 (idle)", "move": "이동 (move)", "attack": "공격 (attack)", "hurt": "피격 (hurt)",
+               "death": "사망 (death)", "jump_start": "도약 준비 (jump_start)", "jump": "상승 (jump)",
+               "fall": "하강 (fall)", "land": "착지 (land)"}
+SHAPE_LABELS = {"rectangle": "사각형", "circle": "원"}
+SHAPE_KIND_LABELS = {"body": "Body", "hurtbox": "Hurtbox", "override": "Hurtbox (override)", "hitbox": "Hitbox"}
+ANIMATION = {
+    "title": "Animation / Collision",
+    "images": "Images", "clips": "Animation Clips", "clip_settings": "Clip", "roles": "역할 연결",
+    "visual": "화면 배치", "shapes": "판정 도형",
+    "image_path_hint": "프로젝트 기준 PNG 경로 (예: assets/characters/enemies/ant/idle.png)",
+    "browse": "찾아보기…", "register": "등록", "refresh_image": "크기·해시 갱신", "remove": "삭제",
+    "clip_id": "새 Clip ID", "clip_id_hint": "비우면 자동 (clip, clip_2 …)",
+    "columns": "열", "rows": "행", "count": "frame 수", "all_frames": "전체",
+    "clip_from_grid": "격자로 Clip 만들기", "clip_from_images": "선택 이미지로 Clip 만들기",
+    "play": "재생", "pause": "정지", "flip": "좌우 반전 미리보기", "zoom": "배율",
+    "duration": "frame 지속 (배수)", "frame_earlier": "◀ 앞으로", "frame_later": "뒤로 ▶", "remove_frame": "frame 삭제",
+    "fps": "FPS", "loop": "반복 재생 (loop)",
+    "visual_scale": "visual_scale (x, y)", "visual_offset": "visual_offset (x, y)",
+    "foot_margin": "발 아래 여백(px)", "bottom_center": "Bottom-center 맞춤",
+    "shape_type": "모양", "center": "중심 (x, y)", "size": "크기 (w, h)", "radius": "반지름",
+    "enabled": "사용", "add_hurtbox": "Hurtbox 추가", "add_hitbox": "Hitbox 추가",
+    "override_frame": "이 frame 전용 Hurtbox", "override_clip": "이 Clip 전용 Hurtbox", "override_clear": "전용 Hurtbox 해제",
+    "override_none": "기본 Hurtbox 세트를 쓰는 frame입니다.",
+    "override_clip_state": "이 Clip 전체에 전용 Hurtbox 세트가 적용됩니다.",
+    "override_frame_state": "frame {frame} 전용 Hurtbox 세트가 적용됩니다.",
+    "disabled_suffix": "  (꺼짐)", "no_clip": "(없음)",
+    "role_required": "필수 역할입니다. Clip을 연결해야 합니다.", "role_loops": "이 역할의 Clip은 loop여야 합니다.",
+    "no_document": "문서가 열려 있지 않습니다.", "no_clip_selected": "Clip을 만들거나 선택하세요.",
+    "select_one_image": "격자로 나눌 이미지를 하나만 선택하세요.", "select_images": "Clip에 넣을 이미지를 선택하세요.",
+    "read_only": "기존 게임 리소스에서 가져온 문서입니다. 이미지·Clip·판정은 읽기 전용이며 미리보기만 할 수 있습니다.",
+    "refused": "적용하지 않았습니다: {error}",
+    "time": "frame {frame} / {count} · 전체 {seconds:.3f} s",
+    "labels": {"register": "이미지 등록", "refresh": "이미지 정보 갱신", "remove_image": "이미지 삭제", "clip": "Clip 추가",
+               "remove_clip": "Clip 삭제", "fps": "FPS 변경", "loop": "loop 변경", "duration": "frame 지속 변경",
+               "move_frame": "frame 순서 변경", "remove_frame": "frame 삭제", "role": "역할 연결", "visual": "화면 배치 변경",
+               "anchor": "Bottom-center 맞춤", "shape": "판정 도형 수정", "add_box": "판정 추가", "remove_box": "판정 삭제",
+               "override": "전용 Hurtbox 변경"},
+}
+
+
+def role_label(role):
+    return ROLE_LABELS.get(role, role)
+
+
+def shape_label(kind):
+    return SHAPE_LABELS.get(kind, kind)
+
+
+def shape_kind_label(kind):
+    return SHAPE_KIND_LABELS.get(kind, kind)
