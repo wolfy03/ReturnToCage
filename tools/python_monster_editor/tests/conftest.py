@@ -53,9 +53,11 @@ FAKE = textwrap.dedent('''
         sys.exit(int(os.environ.get("RTC_FAKE_IMPORT_EXIT", "0")))
     request = json.load(open(args[args.index("--request") + 1], encoding="utf-8"))
     project = args[args.index("--path") + 1]
+    render = any(arg.endswith("render_check.tscn") for arg in args)       # the render check has its own scene
+    operation = "render_check" if render else request["operation"]
     if os.environ.get("RTC_FAKE_ECHO"):   # lets a test read the request the client really sent
-        json.dump({"request": request, "project": project}, open(os.environ["RTC_FAKE_ECHO"], "w", encoding="utf-8"))
-    operation = request["operation"]
+        json.dump({"request": request, "project": project, "arguments": args},
+                  open(os.environ["RTC_FAKE_ECHO"], "w", encoding="utf-8"))
     mode = os.environ.get("RTC_FAKE_MODE_" + operation.upper(), mode)      # one operation may misbehave alone
     once = os.environ.get("RTC_FAKE_CRASH_ONCE")       # crash the first time, behave afterwards
     if once and not os.path.exists(once):
@@ -66,12 +68,14 @@ FAKE = textwrap.dedent('''
             os.makedirs(os.path.dirname(os.path.join(project, relative)), exist_ok=True)
             with open(os.path.join(project, relative), "w", encoding="utf-8") as stream:
                 stream.write("[gd_resource] " + relative)
-    result = {"protocol": 1, "request_id": request["request_id"], "operation": request["operation"],
+    result = {"protocol": 1, "request_id": request["request_id"], "operation": operation,
               "project_path": project, "status": "PASS", "error_code": "", "message": "",
               "godot_version": "4.7.2-stable (official)", "physics_ticks_per_second": 60,
               "network_protocol_version": 20, "gravity": 1100.0, "target_keep_range_scale": 1.35,
               "snapshot_states": ["IDLE", "MOVING", "ATTACKING", "HURT", "DEAD"],
               "data": json.loads(os.environ.get("RTC_FAKE_DATA", '{"monsters": []}'))}
+    if render and os.environ.get("RTC_FAKE_RENDER"):
+        result.update(json.loads(os.environ["RTC_FAKE_RENDER"]))
     if operation in ("stage_monster", "read_stage"):
         # Like the real stager: the answer carries the session ID found in the copy's marker.
         data = result["data"]
@@ -102,7 +106,7 @@ FAKE = textwrap.dedent('''
     if mode == "wrong_protocol":
         result["protocol"] = 2
     if mode == "wrong_operation":
-        result["operation"] = "import_monster" if request["operation"] == "inspect_monsters" else "inspect_monsters"
+        result["operation"] = "import_monster" if operation == "inspect_monsters" else "inspect_monsters"
     if mode == "wrong_project":
         result["project_path"] = os.path.dirname(project.rstrip("/\\\\")) or "/"
     if mode == "fail":
@@ -115,7 +119,7 @@ FAKE = textwrap.dedent('''
         with open(request["result_path"], "w", encoding="utf-8") as stream:
             stream.write("{ this is not json" if mode == "bad_json" else
                          "[1, 2, 3]" if mode == "not_an_object" else json.dumps(result))
-    print("MONSTER BRIDGE", request["operation"], result["status"])
+    print("MONSTER BRIDGE", operation, result["status"])
     sys.exit(3 if mode == "fail" else 0)
 ''')
 

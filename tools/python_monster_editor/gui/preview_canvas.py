@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTransform
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QTransform
 from PySide6.QtWidgets import QWidget
 
 from application import animation as logic
@@ -85,6 +85,8 @@ class PreviewCanvas(QWidget):
         self.editable = False
         self.message = ""
         self.context = None
+        self.background = QColor("#1b202a")
+        self.guides = True                     # the origin cross and the frame outline
         self._drag = None                      # DragSession
         self._preview = None
         self._pan_from = None
@@ -204,20 +206,36 @@ class PreviewCanvas(QWidget):
                 for handle, point in logic.handle_points(shape).items()}
 
     # ---- painting
+    def render_image(self):
+        """What the canvas shows, as an image of exactly ``width x height`` pixels (no screen scaling)."""
+        image = QImage(self.size(), QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        self.paint(painter)
+        painter.end()
+        return image
+
     def paintEvent(self, _event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#1b202a"))
+        self.paint(painter)
+        painter.end()
+
+    def paint(self, painter):
+        if self.background.alpha() > 0:
+            painter.fillRect(self.rect(), self.background)
         rect = self.frame_rect()
         if self.pixmap is not None and rect is not None:
             picture = self.pixmap.transformed(QTransform().scale(-1, 1)) if self.picture_mirrored() else self.pixmap
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
             painter.drawPixmap(rect, picture, QRectF(picture.rect()))
-            painter.setPen(QPen(QColor("#44506a"), 1, Qt.PenStyle.DotLine))
-            painter.drawRect(rect)
-        centre = self.to_view([0, 0])
-        painter.setPen(QPen(QColor("#9aa5b8"), 1))
-        painter.drawLine(QPointF(centre.x() - 8, centre.y()), QPointF(centre.x() + 8, centre.y()))
-        painter.drawLine(QPointF(centre.x(), centre.y() - 8), QPointF(centre.x(), centre.y() + 8))
+            if self.guides:
+                painter.setPen(QPen(QColor("#44506a"), 1, Qt.PenStyle.DotLine))
+                painter.drawRect(rect)
+        if self.guides:
+            centre = self.to_view([0, 0])
+            painter.setPen(QPen(QColor("#9aa5b8"), 1))
+            painter.drawLine(QPointF(centre.x() - 8, centre.y()), QPointF(centre.x() + 8, centre.y()))
+            painter.drawLine(QPointF(centre.x(), centre.y() - 8), QPointF(centre.x(), centre.y() + 8))
         for slot, shape in self.shapes:
             shape = self.shape_of(slot) or shape
             if not usable_shape(shape):
@@ -246,7 +264,6 @@ class PreviewCanvas(QWidget):
             painter.setPen(QColor("#c9a227"))
             painter.drawText(self.rect().adjusted(8, 6, -8, -6), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
                              self.message)
-        painter.end()
 
     # ---- input
     def _hit(self, position):
