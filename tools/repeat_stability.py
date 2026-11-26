@@ -48,8 +48,10 @@ def classify(record, text):
 
 
 def commit():
+    """The checked-out commit, marked when the working tree differs from it."""
     try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
+        git = lambda *words: subprocess.run(["git", *words], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
+        return git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain") else "")
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -83,16 +85,18 @@ def main():
         "enet3": (enet + ["--players", "3"], "WORLD RUNTIME PROBE PASS", 65),
         "local2": (local + ["--players", "2"], "MULTIPLAYER PROBE PASS", 65),
         "local3": (local + ["--players", "3"], "MULTIPLAYER PROBE PASS", 65),
-        "lifecycle": (python + ["tools/test_session_recovery.py", "--godot", args.godot, "--artifacts", str(output / "lifecycle"),
-                                "--ipv6", "auto"], "SESSION LIFECYCLE PROBE PASS", 280),
+        "lifecycle": (python + ["tools/test_session_recovery.py", "--godot", args.godot, "--artifacts", str(output / "lifecycle-{run}"),
+                                "--ipv6", "auto"], "SESSION LIFECYCLE RECOVERY PASS", 280),
         # Builds the release EXE, then runs content, mixed editor/EXE ENet and both lifecycles against it.
-        "release": (python + ["tools/build_windows_demo.py", "--godot", args.godot, "--rendered"], "SESSION LIFECYCLE RECOVERY PASS", 900),
+        "release": (python + ["tools/build_windows_demo.py", "--godot", args.godot, "--rendered"], "WINDOWS DEMO BUILD AND EXE VALIDATION PASS", 900),
         "export": ([args.godot, "--headless", "--path", str(ROOT), "--export-release", "Windows Desktop", str(output / "ReturnToCage.exe"), "--quit"], "", 120),
     }
     results = []
     for case in args.case or list(commands):
-        command, marker, timeout = commands[case]
+        template, marker, timeout = commands[case]
         for index in range(args.repeat):
+            # Each run gets its own artifact directory; runners refuse to reuse one.
+            command = [part.replace("{run}", f"{index + 1:02}") for part in template]
             started = time.monotonic()
             scope = ProcessScope()
             process = None
@@ -137,7 +141,7 @@ def main():
     for case in dict.fromkeys(row["case"] for row in results):
         rows = [row for row in results if row["case"] == case]
         count = lambda field, value: sum(row[field] == value for row in rows)
-        print(f"STABILITY SUMMARY {case} commit={revision[:7]} runs={len(rows)} pass={sum(row['pass'] for row in rows)} "
+        print(f"STABILITY SUMMARY {case} commit={revision[:7]}{"-dirty" if revision.endswith("-dirty") else ""} runs={len(rows)} pass={sum(row['pass'] for row in rows)} "
               f"functional_pass={count('functional_result', 'PASS')} functional_fail={count('functional_result', 'FAIL')} "
               f"functional_timeout={count('functional_result', 'TIMEOUT')} known_engine_crash={count('process_result', 'KNOWN_ENGINE_CRASH')} "
               f"unknown_native_crash={count('process_result', 'UNKNOWN_NATIVE_CRASH')}", flush=True)

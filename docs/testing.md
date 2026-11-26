@@ -558,3 +558,49 @@ CI는 `.github/workflows/python-monster-editor.yml`이다: Ubuntu·Windows의 py
 Ubuntu의 Godot 계약 검사와 확장성 검사. JUnit XML, 계약 JSON, Godot 로그, 측정 결과를 artifact로 남긴다.
 Godot을 실행하는 검사는 순차로 돌린다. 실행 중에는 `.godot` 캐시나 `.uid` 파일을 지우지 않는다 — 지우면 다음 실행이
 "Missing .uid" 경고로 실패한다(코드 문제가 아니며 한 번 더 실행하면 사라진다).
+
+## 결과 상태와 반복 검증 (통합 안정화)
+
+검증 실행 하나는 서로 독립인 두 답을 갖는다. 정의와 분류 기준은 [known_issues.md](known_issues.md)에 있다.
+
+| 상태 | 뜻 |
+|---|---|
+| 기능 통과 (`functional_result = PASS`) | 성공 marker가 있고 기능 실패 표시가 없다 |
+| 프로세스 정상 종료 (`process_result = PASS`) | 종료 코드 0, 남은 자식 프로세스 없음 |
+| `KNOWN_ENGINE_CRASH` | 기능 통과 **뒤** `0xC0000005`로 종료. 문서화된 엔진 종료 버그 |
+| `UNKNOWN_NATIVE_CRASH` | 성공 marker 없이 `0xC0000005`. 기존 버그로 분류하지 않는다 |
+| `FAIL` | 실제 기능 실패 또는 0이 아닌 종료 |
+| `TIMEOUT` | 제한 시간 안에 끝나지 않음 |
+| `NOT_EVALUATED` | 실행하지 않음. 통과로 세지 않는다 |
+
+실행 하나가 PASS인 것은 두 답이 모두 PASS일 때뿐이다. 재실행해서 통과했더라도 앞의 실패 기록은 남긴다.
+
+```sh
+python tools/repeat_stability.py --godot <godot> --case local3 --repeat 30 --output <dir>
+python tools/repeat_stability.py --godot <godot> --case lifecycle --repeat 10 --output <dir>
+python tools/repeat_stability.py --godot <godot> --case release --repeat 10 --output <dir>
+```
+
+| case | 실행하는 것 | 성공 marker |
+|---|---|---|
+| `local2` / `local3` | `test_multiplayer_local.py` (이동·점프·사다리·전투·전리품·재접속) | `MULTIPLAYER PROBE PASS` |
+| `lifecycle` | `test_session_recovery.py` (headless, 같은 프로세스의 host/client/menu 전환) | `SESSION LIFECYCLE PROBE PASS` |
+| `release` | `build_windows_demo.py --rendered` (release EXE 빌드, content, editor↔EXE ENet, headless·rendered lifecycle) | `SESSION LIFECYCLE RECOVERY PASS` |
+
+각 실행의 stdout/stderr와 `results.json`(`functional_result`, `process_result`, `exit_code`, `commit`, 소요 시간,
+남은 자식 프로세스)이 `--output` 아래 남고, 마지막에 case별 `STABILITY SUMMARY` 한 줄이 나온다. 이 도구는 자기가
+띄운 프로세스 트리만 정리한다(`ProcessScope`) — 이름이 같은 다른 Godot 프로세스는 건드리지 않는다. 각 runner는
+역할별로 독립된 `user://` root와 포트를 쓴다.
+
+**통합 후보는 하나의 SHA로 검증한다.** 병합 전 필수 검증(프로젝트 체크, ENet E2E, 에디터 pytest·브리지, EXE
+빌드)은 전부 같은 commit에서 돌리고 보고에 그 SHA를 적는다. 검증 도중 master가 바뀌어 다시 통합했다면 바뀐
+파일이 영향을 주는 검증을 새 SHA에서 다시 돌리고, 재사용한 결과는 어느 SHA의 것인지와 재사용 근거를 함께 적는다.
+
+### 새 회귀 테스트
+
+| 테스트 | 막는 것 |
+|---|---|
+| `tests/unit/test_network_input_validation.gd` (`_test_jump_survives_packet_loss`) | 점프가 packet 하나에만 실려 유실되는 것. 선두 packet 0·1·4개 유실에서 press당 jump 요청 1회, UI 차단 시 취소 |
+| `tests/unit/test_command_watchdog.gd` | lifecycle probe의 idle 제한이 시작 시각에 묶여, 명령이 한 프레임 안에 끝나는 역할(D)을 300초 뒤 끝내는 것 |
+| `tests/unit/test_map_bridge_platform_sync.gd` | 브리지가 충돌체가 맞으면 Visual을 건너뛰는 것, 공유 Shape 변형, 인스턴스 자식 변경. `ResourceSaver` 저장 후 `_ready()` 없이 재로드해 확인 |
+| `tests/unit/test_player_animation_presentation.gd` (착지) | 첫 snapshot 전 원격 actor의 가짜 착지, 최고점에서 공중 이력 소실, 재구성 후 이전 착지·공중 이력 잔존 |
