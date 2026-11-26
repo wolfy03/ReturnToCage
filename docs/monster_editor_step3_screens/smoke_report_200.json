@@ -1,0 +1,318 @@
+{
+  "platform": "windows",
+  "device_pixel_ratio": 2.0,
+  "pyside6": "6.11.3",
+  "python": "3.14.5",
+  "project": ".",
+  "godot": "<home>\\Downloads\\Godot_v4.7.2-stable_win64.exe\\Godot_v4.7.2-stable_win64.exe",
+  "counts": {
+    "pass": 49,
+    "fail": 0,
+    "not_evaluated": 0
+  },
+  "timings_ms": {
+    "launch": 352.77,
+    "project_switch": 10.53,
+    "catalog_refresh": 1.5,
+    "new_document": 38.06,
+    "single_field_edit": 3.48,
+    "undo": 2.82,
+    "redo": 2.14,
+    "multi_field_edit": 5.25,
+    "validation": 5.92,
+    "save": 15.81,
+    "registry_check": 2116.01,
+    "import_sewer_beetle": 2152.03,
+    "import_frog": 2148.94,
+    "open_document": 25.85,
+    "inspector_build": 10.25,
+    "workspace": {
+      "switch_to_workspace": 43.08,
+      "select_frame": 8.66,
+      "move_frame": 38.8,
+      "undo_move_frame": 12.99,
+      "drag_20_moves": 8.12,
+      "drag_commit": 15.32,
+      "frame_cache": {
+        "entries": 17,
+        "bytes": 233472,
+        "max_bytes": 100663296,
+        "max_entries": 512,
+        "hits": 49,
+        "misses": 17,
+        "evictions": 0,
+        "uncached": 0,
+        "sheet_bytes": 49152,
+        "sheet_decodes": 3
+      }
+    },
+    "document_small": {
+      "show_document": 51.21,
+      "single_edit": 29.43,
+      "undo": 14.35,
+      "validate_and_list": 17.99,
+      "findings": 26
+    },
+    "document_medium": {
+      "show_document": 74.63,
+      "single_edit": 48.16,
+      "undo": 16.44,
+      "validate_and_list": 34.34,
+      "findings": 61
+    },
+    "document_large": {
+      "show_document": 153.94,
+      "single_edit": 95.05,
+      "undo": 19.81,
+      "validate_and_list": 63.33,
+      "findings": 141
+    }
+  },
+  "checks": [
+    {
+      "name": "window starts without a project",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "project settings are accepted",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "the new-monster dialog accepts a free ID",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 01_new_monster_dialog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "a new monster is created and saved as a draft",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 02_new_monster_in_catalog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "typing a stat and pressing Enter edits the document",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 05_stats_edit",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Ctrl+Z twice restores the saved state",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Ctrl+Y and Ctrl+Shift+Z redo both edits",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "loot rows are added through the buttons",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 06_loot_edit",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "the validation panel lists the failure",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "eleven domains are shown and unverified ones are not shown as passed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "activating a finding focuses its field",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 07_validation_error",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Ctrl+S saves the draft",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "a clone is a new unsaved draft with its own ID and loot table",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "the clone is saved next to the original and the original is unchanged",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Godot Registry verification marks game monsters as verified",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 03_catalog_registry_verified",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sewer_beetle is imported as an unsaved draft bound to the game resources",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 04_import_sewer_beetle",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sewer_beetle: behaviour is read-only, stats are editable",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "sewer_beetle: the imported draft saves and reopens identically",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "frog is imported as an unsaved draft bound to the game resources",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 04_import_frog",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "frog: behaviour is read-only, stats are editable",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "frog: the imported draft saves and reopens identically",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "closing with unsaved changes can be cancelled",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "closing after choosing Save closes the window",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "settings are restored in a new window",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "the saved draft reopens with the same content and is clean",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 08_saved_and_reopened",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "the catalog lists the saved drafts",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "two clips were cut from the project's sheets with the buttons",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "moving a frame took its hurtbox set and the attack hit frame along, in one undo step",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "undoing the move restores the frame, the hurtbox set and the hit frame together",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 09_animation_workspace",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "nothing is written to the document while a shape is dragged",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "releasing the mouse commits the drag as one edit",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Esc cancels a drag and the document keeps its shape",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "screenshot 10_collision_workspace",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "playback advances frames and the canvas is read-only meanwhile",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "pause keeps the frame and makes the canvas editable again",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "the frame cache is inside its byte budget",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "small document stays responsive (edit and undo under 250 ms)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "medium document stays responsive (edit and undo under 250 ms)",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "large document stays responsive (edit and undo under 250 ms)",
+      "passed": true,
+      "detail": ""
+    }
+  ]
+}

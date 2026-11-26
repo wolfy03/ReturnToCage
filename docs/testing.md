@@ -538,6 +538,28 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 숲 지형을 고치면 실제 입력으로 입구→전망대 경로와 움푹한 구간 탈출을 다시 확인한다. 자동화된
 경로 검증은 Field Editor의 Traversal 분석을 쓴다.
 
+## Monster Editor 안정화 (MONSTER-STEP 3 stabilization)
+
+기록은 [monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md).
+
+| 검사 | 명령 | 범위 |
+|---|---|---|
+| 참조 무결성 (`tests/test_reference_integrity.py`) | core와 같은 pytest 명령 | frame 이동·삭제·삽입·복제 뒤 Hurtbox override와 `attack_hit_frame`이 원래 frame을 가리키는지(같은 그림의 frame 포함, frame마다 다른 duration을 꼬리표로), **수정 전 동작(배열만 이동)이 결함임을 보이는 테스트**, 고정 seed의 무작위 편집 25회 × 12단계 뒤 Undo로 원본 복원, Clip·이미지·Hitbox 삭제의 거절과 대체, ID 변경, 세션이 참조 필드만 통과시키는지 |
+| Staging (`tests/test_staging.py`) | 〃 | 링크·junction이 있는 프로젝트의 복사 거절(Windows junction은 실제로 만들어 검사), 한도·여유 공간·취소·복사 실패·복사 중 원본 변경, 표식 복제·다른 세션·표식 없음·잘못된 위치·링크로 바꿔치기된 폴더의 삭제 거절, 삭제 실패 보고와 재시도, 예외 4종·취소·잘못된 응답 19종 뒤 사본이 남지 않는지, 디스크 재읽기 불일치, 이미지 해시 불일치, texture filter(inherit 포함), crash 재시도 기록 |
+| 렌더 비교 로직 (`tests/test_rendering.py`) | 〃 | 기대 좌표가 `geometry`와 같은지, 위치·반전·region·역할·필터·재생 시간의 불일치가 각각 보고되는지, 렌더 응답 검사, 이미지 비교(위치·면적·색) |
+| 재생·cache (`tests/test_playback_cache.py`) | 〃 | frame 경계, 일시정지 후 이어 재생, one-shot 종료, loop 횟수, 바이트 예산·LRU·큰 frame·key 분리·실패 디코딩·명시적 갱신·시트 1회 디코딩 |
+| 안정화 GUI (`tests/test_gui_stabilization.py`) | 〃 | 버튼으로 frame 이동(세트·타격 frame·선택·Undo·저장), 삭제 확인 흐름, Clip·Hitbox 대체, 반전 상태의 핸들, 확대·pan·scale 분리, 드래그 취소 10가지, 재생 버튼, 선택 계약 |
+| 실제 Godot Staging | `python tools/python_monster_editor/check_godot_stage.py --godot <godot> --artifacts <dir>` | 세 문서 staging: 두 번째 프로세스의 재읽기가 문서와 같음, 영역별 상태, texture filter(1·2·0), 이미지 해시 불일치 보고, 실제 프로젝트와 다른 세션의 거절, 잘못된 요청 13종이 `INVALID_REQUEST`, 이전 시도의 출력 교체, 사본이 남지 않음, **`.godot`을 제외한 프로젝트 전체 파일**의 해시가 전후 같음 |
+| **실제 렌더링** | `python tools/python_monster_editor/check_godot_render.py --godot <godot> --artifacts <dir> [--rendering-method gl_compatibility] [--allow-no-renderer]` | 창과 렌더러로 딱정벌레·개구리·새 초안을 그려 편집기 미리보기와 비교(위치, 픽셀, region, 필터, 역할, 실제 재생 시간). 증거 PNG와 `render_report.json`. 렌더러가 없으면 실패하거나 `--allow-no-renderer`로 NOT_EVALUATED — headless로 대체하지 않는다 |
+| Frame cache 실측 | `python tools/python_monster_editor/check_frame_cache.py --output <json>` | cache 추정치가 예산 안인지, 프로세스 working set(cache 추정치와 다른 양으로 따로 기록), 장시간 재생, 프로젝트 전환 |
+
+CI(`python-monster-editor.yml`): `core`가 안정화 테스트 묶음과 frame cache 실측을 Ubuntu·Windows에서, `gui-windows`가
+스모크(Animation / Collision 흐름 포함)·Import·Staging·렌더링을, `godot-contract`가 Linux의 계약·Import·Staging을 돌린다.
+렌더링 step은 runner에 렌더러가 없으면 NOT_EVALUATED를 job summary에 적는다.
+
+`check_godot_stage.py`와 `check_godot_render.py`는 실행 전후 프로젝트 전체의 해시를 비교한다. 그 사이에 프로젝트의
+파일을(문서 포함) 고치면 "프로젝트가 바뀌었다"로 실패한다 — 검사가 도는 동안 저장소를 편집하지 않는다.
+
 ## Monster Editor GUI · Bridge · Import (MONSTER-STEP 2)
 
 편집기와 읽기 전용 Bridge의 검사다. 기록은 [monster_editor_step2.md](monster_editor_step2.md).

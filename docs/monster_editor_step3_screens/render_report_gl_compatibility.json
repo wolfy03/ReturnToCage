@@ -1,0 +1,1652 @@
+{
+  "size": [
+    320,
+    240
+  ],
+  "zoom": 3,
+  "requested_rendering_method": "gl_compatibility",
+  "monsters": {
+    "sewer_beetle": {
+      "carrier": "sewer_beetle",
+      "texture_filter": 1,
+      "expected_texture_filter": 1,
+      "visual_scale": [
+        1,
+        1
+      ],
+      "visual_offset": [
+        0,
+        -13
+      ],
+      "pixel_exact_expected": true,
+      "identical_screenshots": 20,
+      "screenshots": 20,
+      "worst": {
+        "box": 0,
+        "coverage": 0.0,
+        "colour": 0
+      },
+      "role_selection": {
+        "attack": "attack",
+        "death": "death",
+        "fall": "idle",
+        "hurt": "hurt",
+        "idle": "idle",
+        "jump": "idle",
+        "move": "move"
+      },
+      "roles_not_forced": [],
+      "timings": [
+        {
+          "clip": "idle",
+          "samples": 83,
+          "loop": true,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "move",
+          "samples": 54,
+          "loop": true,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "attack",
+          "samples": 61,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "hurt",
+          "samples": 26,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "death",
+          "samples": 39,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        }
+      ],
+      "differences": [],
+      "shots": [
+        {
+          "name": "idle_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "rendered_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f0_left",
+          "identical": true,
+          "preview_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "rendered_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f2_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "rendered_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f2_left",
+          "identical": true,
+          "preview_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "rendered_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "move_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "rendered_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "move_f0_left",
+          "identical": true,
+          "preview_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "rendered_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "move_f3_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "rendered_box": [
+            94,
+            66,
+            238,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "move_f3_left",
+          "identical": true,
+          "preview_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "rendered_box": [
+            82,
+            66,
+            226,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f0_right",
+          "identical": true,
+          "preview_box": [
+            85,
+            69,
+            229,
+            150
+          ],
+          "rendered_box": [
+            85,
+            69,
+            229,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f0_left",
+          "identical": true,
+          "preview_box": [
+            91,
+            69,
+            235,
+            150
+          ],
+          "rendered_box": [
+            91,
+            69,
+            235,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f3_right",
+          "identical": true,
+          "preview_box": [
+            112,
+            66,
+            256,
+            150
+          ],
+          "rendered_box": [
+            112,
+            66,
+            256,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f3_left",
+          "identical": true,
+          "preview_box": [
+            64,
+            66,
+            208,
+            150
+          ],
+          "rendered_box": [
+            64,
+            66,
+            208,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f0_right",
+          "identical": true,
+          "preview_box": [
+            85,
+            72,
+            229,
+            150
+          ],
+          "rendered_box": [
+            85,
+            72,
+            229,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f0_left",
+          "identical": true,
+          "preview_box": [
+            91,
+            72,
+            235,
+            150
+          ],
+          "rendered_box": [
+            91,
+            72,
+            235,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f1_right",
+          "identical": true,
+          "preview_box": [
+            88,
+            69,
+            232,
+            150
+          ],
+          "rendered_box": [
+            88,
+            69,
+            232,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f1_left",
+          "identical": true,
+          "preview_box": [
+            88,
+            69,
+            232,
+            150
+          ],
+          "rendered_box": [
+            88,
+            69,
+            232,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            72,
+            238,
+            150
+          ],
+          "rendered_box": [
+            94,
+            72,
+            238,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f0_left",
+          "identical": true,
+          "preview_box": [
+            82,
+            72,
+            226,
+            150
+          ],
+          "rendered_box": [
+            82,
+            72,
+            226,
+            150
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f2_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            238,
+            135
+          ],
+          "rendered_box": [
+            94,
+            66,
+            238,
+            135
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f2_left",
+          "identical": true,
+          "preview_box": [
+            82,
+            66,
+            226,
+            135
+          ],
+          "rendered_box": [
+            82,
+            66,
+            226,
+            135
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        }
+      ],
+      "seconds": 9.02,
+      "process": {
+        "stage": {
+          "attempts": {
+            "import": 1,
+            "stage_monster": 1,
+            "read_stage": 1
+          },
+          "crash_exit_codes": []
+        },
+        "render_crash_exit_codes": []
+      }
+    },
+    "frog": {
+      "carrier": "frog",
+      "texture_filter": 1,
+      "expected_texture_filter": 1,
+      "visual_scale": [
+        1,
+        1
+      ],
+      "visual_offset": [
+        4,
+        -19
+      ],
+      "pixel_exact_expected": true,
+      "identical_screenshots": 32,
+      "screenshots": 32,
+      "worst": {
+        "box": 0,
+        "coverage": 0.0,
+        "colour": 0
+      },
+      "role_selection": {
+        "attack": "attack",
+        "death": "death",
+        "fall": "fall",
+        "hurt": "hurt",
+        "idle": "idle",
+        "jump": "jump",
+        "move": "idle"
+      },
+      "roles_not_forced": [
+        "role jump_start: bound to a clip, but the presenter shows it only through its own timers; not forced by this check",
+        "role land: bound to a clip, but the presenter shows it only through its own timers; not forced by this check"
+      ],
+      "timings": [
+        {
+          "clip": "idle",
+          "samples": 83,
+          "loop": true,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "jump_start",
+          "samples": 20,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "jump",
+          "samples": 32,
+          "loop": true,
+          "largest_delta": 0.016702
+        },
+        {
+          "clip": "fall",
+          "samples": 30,
+          "loop": true,
+          "largest_delta": 0.0167143333333333
+        },
+        {
+          "clip": "land",
+          "samples": 20,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "attack",
+          "samples": 53,
+          "loop": false,
+          "largest_delta": 0.0172203333333333
+        },
+        {
+          "clip": "hurt",
+          "samples": 26,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "death",
+          "samples": 39,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        }
+      ],
+      "differences": [],
+      "shots": [
+        {
+          "name": "idle_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            57,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            57,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            57,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            57,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f2_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            57,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            57,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f2_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            57,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            57,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_start_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            66,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_start_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            66,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            66,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_start_f1_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            75,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            75,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_start_f1_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            75,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            75,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_f0_right",
+          "identical": true,
+          "preview_box": [
+            79,
+            30,
+            217,
+            159
+          ],
+          "rendered_box": [
+            79,
+            30,
+            217,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            30,
+            241,
+            159
+          ],
+          "rendered_box": [
+            103,
+            30,
+            241,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_f1_right",
+          "identical": true,
+          "preview_box": [
+            82,
+            30,
+            217,
+            159
+          ],
+          "rendered_box": [
+            82,
+            30,
+            217,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "jump_f1_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            30,
+            238,
+            159
+          ],
+          "rendered_box": [
+            103,
+            30,
+            238,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "fall_f0_right",
+          "identical": true,
+          "preview_box": [
+            79,
+            48,
+            217,
+            159
+          ],
+          "rendered_box": [
+            79,
+            48,
+            217,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "fall_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            48,
+            241,
+            159
+          ],
+          "rendered_box": [
+            103,
+            48,
+            241,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "fall_f1_right",
+          "identical": true,
+          "preview_box": [
+            79,
+            54,
+            217,
+            159
+          ],
+          "rendered_box": [
+            79,
+            54,
+            217,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "fall_f1_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            54,
+            241,
+            159
+          ],
+          "rendered_box": [
+            103,
+            54,
+            241,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "land_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            78,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            78,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "land_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            78,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            78,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "land_f1_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            66,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            66,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "land_f1_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            66,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            66,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            69,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            69,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            69,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            69,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f3_right",
+          "identical": true,
+          "preview_box": [
+            97,
+            33,
+            268,
+            159
+          ],
+          "rendered_box": [
+            97,
+            33,
+            268,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f3_left",
+          "identical": true,
+          "preview_box": [
+            52,
+            33,
+            223,
+            159
+          ],
+          "rendered_box": [
+            52,
+            33,
+            223,
+            159
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f0_right",
+          "identical": true,
+          "preview_box": [
+            85,
+            69,
+            208,
+            156
+          ],
+          "rendered_box": [
+            85,
+            69,
+            208,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f0_left",
+          "identical": true,
+          "preview_box": [
+            112,
+            69,
+            235,
+            156
+          ],
+          "rendered_box": [
+            112,
+            69,
+            235,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f1_right",
+          "identical": true,
+          "preview_box": [
+            88,
+            63,
+            211,
+            156
+          ],
+          "rendered_box": [
+            88,
+            63,
+            211,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f1_left",
+          "identical": true,
+          "preview_box": [
+            109,
+            63,
+            232,
+            156
+          ],
+          "rendered_box": [
+            109,
+            63,
+            232,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f0_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            72,
+            217,
+            156
+          ],
+          "rendered_box": [
+            94,
+            72,
+            217,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f0_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            72,
+            226,
+            156
+          ],
+          "rendered_box": [
+            103,
+            72,
+            226,
+            156
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f2_right",
+          "identical": true,
+          "preview_box": [
+            94,
+            63,
+            217,
+            153
+          ],
+          "rendered_box": [
+            94,
+            63,
+            217,
+            153
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f2_left",
+          "identical": true,
+          "preview_box": [
+            103,
+            63,
+            226,
+            153
+          ],
+          "rendered_box": [
+            103,
+            63,
+            226,
+            153
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        }
+      ],
+      "seconds": 10.48,
+      "process": {
+        "stage": {
+          "attempts": {
+            "import": 1,
+            "stage_monster": 1,
+            "read_stage": 1
+          },
+          "crash_exit_codes": []
+        },
+        "render_crash_exit_codes": []
+      }
+    },
+    "new_draft": {
+      "carrier": "sewer_beetle",
+      "texture_filter": 1,
+      "expected_texture_filter": 1,
+      "visual_scale": [
+        1.5,
+        1.5
+      ],
+      "visual_offset": [
+        0,
+        -16.666666666666668
+      ],
+      "pixel_exact_expected": false,
+      "identical_screenshots": 6,
+      "screenshots": 20,
+      "worst": {
+        "box": 1,
+        "coverage": 0.02778555431131019,
+        "colour": 253
+      },
+      "role_selection": {
+        "attack": "attack",
+        "death": "death",
+        "fall": "idle",
+        "hurt": "hurt",
+        "idle": "idle",
+        "jump": "idle",
+        "move": "move"
+      },
+      "roles_not_forced": [],
+      "timings": [
+        {
+          "clip": "idle",
+          "samples": 84,
+          "loop": true,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "move",
+          "samples": 55,
+          "loop": true,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "attack",
+          "samples": 61,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "hurt",
+          "samples": 26,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        },
+        {
+          "clip": "death",
+          "samples": 39,
+          "loop": false,
+          "largest_delta": 0.0166666666666667
+        }
+      ],
+      "differences": [],
+      "shots": [
+        {
+          "name": "idle_f0_right",
+          "identical": true,
+          "preview_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "rendered_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f0_left",
+          "identical": false,
+          "preview_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "rendered_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "only_in_preview": 45,
+          "only_in_rendered": 26,
+          "colour_differs": 53
+        },
+        {
+          "name": "idle_f2_right",
+          "identical": true,
+          "preview_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "rendered_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "idle_f2_left",
+          "identical": false,
+          "preview_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "rendered_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "only_in_preview": 179,
+          "only_in_rendered": 133,
+          "colour_differs": 211
+        },
+        {
+          "name": "move_f0_right",
+          "identical": true,
+          "preview_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "rendered_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "move_f0_left",
+          "identical": false,
+          "preview_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "rendered_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "only_in_preview": 156,
+          "only_in_rendered": 147,
+          "colour_differs": 143
+        },
+        {
+          "name": "move_f3_right",
+          "identical": false,
+          "preview_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "rendered_box": [
+            61,
+            23,
+            277,
+            149
+          ],
+          "only_in_preview": 35,
+          "only_in_rendered": 109,
+          "colour_differs": 155
+        },
+        {
+          "name": "move_f3_left",
+          "identical": false,
+          "preview_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "rendered_box": [
+            43,
+            23,
+            259,
+            149
+          ],
+          "only_in_preview": 129,
+          "only_in_rendered": 167,
+          "colour_differs": 135
+        },
+        {
+          "name": "attack_f0_right",
+          "identical": true,
+          "preview_box": [
+            48,
+            27,
+            264,
+            149
+          ],
+          "rendered_box": [
+            48,
+            27,
+            264,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "attack_f0_left",
+          "identical": false,
+          "preview_box": [
+            57,
+            27,
+            273,
+            149
+          ],
+          "rendered_box": [
+            56,
+            27,
+            273,
+            149
+          ],
+          "only_in_preview": 198,
+          "only_in_rendered": 199,
+          "colour_differs": 230
+        },
+        {
+          "name": "attack_f3_right",
+          "identical": false,
+          "preview_box": [
+            88,
+            23,
+            304,
+            149
+          ],
+          "rendered_box": [
+            88,
+            23,
+            304,
+            149
+          ],
+          "only_in_preview": 28,
+          "only_in_rendered": 4,
+          "colour_differs": 16
+        },
+        {
+          "name": "attack_f3_left",
+          "identical": false,
+          "preview_box": [
+            16,
+            23,
+            232,
+            149
+          ],
+          "rendered_box": [
+            16,
+            23,
+            232,
+            149
+          ],
+          "only_in_preview": 211,
+          "only_in_rendered": 187,
+          "colour_differs": 249
+        },
+        {
+          "name": "hurt_f0_right",
+          "identical": true,
+          "preview_box": [
+            48,
+            32,
+            264,
+            149
+          ],
+          "rendered_box": [
+            48,
+            32,
+            264,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "hurt_f0_left",
+          "identical": false,
+          "preview_box": [
+            57,
+            32,
+            273,
+            149
+          ],
+          "rendered_box": [
+            56,
+            32,
+            272,
+            149
+          ],
+          "only_in_preview": 112,
+          "only_in_rendered": 140,
+          "colour_differs": 199
+        },
+        {
+          "name": "hurt_f1_right",
+          "identical": false,
+          "preview_box": [
+            52,
+            27,
+            268,
+            149
+          ],
+          "rendered_box": [
+            52,
+            27,
+            268,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 9,
+          "colour_differs": 9
+        },
+        {
+          "name": "hurt_f1_left",
+          "identical": false,
+          "preview_box": [
+            52,
+            27,
+            268,
+            149
+          ],
+          "rendered_box": [
+            52,
+            27,
+            268,
+            149
+          ],
+          "only_in_preview": 157,
+          "only_in_rendered": 165,
+          "colour_differs": 238
+        },
+        {
+          "name": "death_f0_right",
+          "identical": true,
+          "preview_box": [
+            61,
+            32,
+            277,
+            149
+          ],
+          "rendered_box": [
+            61,
+            32,
+            277,
+            149
+          ],
+          "only_in_preview": 0,
+          "only_in_rendered": 0,
+          "colour_differs": 0
+        },
+        {
+          "name": "death_f0_left",
+          "identical": false,
+          "preview_box": [
+            43,
+            32,
+            259,
+            149
+          ],
+          "rendered_box": [
+            43,
+            32,
+            259,
+            149
+          ],
+          "only_in_preview": 191,
+          "only_in_rendered": 164,
+          "colour_differs": 253
+        },
+        {
+          "name": "death_f2_right",
+          "identical": false,
+          "preview_box": [
+            61,
+            23,
+            277,
+            126
+          ],
+          "rendered_box": [
+            61,
+            23,
+            277,
+            126
+          ],
+          "only_in_preview": 22,
+          "only_in_rendered": 26,
+          "colour_differs": 104
+        },
+        {
+          "name": "death_f2_left",
+          "identical": false,
+          "preview_box": [
+            43,
+            23,
+            259,
+            126
+          ],
+          "rendered_box": [
+            43,
+            23,
+            259,
+            126
+          ],
+          "only_in_preview": 95,
+          "only_in_rendered": 111,
+          "colour_differs": 175
+        }
+      ],
+      "seconds": 9.02,
+      "process": {
+        "stage": {
+          "attempts": {
+            "import": 1,
+            "stage_monster": 1,
+            "read_stage": 1
+          },
+          "crash_exit_codes": []
+        },
+        "render_crash_exit_codes": []
+      }
+    }
+  },
+  "renderer": {
+    "display_server": "Windows",
+    "rendering_driver": "opengl3",
+    "rendering_method": "gl_compatibility",
+    "video_adapter": "NVIDIA GeForce RTX 3070 Laptop GPU",
+    "video_adapter_vendor": "NVIDIA"
+  },
+  "status": "PASS",
+  "failures": [],
+  "unavailable": "",
+  "seconds": 78.7,
+  "platform": "win32",
+  "qt_platform": "windows",
+  "ci": false,
+  "not_checked": [
+    "the document's hitboxes and per-frame hurtbox sets are drawn as an overlay only; no runtime uses them in MONSTER-STEP 3",
+    "jump_start and land clips (presenter timers)",
+    "combat, network and publishing"
+  ]
+}

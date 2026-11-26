@@ -220,6 +220,12 @@ MONSTER-STEP 1 이후 `EnemyAnimationProfile`에 `texture_filter`(`CanvasItem.Te
   Step 1에는 Import·Export 명령이 없다.
 - 두 예제의 `source_binding`은 두 스크립트의 새 해시로 갱신돼 있다. contract check의 나머지 비교가 그대로인
   것을 확인한 뒤 `--refresh-bindings`로 갱신한 것이며, 해시 갱신이 값 비교를 대신하지는 않는다.
+- **현재 상태 (STEP 3 안정화).** Import는 값을 `source_binding.passthrough.profile_texture_filter`에 보존한다.
+  Staging은 그 값을 profile에 넘기고, profile 재읽기와 carrier의 실제 sprite 양쪽에서 문서의 값과 비교한다
+  (`CanvasItem.TextureFilter` 숫자 그대로 — inherit(0)은 nearest(1)와 같지 않다). 실제 렌더링 검사도 sprite의 값을
+  확인한다. passthrough가 없는 문서(새 초안, 그리고 `source_binding`을 지우는 **복제본**)는 profile 기본값
+  nearest로 staging된다 — 복제하면 원본의 필터 설정은 따라오지 않는다. 초안에서 필터를 고르려면 Schema V2의
+  `presentation.texture_filter`가 필요하다.
 - **후속 단계에서 지켜야 할 것.** Import(STEP 2)는 profile의 `texture_filter`가 기본값이 아니면 그 값을
   `unsupported`로 보고해야 한다(조용히 버리면 정식 아트의 `LINEAR` 설정이 Export에서 사라진다). Animation
   Editor(STEP 3)가 profile을 쓰게 되면 schema에 필드를 추가하고 probe가 이 값을 읽도록 한다. 정식 아트의 권장

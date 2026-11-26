@@ -69,11 +69,16 @@
 
 **하지 않는 것**: 게시, sprite 편집, 판정 편집, 타임라인, AI 그래프, EXE.
 
-## MONSTER-STEP 3 — Animation / Collision Editor (구현됨, 병합 대기)
+## MONSTER-STEP 3 — Animation / Collision Editor (구현됨, 안정화됨, 병합 대기)
 
-결과와 검증 기록은 [monster_editor_step3.md](monster_editor_step3.md)에 있다. 아래는 착수 전에 정한 범위이며,
-달라진 점: `texture_filter`는 Schema V1에 필드가 없어 편집하지 않았고, staging의 "그려진다"는 headless에서
-구조로만 확인했다(렌더링 픽셀은 NOT_EVALUATED).
+결과와 검증 기록은 [monster_editor_step3.md](monster_editor_step3.md), 안정화는
+[monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md)에 있다. 아래는 착수 전에 정한 범위이며,
+달라진 점: `texture_filter`는 Schema V1에 필드가 없어 편집하지 않았다. staging의 "그려진다"는 STEP 3에서 headless
+구조 확인뿐이었고, 안정화에서 실제 렌더러로 그려 미리보기와 비교했다.
+
+**STEP 4가 넘겨받는 것** ([monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md) §13): 같은 `DocumentSession`과 Undo,
+`application/references.py`(참조 조회·재연결·ID 변경), `PreviewCanvas`와 frame cache, `Playback`(재생 시간 조회),
+workspace의 선택 계약(`select_frame` / `seek` / `highlight_box` / `selection_changed`), `StagingSession`과 렌더 검사.
 
 - **선행**: STEP 2. 데이터 런타임은 아직 필요 없다. 시작할 때 요약 패널의 부분 갱신을 먼저 한다 — Large 문서에서
   편집 1회가 약 95 ms이고 대부분이 요약 전체 재생성이다(STEP 2 측정). 드래그 조작은 이 비용을 견디지 못한다.
@@ -88,7 +93,11 @@
 
 ## MONSTER-STEP 4 — Attack Pattern Editor / Combat Runtime
 
-- **선행**: STEP 3. **이 단계부터 게임 런타임과 프로토콜이 바뀐다.**
+- **선행**: STEP 3과 그 안정화. **이 단계부터 게임 런타임과 프로토콜이 바뀐다.** 프로토콜을 21로 올릴 때,
+  master의 Runtime 안정화가 현재 프로토콜 안에서 임시로 푼 문제(점프 press를 150 ms 재전송)의 장기 계약을 같이
+  정한다: 지속 입력과 순간 action의 분리, action sequence와 중복 제거, 유실 시 재전송·ACK, 세션 generation
+  ([runtime_stabilization.md](runtime_stabilization.md)). 그리고 Windows lifecycle probe의 미해결 실패가 새 전투
+  런타임 검증에 어떤 영향을 주는지 먼저 평가한다.
 - **범위(Godot)**: `DataEnemyDefinition`(EnemyDefinition 상속), 공용 `data_enemy.tscn` + `DataEnemyAgent`,
   Attack Timeline Executor(정수 tick), 몬스터 hitbox(기존 `HitboxComponent` 재사용 + 인스턴스 단위 공유 hit 목록),
   hurtbox 집합 구성, `RangeStrike`·`EnableHitbox`·`DisableHitbox`·`ApplyImpulse`·`ApplyMovement`·facing lock,
@@ -139,7 +148,10 @@
 | 공통 Python 패키지 추출 | **STEP 2에서 중복 유지로 결정** | 재검토는 STEP 7(EXE)에서 |
 | 개구리 접촉 판정 | **결정됨** | V2에서 `hitboxes[].target_test` 추가 (stabilization §6). 구현은 STEP 5 |
 | 개구리 근거리 도약 | **결정됨** | V2에서 `Hop.near_goal_speed_scale` / `near_goal_lift` 추가. 구현은 STEP 5 |
-| 연속 조작의 편집 비용 | STEP 3 | 조작 종료 시 1회 확정 / 부분 정규화 도입 — GUI에서 측정 후 결정 |
+| 연속 조작의 편집 비용 | **결정됨 (STEP 3)** | 조작 종료 시 1회 확정. 드래그 중에는 문서를 건드리지 않는다 |
+| `texture_filter` 필드 | Schema V2 | 지금은 가져온 문서의 passthrough에만 있다 |
+| frame 고유 ID | frame 단위 이벤트가 생길 때 | V1은 번호 참조 + 재지정 규칙으로 유지 |
+| frame별 anchor | Schema V2 | 크기가 다른 frame의 발 위치 |
 | `causes_hurt` 존중 여부 | STEP 5 | 데이터 몬스터만 존중 / legacy도 수정 / 현행 유지 |
 | 정수 tick 타이머를 legacy에도 적용할지 | STEP 5 | 적용(경계 tick이 바뀔 수 있음) / 데이터 몬스터만 |
 | 기존 두 몬스터의 전환 시점 | STEP 6 이후 | 전환 / legacy 유지 |

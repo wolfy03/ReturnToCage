@@ -170,11 +170,17 @@ tools/python_monster_editor/
 │  ├─ validation/      report(코드·Finding·Report) · context(Context, ProjectView, @rule)
 │  │                   · structure · assets · animation · combat · behavior · compatibility
 │  └─ reference.py     schema·registry·코드 선언에서 문서 표를 생성
-├─ application/        (STEP 2, Qt 없음) session · project · settings · work
-├─ bridge/             (STEP 2, Qt 없음) client: Godot 실행과 응답 검사 · importer: LegacyImportProfile
-├─ gui/                (STEP 2, PySide6) main_window · inspector · panels · lists · dialogs · strings · testing
+├─ application/        (Qt 없음) session · project · settings · work
+│                      · animation(STEP 3: 동작 → edit 목록) · references · playback(안정화)
+├─ bridge/             (Qt 없음) client: Godot 실행과 응답 검사 · importer: LegacyImportProfile
+│                      · staging(STEP 3: StagingSession, 비교) · rendering(안정화: 렌더 검사와 기대값)
+├─ gui/                (PySide6) main_window · inspector · panels · lists · dialogs · strings · testing
+│                      · animation(workspace) · preview_canvas · frame_cache · render_compare
 ├─ main.py             편집기 진입점, 스크립트된 GUI 스모크(--smoke-report)
 ├─ check_godot_import.py            실제 Godot으로 Bridge·Import·격리 프로젝트·실패 경로 검사
+├─ check_godot_stage.py             실제 Godot으로 staging·디스크 재읽기·요청 거절·원본 무결성 검사
+├─ check_godot_render.py            실제 렌더러로 그려 편집기 미리보기와 비교
+├─ check_frame_cache.py             frame cache 예산과 프로세스 메모리 실측
 ├─ examples/           sewer_beetle · frog · sewer_rat_prototype
 ├─ tests/              pytest (표준 라이브러리 외 의존성 없음)
 ├─ validate.py         명령행 검증
@@ -185,7 +191,9 @@ tools/python_monster_editor/
 tools/monster_bridge/
 ├─ monster_inspector.gd        probe와 Bridge가 함께 쓰는 추출 코드
 ├─ contract_probe.gd / .tscn   읽기 전용 probe
-└─ bridge.gd / .tscn           읽기 전용 Bridge (inspect_monsters, import_monster)
+├─ bridge.gd / .tscn           Bridge (inspect_monsters, import_monster 읽기 전용 · stage_monster, read_stage는 staging 사본에서만)
+├─ monster_stager.gd           staging 사본에서 SpriteFrames·EnemyAnimationProfile 생성과 재읽기
+└─ render_check.gd / .tscn     staging 사본에서 실제 렌더러로 그리는 검증 씬
 ```
 
 의존 방향은 `spec ← modules ← schema ← document / editing ← validation ← 도구` 한쪽이다. 범용 코드(schema,
@@ -210,7 +218,8 @@ protocol·request_id·operation이 일치하는 JSON 결과, 종료 코드 0, �
 | `inspect_monsters` | 없음 | ContentRegistry에 등록된 몬스터 ID·이름·정의/scene 경로·actor 스크립트·정의 오류 | **STEP 2 (구현됨)** |
 | `import_monster` | monster_id | 한 몬스터의 실제 값. Python importer가 문서와 `source_binding`(파일 해시, 편집 가능 범위, 미지원 항목)으로 변환 | **STEP 2 (구현됨)** |
 | `validate_document` | 문서 | 리소스 참조, 타입, 모듈 ID를 엔진에서 확인 | STEP 3~5 |
-| `stage_monster` | 문서 | 복사본에 `DataEnemyDefinition`, profile, SpriteFrames, loot 생성 | STEP 3~5 |
+| `stage_monster` | 문서 | 복사본에 profile, SpriteFrames 생성 (**STEP 3 구현됨**: 표현부). `DataEnemyDefinition`, loot는 STEP 4~5 | STEP 3~5 |
+| `read_stage` | staging 세션 | staged 리소스를 새 프로세스에서 디스크로부터 재읽기 | **안정화 (구현됨)** |
 | `validate_export` | staging | 새 프로세스에서 재로드, ContentRegistry 검증, 스폰, 상태 진행 | STEP 6 |
 | `runtime_test` | 문서, 시나리오 | 실제 actor를 권위로 실행한 기록 | STEP 6 |
 | `publish` / `recover` | 승인된 staging | 저널 기반 다중 파일 원자 게시, 실패 시 rollback | STEP 6 |

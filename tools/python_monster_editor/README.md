@@ -1,4 +1,4 @@
-# ReturnToCage Monster Editor (MONSTER-STEP 2)
+# ReturnToCage Monster Editor (MONSTER-STEP 3)
 
 `.rtcmonster` 문서의 Python core와 그 위의 편집기다. 편집기는 초안을 만들고 게임 몬스터의 값을 읽어 올 뿐,
 게임을 바꾸지 않는다(게시는 이후 단계).
@@ -86,11 +86,21 @@ python tools/python_monster_editor/main.py --smoke-report <report.json> --smoke-
 # 실제 Godot으로 Bridge와 Import 검사 (격리된 프로젝트 사본의 신규 몬스터, 실패 경로 포함)
 python tools/python_monster_editor/check_godot_import.py --godot <godot> --artifacts <dir>
 
+# 실제 Godot으로 표현 리소스 staging 검사 (프로젝트 사본, 디스크 재읽기, 요청 거절, 원본 무결성)
+python tools/python_monster_editor/check_godot_stage.py --godot <godot> --artifacts <dir>
+
+# 실제 렌더러로 그려 편집기 미리보기와 비교 (창이 잠깐 뜬다. 렌더러가 없으면 --allow-no-renderer로 NOT_EVALUATED)
+python tools/python_monster_editor/check_godot_render.py --godot <godot> --artifacts <dir>
+
+# frame cache 예산과 프로세스 메모리 실측
+python tools/python_monster_editor/check_frame_cache.py --output <result.json>
+
 # 규모별 측정
 python tools/python_monster_editor/benchmark.py --output <result.json>
 ```
 
-두 Godot 검사는 게임 파일을 바꾸지 않는다. 게임에 몬스터를 새로 추가해도 예제 문서를 쓸 필요는 없다 —
+Godot 검사들은 게임 파일을 바꾸지 않는다(staging과 렌더 검사는 프로젝트 사본에서 돌고, 끝나면 프로젝트 전체의
+해시가 그대로인지 확인한다 — 그래서 검사가 도는 동안 저장소의 파일을 고치면 실패한다). 게임에 몬스터를 새로 추가해도 예제 문서를 쓸 필요는 없다 —
 새 몬스터는 registry 계약이 검사한다. 예제와 비교되는 것은 `godot_contract.LEGACY_PROFILES`에 등록한 기준 몬스터뿐이다.
 기준 몬스터의 스크립트·scene·리소스를 고쳐서 "source files" 항목으로 실패하면, **예제가 여전히 게임과 같은지 먼저
 확인한 뒤** `--refresh-bindings`로 해시를 갱신한다(값이 다르면 갱신되지 않는다). 그때 `--artifacts`의 `probe.json`을

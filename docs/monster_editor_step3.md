@@ -4,6 +4,11 @@ STEP 2([monster_editor_step2.md](monster_editor_step2.md)) 위에 이미지·Cli
 Godot이 표현 리소스를 직접 만들어 보는 staging 검증을 더했다. 게임 런타임·`NetworkProtocol`(20)·Schema(V1)·
 Bridge protocol(1)은 바뀌지 않았다. 게임 프로젝트의 파일은 이 단계의 어떤 기능으로도 쓰이지 않는다.
 
+> **안정화 이후 달라진 것은 [monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md)에 있다.** frame 순서 변경 시
+> 참조 유지, Clip·이미지·Hitbox 삭제 보호, 드래그·재생 계약, 바이트 예산 frame cache, Staging 사본의 소유권과
+> 정리, 디스크 재읽기, texture filter 비교, 실제 렌더링 검증. 아래 본문은 STEP 3 시점의 기록이며, 안정화로
+> 바뀐 곳에는 표시를 달았다.
+
 ## 1. 있는 것과 없는 것
 
 | 항목 | 상태 |
@@ -21,13 +26,17 @@ Bridge protocol(1)은 바뀌지 않았다. 게임 프로젝트의 파일은 이 
 | 실제 프로젝트에 게시 | **없음** (STEP 6) |
 | `texture_filter` 편집 | **없음** — Schema V1에 필드가 없다(§6) |
 | frame `offset`, Clip `on_finish`·`priority` 편집 | **없음** (`planned`, 값 표시도 요약에만) |
-| 렌더링된 화면으로 staging 결과 확인 | **NOT_EVALUATED** — staging은 headless다(§5) |
+| 렌더링된 화면으로 staging 결과 확인 | STEP 3: NOT_EVALUATED. **안정화에서 구현** — `check_godot_render.py` |
 
 ## 2. 계층
 
 ```text
-gui/animation.py            AnimationWorkspace, PreviewCanvas, load_frame      (Qt)
+gui/animation.py            AnimationWorkspace                                   (Qt)
+gui/preview_canvas.py       PreviewCanvas (안정화에서 분리)                       (Qt)
+gui/frame_cache.py          load_frame, FrameCache (안정화에서 분리)              (Qt)
 application/animation.py    한 동작 -> Edit 목록. 이미지/Clip/역할/도형/override   (Qt 없음)
+application/references.py   참조 조회·재연결·frame 번호 재지정 (안정화)           (Qt 없음)
+application/playback.py     재생 상태와 시간 (안정화)                             (Qt 없음)
 bridge/staging.py           프로젝트 사본, stage 요청, 재읽기 대조                 (Qt 없음)
 tools/monster_bridge/monster_stager.gd   Godot 안에서 리소스 생성·저장·재읽기·attach
 ```
@@ -46,9 +55,10 @@ tools/monster_bridge/monster_stager.gd   Godot 안에서 리소스 생성·저�
 |---|---|---|
 | 이미지 등록 | core의 경로·헤더·무결성 검사를 통과한 PNG만. 크기와 해시는 파일에서 읽는다 | 손으로 적은 크기는 `asset_size_mismatch`의 원인이다 |
 | 격자 Clip | 이미지 크기가 격자로 나누어떨어져야 한다 | 나머지가 있는 분할은 조용히 잘린 frame을 만든다 |
-| Clip 삭제 | 그 Clip을 가리키는 역할과 override를 같은 Undo 단계에서 함께 지운다 | 남으면 `unknown_animation` FAIL이 된다 |
-| frame 삭제 | 그 frame의 override는 지우고 뒤 frame의 override 번호를 하나씩 당긴다 | override는 번호로 frame을 가리킨다 |
-| 사용 중인 이미지 삭제 | 거절 | Clip을 깨뜨리는 삭제를 한 번의 클릭으로 허용하지 않는다 |
+| Clip 삭제 | 그 Clip을 가리키는 역할과 override를 같은 Undo 단계에서 함께 지운다. **안정화:** 지우기 전에 목록을 보여 주고 확인받는다. 공격 패턴·상태·이벤트가 참조하면 거절하거나 대체 Clip으로 재연결한다 | 남으면 `unknown_animation` FAIL이 된다 |
+| frame 삭제 | 그 frame의 override는 지우고 뒤 frame의 override 번호를 하나씩 당긴다. **안정화:** `attack_hit_frame`도 같이 옮기고, 타격 frame 자체를 지울 때는 대체 frame을 묻는다. 마지막 frame은 지우지 않는다 | override는 번호로 frame을 가리킨다 |
+| frame 순서 변경 | **안정화:** override와 `attack_hit_frame`이 frame을 따라간다. STEP 3에서는 배열만 옮겨 세트가 다른 frame에 붙었다 | 같은 이유 |
+| 사용 중인 이미지 삭제 | 거절. **안정화:** 또는 크기가 맞는 다른 이미지로 재연결. frame은 지우지 않는다 | Clip을 깨뜨리는 삭제를 한 번의 클릭으로 허용하지 않는다 |
 | 도형 드래그 | 드래그 중에는 캔버스의 미리보기만 바뀌고, **버튼을 뗄 때 편집 1회** | 편집 1회는 문서 전체를 정규화한다(§4) |
 | 겹친 도형 선택 | 이미 선택된 도형이 우선(핸들 → 영역), 아니면 위에 그려진 도형 | 목록에서 고른 body를 hurtbox 밑에서도 끌 수 있어야 한다 |
 | 사각형 크기 조절 | 끈 변만 움직이고 반대 변은 고정. 최소 1 px | 중심 고정 방식은 반대쪽이 함께 움직여 맞추기 어렵다 |
@@ -99,7 +109,9 @@ dirty 표시에 쓰인다)이며 둘 다 core의 일이다. smoke의 Large 편�
 
 **안전.** 실제 프로젝트는 쓰이지 않는다. 사본을 먼저 만들고, stager는 표식이 없는 프로젝트를
 `NOT_A_STAGING_PROJECT`로 거절하며, Python은 프로젝트 안쪽을 staging 폴더로 받지 않고, 표식 없는 폴더를 지우지
-않는다. Python은 `.tres` 텍스트를 조립하지 않는다.
+않는다. Python은 `.tres` 텍스트를 조립하지 않는다. **안정화:** 표식만으로는 삭제할 수 없다 — 사본을 만든
+`StagingSession`의 ID가 표식과 같아야 하고, 링크·junction이 있는 프로젝트는 복사를 시작하지 않으며, 예외 종류와
+무관하게 사본을 지운다([monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md) §6).
 
 **실패와 차이는 다르다.** Godot이 만든 것이 문서와 다르면 예외가 아니라 `StageResult.differences`다. 결과를 못
 얻은 실행만 `BridgeError`다. 실패한 실행의 사본은 지운다(실패가 임시 폴더에 수십 MB씩 쌓이지 않게).
@@ -109,7 +121,8 @@ dirty 표시에 쓰인다)이며 둘 다 core의 일이다. smoke의 Large 편�
 다시 한다. `stage_monster`는 버려도 되는 사본 안의 자기 출력만 덮어쓰므로 재시도가 안전하다.
 
 **headless의 한계.** 4번은 presenter가 만들어졌고 sprite가 staged `SpriteFrames`의 텍스처를 갖고 있으며
-위치·scale이 문서와 같은지를 확인한다. 화면에 실제로 그려진 픽셀은 확인하지 않는다 — NOT_EVALUATED다.
+위치·scale이 문서와 같은지를 확인한다. 화면에 실제로 그려진 픽셀은 확인하지 않는다 — `StageResult.areas["rendering"]`은
+항상 NOT_EVALUATED다. 그려진 결과는 별도의 `check_godot_render.py`가 창과 렌더러로 확인한다([monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md) §9).
 
 ## 6. Schema에 없는 것: `texture_filter`
 
@@ -143,5 +156,5 @@ skip 5건은 기존과 같다(offscreen에서의 창 단축키, 심볼릭 링크
 - 게시(STEP 6): staging에서 검증된 두 리소스를 실제 프로젝트로 옮기는 트랜잭션. 지금의 `stage_monster`는
   사본 밖으로 아무것도 내보내지 않는다.
 - hurtbox override와 hitbox를 읽는 데이터 런타임(STEP 4). 지금은 편집·검증만 된다.
-- 렌더링 확인: staging 사본에서 rendered probe로 screenshot을 찍는 검사.
+- ~~렌더링 확인: staging 사본에서 rendered probe로 screenshot을 찍는 검사.~~ 안정화에서 구현.
 - carrier 선택 UI: 지금 메뉴는 registry가 처음 주는 Enemy를 쓴다. `stage_presentation(carrier=…)`는 이미 받는다.

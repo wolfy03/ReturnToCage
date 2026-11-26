@@ -1,0 +1,72 @@
+{
+  "budget_mib": 96,
+  "platform": "win32",
+  "python": "3.14.5",
+  "measured": [
+    {
+      "frame": 256,
+      "frames": 512,
+      "pixels_demanded_mib": 128.0,
+      "cache_peak_mib": 96.0,
+      "frames_kept": 384,
+      "evictions": 128,
+      "sheet_decodes": 2,
+      "sheet_kept_mib": 64.0,
+      "working_set_before_mib": 45.7,
+      "working_set_peak_mib": 207.3,
+      "working_set_after_clear_mib": 46.2,
+      "decode_ms_per_frame": 0.92,
+      "cached_ms_per_frame": 0.022
+    },
+    {
+      "frame": 512,
+      "frames": 128,
+      "pixels_demanded_mib": 128.0,
+      "cache_peak_mib": 96.0,
+      "frames_kept": 96,
+      "evictions": 32,
+      "sheet_decodes": 2,
+      "sheet_kept_mib": 64.0,
+      "working_set_before_mib": 46.4,
+      "working_set_peak_mib": 206.8,
+      "working_set_after_clear_mib": 46.4,
+      "decode_ms_per_frame": 3.77,
+      "cached_ms_per_frame": 0.024
+    },
+    {
+      "frame": 1024,
+      "frames": 32,
+      "pixels_demanded_mib": 128.0,
+      "cache_peak_mib": 96.0,
+      "frames_kept": 24,
+      "evictions": 8,
+      "sheet_decodes": 2,
+      "sheet_kept_mib": 64.0,
+      "working_set_before_mib": 46.5,
+      "working_set_peak_mib": 206.6,
+      "working_set_after_clear_mib": 46.5,
+      "decode_ms_per_frame": 14.64,
+      "cached_ms_per_frame": 0.033
+    },
+    {
+      "replay_loops": 400,
+      "frames": 32,
+      "ms_per_frame": 0.0225,
+      "working_set_growth_kib": 0,
+      "cache": {
+        "entries": 32,
+        "bytes": 8388608,
+        "max_bytes": 100663296,
+        "max_entries": 512,
+        "hits": 12800,
+        "misses": 32,
+        "evictions": 0,
+        "uncached": 0,
+        "sheet_bytes": 67108864,
+        "sheet_decodes": 1
+      }
+    }
+  ],
+  "failures": [],
+  "note": "cache bytes are an estimate of decoded pixels; the working set is the whole process as the operating system reports it. They are different quantities and are not expected to be equal."
+}

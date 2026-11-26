@@ -419,7 +419,11 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
   Legacy Import Profile), `gui/` + `main.py`(PySide6 편집기), 예제. `tools/monster_bridge/bridge.tscn`은 읽기 전용
   Bridge(`inspect_monsters`, `import_monster`)이고 `check_godot_import.py`가 실제 Godot으로 검사한다.
   [STEP 2 기록](monster_editor_step2.md), [Bridge](monster_editor_bridge.md),
-  [사용 가이드](monster_editor_user_guide.md). `check_godot_contract.py`가 `tools/monster_bridge/contract_probe.tscn`으로 등록된 모든
+  [사용 가이드](monster_editor_user_guide.md). STEP 3과 안정화: `application/animation.py`·`references.py`·
+  `playback.py`(Qt 없는 편집·참조·재생), `gui/animation.py`·`preview_canvas.py`·`frame_cache.py`, `bridge/staging.py`
+  (`StagingSession`)·`rendering.py`, `tools/monster_bridge/monster_stager.gd`·`render_check.tscn`(staging 사본에서만
+  동작), `check_godot_stage.py`·`check_godot_render.py`·`check_frame_cache.py`.
+  [STEP 3](monster_editor_step3.md), [안정화](monster_editor_step3_stabilization.md). `check_godot_contract.py`가 `tools/monster_bridge/contract_probe.tscn`으로 등록된 모든
   Enemy를 범용 계약으로 검사하고, 기준 몬스터(딱정벌레·개구리)는 예제와 대조한다. 게임 런타임은 이 문서를 읽지
   않는다. [아키텍처](monster_editor_architecture.md), [안정화 기록](monster_editor_step1_stabilization.md) 참조.
 - `tools/test_multiplayer_*.py` — 실제 ENet + 분리된 OS 프로세스. restart(재접속/세이브),

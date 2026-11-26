@@ -1,0 +1,175 @@
+{
+  "stages": {
+    "frog": {
+      "differences": [],
+      "attempts": 1,
+      "process": {
+        "attempts": {
+          "import": 1,
+          "stage_monster": 1,
+          "read_stage": 1
+        },
+        "crash_exit_codes": []
+      },
+      "areas": {
+        "staging": "PASS",
+        "resources": "PASS",
+        "readback": "PASS",
+        "images": "PASS",
+        "attach": "PASS",
+        "rendering": "NOT_EVALUATED",
+        "combat_runtime": "NOT_EVALUATED",
+        "network": "NOT_EVALUATED",
+        "publish": "NOT_EVALUATED"
+      },
+      "notes": [],
+      "seconds": 16.64,
+      "carrier": "frog",
+      "clips": [
+        "attack",
+        "death",
+        "fall",
+        "hurt",
+        "idle",
+        "jump",
+        "jump_start",
+        "land"
+      ],
+      "texture_filter": 1,
+      "resources": {
+        "res://monster_stage/frog/sprite_frames.tres": "ddd73534cdd4d20993c4328271adaef5506ed1ff61abc1620faf4b31ea05de52",
+        "res://monster_stage/frog/animation_profile.tres": "ceb5bd1ca3bcb8731ff58d7a1f3844f525fe918097715a5c1f3c2d5c146ad0f4"
+      },
+      "godot_version": "4.7.2.stable.official.ed1daf0bf",
+      "document_fingerprint": "f267ef30299b68f562f3cb3834cd87767bbe280d132893b5c7456cb423b48810",
+      "project_fingerprint": "d1232e76c2eb6c614474b5ac7881645a358049b5cb387ea2492d43599d2c8e24",
+      "copy": {
+        "files": 1138,
+        "bytes": 34041261,
+        "seconds": 1.14
+      }
+    },
+    "sewer_beetle": {
+      "differences": [],
+      "attempts": 1,
+      "process": {
+        "attempts": {
+          "import": 1,
+          "stage_monster": 1,
+          "read_stage": 1
+        },
+        "crash_exit_codes": []
+      },
+      "areas": {
+        "staging": "PASS",
+        "resources": "PASS",
+        "readback": "PASS",
+        "images": "PASS",
+        "attach": "PASS",
+        "rendering": "NOT_EVALUATED",
+        "combat_runtime": "NOT_EVALUATED",
+        "network": "NOT_EVALUATED",
+        "publish": "NOT_EVALUATED"
+      },
+      "notes": [],
+      "seconds": 15.83,
+      "carrier": "frog",
+      "clips": [
+        "attack",
+        "death",
+        "hurt",
+        "idle",
+        "move"
+      ],
+      "texture_filter": 1,
+      "resources": {
+        "res://monster_stage/sewer_beetle/sprite_frames.tres": "2d8c7ec9a0fb14e0c4e54a135167d10c3dada66e6071cdd60ea7d0409ad2df0f",
+        "res://monster_stage/sewer_beetle/animation_profile.tres": "51928a15fd4feeab1a5a7d2ffb9203867b36b67de6acc6f68a49437f1a18a2bf"
+      },
+      "godot_version": "4.7.2.stable.official.ed1daf0bf",
+      "document_fingerprint": "92fb239ef28c3be446a20b0ef473da0f6203464349d0554cb21a3adfed079c9a",
+      "project_fingerprint": "15badf911cf8cdfe006e31b0de83a53e1985dac77af9966104f032e118950b02",
+      "copy": {
+        "files": 1138,
+        "bytes": 34041261,
+        "seconds": 1.16
+      }
+    },
+    "draft_from_art": {
+      "differences": [],
+      "attempts": 1,
+      "process": {
+        "attempts": {
+          "import": 1,
+          "stage_monster": 1,
+          "read_stage": 1
+        },
+        "crash_exit_codes": []
+      },
+      "areas": {
+        "staging": "PASS",
+        "resources": "PASS",
+        "readback": "PASS",
+        "images": "PASS",
+        "attach": "PASS",
+        "rendering": "NOT_EVALUATED",
+        "combat_runtime": "NOT_EVALUATED",
+        "network": "NOT_EVALUATED",
+        "publish": "NOT_EVALUATED"
+      },
+      "notes": [],
+      "seconds": 16.01,
+      "carrier": "frog",
+      "clips": [
+        "attack",
+        "death",
+        "fall",
+        "hurt",
+        "idle",
+        "jump",
+        "jump_start",
+        "land"
+      ],
+      "texture_filter": 1,
+      "resources": {
+        "res://monster_stage/stage_check_draft/sprite_frames.tres": "35d77d09cd1da84363e060a50d823ee33c190a759080f572cc60330ef8c62053",
+        "res://monster_stage/stage_check_draft/animation_profile.tres": "1dc59d247fdbdd57966b51df722df46997fe7b2a76455c6bef5e428b72e0629b"
+      },
+      "godot_version": "4.7.2.stable.official.ed1daf0bf",
+      "document_fingerprint": "b494796067de1cea2219eb73ef89a1d0608ab5290cc0362210f5fe17cdc1cb98",
+      "project_fingerprint": "d1232e76c2eb6c614474b5ac7881645a358049b5cb387ea2492d43599d2c8e24",
+      "copy": {
+        "files": 1138,
+        "bytes": 34041261,
+        "seconds": 1.14
+      }
+    }
+  },
+  "safety": {
+    "the real project refuses stage_monster": "NOT_A_STAGING_PROJECT",
+    "the real project refuses read_stage": "NOT_A_STAGING_PROJECT",
+    "a request from another staging session is refused": "STAGING_NOT_OWNED",
+    "a request without a staging session is refused": "STAGING_NOT_OWNED",
+    "a fractional source rect is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a rect outside its image is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a negative rect is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a text fps is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a zero duration is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a loop that is not a boolean is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a role naming no clip is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a fractional hit frame is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a zero visual scale is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "an unknown texture filter is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "an image path that leaves the project is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "an image ID that is not an ID is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a carrier that is not text is INVALID_REQUEST, not a script error": "INVALID_REQUEST",
+    "a monster ID that is not an ID is INVALID_REQUEST": "INVALID_REQUEST",
+    "reading back a stage that was never made is RESOURCE_MISSING": "RESOURCE_MISSING",
+    "a missing image stops the stage": "RESOURCE_MISSING",
+    "a document without clips is refused before any copy": "NOTHING_TO_STAGE",
+    "project_files_compared": 1094
+  },
+  "passed": true,
+  "failures": [],
+  "seconds": 179.2
+}
