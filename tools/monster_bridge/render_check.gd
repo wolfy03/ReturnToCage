@@ -146,8 +146,9 @@ func _run() -> void:
 	_viewport.transparent_bg = true               # the screenshot keeps alpha; the editor composes the background
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_viewport.snap_2d_transforms_to_pixel = false
-	_viewport.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, Vector2(size) / 2.0)   # actor origin = centre
 	add_child(_viewport)
+	# After entering the tree: the viewport has no canvas to transform before that.
+	_viewport.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, Vector2(size) / 2.0)   # actor origin = centre
 
 	_actor = definition.actor_scene.instantiate() as EnemyAgent
 	if _actor == null:

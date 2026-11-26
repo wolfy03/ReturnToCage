@@ -122,12 +122,19 @@ def main():
         return passed
 
     def refused(name, code, action):
-        try:
-            action()
-        except BridgeError as error:
-            report["safety"][name] = error.code
-            return check(name, error.code == code, f"{error.code}: {error.detail}")
-        return check(name, False, "it was accepted")
+        # The engine's exit crash can hit the same call three times in a row when the machine is busy. A
+        # crash says nothing about whether the request would have been refused, so the question is asked
+        # again; every such round is counted in the report.
+        for _round in range(3):
+            try:
+                action()
+            except BridgeError as error:
+                if error.code == client.PROCESS_CRASH and _round < 2:
+                    report["process_crash_rounds"] = report.get("process_crash_rounds", 0) + 1
+                    continue
+                report["safety"][name] = error.code
+                return check(name, error.code == code, f"{error.code}: {error.detail}")
+            return check(name, False, "it was accepted")
 
     for name, document in staged.items():
         try:

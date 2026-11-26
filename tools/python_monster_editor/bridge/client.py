@@ -140,6 +140,24 @@ def _run(command, cwd, cancel, timeout):
     return process.returncode, log
 
 
+def retry_crashes(run, cancel=None):
+    """Call ``run()`` again when it ends in ``PROCESS_CRASH``, at most ``CRASH_ATTEMPTS`` times in all.
+
+    Returns ``(value, crash exit codes, log of the first crash)``. Only for work that is safe to repeat:
+    reads, and writes confined to a disposable staging copy that start from a clean slate. The crashes are
+    handed back so the caller reports them next to the functional result instead of hiding them.
+    """
+    crashes, crash_log = [], ""
+    for attempt in range(1, CRASH_ATTEMPTS + 1):
+        try:
+            return run(), tuple(crashes), crash_log
+        except BridgeError as error:
+            if error.code != PROCESS_CRASH or attempt == CRASH_ATTEMPTS or (cancel is not None and cancel.is_set()):
+                raise
+            crashes.append(error.exit_code)
+            crash_log = crash_log or error.log
+
+
 def godot_version(godot, cancel=None, timeout=30):
     """The engine's ``--version`` line, e.g. ``4.7.2.stable.official.ed1daf0bf``."""
     code, log = _run([str(godot), "--version"], None, cancel, timeout)

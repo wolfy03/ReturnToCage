@@ -18,6 +18,7 @@ NOT_EVALUATED. A headless structure check is never offered in its place.
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 import tempfile
 import time
 import uuid
@@ -29,6 +30,8 @@ from . import client
 from .client import BridgeError
 
 RENDER_SCENE = "res://tools/monster_bridge/render_check.tscn"
+# The render scene is this tool's own: any engine error line while it runs is a defect of the check.
+RENDER_ERRORS = re.compile(r"(?:^|\n)ERROR:", re.I)
 NO_RENDERER = "NO_RENDERER"
 DEFAULT_SIZE = (320, 240)
 DEFAULT_ZOOM = 3
@@ -49,6 +52,7 @@ class RenderResult:
     log: str = ""
     seconds: float = 0.0
     notes: tuple = field(default_factory=tuple)
+    crashes: tuple = ()           # exit codes of attempts that crashed and were run again
 
     @property
     def passed(self):
@@ -212,6 +216,18 @@ def render_staged(godot, session, document, output_dir, shots=None, timings=None
     ``session`` is the ``StagingSession`` the document was staged in (``stage_presentation(..., keep=True)``).
     Raises ``BridgeError``: ``NO_RENDERER`` when the engine has no renderer here, the usual codes otherwise.
     """
+    started = time.monotonic()
+    # A run that crashes is repeated: it reads the staged resources and writes only screenshots, which the
+    # next attempt overwrites. The crashes stay on the result.
+    result, crashes, _log = client.retry_crashes(
+        lambda: _render_once(godot, session, document, output_dir, shots, timings, carrier, size, zoom, cancel,
+                             timeout, rendering_method), cancel)
+    from dataclasses import replace
+    return replace(result, crashes=crashes, seconds=time.monotonic() - started)
+
+
+def _render_once(godot, session, document, output_dir, shots, timings, carrier, size, zoom, cancel, timeout,
+                 rendering_method):
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     monster_id = document.data["monster_id"]
@@ -234,8 +250,8 @@ def render_staged(godot, session, document, output_dir, shots=None, timings=None
             raise BridgeError(client.CANCELLED, "the operation was cancelled", log)
         if code < 0 or code > 255:
             raise BridgeError(client.PROCESS_CRASH, f"Godot crashed (exit {code}, 0x{code & 0xffffffff:08X})", log, code)
-        if client.ENGINE_ERRORS.search(log):
-            raise BridgeError(client.ENGINE_ERROR, "Godot reported script errors or leaks", log)
+        if client.ENGINE_ERRORS.search(log) or RENDER_ERRORS.search(log):
+            raise BridgeError(client.ENGINE_ERROR, "Godot reported errors while rendering", log)
         result = client._read_result(result_path, code, log)
     if result.get("request_id") != request_id or result.get("operation") != "render_check" \
             or result.get("protocol") != client.PROTOCOL:

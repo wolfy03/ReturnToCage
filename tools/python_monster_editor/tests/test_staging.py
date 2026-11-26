@@ -514,7 +514,7 @@ def test_a_stage_runs_in_the_copy_and_never_in_the_project(staged, tmp_path, bee
     assert result.areas == {"staging": "PASS", "resources": "PASS", "readback": "PASS", "images": "PASS",
                             "attach": "PASS", "rendering": "NOT_EVALUATED", "combat_runtime": "NOT_EVALUATED",
                             "network": "NOT_EVALUATED", "publish": "NOT_EVALUATED"}
-    assert result.process == {"attempts": {"stage_monster": 1, "read_stage": 1}, "crash_exit_codes": []}
+    assert result.process == {"attempts": {"import": 1, "stage_monster": 1, "read_stage": 1}, "crash_exit_codes": []}
 
 
 def test_the_caller_can_keep_the_copy_and_then_owns_it(staged, beetle):
@@ -699,7 +699,7 @@ def test_a_crashed_attempt_is_retried_recorded_and_never_passed_off_as_clean(sta
     set_mode("ok", crash_once=tmp_path / "crashed-once")
     result = staging.stage_presentation(godot, project, beetle, work)
     assert result.passed and result.attempts == 2
-    assert result.process["attempts"] == {"stage_monster": 2, "read_stage": 1}
+    assert result.process["attempts"] == {"import": 1, "stage_monster": 2, "read_stage": 1}
     assert len(result.process["crash_exit_codes"]) == 1                    # the functional PASS keeps its crash record
     if os.name == "nt":
         assert result.process["crash_exit_codes"][0] & 0xFFFFFFFF == 0xC0000005

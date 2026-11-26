@@ -164,7 +164,8 @@ def main():
             "role_selection": drawn.data.get("role_selection"), "roles_not_forced": list(drawn.notes),
             "timings": [{"clip": row["clip"], "samples": len(row.get("samples", [])), "loop": row.get("loop"),
                          "largest_delta": row.get("largest_delta")} for row in drawn.data.get("timings", [])],
-            "differences": list(drawn.differences), "shots": rows, "seconds": round(drawn.seconds, 2)}
+            "differences": list(drawn.differences), "shots": rows, "seconds": round(drawn.seconds, 2),
+            "process": {"stage": result.process, "render_crash_exit_codes": list(drawn.crashes)}}
 
     left = [path.name for path in work.iterdir() if path.name.startswith(staging.STAGING_PREFIX)]
     check("no staging copy is left behind", not left and not staging.leftovers(), str(left))

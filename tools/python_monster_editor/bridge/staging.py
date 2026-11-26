@@ -489,16 +489,27 @@ def stage_request(document, carrier="", session_id=""):
     return request
 
 
-def import_assets(godot, staging_root, cancel=None, timeout=IMPORT_TIMEOUT):
-    """Let the editor import the copy's assets. Returns the engine log."""
-    code, log = client._run([str(godot), "--headless", "--path", str(staging_root), "--import"], staging_root,
-                            cancel, timeout)
-    if cancel is not None and cancel.is_set():
-        raise BridgeError(client.CANCELLED, "the operation was cancelled", log)
-    if code < 0 or code > 255:
-        raise BridgeError(client.PROCESS_CRASH, f"Godot crashed while importing (exit {code}, 0x{code & 0xffffffff:08X})", log)
-    if code != 0:
-        raise BridgeError(STAGE_FAILED, f"Godot could not import the staging copy (exit {code})", log)
+def import_assets(godot, staging_root, cancel=None, timeout=IMPORT_TIMEOUT, crashes=None):
+    """Let the editor import the copy's assets. Returns the engine log.
+
+    An import that crashes is run again (``client.retry_crashes``): it only fills the import cache of a
+    disposable copy, and importing twice gives the same cache. Exit codes of crashed attempts are appended
+    to ``crashes`` when a list is given.
+    """
+    def once():
+        code, log = client._run([str(godot), "--headless", "--path", str(staging_root), "--import"], staging_root,
+                                cancel, timeout)
+        if cancel is not None and cancel.is_set():
+            raise BridgeError(client.CANCELLED, "the operation was cancelled", log)
+        if code < 0 or code > 255:
+            raise BridgeError(client.PROCESS_CRASH,
+                              f"Godot crashed while importing (exit {code}, 0x{code & 0xffffffff:08X})", log, code)
+        if code != 0:
+            raise BridgeError(STAGE_FAILED, f"Godot could not import the staging copy (exit {code})", log)
+        return log
+    log, crashed, _first = client.retry_crashes(once, cancel)
+    if crashes is not None:
+        crashes.extend(crashed)
     return log
 
 
@@ -759,7 +770,8 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
     result = None
     try:
         project_fingerprint = source_fingerprint(session.root, document)
-        import_assets(godot, session.root, cancel)
+        import_crashes = []
+        import_assets(godot, session.root, cancel, crashes=import_crashes)
         built = client.call(godot, session.root, "stage_monster", monster_id, cancel, timeout, work_folder,
                             stage=stage_request(document, carrier, session.id))
         files = check_stage_response(built.data, session, monster_id)
@@ -791,8 +803,9 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
             "rendering": NOT_EVALUATED, "combat_runtime": NOT_EVALUATED, "network": NOT_EVALUATED,
             "publish": NOT_EVALUATED,
         }
-        process = {"attempts": {"stage_monster": built.attempts, "read_stage": reread.attempts},
-                   "crash_exit_codes": list(built.crashes) + list(reread.crashes)}
+        process = {"attempts": {"import": len(import_crashes) + 1, "stage_monster": built.attempts,
+                                "read_stage": reread.attempts},
+                   "crash_exit_codes": import_crashes + list(built.crashes) + list(reread.crashes)}
         result = StageResult(monster_id, session.root, built.data["sprite_frames_path"], built.data["profile_path"],
                              tuple(structure + disk + image_lines), profile, built.data["attach"],
                              max(built.attempts, reread.attempts), time.monotonic() - started, session, keep, "",
