@@ -265,7 +265,7 @@ profile을 붙여, 실제 `EnemyAnimationPresenter`가 만든 sprite를 320×240
 | frame region | sprite가 실제로 쓴 텍스처·region vs 문서의 이미지·rect |
 | texture filter | profile과 sprite |
 | 역할 | 상태를 강제했을 때 실제 presenter가 고른 Clip (idle, move, attack, hurt, death, jump, fall) |
-| frame duration·loop | `AnimatedSprite2D`를 실제로 재생하며 매 frame 기록한 (경과 시간, frame) vs `timing.frame_at` |
+| frame duration·loop | `AnimatedSprite2D`를 실제로 재생하며 매 frame 기록한 (경과 시간, frame) vs `timing.frame_at`. 검사의 시계와 sprite의 시계는 같은 간격으로 가지만 한 frame 안에서 갱신 순서가 다를 수 있어, 표본마다 앞뒤 한 frame 간격을 허용한다 |
 
 이 PC에서 두 렌더러로 실행했다: **forward_plus / d3d12** 와 **gl_compatibility / opengl3** (NVIDIA GeForce RTX 3070 Laptop GPU). 결과는 두 렌더러에서 같았다.
 

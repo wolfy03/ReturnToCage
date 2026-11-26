@@ -170,9 +170,11 @@ def compare_filter(document, data):
 def compare_timing(document, timings):
     """Lines where real playback showed a frame the document's timing rule does not allow at that time.
 
-    Each sample is ``[elapsed seconds, frame, playing]`` taken once per rendered frame. The engine advances
-    in the same steps, so a sample may show the frame of any instant within one step before it; anything
-    outside that window is a difference. A one-shot clip must end on its last frame and stop.
+    Each sample is ``[elapsed seconds, frame, playing]`` taken once per rendered frame. The scene's clock
+    and the sprite's own are advanced by the same steps but not at the same moment within a frame (the
+    sprite may already have consumed the step in which playback was started, or not yet the current one),
+    so a sample may show the frame of any instant within one step either side of it. Anything outside that
+    window is a difference. A one-shot clip must end on its last frame and stop.
     """
     lines = []
     for row in timings:
@@ -183,11 +185,9 @@ def compare_timing(document, timings):
         slack = row["largest_delta"] + 1e-4
         wrong = []
         for elapsed, frame, _playing in row["samples"]:
-            allowed = {frame_at(clip, max(0.0, elapsed - slack)), frame_at(clip, elapsed), frame_at(clip, elapsed + 1e-4)}
-            if clip["loop"] or elapsed - slack < clip_seconds(clip):
-                # Every frame boundary inside the window is allowed too (a window may span a short frame).
-                steps = 8
-                allowed |= {frame_at(clip, max(0.0, elapsed - slack * part / steps)) for part in range(steps + 1)}
+            # Every frame the window touches is allowed (it may span a short frame entirely).
+            steps = 8
+            allowed = {frame_at(clip, max(0.0, elapsed + slack * part / steps)) for part in range(-steps, steps + 1)}
             if frame not in allowed:
                 wrong.append((round(elapsed, 4), frame, sorted(allowed)))
         if wrong:
