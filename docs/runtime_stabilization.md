@@ -142,7 +142,25 @@ dodge 실행 뒤 `ready_action`(action IDLE + 접지)을 10초 안에 만족하�
 KNOWN_ENGINE_CRASH. 이 job은 여러 프로세스를 띄우는 단계를 연속으로 실행하므로 엔진 종료 crash가 있는 한
 안정적으로 녹색이 될 수 없다. job의 실패 판정은 바꾸지 않았다.
 
-최종 커밋의 CI 결과는 이 브랜치의 PR/보고에 적는다.
+### 통합 후보 `88251c5` 전체 검증 (로컬, 한 SHA)
+
+36개 단계 중 35개 PASS, 1개 `Functional PASS / Process KNOWN_ENGINE_CRASH`.
+
+| 묶음 | 결과 |
+|---|---|
+| `check_project.py` (7,020 assertions), release-boundary unittest | PASS |
+| ENet E2E 20종 (local 2·3·host-disconnect, restart 3, worlds 2, world_runtime 2, forest 2, authority 2, protocol, disconnect, roster 2) | PASS |
+| `test_session_recovery.py` (headless lifecycle) | 전 역할 `PROBE PASS` 뒤 A가 `0xC0000005`로 종료 — Known engine crash. 같은 검사의 10회 반복은 10/10 |
+| Forest playtest | PASS_WITH_WARNINGS (스폰 캡슐 겹침, [known_issues.md](known_issues.md)) |
+| Forest rendered probe | PASS |
+| Map Editor pytest (184 passed, 3 skipped), V6 집중 테스트, Qt smoke | PASS |
+| Scene / V4 / Forest V6 / Terrain 브리지, V6 Enemy 스폰 데이터 안전 + 10회 왕복 | PASS |
+| Monster Editor pytest (569 passed, 3 skipped), Godot 계약 (205 checks, 3 not evaluated) | PASS |
+| Map Editor OneDir EXE 빌드, 패키징 EXE 검증 | PASS |
+| Windows release 빌드 + EXE 검증 (`--rendered`, 1회) | PASS |
+
+이 문서 표를 추가한 커밋은 문서만 바꾼다. 위 결과는 `88251c5`의 것이며 그 뒤 코드·리소스 변경은 없다.
+최종 커밋의 CI 결과는 이 브랜치의 보고에 적는다.
 
 ## 5. 다른 작업에 주는 영향
 
