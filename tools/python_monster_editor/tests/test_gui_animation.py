@@ -20,14 +20,12 @@ from gui.animation import load_frame  # noqa: E402
 from gui.main_window import MainWindow  # noqa: E402
 from gui.testing import ScriptedPrompts  # noqa: E402
 from rtcmonster.geometry import shape_bounds  # noqa: E402
-from test_gui import app  # noqa: E402,F401  (session fixture)
-from conftest import fake  # noqa: E402,F401
 
 BEETLE = "assets/characters/enemies/sewer_beetle"
 
 
 @pytest.fixture
-def window(app, tmp_path):  # noqa: F811
+def window(app, tmp_path):
     prompts = ScriptedPrompts()
     view = MainWindow(Settings(tmp_path / "settings.json"), prompts)
     view.apply_project_settings({"project_root": str(PROJECT), "godot_path": "", "drafts_folder": str(tmp_path)})
@@ -171,7 +169,7 @@ def test_playback_follows_the_documents_timing_rule(window):
 
 
 # ---------------------------------------------------------------------------------------------------- shapes
-def test_input_dragging_a_shape_on_the_canvas_is_one_edit_on_release(window, app):  # noqa: F811
+def test_input_dragging_a_shape_on_the_canvas_is_one_edit_on_release(window, app):
     panel, canvas = window.animation, window.animation.canvas
     grid_clip(window, "idle", "idle", 4)
     body = panel._slots()[0]
@@ -306,7 +304,7 @@ def test_closing_the_document_empties_the_workspace(window):
 
 
 # -------------------------------------------------------------------------------------------------- staging
-def test_the_stage_action_reports_what_godot_built(app, tmp_path, fake):  # noqa: F811
+def test_the_stage_action_reports_what_godot_built(app, tmp_path, fake):
     import json
     from test_staging import OUTPUTS, stage_data
     godot, project, set_mode = fake

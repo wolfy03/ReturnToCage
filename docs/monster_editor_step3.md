@@ -102,7 +102,8 @@ dirty 표시에 쓰인다)이며 둘 다 core의 일이다. smoke의 Large 편�
 않는다. Python은 `.tres` 텍스트를 조립하지 않는다.
 
 **실패와 차이는 다르다.** Godot이 만든 것이 문서와 다르면 예외가 아니라 `StageResult.differences`다. 결과를 못
-얻은 실행만 `BridgeError`다. 실패한 실행의 사본은 조사할 수 있게 남기고 경로를 오류에 적는다.
+얻은 실행만 `BridgeError`다. 실패한 실행의 사본은 지운다(실패가 임시 폴더에 수십 MB씩 쌓이지 않게).
+`keep_on_failure=True`를 주면 조사용으로 남기고 경로를 오류에 적는다. 취소된 실행은 남기지 않는다.
 
 **crash 재시도.** 엔진 종료 crash([monster_editor_bridge.md](monster_editor_bridge.md)의 "엔진 종료 시 crash")로 끝난 실행은 믿지 않고 최대 3회까지
 다시 한다. `stage_monster`는 버려도 되는 사본 안의 자기 출력만 덮어쓰므로 재시도가 안전하다.

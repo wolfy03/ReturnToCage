@@ -34,18 +34,6 @@ from rtcmonster.spec import Num  # noqa: E402
 FIXTURE = PROJECT / "tools/python_monster_editor/tests/fixtures/contract_probe.json"
 
 
-@pytest.fixture(scope="session")
-def app():
-    application = QApplication.instance() or QApplication([])
-    yield application
-
-
-@pytest.fixture
-def native(app):
-    if app.platformName() == "offscreen":
-        pytest.skip("window shortcuts need a real windowing system; run on Windows")
-
-
 @pytest.fixture
 def drafts(tmp_path):
     folder = tmp_path / "한글 초안"

@@ -210,16 +210,17 @@ def test_a_failed_run_raises_and_says_where_the_copy_is(fake, tmp_path, beetle, 
     set_mode(mode, data=json.dumps(stage_data(beetle)), **extra)
     with pytest.raises(BridgeError) as caught:
         staging.stage_presentation(godot, project, beetle, work)
-    assert caught.value.code == code
+    assert caught.value.code == code and copies(work) == []     # a failed stage leaves nothing behind
+    assert not (project / staging.MARKER).exists()
+    with pytest.raises(BridgeError) as caught:
+        staging.stage_presentation(godot, project, beetle, work, keep_on_failure=True)
     kept = copies(work)
-    if copied:
-        assert len(kept) == 1 and str(kept[0]) in caught.value.detail
+    assert caught.value.code == code
+    if copied:                                                   # kept on request, and the error says where
+        assert len(kept) == 1 and str(kept[0]) in caught.value.detail and str(kept[0]) in str(caught.value)
+        staging.remove_staging_copy(kept[0] / "project")
     else:
         assert kept == []                                        # the version is checked before any copy
-    assert not (project / staging.MARKER).exists()
-    with pytest.raises(BridgeError):
-        staging.stage_presentation(godot, project, beetle, work, keep_on_failure=False)
-    assert len(copies(work)) == len(kept)                        # nothing more is left behind
 
 
 def test_a_response_naming_files_that_do_not_exist_is_refused(fake, tmp_path, beetle):

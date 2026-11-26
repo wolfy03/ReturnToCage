@@ -32,6 +32,8 @@ KIND_COLORS = {"body": "#5aa9e6", "hurtbox": "#7fd18b", "override": "#d9a03f", "
 HANDLE_PIXELS = 7
 STRIP_ICON = 56
 TICK_MS = 16
+# Full-resolution frames are kept, so the limit is what bounds memory: 128 frames of 256x256 RGBA is 32 MiB.
+FRAME_CACHE = 128
 
 
 # ------------------------------------------------------------------------------------------------- frames
@@ -59,7 +61,7 @@ def load_frame(project_root, relative, rect=None):
             reader.setClipRect(QRect(*rect))
         image = reader.read()
         _frames[key] = (None, "decode_failed") if image.isNull() else (QPixmap.fromImage(image), "ok")
-        while len(_frames) > 512:
+        while len(_frames) > FRAME_CACHE:
             _frames.pop(next(iter(_frames)))
     return _frames[key]
 
@@ -509,6 +511,7 @@ class AnimationWorkspace(QWidget):
         self._session, self._project_root = session, project_root
         self._clip_id, self._frame, self._slot, self._shown = "", 0, None, None
         self.play_button.setChecked(False)
+        self.notice.setText("")                 # a refusal belongs to the document it was about
         self.refresh()
 
     def set_project_root(self, project_root):
@@ -541,7 +544,7 @@ class AnimationWorkspace(QWidget):
         if edits and not self._loading:
             self.edits_requested.emit(list(edits), strings.ANIMATION["labels"].get(label, label))
 
-    def _attempt(self, build, label):
+    def _attempt(self, build):
         """Run a helper that may refuse; show the refusal instead of raising into Qt."""
         try:
             edits = build()
@@ -736,7 +739,7 @@ class AnimationWorkspace(QWidget):
         relative = self.image_path.text().strip()
         if not relative or self.data is None:
             return
-        result = self._attempt(lambda: logic.register_image(self.data, self._project_root, relative), "register")
+        result = self._attempt(lambda: logic.register_image(self.data, self._project_root, relative))
         if result is not None:
             self._request(result[1], "register")
             self.image_path.clear()
@@ -744,8 +747,7 @@ class AnimationWorkspace(QWidget):
     def refresh_image(self):
         edits = []
         for image_id in self.selected_images():
-            more = self._attempt(lambda image_id=image_id: logic.refresh_image(self.data, self._project_root, image_id),
-                                 "refresh")
+            more = self._attempt(lambda image_id=image_id: logic.refresh_image(self.data, self._project_root, image_id))
             if more is None:
                 return
             edits += more
@@ -754,7 +756,7 @@ class AnimationWorkspace(QWidget):
     def remove_image(self):
         ids = self.selected_images()
         if len(ids) == 1:
-            self._request(self._attempt(lambda: logic.remove_image(self.data, ids[0]), "remove_image") or [],
+            self._request(self._attempt(lambda: logic.remove_image(self.data, ids[0])) or [],
                           "remove_image")
 
     # ------------------------------------------------------------------------------------------- clips
@@ -769,7 +771,7 @@ class AnimationWorkspace(QWidget):
             return
         clip_id = self._new_clip_id()
         edits = self._attempt(lambda: logic.clip_from_grid(self.data, ids[0], clip_id, self.columns.value(),
-                                                           self.rows.value(), self.count.value() or None), "clip")
+                                                           self.rows.value(), self.count.value() or None))
         if edits:
             self._clip_id, self._frame = clip_id, 0
             self._request(edits, "clip")
@@ -781,7 +783,7 @@ class AnimationWorkspace(QWidget):
             self.notice.setText(strings.ANIMATION["select_images"])
             return
         clip_id = self._new_clip_id()
-        edits = self._attempt(lambda: logic.clip_from_images(self.data, clip_id, ids), "clip")
+        edits = self._attempt(lambda: logic.clip_from_images(self.data, clip_id, ids))
         if edits:
             self._clip_id, self._frame = clip_id, 0
             self._request(edits, "clip")
@@ -789,7 +791,7 @@ class AnimationWorkspace(QWidget):
 
     def remove_clip(self):
         if self.current_clip() is not None:
-            self._request(self._attempt(lambda: logic.remove_clip(self.data, self._clip_id), "remove_clip") or [],
+            self._request(self._attempt(lambda: logic.remove_clip(self.data, self._clip_id)) or [],
                           "remove_clip")
 
     def select_clip(self, clip_id, frame=0):
@@ -835,8 +837,7 @@ class AnimationWorkspace(QWidget):
 
     def remove_frame(self):
         if self.current_clip() is not None:
-            self._request(self._attempt(lambda: logic.remove_frame(self.data, self._clip_id, self._frame),
-                                        "remove_frame") or [], "remove_frame")
+            self._request(self._attempt(lambda: logic.remove_frame(self.data, self._clip_id, self._frame)) or [], "remove_frame")
 
     # ---------------------------------------------------------------------------------------- playback
     def _set_playing(self, playing):
@@ -871,7 +872,7 @@ class AnimationWorkspace(QWidget):
     def _bind_role(self, role, clip_id):
         if self._loading or self.data is None or self.data["presentation"]["roles"][role] == clip_id:
             return
-        self._request(self._attempt(lambda: logic.bind_role(self.data, role, clip_id), "role") or [], "role")
+        self._request(self._attempt(lambda: logic.bind_role(self.data, role, clip_id)) or [], "role")
 
     def _visual_edited(self):
         if self._loading or self.data is None:
@@ -887,7 +888,7 @@ class AnimationWorkspace(QWidget):
     def apply_bottom_center(self):
         if self.current_clip() is not None:
             self._request(self._attempt(lambda: logic.bottom_center_edits(self.data, self._clip_id,
-                                                                          self.foot_margin.value()), "anchor") or [],
+                                                                          self.foot_margin.value())) or [],
                           "anchor")
 
     # ------------------------------------------------------------------------------------------ shapes
@@ -933,20 +934,20 @@ class AnimationWorkspace(QWidget):
 
     def add_box(self, kind):
         if self.data is not None:
-            result = self._attempt(lambda: logic.add_box(self.data, kind), "add_box")
+            result = self._attempt(lambda: logic.add_box(self.data, kind))
             if result is not None:
                 self._request(result[1], "add_box")
 
     def remove_selected_shape(self):
         if self._slot is not None:
             slot, self._slot = self._slot, None
-            self._request(self._attempt(lambda: logic.remove_box(slot), "remove_box") or [], "remove_box")
+            self._request(self._attempt(lambda: logic.remove_box(slot)) or [], "remove_box")
 
     def create_override(self, for_frame):
         if self.current_clip() is not None:
             self._slot = None
             self._request(self._attempt(lambda: logic.create_override(
-                self.data, self._clip_id, self._frame if for_frame else None), "override") or [], "override")
+                self.data, self._clip_id, self._frame if for_frame else None)) or [], "override")
 
     def clear_override(self):
         if self.current_clip() is None:
@@ -956,5 +957,5 @@ class AnimationWorkspace(QWidget):
             return
         frame = self.data["collision"]["hurtbox_overrides"][index]["frame"]
         self._slot = None
-        self._request(self._attempt(lambda: logic.remove_override(self.data, self._clip_id, frame), "override") or [],
+        self._request(self._attempt(lambda: logic.remove_override(self.data, self._clip_id, frame)) or [],
                       "override")

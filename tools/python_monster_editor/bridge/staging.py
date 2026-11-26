@@ -214,11 +214,12 @@ def compare_attach(document, profile, attach):
 
 
 def stage_presentation(godot, project, document, work_folder=None, carrier="", cancel=None,
-                       timeout=client.DEFAULT_TIMEOUT, keep_on_failure=True):
+                       timeout=client.DEFAULT_TIMEOUT, keep_on_failure=False):
     """Build the document's presentation in a staging copy and return a ``StageResult``.
 
     The caller owns the returned copy and removes it with ``remove_staging_copy``. When the run raises,
-    the copy is removed here unless ``keep_on_failure`` (kept for inspection, its path is in the error).
+    the copy is removed here, so a failed stage leaves nothing behind. ``keep_on_failure`` keeps it for
+    inspection instead and names its path in the error; a cancelled run never keeps one.
     """
     if not document.data["animations"]["clips"]:
         raise BridgeError(NOTHING_TO_STAGE, "the document has no animation clips")
@@ -229,10 +230,9 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
         response = client.call(godot, staging_root, "stage_monster", document.data["monster_id"], cancel, timeout,
                                work_folder, stage=stage_request(document, carrier))
     except BridgeError as error:
-        if keep_on_failure and error.code not in (client.CANCELLED,):
-            error.detail = f"{error.detail} (staging copy kept: {staging_root})"
-        else:
-            remove_staging_copy(staging_root)
+        if keep_on_failure and error.code != client.CANCELLED:
+            raise BridgeError(error.code, f"{error.detail} (staging copy kept: {staging_root})", error.log) from error
+        remove_staging_copy(staging_root)
         raise
     data = response.data
     for key in ("sprite_frames_path", "profile_path", "profile", "attach"):

@@ -118,3 +118,21 @@ def fake(tmp_path, monkeypatch):
             monkeypatch.setenv(f"RTC_FAKE_{key.upper()}", str(value))
     set_mode("ok")
     return godot, project, set_mode
+
+
+# ------------------------------------------------------------------------------------------------ Qt (GUI tests)
+@pytest.fixture(scope="session")
+def app():
+    """The one QApplication of the test session, shared by every GUI test module.
+
+    PySide6 is imported here and not at the top: the core and application tests must keep working, and
+    keep proving they need no Qt, on a machine that has none.
+    """
+    widgets = pytest.importorskip("PySide6.QtWidgets")
+    yield widgets.QApplication.instance() or widgets.QApplication([])
+
+
+@pytest.fixture
+def native(app):
+    if app.platformName() == "offscreen":
+        pytest.skip("window shortcuts need a real windowing system; run on Windows")
