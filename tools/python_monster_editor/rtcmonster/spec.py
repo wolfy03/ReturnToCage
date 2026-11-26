@@ -49,9 +49,11 @@ def capabilities(support):
     return dict(CAPABILITIES[support])
 
 
-# Document sections the desktop editor can edit since MONSTER-STEP 2. The other
-# sections are shown read-only until their editors exist (STEP 3 to 5).
-EDITOR_EDITABLE_SECTIONS = ("metadata", "stats", "movement", "sensors", "loot")
+# Document sections the desktop editor can edit: the STEP 2 forms, and since
+# MONSTER-STEP 3 the image, clip, presentation and collision editors. The other
+# sections are shown read-only until their editors exist (STEP 4 and 5).
+EDITOR_EDITABLE_SECTIONS = ("metadata", "stats", "movement", "sensors", "loot",
+                            "assets", "animations", "presentation", "collision")
 
 
 def field_capabilities(path, support):

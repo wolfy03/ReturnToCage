@@ -27,6 +27,35 @@ SUMMARY_SECTIONS = ("assets", "animations", "presentation", "collision", "attack
 _thumbnails = {}
 
 
+_inspected = {}
+
+
+def image_digest(project_root, relative):
+    """``(sha256 or None, state)`` of a project image after the core's structural check. Never raises.
+
+    The check reads and hashes the whole file, and panels ask after every edit, so the answer is kept
+    per file identity (size and modification time). A file that was replaced is checked again.
+    """
+    try:
+        stat = (Path(project_root) / relative).stat()
+        key = (str(project_root), relative, stat.st_size, stat.st_mtime_ns)
+    except (OSError, ValueError):
+        key = None
+    if key is None or key not in _inspected:
+        try:
+            answer = (inspect_image(project_root, relative)[2], "ok")
+        except FileNotFoundError:
+            answer = (None, "missing")
+        except (png.PngError, DocumentError, OSError):
+            answer = (None, "structure_failed")
+        if key is None:
+            return answer
+        _inspected[key] = answer
+        while len(_inspected) > 256:
+            _inspected.pop(next(iter(_inspected)))
+    return _inspected[key]
+
+
 def load_thumbnail(project_root, relative, rect=None):
     """``(QPixmap or None, state)`` for a project image. Never raises.
 
@@ -38,12 +67,9 @@ def load_thumbnail(project_root, relative, rect=None):
         return None, "none"
     if project_root is None:
         return None, "unchecked"
-    try:
-        _width, _height, digest = inspect_image(project_root, relative)
-    except FileNotFoundError:
-        return None, "missing"
-    except (png.PngError, DocumentError, OSError):
-        return None, "structure_failed"
+    digest, state = image_digest(project_root, relative)
+    if digest is None:
+        return None, state
     key = (str(project_root), relative, digest, tuple(rect) if rect else None)
     if key not in _thumbnails:
         reader = QImageReader(str(Path(project_root) / relative))
@@ -88,6 +114,7 @@ class LootEditor(QWidget):
         super().__init__()
         self._session = None
         self._items = None
+        self._shown = None
         self._loading = False
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -123,11 +150,13 @@ class LootEditor(QWidget):
 
     def set_session(self, session):
         self._session = session
+        self._shown = None
         self.refresh()
 
     def set_items(self, item_ids):
         """IDs of the project's ItemDefinitions, or None when no project is connected."""
         self._items = None if item_ids is None else list(item_ids)
+        self._shown = None
         self.refresh()
 
     def _request(self, edits, label):
@@ -137,12 +166,19 @@ class LootEditor(QWidget):
     def _entries(self):
         return self._session.document.data["loot"]["entries"]
 
-    def refresh(self):
+    def refresh(self, force=False):
+        """Show the session's loot. ``force`` rebuilds even an unchanged table, to undo a rejected input."""
         if self._session is None:
             return
-        self._loading = True
         loot = self._session.document.data["loot"]
         editable = self._session.is_editable(("loot",))
+        # Document snapshots share the sections an edit did not touch, so identity tells whether the
+        # table is already showing this value. Rebuilding every cell widget for an unrelated edit was
+        # a large part of the cost of one edit.
+        if not force and self._shown is not None and self._shown[0] is loot and self._shown[1] == editable:
+            return
+        self._shown = (loot, editable)
+        self._loading = True
         entries = loot["entries"]
         self.table_id.setText(loot["loot_table_id"])
         self.managed.setChecked(entries is not None)
@@ -244,9 +280,11 @@ class SummaryPanel(QTextBrowser):
         self.setOpenLinks(False)
         self._session = None
         self._highlight = ""
+        self._shown = None
 
     def set_session(self, session):
         self._session = session
+        self._shown = None
         self.refresh()
 
     def highlight(self, section):
@@ -254,11 +292,36 @@ class SummaryPanel(QTextBrowser):
         self.refresh()
         self.scrollToAnchor(section)
 
-    def refresh(self):
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh()
+
+    def toHtml(self):
+        self.refresh(visible_only=False)        # a reader always gets the current text
+        return super().toHtml()
+
+    def toPlainText(self):
+        self.refresh(visible_only=False)
+        return super().toPlainText()
+
+    def refresh(self, visible_only=True):
+        """Regenerate the text only when it would differ, and only while someone can see it.
+
+        The summary is one HTML document. Building it after every edit was most of an edit's cost on
+        a large monster, although most edits do not touch the sections it shows. Snapshots share
+        untouched sections, so comparing the sections by identity is exact.
+        """
         if self._session is None:
+            self._shown = None
             self.setHtml("")
             return
         data = self._session.document.data
+        if visible_only and not self.isVisible():
+            return                      # showEvent, or the next reader, refreshes
+        state = [data[section] for section in SUMMARY_SECTIONS] + [self._highlight, self._session]
+        if self._shown is not None and len(self._shown) == len(state)                 and all(old is new for old, new in zip(self._shown, state)):
+            return
+        self._shown = state
         collision, behavior = data["collision"], data["behavior"]
         registry = self._session.document.schema.registry
 

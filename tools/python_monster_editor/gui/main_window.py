@@ -373,7 +373,7 @@ class MainWindow(QMainWindow):
         except DocumentError as error:
             self.status(f"입력을 적용하지 않았습니다: {error}")
             self.inspector.refresh()         # put the field back; every other field keeps its value
-            self.loot_editor.refresh()
+            self.loot_editor.refresh(force=True)
             return False
         return changed
 
