@@ -131,3 +131,10 @@ def shape_label(kind):
 
 def shape_kind_label(kind):
     return SHAPE_KIND_LABELS.get(kind, kind)
+
+
+STAGE = {
+    "passed": "Staging 통과: Godot이 Clip {clips}개의 SpriteFrames와 EnemyAnimationProfile을 만들었고 문서와 일치합니다 "
+              "(확인용 actor: {carrier}). 프로젝트 파일은 바뀌지 않았습니다.",
+    "differs": "Godot이 만든 리소스가 문서와 다릅니다. 프로젝트 파일은 바뀌지 않았습니다.",
+}

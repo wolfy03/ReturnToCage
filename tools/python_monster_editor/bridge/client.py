@@ -1,4 +1,7 @@
-"""Run the read-only Godot bridge and return a checked response. No Qt; callers decide on which thread.
+"""Run the Godot bridge and return a checked response. No Qt; callers decide on which thread.
+
+``inspect_monsters`` and ``import_monster`` only read. ``stage_monster`` writes presentation resources, and
+only into a staging copy of the project (see ``bridge.staging``); the bridge itself refuses any other project.
 
 Contract of one call:
 
@@ -24,7 +27,7 @@ import time
 import uuid
 
 PROTOCOL = 1
-OPERATIONS = ("inspect_monsters", "import_monster")
+OPERATIONS = ("inspect_monsters", "import_monster", "stage_monster")
 DEFAULT_TIMEOUT = 180
 CRASH_ATTEMPTS = 3
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -125,19 +128,23 @@ def check_version(godot, project, cancel=None):
     return actual
 
 
-def call(godot, project, operation, monster_id="", cancel=None, timeout=DEFAULT_TIMEOUT, work_folder=None):
+def call(godot, project, operation, monster_id="", cancel=None, timeout=DEFAULT_TIMEOUT, work_folder=None,
+         stage=None):
     """Run one bridge operation against ``project`` and return a checked BridgeResponse.
 
     Godot 4.7.2 on Windows sometimes dies with an access violation while shutting down, after the bridge
     has finished (measured: a few runs in a hundred, also with the STEP 1 probe; never with the game's main
-    scene). A crashed run is never trusted, whatever it wrote. Because both operations only read, the call
-    is simply made again, at most ``CRASH_ATTEMPTS`` times; ``BridgeResponse.attempts`` says how many it took.
+    scene). A crashed run is never trusted, whatever it wrote. The read operations change nothing, and
+    ``stage_monster`` only overwrites its own output inside a disposable staging copy, so the call is simply
+    made again, at most ``CRASH_ATTEMPTS`` times; ``BridgeResponse.attempts`` says how many it took.
+
+    ``stage`` is the payload of ``stage_monster`` and is sent only with that operation.
     """
     if operation not in OPERATIONS:
         raise ValueError(f"unknown bridge operation: {operation}")
     for attempt in range(1, CRASH_ATTEMPTS + 1):
         try:
-            response = _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder)
+            response = _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage)
         except BridgeError as error:
             if error.code != PROCESS_CRASH or attempt == CRASH_ATTEMPTS:
                 raise
@@ -145,7 +152,7 @@ def call(godot, project, operation, monster_id="", cancel=None, timeout=DEFAULT_
         return replace(response, attempts=attempt)
 
 
-def _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder):
+def _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage=None):
     # Always absolute: Godot runs with the project as its working directory, so a relative --path would
     # point somewhere else and the engine would sit in the project manager until the timeout.
     project = Path(project).resolve()
@@ -155,9 +162,11 @@ def _call_once(godot, project, operation, monster_id, cancel, timeout, work_fold
     request_id = uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix="rtc-monster-bridge-", dir=work_folder) as folder:
         request_path, result_path = Path(folder) / "request.json", Path(folder) / "result.json"
-        request_path.write_text(json.dumps({
-            "protocol": PROTOCOL, "request_id": request_id, "operation": operation, "monster_id": monster_id,
-            "result_path": str(result_path)}), encoding="utf-8")
+        request = {"protocol": PROTOCOL, "request_id": request_id, "operation": operation, "monster_id": monster_id,
+                   "result_path": str(result_path)}
+        if operation == "stage_monster":
+            request["stage"] = stage
+        request_path.write_text(json.dumps(request), encoding="utf-8")
         code, log = _run([str(godot), "--headless", "--path", str(project), BRIDGE_SCENE, "--",
                           "--request", str(request_path)], project, cancel, timeout)
         if cancel is not None and cancel.is_set():

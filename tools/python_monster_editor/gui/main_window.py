@@ -20,7 +20,7 @@ from application.project import ProjectError, ProjectSession, delete_draft
 from application.session import DocumentSession
 from application.settings import Settings
 from application.work import JobBoard, ValidationController
-from bridge import client
+from bridge import client, staging
 from rtcmonster import SUFFIX, DocumentConflict, DocumentError, document_revision, parse_path, set_value
 from rtcmonster.catalog import CONFLICT
 
@@ -67,6 +67,7 @@ class MainWindow(QMainWindow):
         self._import_support = {}
         self._engine_version = ""
         self._last_message = ""
+        self.last_stage = None
         self.setObjectName("MonsterEditorMainWindow")
         self.resize(1360, 860)
 
@@ -139,6 +140,7 @@ class MainWindow(QMainWindow):
             "refresh": self._action("프로젝트 카탈로그 새로고침", self.refresh_catalog, "F5"),
             "registry": self._action("Godot Registry 검증 (게임 몬스터 목록 가져오기)", self.verify_registry),
             "import": self._action("선택 몬스터 가져오기", self.import_selected),
+            "stage": self._action("표현 리소스 Staging 검증 (프로젝트 사본)", self.stage_presentation),
             "godot_check": self._action("Godot 연결 및 버전 검사", self.check_godot),
             "cancel_job": self._action("진행 중인 Godot 작업 취소", self.cancel_jobs),
             "reset_layout": self._action("기본 레이아웃 복원", self.reset_layout),
@@ -165,7 +167,7 @@ class MainWindow(QMainWindow):
         menu = bar.addMenu("검증(&A)")
         menu.addActions([a["validate"], a["refresh"], a["registry"]])
         menu = bar.addMenu("Godot(&G)")
-        menu.addActions([a["registry"], a["import"], a["godot_check"]])
+        menu.addActions([a["registry"], a["import"], a["stage"], a["godot_check"]])
         menu.addSeparator()
         menu.addAction(a["cancel_job"])
         later = menu.addAction("게임에 게시 (후속 단계에서 지원)")
@@ -197,6 +199,7 @@ class MainWindow(QMainWindow):
         a["registry"].setEnabled(godot_ready)
         a["godot_check"].setEnabled(godot_ready)
         a["import"].setEnabled(godot_ready and entry is not None and entry.source == "game")
+        a["stage"].setEnabled(godot_ready and session is not None and bool(session.document.data["animations"]["clips"]))
         a["cancel_job"].setEnabled(bool(self.jobs.active))
         a["refresh"].setEnabled(True)
 
@@ -733,6 +736,30 @@ class MainWindow(QMainWindow):
                 text += f" · 표현하지 못한 항목 {len(result.notes)}건 (요약 탭의 Source Binding 참조)"
             self.status(text + " · 초안은 아직 저장되지 않았습니다.", 15000)
         return self._start_job("import_monster", work, done, same_document=True, label=f"{monster_id} 가져오기")
+
+    def stage_presentation(self, carrier=""):
+        """Build the open document's SpriteFrames and animation profile in a copy of the project and compare
+        what Godot built with the document. The project itself is not written; the copy is removed afterwards."""
+        if self.session is None:
+            return None
+        godot, root, document = self.project.godot, self.project.root, self.session.document
+
+        def work(cancel):
+            result = staging.stage_presentation(godot, root, document, carrier=carrier, cancel=cancel)
+            staging.remove_staging_copy(result.staging_root)
+            return result
+
+        def done(result):
+            self.last_stage = result
+            if result.passed:
+                self.status(strings.STAGE["passed"].format(clips=len(result.profile.get("animations", {})),
+                                                           carrier=result.attach.get("carrier", "–")), 15000)
+            else:
+                shown = list(result.differences[:12])
+                if len(result.differences) > 12:
+                    shown.append(f"… 외 {len(result.differences) - 12}건")
+                self.prompts.error("Staging", strings.STAGE["differs"] + "\n\n" + "\n".join(shown))
+        return self._start_job("stage_monster", work, done, same_document=True, label="표현 리소스 Staging")
 
     def wait_for_jobs(self, timeout_ms=200000):
         """Block until background jobs have delivered their results. For tests and for closing."""

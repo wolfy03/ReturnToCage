@@ -1,5 +1,8 @@
 # Monster Editor Godot Bridge (protocol 1)
 
+> MONSTER-STEP 3에서 `stage_monster`가 추가됐다(아래 "stage_monster"). protocol은 1 그대로다: 이 명령을 모르는
+> 이전 bridge는 `UNKNOWN_OPERATION`으로 답한다. `inspect_monsters`와 `import_monster`는 여전히 읽기만 한다.
+
 편집기가 게임의 실제 값을 읽기 위해 Godot을 실행하는 통로다. STEP 2의 두 명령은 **읽기 전용**이다: 결과 JSON 한
 개 외에는 어떤 파일도 쓰지 않고, 리소스를 저장하지 않는다.
 
@@ -42,6 +45,35 @@ godot --headless --path <project 절대 경로> res://tools/monster_bridge/bridg
 
 몬스터 목록은 `ContentRegistry`가 실제로 등록한 `EnemyDefinition`이다. 편집기가 "Registry 확인됨"이라고 표시하는
 근거는 이 응답뿐이다.
+
+## stage_monster (STEP 3)
+
+요청에 `"stage"`가 붙는다.
+
+```json
+{"images": {"<image id>": "<프로젝트 기준 PNG 경로>"},
+ "clips": [{"id": "idle", "fps": 10, "loop": true,
+            "frames": [{"image": "<image id>", "rect": [0, 0, 64, 48], "duration": 1}]}],
+ "presentation": {"roles": {"idle": "idle"}, "visual_scale": [1, 1], "visual_offset": [0, -13],
+                  "faces_right_by_default": true, "attack_hit_frame": 2, "airborne_speed": 30, "move_speed_threshold": 8},
+ "carrier": "<등록된 Enemy ID, 비우면 registry의 첫 Enemy>", "texture_filter": 0}
+```
+
+`tools/monster_bridge/monster_stager.gd`가 처리한다. 프로젝트 루트에 `.rtc_monster_staging` 표식이 없으면
+`NOT_A_STAGING_PROJECT`로 거절하고 아무것도 만들지 않는다 — 표식은 편집기가 만든 사본에만 있다. 표식이 있으면
+`res://monster_stage/<monster_id>/sprite_frames.tres`와 `animation_profile.tres`를 `ResourceSaver`로 저장하고
+응답 `data`에 다음을 담는다.
+
+| 키 | 내용 |
+|---|---|
+| `sprite_frames_path`, `profile_path` | 저장한 두 리소스 |
+| `profile` | 저장한 profile을 디스크에서 다시 읽은 결과(`monster_inspector.gd`의 `profile()`과 같은 형식) |
+| `attach` | carrier actor를 표현 actor와 서버 런타임 actor로 한 번씩 ready시킨 결과(`has_presenter`, sprite의 `SpriteFrames` 경로·첫 frame 텍스처·위치·scale) |
+
+추가 오류 코드: `NOT_A_STAGING_PROJECT`, `INVALID_REQUEST`(형식·범위), `RESOURCE_MISSING`(Godot이 PNG를 텍스처로
+못 읽음), `EXPORT_FAILED`(저장 실패). Python 쪽(`bridge/staging.py`)의 코드: `NOTHING_TO_STAGE`,
+`STAGING_INSIDE_PROJECT`, `STAGE_FAILED`. 사본 생성, 대조, crash 재시도 정책은
+[monster_editor_step3.md](monster_editor_step3.md) §5.
 
 ## 성공 판정
 

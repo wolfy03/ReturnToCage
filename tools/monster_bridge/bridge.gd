@@ -1,20 +1,26 @@
 extends Node
-## Read-only bridge between the Monster Editor and the game.
+## Bridge between the Monster Editor and the game.
 ##
 ##   godot --headless --path <project> res://tools/monster_bridge/bridge.tscn -- --request <request.json>
 ##
 ## The request names an operation and where to write the result:
 ##
-##   {"protocol": 1, "request_id": "...", "operation": "inspect_monsters" | "import_monster",
-##    "monster_id": "...", "result_path": "<absolute path>.json"}
+##   {"protocol": 1, "request_id": "...", "operation": "inspect_monsters" | "import_monster" | "stage_monster",
+##    "monster_id": "...", "result_path": "<absolute path>.json", "stage": {...}}
 ##
 ## The result repeats protocol, request_id and operation, so the editor can tell
-## that the file answers the question it asked. This script writes exactly that
-## one file. It never saves a resource and never changes the project.
+## that the file answers the question it asked.
+##
+## inspect_monsters and import_monster only read: they write that one result
+## file and nothing else. stage_monster also saves a SpriteFrames and an
+## EnemyAnimationProfile, and only in a staging copy of the project
+## (monster_stager.gd refuses a project without the staging marker).
 
 const Inspector := preload("res://tools/monster_bridge/monster_inspector.gd")
+const Stager := preload("res://tools/monster_bridge/monster_stager.gd")
+## stage_monster was added in MONSTER-STEP 3 without a version change: an older bridge answers it with UNKNOWN_OPERATION.
 const PROTOCOL := 1
-const OPERATIONS := ["inspect_monsters", "import_monster"]
+const OPERATIONS := ["inspect_monsters", "import_monster", "stage_monster"]
 
 var _request: Dictionary = {}
 
@@ -37,6 +43,12 @@ func _ready() -> void:
 		_finish({}, "UNKNOWN_OPERATION", String(_request.operation))
 	elif _request.operation == "inspect_monsters":
 		_finish(_inspect_monsters())
+	elif _request.operation == "stage_monster":
+		var staged := Stager.stage(String(_request.get("monster_id", "")), _request.get("stage"), self)
+		if staged.has("error_code"):
+			_finish({}, String(staged.error_code), String(staged.message))
+		else:
+			_finish(staged)
 	else:
 		_import_monster(String(_request.get("monster_id", "")))
 

@@ -150,6 +150,8 @@ jobs:
           Remove-Item Env:QT_SCALE_FACTOR
       - name: Bridge and legacy import against the real Godot, an isolated project with new monsters, failure cases
         run: python -u -X utf8 tools/python_monster_editor/check_godot_import.py --godot $env:RTC_GODOT_CONSOLE --artifacts "$env:RUNNER_TEMP/monster-gui/import"
+      - name: Stage presentation resources in a project copy with the real Godot and compare the readback
+        run: python -u -X utf8 tools/python_monster_editor/check_godot_stage.py --godot $env:RTC_GODOT_CONSOLE --artifacts "$env:RUNNER_TEMP/monster-gui/stage"
       - name: The checks left the working tree untouched
         shell: bash
         run: |
@@ -196,6 +198,8 @@ jobs:
         run: python -u -X utf8 tools/python_monster_editor/check_contract_extensibility.py --godot "$GODOT" --artifacts "$RUNNER_TEMP/monster-contract/extensibility"
       - name: Bridge and legacy import on Linux (same checks as Windows)
         run: python -u -X utf8 tools/python_monster_editor/check_godot_import.py --godot "$GODOT" --artifacts "$RUNNER_TEMP/monster-contract/import"
+      - name: Stage presentation resources in a project copy on Linux (same checks as Windows)
+        run: python -u -X utf8 tools/python_monster_editor/check_godot_stage.py --godot "$GODOT" --artifacts "$RUNNER_TEMP/monster-contract/stage"
       - name: Record what was verified
         if: always()
         shell: bash

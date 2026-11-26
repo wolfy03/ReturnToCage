@@ -49,8 +49,15 @@ FAKE = textwrap.dedent('''
             sys.exit(7)
         print(os.environ.get("RTC_FAKE_VERSION", "4.7.2.stable.official.ed1daf0bf"))
         sys.exit(0)
+    if "--import" in args:                # the editor's asset import of a staging copy
+        sys.exit(int(os.environ.get("RTC_FAKE_IMPORT_EXIT", "0")))
     request = json.load(open(args[args.index("--request") + 1], encoding="utf-8"))
     project = args[args.index("--path") + 1]
+    if os.environ.get("RTC_FAKE_ECHO"):   # lets a test read the request the client really sent
+        json.dump({"request": request, "project": project}, open(os.environ["RTC_FAKE_ECHO"], "w", encoding="utf-8"))
+    for relative in json.loads(os.environ.get("RTC_FAKE_TOUCH", "[]")):
+        os.makedirs(os.path.dirname(os.path.join(project, relative)), exist_ok=True)
+        open(os.path.join(project, relative), "w").close()
     result = {"protocol": 1, "request_id": request["request_id"], "operation": request["operation"],
               "project_path": project, "status": "PASS", "error_code": "", "message": "",
               "godot_version": "4.7.2-stable (official)", "physics_ticks_per_second": 60,

@@ -69,7 +69,11 @@
 
 **하지 않는 것**: 게시, sprite 편집, 판정 편집, 타임라인, AI 그래프, EXE.
 
-## MONSTER-STEP 3 — Animation / Collision Editor
+## MONSTER-STEP 3 — Animation / Collision Editor (구현됨, 병합 대기)
+
+결과와 검증 기록은 [monster_editor_step3.md](monster_editor_step3.md)에 있다. 아래는 착수 전에 정한 범위이며,
+달라진 점: `texture_filter`는 Schema V1에 필드가 없어 편집하지 않았고, staging의 "그려진다"는 headless에서
+구조로만 확인했다(렌더링 픽셀은 NOT_EVALUATED).
 
 - **선행**: STEP 2. 데이터 런타임은 아직 필요 없다. 시작할 때 요약 패널의 부분 갱신을 먼저 한다 — Large 문서에서
   편집 1회가 약 95 ms이고 대부분이 요약 전체 재생성이다(STEP 2 측정). 드래그 조작은 이 비용을 견디지 못한다.

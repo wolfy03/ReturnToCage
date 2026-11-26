@@ -21,6 +21,7 @@ from gui.main_window import MainWindow  # noqa: E402
 from gui.testing import ScriptedPrompts  # noqa: E402
 from rtcmonster.geometry import shape_bounds  # noqa: E402
 from test_gui import app  # noqa: E402,F401  (session fixture)
+from conftest import fake  # noqa: E402,F401
 
 BEETLE = "assets/characters/enemies/sewer_beetle"
 
@@ -302,3 +303,41 @@ def test_closing_the_document_empties_the_workspace(window):
     panel = window.animation
     assert panel.image_list.count() == panel.clip_list.count() == panel.strip.count() == 0
     assert panel.canvas.message == strings.ANIMATION["no_document"] and not panel.register_button.isEnabled()
+
+
+# -------------------------------------------------------------------------------------------------- staging
+def test_the_stage_action_reports_what_godot_built(app, tmp_path, fake):  # noqa: F811
+    import json
+    from test_staging import OUTPUTS, stage_data
+    godot, project, set_mode = fake
+    for name in ("autoload/content_registry.gd", "data/definitions/enemy_definition.gd"):
+        (project / name).parent.mkdir(parents=True, exist_ok=True)
+        (project / name).write_text("", encoding="utf-8")
+    prompts = ScriptedPrompts()
+    view = MainWindow(Settings(tmp_path / "settings.json"), prompts)
+    view.apply_project_settings({"project_root": str(project), "godot_path": str(godot), "drafts_folder": str(tmp_path)})
+    view.show()
+    QTest.qWaitForWindowExposed(view)
+    try:
+        assert not view.actions_by_name["stage"].isEnabled()                  # nothing open
+        beetle = load("sewer_beetle")
+        view.set_session(DocumentSession(beetle))
+        assert view.actions_by_name["stage"].isEnabled()
+        set_mode("ok", data=json.dumps(stage_data(beetle)), touch=OUTPUTS)
+        assert view.stage_presentation(carrier="ant") is not None
+        view.wait_for_jobs()
+        assert view.last_stage is not None and view.last_stage.passed and not view.last_stage.staging_root.exists()
+        assert prompts.last_error() is None and not (project / "monster_stage").exists()
+        data = stage_data(beetle)
+        data["profile"]["roles"]["move"] = "idle"
+        set_mode("ok", data=json.dumps(data), touch=OUTPUTS)
+        view.stage_presentation()
+        view.wait_for_jobs()
+        assert not view.last_stage.passed and "role move" in prompts.last_error()[1]
+        view.set_session(DocumentSession(load("sewer_rat_prototype")))      # no clips: nothing to stage
+        assert not view.actions_by_name["stage"].isEnabled()
+    finally:
+        view.session = None
+        view.close()
+        view.deleteLater()
+        app.processEvents()
