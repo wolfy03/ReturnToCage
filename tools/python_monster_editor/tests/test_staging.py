@@ -7,6 +7,7 @@ never the target, that a copy is cleaned up, and that every kind of difference i
 
 import copy
 import json
+import os
 
 import pytest
 
@@ -200,7 +201,8 @@ def test_a_stage_that_differs_is_a_result_with_differences(fake, tmp_path, beetl
     ("fail", {}, "UNKNOWN_MONSTER", True),
     ("crash", {}, client.PROCESS_CRASH, True),
     ("ok", {"import_exit": 1}, staging.STAGE_FAILED, True),
-    ("ok", {"import_exit": -1073741819}, client.PROCESS_CRASH, True),
+    # An access-violation exit code only survives on Windows; elsewhere exit() truncates it to a plain failure.
+    ("ok", {"import_exit": -1073741819}, client.PROCESS_CRASH if os.name == "nt" else staging.STAGE_FAILED, True),
     ("ok", {"version": "4.6.1.stable"}, client.GODOT_VERSION_MISMATCH, False),
 ])
 def test_a_failed_run_raises_and_says_where_the_copy_is(fake, tmp_path, beetle, mode, extra, code, copied):
