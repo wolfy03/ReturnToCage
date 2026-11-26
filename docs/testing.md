@@ -557,6 +557,9 @@ CI(`python-monster-editor.yml`): `core`가 안정화 테스트 묶음과 frame c
 스모크(Animation / Collision 흐름 포함)·Import·Staging·렌더링을, `godot-contract`가 Linux의 계약·Import·Staging을 돌린다.
 렌더링 step은 runner에 렌더러가 없으면 NOT_EVALUATED를 job summary에 적는다.
 
+`docs/` 아래에 PNG를 추가할 때는 그 폴더에 빈 `.gdignore`를 둔다. 없으면 Godot이 문서용 이미지를 import해
+`.png.import` 파일을 만들고, CI의 "작업 트리 미변경" 확인이 실패한다.
+
 `check_godot_stage.py`와 `check_godot_render.py`는 실행 전후 프로젝트 전체의 해시를 비교한다. 그 사이에 프로젝트의
 파일을(문서 포함) 고치면 "프로젝트가 바뀌었다"로 실패한다 — 검사가 도는 동안 저장소를 편집하지 않는다.
 

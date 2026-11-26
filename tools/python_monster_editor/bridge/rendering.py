@@ -241,7 +241,10 @@ def _render_once(godot, session, document, output_dir, shots, timings, carrier, 
                    "shots": shots if shots is not None else default_shots(document),
                    "timings": timings if timings is not None else default_timings(document)}
         request_path.write_text(json.dumps(request), encoding="utf-8")
-        command = [str(godot), "--path", str(session.root), "--windowed", "--resolution", "320x180"]
+        # No sound is played; without this a machine with no audio device (a CI runner) logs audio driver
+        # errors, and this check treats any engine error line of its own scene as a failure.
+        command = [str(godot), "--path", str(session.root), "--windowed", "--resolution", "320x180",
+                   "--audio-driver", "Dummy"]
         if rendering_method:
             command += ["--rendering-method", rendering_method]
         command += [RENDER_SCENE, "--", "--request", str(request_path)]
