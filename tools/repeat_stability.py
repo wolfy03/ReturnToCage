@@ -58,7 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default="godot")
     parser.add_argument("--repeat", type=int, default=10)
-    parser.add_argument("--case", action="append", choices=["physics", "player", "project", "traversal", "headless", "rendered", "enet2", "enet3", "local2", "local3", "lifecycle", "export"])
+    parser.add_argument("--case", action="append", choices=["physics", "player", "project", "traversal", "headless", "rendered", "enet2", "enet3", "local2", "local3", "lifecycle", "release", "export"])
     parser.add_argument("--output", type=Path, help="keep logs and results.json here instead of a temporary directory")
     args = parser.parse_args()
     if not 1 <= args.repeat <= 100:
@@ -85,6 +85,8 @@ def main():
         "local3": (local + ["--players", "3"], "MULTIPLAYER PROBE PASS", 65),
         "lifecycle": (python + ["tools/test_session_recovery.py", "--godot", args.godot, "--artifacts", str(output / "lifecycle"),
                                 "--ipv6", "auto"], "SESSION LIFECYCLE PROBE PASS", 280),
+        # Builds the release EXE, then runs content, mixed editor/EXE ENet and both lifecycles against it.
+        "release": (python + ["tools/build_windows_demo.py", "--godot", args.godot, "--rendered"], "SESSION LIFECYCLE RECOVERY PASS", 900),
         "export": ([args.godot, "--headless", "--path", str(ROOT), "--export-release", "Windows Desktop", str(output / "ReturnToCage.exe"), "--quit"], "", 120),
     }
     results = []
