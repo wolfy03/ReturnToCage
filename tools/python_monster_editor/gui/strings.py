@@ -85,6 +85,7 @@ SHAPE_LABELS = {"rectangle": "사각형", "circle": "원"}
 SHAPE_KIND_LABELS = {"body": "Body", "hurtbox": "Hurtbox", "override": "Hurtbox (override)", "hitbox": "Hitbox"}
 ANIMATION = {
     "title": "Animation / Collision",
+    "tab_sources": "이미지 · Clip", "tab_clip": "Clip · 역할 · 배치", "tab_shapes": "판정",
     "images": "Images", "clips": "Animation Clips", "clip_settings": "Clip", "roles": "역할 연결",
     "visual": "화면 배치", "shapes": "판정 도형",
     "image_path_hint": "프로젝트 기준 PNG 경로 (예: assets/characters/enemies/ant/idle.png)",
@@ -93,7 +94,9 @@ ANIMATION = {
     "columns": "열", "rows": "행", "count": "frame 수", "all_frames": "전체",
     "clip_from_grid": "격자로 Clip 만들기", "clip_from_images": "선택 이미지로 Clip 만들기",
     "play": "재생", "pause": "정지", "flip": "좌우 반전 미리보기", "zoom": "배율",
-    "duration": "frame 지속 (배수)", "frame_earlier": "◀ 앞으로", "frame_later": "뒤로 ▶", "remove_frame": "frame 삭제",
+    "duration": "지속", "frame_earlier": "◀", "frame_later": "▶", "remove_frame": "삭제",
+    "duration_tip": "frame 지속 시간의 배수입니다. 초 = 지속 ÷ FPS.", "frame_earlier_tip": "이 frame을 앞으로 옮깁니다.",
+    "frame_later_tip": "이 frame을 뒤로 옮깁니다.", "remove_frame_tip": "이 frame을 Clip에서 뺍니다.",
     "fps": "FPS", "loop": "반복 재생 (loop)",
     "visual_scale": "visual_scale (x, y)", "visual_offset": "visual_offset (x, y)",
     "foot_margin": "발 아래 여백(px)", "bottom_center": "Bottom-center 맞춤",

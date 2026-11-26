@@ -17,7 +17,7 @@ from PySide6.QtCore import QElapsedTimer, QPointF, QRect, QRectF, QSize, Qt, QTi
 from PySide6.QtGui import QColor, QIcon, QImageReader, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QPushButton,
-                               QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
+                               QScrollArea, QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from application import animation as logic
 from rtcmonster import DocumentError, move_item, png, set_value
@@ -320,10 +320,6 @@ class AnimationWorkspace(QWidget):
         for button in (self.grid_button, self.images_button, self.remove_clip_button):
             row.addWidget(button)
         layout.addLayout(row)
-        left = QWidget()
-        column = QVBoxLayout(left)
-        column.addWidget(images)
-        column.addWidget(clips)
 
         # ---- middle: canvas, playback, frame strip
         self.canvas = PreviewCanvas()
@@ -343,6 +339,9 @@ class AnimationWorkspace(QWidget):
         self.duration = _spin(0.01, 100, 2, 0.25)
         self.frame_left, self.frame_right = QPushButton(text["frame_earlier"]), QPushButton(text["frame_later"])
         self.remove_frame_button = QPushButton(text["remove_frame"])
+        for widget, tip in ((self.duration, "duration_tip"), (self.frame_left, "frame_earlier_tip"),
+                            (self.frame_right, "frame_later_tip"), (self.remove_frame_button, "remove_frame_tip")):
+            widget.setToolTip(text[tip])
         middle = QWidget()
         column = QVBoxLayout(middle)
         row = QHBoxLayout()
@@ -350,8 +349,9 @@ class AnimationWorkspace(QWidget):
         row.addWidget(self.flip)
         row.addWidget(QLabel(text["zoom"]))
         row.addWidget(self.zoom)
-        row.addWidget(self.time_label, 1)
+        row.addStretch(1)
         column.addLayout(row)
+        column.addWidget(self.time_label)
         column.addWidget(self.canvas, 1)
         column.addWidget(self.strip)
         row = QHBoxLayout()
@@ -433,29 +433,33 @@ class AnimationWorkspace(QWidget):
         for button in (self.override_frame, self.override_clip, self.override_clear):
             row.addWidget(button)
         layout.addLayout(row)
-        right = QWidget()
-        column = QVBoxLayout(right)
-        for box in (clip_box, role_box, visual_box, shape_box):
-            column.addWidget(box)
-        column.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(right)
+        # The catalog and inspector docks leave the workspace about 600 px on a 1360 px window, which is
+        # not enough for three columns. The controls therefore share one tabbed side column and the
+        # canvas gets everything else.
+        def page(*boxes):
+            body = QWidget()
+            column = QVBoxLayout(body)
+            for box in boxes:
+                column.addWidget(box)
+            column.addStretch(1)
+            area = QScrollArea()
+            area.setWidgetResizable(True)
+            area.setWidget(body)
+            return area
+
+        self.side = QTabWidget()
+        self.side.addTab(page(images, clips), text["tab_sources"])
+        self.side.addTab(page(clip_box, role_box, visual_box), text["tab_clip"])
+        self.side.addTab(page(shape_box), text["tab_shapes"])
+        self.side.setMinimumWidth(200)
 
         self.notice = QLabel()
         self.notice.setWordWrap(True)
-        # The side columns scroll instead of setting the window's minimum size: the editor has to fit a
-        # 1024x768 desktop, and a column that cannot shrink would push the window wider than that.
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setWidget(left)
-        for area in (left_scroll, scroll):
-            area.setMinimumWidth(120)
-            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         splitter = QSplitter()
-        for widget, stretch in ((left_scroll, 2), (middle, 5), (scroll, 3)):
+        for widget, stretch in ((self.side, 0), (middle, 1)):
             splitter.addWidget(widget)
             splitter.setStretchFactor(splitter.count() - 1, stretch)
+        splitter.setSizes([310, 600])
         middle.setMinimumWidth(240)
         self.setMinimumSize(360, 240)           # an explicit minimum, so the columns never widen the window
         outer = QVBoxLayout(self)
@@ -893,6 +897,8 @@ class AnimationWorkspace(QWidget):
 
     def _canvas_selected(self, slot):
         self._slot = slot
+        if slot is not None:
+            self.side.setCurrentIndex(2)
         self._loading = True
         slots = self._slots()
         self.shape_list.setCurrentRow(slots.index(slot) if slot in slots else -1)
