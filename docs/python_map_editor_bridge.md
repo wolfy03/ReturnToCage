@@ -73,6 +73,17 @@ python tools/python_map_editor/check_scene_bridge.py --godot "<4.7.2 실행 파�
 python tools/python_map_editor/verify_windows_package.py "<배포 ZIP>" --artifacts "<검증 로그>" --bridge-project . --godot "<4.7.2 실행 파일>"
 ```
 
+**Scene에 직접 저장된 FieldPlatform의 자식.** `FieldPlatform`은 `_ready()`에서 CollisionShape2D와 Visual을
+자기 `size`에 맞추지만 staging Scene은 `_ready()`를 거치지 않는다. 그래서 브리지가 저장 전에
+`sync_platform_children()`으로 같은 값을 직접 쓴다. 충돌체 크기, Visual 외곽선, one-way는 **서로 독립으로**
+검사하고 틀린 것만 고친다 — 충돌체가 맞다고 Visual을 건너뛰지 않는다. 이미 맞는 플랫폼은 리소스까지 그대로
+두고(무편집 왕복의 해시가 유지된다), 다른 꼭짓점에서 시작하는 같은 사각형도 다시 쓰지 않는다. 크기를 바꿀
+때는 Shape를 복제한 뒤 고치므로 Shape를 공유하던 다른 플랫폼은 영향받지 않는다. 자식의 owner가 플랫폼의
+owner와 다른 경우(`field_platform.tscn` 인스턴스, 새로 만든 플랫폼)는 그 자식이 이 Scene에 저장되지 않으므로
+건드리지 않는다. 외곽선 계산은 런타임과 같은 `FieldPlatform.rectangle_polygon()` 하나를 쓴다. tint·terrain
+theme·texture·margins·충돌 layer는 이 함수가 건드리지 않는다. `tests/unit/test_map_bridge_platform_sync.gd`가
+네 가지 불일치 조합, 공유 Shape, 인스턴스, one-way, `ResourceSaver` 저장 후 재로드를 `_ready()` 없이 검사한다.
+
 통합 fixture는 별도 복사본에서 하수구를 가져오고 무편집·편집 왕복, UID가 있는 중첩 장식, 반전 장식 보존, 새 플랫폼, PNG 누락 차단과 게시·복구를 검사한다. Traversal 회귀는 기존 실제 PlayerActor 검증기를 사용한다. 기존 EditorPlugin과 달리 이 단계의 Python GUI는 지역 생성, 연결, ENTRY/ESCAPE, 스폰 편집 및 Traversal/Playtest UI를 제공하지 않는다.
 
 [Scene 호환성](python_map_editor_scene_compatibility.md) · [설치 및 편집](python_map_editor.md)

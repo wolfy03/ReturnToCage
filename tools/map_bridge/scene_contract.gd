@@ -167,7 +167,12 @@ static func storage(object: Object, root: Node, chain: Array = []) -> Dictionary
 ## FieldPlatform reconciles its children in _ready(), which a staged scene never
 ## reaches. Write the same geometry here so the saved collision shape and visual
 ## agree with the platform's size instead of waiting for the next load to fix them.
-static func _sync_platform_children(platform: FieldPlatform) -> void:
+##
+## The three stored values are checked independently: a correct collision shape
+## says nothing about the visual. Each is written only when it is wrong, so a
+## platform that already agrees is left byte-for-byte alone. A shape is copied
+## before it is resized, because several platforms may share one resource.
+static func sync_platform_children(platform: FieldPlatform) -> void:
 	var collision := platform.get_node_or_null("CollisionShape2D") as CollisionShape2D
 	var visual := platform.get_node_or_null("Visual") as Polygon2D
 	if collision == null or visual == null:
@@ -181,10 +186,26 @@ static func _sync_platform_children(platform: FieldPlatform) -> void:
 		shape = RectangleShape2D.new() if shape == null else shape.duplicate() as RectangleShape2D
 		shape.size = platform.size
 		collision.shape = shape
-		var half := platform.size / 2.0
-		visual.polygon = PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])
+	var outline := FieldPlatform.rectangle_polygon(platform.size)
+	if not _same_outline(visual.polygon, outline):
+		visual.polygon = outline
 	if collision.one_way_collision != platform.one_way:
 		collision.one_way_collision = platform.one_way
+
+## The same corners in any order: an authored rectangle that starts at another
+## corner is already correct and must not be rewritten.
+static func _same_outline(stored: PackedVector2Array, expected: PackedVector2Array) -> bool:
+	if stored.size() != expected.size():
+		return false
+	for corner in expected:
+		var found := false
+		for point in stored:
+			if point.is_equal_approx(corner):
+				found = true
+				break
+		if not found:
+			return false
+	return true
 
 static func inventory_node(node: Node, root: Node, rows: Dictionary, order: Array) -> void:
 	var path := String(root.get_path_to(node))
@@ -441,7 +462,7 @@ static func apply(root: Node2D, node: Node2D, object: Dictionary) -> String:
 				node.terrain_theme = ""
 				node.terrain_texture = null
 				node.terrain_margins = Vector4i.ZERO
-			_sync_platform_children(node)
+			sync_platform_children(node)
 		else:
 			var collision := node.get_node("CollisionShape2D") as CollisionShape2D
 			var visual := node.get_node("Visual") as Polygon2D

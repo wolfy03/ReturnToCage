@@ -137,6 +137,29 @@ func _test_scene_separation(t: Node) -> void:
 	presented.velocity = Vector2(80, 0)
 	visual.presenter.refresh()
 	t.assert_equal(visual.presenter.current_animation(), &"run", "an actor that never moved vertically in the air does not play a landing over its run")
+	# The apex of a jump has zero vertical velocity; the airborne history must survive it.
+	presented.movement.mode = MovementComponent.Mode.AIR
+	presented.velocity = Vector2(80, -120)
+	visual.presenter.refresh()
+	t.assert_equal(visual.presenter.current_animation(), &"jump", "a rising actor shows the jump clip")
+	presented.velocity = Vector2(80, 0)
+	visual.presenter.refresh()
+	presented.movement.mode = MovementComponent.Mode.GROUND
+	visual.presenter.refresh()
+	t.assert_equal(visual.presenter.current_animation(), &"land", "a jump that reaches its apex still lands")
+	# A landing in progress belongs to the actor it was played for.
+	visual.presenter.configure(presented)
+	visual.presenter.refresh()
+	t.assert_equal(visual.presenter.current_animation(), &"run", "reconfiguring the presenter drops an unfinished landing")
+	presented.movement.mode = MovementComponent.Mode.AIR
+	presented.velocity = Vector2(0, 60)
+	visual.presenter.refresh()
+	# Still AIR but motionless: exactly what a fresh remote actor reports before its first snapshot.
+	presented.velocity = Vector2.ZERO
+	visual.presenter.configure(presented)
+	presented.movement.mode = MovementComponent.Mode.GROUND
+	visual.presenter.refresh()
+	t.assert_equal(visual.presenter.current_animation(), &"idle", "airborne history does not carry over to a reconfigured presenter")
 	layer.queue_free()
 	await t.get_tree().process_frame
 	await t.get_tree().process_frame

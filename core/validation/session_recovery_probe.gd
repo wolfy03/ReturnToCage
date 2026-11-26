@@ -9,21 +9,20 @@ var result_path: String
 var _sequence := 0
 var _busy := false
 var _failed := false
-var _deadline: int
-## A running command must finish within COMMAND_TIMEOUT_MSEC (_deadline). A role
-## that is only waiting for its next command gets the longer idle allowance: the
-## controller drives other roles in between, and on a slow rendered runner that
-## alone has exceeded a minute. The idle watchdog still ends an orphaned process.
-## It is refreshed from _process, never from the command coroutine.
+## Command and idle limits; see CommandWatchdog. Driven from _process only,
+## never from the command coroutine.
 const COMMAND_TIMEOUT_MSEC := 60000
 const IDLE_TIMEOUT_MSEC := 300000
-var _idle_deadline: int
+var _watchdog: CommandWatchdog
 var _player_id: StringName
 var _watched_id: StringName
 var _watch_origin: Vector2
 var _watch_direction := 1.0
 var _saw_motion := false
 var _saw_run := false
+## What the watched player's presenter and movement showed during the watch, in
+## first-seen order. Reported when the run assertion fails.
+var _watch_trace: Array[String] = []
 var _input_sample: Dictionary = {}
 var _input_edges: Dictionary[int, Array] = {}
 const INPUT_KEYS := {
@@ -64,8 +63,7 @@ func _ready() -> void:
 			command_path = argument.trim_prefix("--command=")
 		elif argument.begins_with("--result="):
 			result_path = argument.trim_prefix("--result=")
-	_deadline = Time.get_ticks_msec() + COMMAND_TIMEOUT_MSEC
-	_idle_deadline = Time.get_ticks_msec() + IDLE_TIMEOUT_MSEC
+	_watchdog = CommandWatchdog.new(COMMAND_TIMEOUT_MSEC, IDLE_TIMEOUT_MSEC, Time.get_ticks_msec())
 	if app == null:
 		app = (load("res://core/boot.tscn") as PackedScene).instantiate() as AppRoot
 		add_child(app)
@@ -101,11 +99,13 @@ func _process(_delta: float) -> void:
 		_saw_motion = _saw_motion or (watched.position.x - _watch_origin.x) * _watch_direction > 12.0
 		var visual := watched.player_visual().get_node("PlayerAnimationPresenter") as PlayerAnimationPresenter
 		_saw_run = _saw_run or visual != null and visual.current_animation() == &"run" and watched.facing == _watch_direction
-	var now := Time.get_ticks_msec()
-	if _busy:
-		_idle_deadline = now + IDLE_TIMEOUT_MSEC
-	if now > (_deadline if _busy else _idle_deadline):
-		_fail("command timeout")
+		var seen := "%s/%s/facing=%d" % [visual.current_animation() if visual != null else &"-",
+			MovementComponent.Mode.keys()[watched.movement.mode], int(watched.facing)]
+		if not _watch_trace.has(seen) and _watch_trace.size() < 24:
+			_watch_trace.append(seen)
+	if _watchdog.observe(Time.get_ticks_msec(), _busy):
+		_fail("command timeout while running sequence %d" % _sequence if _busy
+			else "idle timeout: no command for %d s after sequence %d" % [IDLE_TIMEOUT_MSEC / 1000, _sequence])
 		return
 	if _busy or not FileAccess.file_exists(command_path):
 		return
@@ -117,7 +117,7 @@ func _process(_delta: float) -> void:
 	if int(command.get("sequence", 0)) <= _sequence:
 		return
 	_sequence = int(command.sequence)
-	_deadline = Time.get_ticks_msec() + COMMAND_TIMEOUT_MSEC
+	_watchdog.command_started(Time.get_ticks_msec())
 	_busy = true
 	if _gui_mode:
 		print("SESSION STEP %d %s %s" % [_sequence, command.get("action", ""), JSON.stringify(_state_dump())])
@@ -421,6 +421,7 @@ func _execute(command: Dictionary) -> void:
 			_watch_direction = -1.0 if command.get("left", false) else 1.0
 			_saw_motion = false
 			_saw_run = false
+			_watch_trace.clear()
 		"move":
 			# Exercise real movement with the item windows closed, then restore
 			# the existing lifecycle fixture's window state for later checks.
@@ -449,9 +450,11 @@ func _execute(command: Dictionary) -> void:
 			if not await _wait(func() -> bool: return _saw_motion and _saw_run):
 				var actor := _actor(_watched_id)
 				var authority := NetworkManager.authoritative_actor(NetworkManager.peer_id_for_player(_watched_id)) if NetworkManager.is_server() else null
-				_fail("transform/run animation missing for %s motion=%s run=%s pos=%s direction=%s transform_sequence=%s authority=%s" % [
+				_fail("transform/run animation missing for %s motion=%s run=%s pos=%s direction=%s transform_sequence=%s observed=%s snapshots=%s authority=%s" % [
 					_watched_id, _saw_motion, _saw_run, actor.position if actor != null else Vector2.INF,
-					_watch_direction, actor.network._snapshot_sequence if actor != null else -1,
+					_watch_direction, actor.network._snapshot_sequence if actor != null else -1, _watch_trace,
+					{"applied": actor.network.snapshots_applied, "stale": actor.network.snapshots_stale, "has": actor.network._has_snapshot,
+					"world_ready": NetworkManager.is_local_world_ready(), "local_authority": actor.is_simulation_authority()} if actor != null else {},
 					{"position": authority.position, "velocity": authority.velocity, "input": authority.input.move_axis,
 					"received": authority.network._last_received_sequence, "snapshot": authority.network._snapshot_sequence,
 					"locked": authority.movement.controls_locked} if authority != null else {},
@@ -1162,7 +1165,10 @@ func _record_authoritative_input(actor: PlayerActor) -> void:
 		"axes": str(actor.input.move_vector), "x": actor.position.x,
 		"position": str(actor.position), "velocity": str(actor.velocity),
 		"hunger": state.survival.hunger, "thirst": state.survival.thirst, "quick_paws": effect.remaining if effect != null else -1.0,
-		"snapshot": actor.network._snapshot_sequence}
+		"snapshot": actor.network._snapshot_sequence,
+		# The parts of ready_action, so a mismatch names which one was missing.
+		"action_idle": actor.combat_action.is_idle(), "on_floor": actor.is_on_floor(),
+		"movement_mode": MovementComponent.Mode.keys()[actor.movement.mode]}
 
 func _check_blocked_enemy_tick(player_id: StringName) -> bool:
 	if not NetworkManager.is_server() or not LocalInputContext.is_gameplay_blocked():

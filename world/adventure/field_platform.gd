@@ -47,11 +47,17 @@ func _update_geometry() -> void:
 		shape.size = size
 		collision.shape = shape
 	collision.one_way_collision = one_way
-	var half := size / 2.0
-	visual.polygon = PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])
+	visual.polygon = rectangle_polygon(size)
 	visual.color = tint
 
 	_update_appearance()
+
+
+## The visual outline of a platform of this size, centred on the body. The one
+## definition shared by the runtime and by tools that write platform scenes.
+static func rectangle_polygon(platform_size: Vector2) -> PackedVector2Array:
+	var half := platform_size / 2.0
+	return PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])
 
 
 func has_terrain() -> bool:

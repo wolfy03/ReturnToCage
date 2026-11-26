@@ -208,3 +208,19 @@ Monster Editor → 정적 검증 → Godot 검증 → 게시 (data/content/enemi
 
 초안의 ID가 게임에 있는 ID와 같으면 `duplicate_monster_id` FAIL이다. `sewer_rat_prototype`은 초안이고, contract
 check가 ContentRegistry에 없음을 확인한다.
+
+## Schema 밖의 표현 속성: `texture_filter`
+
+MONSTER-STEP 1 이후 `EnemyAnimationProfile`에 `texture_filter`(`CanvasItem.TextureFilter`, 기본
+`TEXTURE_FILTER_NEAREST`)가 추가됐고 `EnemyAnimationPresenter`가 sprite에 그 값을 적용한다. 두 shipped profile
+(`sewer_beetle`, `frog`)은 값을 쓰지 않으므로 기본값이며 화면 결과는 추가 전과 같다. presenter는 표현 전용이라
+서버 런타임 actor에는 영향이 없다.
+
+- `.rtcmonster` Schema V1에는 이 속성을 담는 필드가 **없다.** 지금은 손실이 없다 — 두 예제가 기본값이고
+  Step 1에는 Import·Export 명령이 없다.
+- 두 예제의 `source_binding`은 두 스크립트의 새 해시로 갱신돼 있다. contract check의 나머지 비교가 그대로인
+  것을 확인한 뒤 `--refresh-bindings`로 갱신한 것이며, 해시 갱신이 값 비교를 대신하지는 않는다.
+- **후속 단계에서 지켜야 할 것.** Import(STEP 2)는 profile의 `texture_filter`가 기본값이 아니면 그 값을
+  `unsupported`로 보고해야 한다(조용히 버리면 정식 아트의 `LINEAR` 설정이 Export에서 사라진다). Animation
+  Editor(STEP 3)가 profile을 쓰게 되면 schema에 필드를 추가하고 probe가 이 값을 읽도록 한다. 정식 아트의 권장
+  값은 `docs/enemy_animation.md`에 있다.

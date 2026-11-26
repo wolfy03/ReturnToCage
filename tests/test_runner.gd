@@ -95,6 +95,8 @@ func run_all() -> void:
 	preload("res://tests/unit/test_reward_save_boundary.gd").new().run(self)
 	preload("res://tests/unit/test_network_player_registry.gd").new().run(self)
 	preload("res://tests/unit/test_network_input_validation.gd").new().run(self)
+	preload("res://tests/unit/test_command_watchdog.gd").new().run(self)
+	preload("res://tests/unit/test_map_bridge_platform_sync.gd").new().run(self)
 	preload("res://tests/unit/test_player_private_state_snapshot.gd").new().run(self)
 	preload("res://tests/unit/test_player_world_state.gd").new().run(self)
 	await preload("res://tests/unit/test_world_runtime.gd").new().run(self)

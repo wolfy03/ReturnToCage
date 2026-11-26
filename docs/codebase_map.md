@@ -206,6 +206,9 @@ remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirro
 (`NetworkPlayerComponent.SNAPSHOT_INTERVAL`)로 위치·속도·facing·movement mode 를
 브로드캐스트한다. 클라이언트는 `INTERPOLATION_SPEED = 14.0` 지수 보간,
 `TELEPORT_DISTANCE = 500` 초과 시 순간이동. **클라이언트 예측·재조정(reconciliation)은 없다.**
+점프는 한 번의 키 입력이지만 이 채널은 unreliable이라, 클라이언트가 누른 뒤 0.15초 동안 `jump_pressed`를
+계속 올려 보내고 호스트는 상승 에지에서만 한 번 점프를 요청한다(`outgoing_move_command` /
+`incoming_move_command`, wire 형식 불변 — `docs/multiplayer.md`).
 
 ## 5. 액터와 컴포넌트
 
@@ -421,6 +424,12 @@ Save v4. `shared` + `players[player_id]` 구조. `peer_id` 와 네트워크/런�
   않는다. [아키텍처](monster_editor_architecture.md), [안정화 기록](monster_editor_step1_stabilization.md) 참조.
 - `tools/test_multiplayer_*.py` — 실제 ENet + 분리된 OS 프로세스. restart(재접속/세이브),
   worlds(개별 월드 라우팅), world_runtime(서버 런타임·전투·전리품·채집).
+- `tools/repeat_stability.py` — 같은 검사를 새 프로세스로 순차 반복하고 실행마다 기능 결과와 프로세스 종료
+  결과를 따로 기록한다(`local2/3`, `lifecycle`, `release` 등). 상태 정의와 엔진 종료 crash 정책은
+  [known_issues.md](known_issues.md), 2026-11 통합 안정화의 원인·수정·반복 결과는
+  [runtime_stabilization.md](runtime_stabilization.md).
+- `core/validation/command_watchdog.gd` — 명령 구동 probe(`session_recovery_probe.gd`)의 명령·idle 제한.
+  probe의 `_process`에서만 구동하며 명령 수락 시 두 제한이 모두 다시 시작된다.
 - `.github/workflows/godot.yml` — push 시 같은 검사를 리눅스 Godot 4.7.2 로 실행.
 
 ## 9. 현재 비어 있는 영역 (다음 작업 후보)

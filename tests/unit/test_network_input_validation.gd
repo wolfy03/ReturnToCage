@@ -5,6 +5,7 @@ const PLAYER_TWO := "player_22222222222222222222222222222222"
 const PLAYER_TEST: StringName = &"player_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func run(t: Node) -> void:
+	_test_jump_survives_packet_loss(t)
 	t.assert_equal(NetworkProtocol.VERSION, 20, "gameplay intent channels use current protocol v20")
 	var valid := PlayerMoveCommand.new(1, 1.0, -1.0, true)
 	t.assert_true(valid.is_valid_after(0), "bounded movement command is accepted")
@@ -62,3 +63,36 @@ func run(t: Node) -> void:
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "a pre-presentation v14 session snapshot is rejected")
 	payload["protocol_version"] = NetworkProtocol.VERSION + 1
 	t.assert_equal(NetworkSessionSnapshot.from_payload(payload, NetworkProtocol.VERSION, NetworkManager.MAX_PLAYERS).error_message, "Incompatible multiplayer protocol version", "protocol mismatch is rejected explicitly")
+
+## One key press must be exactly one jump request even when the unreliable move
+## channel drops the packet that first carried it.
+func _test_jump_survives_packet_loss(t: Node) -> void:
+	var frame := 1.0 / 60.0
+	var sent: Array[bool] = []
+	var sender := NetworkPlayerComponent.new()
+	for index in 20:
+		sent.append(sender.outgoing_move_command(PlayerMoveCommand.new(index + 1, 0.0, 0.0, index == 0), frame).jump_pressed)
+	var raised := sent.count(true)
+	t.assert_true(raised >= 5 and raised <= 10 and not sent.slice(raised).has(true) and not sent.slice(0, raised).has(false),
+		"a press is repeated for a short unbroken run of move commands, then stops")
+	sender.outgoing_move_command(PlayerMoveCommand.new(30, 0.0, 0.0, true), frame)
+	var owner := RefCounted.new()
+	LocalInputContext.acquire(owner)
+	t.assert_true(not sender.outgoing_move_command(PlayerMoveCommand.new(31, 0.0, 0.0, false), frame).jump_pressed,
+		"a blocked UI sends neutral commands without the earlier press")
+	LocalInputContext.release(owner)
+	t.assert_true(not sender.outgoing_move_command(PlayerMoveCommand.new(32, 0.0, 0.0, false), frame).jump_pressed,
+		"the press cancelled by the block does not come back when the block ends")
+	sender.free()
+	for lost in [0, 1, 4]:
+		var receiver := NetworkPlayerComponent.new()
+		var edges := 0
+		for index in range(lost, sent.size()):
+			if receiver.incoming_move_command(PlayerMoveCommand.new(index + 1, 0.0, 0.0, sent[index])).jump_pressed:
+				edges += 1
+		t.assert_equal(edges, 1, "one press is one jump request with %d leading packets lost" % lost)
+		for index in 3:
+			if receiver.incoming_move_command(PlayerMoveCommand.new(40 + index, 0.0, 0.0, index == 1)).jump_pressed:
+				edges += 1
+		t.assert_equal(edges, 2, "a later press is a new jump request")
+		receiver.free()
