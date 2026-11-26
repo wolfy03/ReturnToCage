@@ -10,12 +10,19 @@ const COMBAT_STATE_INTERVAL := 0.1
 const COMBAT_HEARTBEAT_INTERVAL := 0.5
 const INTERPOLATION_SPEED := 14.0
 const TELEPORT_DISTANCE := 500.0
+## A jump is one key press, but move commands travel unreliably: a press carried
+## by a single packet is lost with that packet. The sender keeps the flag raised
+## for this long and the receiver acts on its rising edge only, so one press is
+## still exactly one jump request. The wire format is unchanged.
+const JUMP_RESEND_SECONDS := 0.15
 
 var actor: PlayerActor
 var input: PlayerInputComponent
 var movement: MovementComponent
 var _local_sequence: int = 0
 var _last_received_sequence: int = -1
+var _jump_resend_remaining: float = 0.0
+var _last_received_jump: bool = false
 var _snapshot_sequence: int = 0
 var _snapshot_accumulator: float = 0.0
 var _combat_sequence: int = 0
@@ -68,14 +75,16 @@ func _exit_tree() -> void:
 	if NetworkManager.peer_world_ready.is_connected(_on_peer_world_ready):
 		NetworkManager.peer_world_ready.disconnect(_on_peer_world_ready)
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if actor == null or not NetworkManager.is_multiplayer_active() or not actor.is_local_player():
 		return
 	if not NetworkManager.is_local_world_ready():
 		input.take_jump_pressed()
+		_jump_resend_remaining = 0.0
 		return
 	if actor.is_simulation_authority():
 		input.take_jump_pressed()
+		_jump_resend_remaining = 0.0
 		return
 	_local_sequence += 1
 	var runtime := GameSession.get_player_runtime(actor.peer_id)
@@ -83,11 +92,31 @@ func _process(_delta: float) -> void:
 		runtime.move_input_sequence = _local_sequence
 	# Keep sending sequenced neutral moves while blocked so the server
 	# replaces the last movement command without a new UI authority RPC.
-	var command := input.take_local_move_command(_local_sequence)
+	var command := outgoing_move_command(input.take_local_move_command(_local_sequence), delta)
 	if command.is_valid_after(_local_sequence - 1):
 		NetworkManager.submit_player_move_input(
 			actor.peer_id, command.sequence, command.move_axis, command.vertical_axis, command.jump_pressed
 		)
+
+## Raises the jump flag on the commands that follow a press. A blocked UI
+## cancels the window: its neutral packets must not carry an old press.
+func outgoing_move_command(command: PlayerMoveCommand, delta: float) -> PlayerMoveCommand:
+	if LocalInputContext.is_gameplay_blocked():
+		_jump_resend_remaining = 0.0
+	elif command.jump_pressed:
+		_jump_resend_remaining = JUMP_RESEND_SECONDS
+	elif _jump_resend_remaining > 0.0:
+		_jump_resend_remaining = maxf(0.0, _jump_resend_remaining - delta)
+		command.jump_pressed = _jump_resend_remaining > 0.0
+	return command
+
+## The host half of the same contract: a run of raised flags is one press, and
+## it starts at whichever command of the run arrives first.
+func incoming_move_command(command: PlayerMoveCommand) -> PlayerMoveCommand:
+	var raised := command.jump_pressed
+	command.jump_pressed = raised and not _last_received_jump
+	_last_received_jump = raised
+	return command
 
 func server_snapshot_tick(delta: float) -> void:
 	if actor == null or not NetworkManager.is_multiplayer_active() or not NetworkManager.is_server():
@@ -226,7 +255,7 @@ func _on_move_command_received(
 	if not command.is_valid_after(_last_received_sequence):
 		return
 	_last_received_sequence = sequence
-	input.apply_move_command(command)
+	input.apply_move_command(incoming_move_command(command))
 
 func _on_transform_snapshot_received(
 	peer_id: int,

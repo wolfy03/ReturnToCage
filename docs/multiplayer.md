@@ -451,6 +451,37 @@ reconnected player never shows status text from the previous connection. Because
 current `player_id` → peer mapping at send time, a reconnected identity receives its new notices on
 its new peer ID. Gameplay state, Save v5 and Profile v1 are unchanged.
 
+## Jump delivery on the unreliable move channel (Protocol remains v20)
+
+Move commands are sent every client frame on an `unreliable_ordered` channel. A jump is one key press, and
+until this change it was carried by exactly one of those packets: when the transport dropped that packet
+the host never saw the press. With three peers on one machine this lost about one jump in three probe runs,
+and the same loss was the `input_authority` failure in the release lifecycle.
+
+The wire format is unchanged. The meaning of the existing `jump_pressed` flag is now a short level instead
+of a single-packet edge:
+
+- **Client** (`NetworkPlayerComponent.outgoing_move_command`): after a press, the flag stays raised on the
+  move commands of the next `JUMP_RESEND_SECONDS` (0.15 s). A blocked UI cancels the window - its neutral
+  packets must not carry an old press - and a cancelled press does not return when the block ends.
+- **Host** (`NetworkPlayerComponent.incoming_move_command`): a run of raised flags is one press. The jump
+  request is emitted on the rising edge, at whichever command of the run arrives first, so one press is
+  still exactly one `jump_requested`.
+
+Jump rules are untouched: the host still jumps only from the floor (or out of a climb), a press in the air
+is still rejected at the edge and is not buffered, and there is no coyote time. A second press within the
+0.15 s window merges into the first; a grounded jump lasts about 0.7 s, so the two cannot both be valid.
+
+An older host with a newer client sees several raised flags and calls its jump handler for each; after the
+first the actor is airborne and the rest are ignored. A newer host with an older client sees a one-packet
+run, which is one edge. Mixed peers therefore behave correctly and the handshake version did not change.
+
+This lowers the loss from "one packet" to "every packet for 0.15 s", at which point movement itself has
+stalled. It is not a delivery guarantee. A guarantee needs a reliable jump intent like `PlayerDodgeCommand`,
+which is a new RPC and therefore Protocol v21; that was not done here because nothing else required a
+version change and the monster editor contract pins v20. `tests/unit/test_network_input_validation.gd`
+covers the resend run, the cancelled press and one edge per press with 0, 1 and 4 leading packets lost.
+
 ## Application shutdown with an open transport
 
 On application exit autoloads leave the tree after the boot scene. `NetworkManager._exit_tree()`

@@ -206,6 +206,9 @@ remote actor에는 HURT도 DODGE도 복제되지 않는다(dodge는 facing mirro
 (`NetworkPlayerComponent.SNAPSHOT_INTERVAL`)로 위치·속도·facing·movement mode 를
 브로드캐스트한다. 클라이언트는 `INTERPOLATION_SPEED = 14.0` 지수 보간,
 `TELEPORT_DISTANCE = 500` 초과 시 순간이동. **클라이언트 예측·재조정(reconciliation)은 없다.**
+점프는 한 번의 키 입력이지만 이 채널은 unreliable이라, 클라이언트가 누른 뒤 0.15초 동안 `jump_pressed`를
+계속 올려 보내고 호스트는 상승 에지에서만 한 번 점프를 요청한다(`outgoing_move_command` /
+`incoming_move_command`, wire 형식 불변 — `docs/multiplayer.md`).
 
 ## 5. 액터와 컴포넌트
 

@@ -240,6 +240,11 @@ python tools/test_multiplayer_forest.py       --godot <godot> --players 3
   malformed direction 도 sequence 는 소비하므로 같은 번호로 정상 값을 다시 보낼 수 없다.
   remote client 는 HP 무적·스태미나 소비·DODGE state·combo index·input buffer·위치를 스스로
   결정하지 않는다.
+- **점프 플래그는 packet 하나에만 실리지 않는다.** 이동 명령은 unreliable 채널이라, 누른 프레임의
+  packet 하나에만 `jump_pressed` 를 실으면 그 packet 이 유실될 때 입력이 사라진다. 클라이언트는 누른 뒤
+  `NetworkPlayerComponent.JUMP_RESEND_SECONDS` 동안 플래그를 유지하고, 호스트는 **상승 에지에서 한 번만**
+  `jump_requested` 를 낸다. wire 형식과 `NetworkProtocol.VERSION` 은 그대로다. 호스트의 점프 조건(접지 또는
+  climb 탈출)은 바꾸지 않는다 — 이 구간은 jump buffer 가 아니며 공중에서 누른 입력은 에지에서 거절된다.
 - **클라이언트는 데미지를 적용하지 않는다.** 클라이언트가 보내는 것은 항상 *의도*이고,
   호스트가 검증 후 실행하고 결과를 복제한다(2절).
 - **입력 액션은 `project.godot` 에만 정의한다.** 코드에서 InputMap 을 만들지 않는다.
