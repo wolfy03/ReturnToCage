@@ -375,9 +375,33 @@ Windows 11, Python 3.14.5, PySide6-Essentials 6.11.3, Godot 4.7.2-stable. 코드
 - 참조 재연결이 세션에서 거절됐다: 편집기가 없는 `attack_patterns` 구역의 필드였기 때문이다. 참조 필드만 통과시키는
   세션 규칙을 넣었다(§3). 같은 검토에서 `rename_id`가 편집 가능 검사를 건너뛰던 것도 막았다.
 
-**CI.** `feature/monster-editor-step3-stabilization`의 GitHub Actions 결과는 푸시 뒤 최종 SHA로 확인한다. 렌더링 step은
-runner가 렌더할 수 없으면 NOT_EVALUATED를 job summary에 남긴다 — 위 표의 렌더링 결과는 개발 PC의 것이다.
+**CI** (GitHub Actions, 코드가 마지막으로 바뀐 커밋 `d30baab`).
 
+| 워크플로 / job | 결과 |
+|---|---|
+| Python Monster Editor / `core` (Ubuntu, Windows) | 성공 |
+| Python Monster Editor / `godot-contract` (Linux: 계약·확장성·Import·Staging) | 성공 |
+| Python Monster Editor / `gui-windows` (스모크 3배율, Import, Staging, **렌더링**, 작업 트리 미변경) | 1차 실패 → 재실행 성공 |
+| Python Map Editor (`43ea113`에서 실행; 이후 커밋은 그 경로를 건드리지 않아 다시 돌지 않았다) | 성공 |
+| Godot validation / `headless` | 성공 |
+| Godot validation / `windows-demo` | **실패** (아래) |
+
+- `gui-windows` 1차 실패는 `check_godot_import.py`(STEP 2의 검사, 이 브랜치에서 고치지 않음)의 격리 프로젝트 단계에서
+  Bridge 호출이 `0xC0000005`로 3회 연속 끝난 것이다. 같은 커밋을 다시 실행해 통과했다. 재시도 3회를 다 쓰는 경우가
+  개발 PC에서 한 번, CI에서 한 번 있었다 — crash가 서로 독립이라는 가정(약 5% → 3연속 0.01%)은 맞지 않는다.
+  원인은 밝히지 못했고 엔진 버전을 올릴 때 다시 본다([known_issues.md](known_issues.md)).
+- **CI runner에서도 실제 렌더러가 돌았다**: forward_plus / d3d12 / Microsoft Basic Render Driver(소프트웨어). 딱정벌레
+  20장·개구리 32장이 미리보기와 픽셀까지 같았다. 새 초안(scale 1.5)은 위치 오차 1 px, 한쪽에만 그려진 면적 5.1%로
+  한도(6%) 안이었다 — 개발 PC의 GPU(2.8%)와 가장자리 반올림이 다르다.
+- 그 과정에서 CI만의 문제 셋을 고쳤다: runner에 오디오 장치가 없어 엔진이 낸 `ERROR:` 줄(렌더 검사를
+  `--audio-driver Dummy`로 실행), `docs/`에 넣은 증거 PNG를 Godot이 import해 생긴 `.png.import` 파일(폴더에
+  `.gdignore`), 재생 시간 표본 하나가 frame 경계에서 한 frame 앞선 것(검사의 시계와 sprite의 시계의 위상 차이를
+  양쪽으로 허용).
+- `windows-demo`는 릴리스 EXE의 session lifecycle probe에서 역할 B의 `assert_motion`이 실패했다(`43ea113`, `d30baab`
+  두 번 모두). master `8a24f91`에서는 같은 job이 성공했고 그 전 master 커밋들에서는 실패했다. 이 브랜치는 게임
+  코드를 바꾸지 않았다(`tools/python_monster_editor/`, `tools/monster_bridge/`, 워크플로, 문서뿐). Runtime 안정화에서
+  미해결로 남긴 "client 자신의 actor snapshot / run animation 관측" 문제와 같은 자리이며
+  ([runtime_stabilization.md](runtime_stabilization.md)), 여기서 고치지 않았다.
 
 **확인하지 않은 것.** 사람이 직접 조작한 검사(입력은 `QTest` 이벤트). OS 파일 대화상자. macOS. Linux에서의 창 단위
 단축키. 실제 전투·네트워크·게시(해당 기능 없음). Windows 릴리스 빌드와 lifecycle probe는 이 브랜치에서 다시 돌리지
