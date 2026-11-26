@@ -41,7 +41,9 @@ def run(command: list[str], log: Path) -> None:
     output = result.stdout.decode("utf-8", errors="replace")
     log.write_text(output, encoding="utf-8")
     if result.returncode or ERRORS.search(output):
-        raise RuntimeError(f"Command failed: {subprocess.list2cmdline(command)}\n{output}")
+        # Name the exit code: an engine crash at exit leaves no error text at all.
+        code = result.returncode
+        raise RuntimeError(f"Command failed (exit={code}, 0x{code & 0xFFFFFFFF:08X}): {subprocess.list2cmdline(command)}\n{output}")
 
 
 def inspect_executable(path: Path) -> dict:
