@@ -81,13 +81,17 @@ Schema V1에는 두 종류의 참조가 있다.
 frame의 동일성은 **위치**로 추적한다. 같은 이미지·같은 rect의 frame이 여러 개 있을 수 있으므로 그림으로 구별하지
 않는다(테스트는 frame마다 다른 `duration`을 꼬리표로 쓴다).
 
-**세션 규칙 두 가지** (`DocumentSession.apply`).
+**세션 규칙** (`DocumentSession.apply`). S2에서 "edit 하나하나의 경로"가 아니라 **적용한 결과**를 보도록 바꿨다(§15).
 
-- 편집기가 없는 구역(`attack_patterns`, `behavior`)의 필드라도, 편집 가능한 대상(Clip·이미지·Hitbox)을 가리키는
-  `Id(ref=…)` 필드는 재연결할 수 있다. 그 밖의 필드, 상태·패턴을 가리키는 참조, 그리고 가져온 문서가 `read_only`로
-  묶은 구역은 여전히 거절된다.
-- ID 변경(`rename_id`)은 경로가 없는 edit이라 이전에는 편집 가능 검사를 통과했다. 이제 그 대상이 정의된 구역이
-  편집 가능해야 한다(가져온 몬스터의 Clip 이름은 바꿀 수 없다).
+- 편집 가능하지 않은 구역은 edit 묶음을 적용한 뒤에도 그대로여야 한다. 예외는 하나다: 새 초안에서 편집기가
+  아직 없을 뿐인 구역(`attack_patterns`, `behavior`)의, 편집 가능한 대상(Clip·이미지·Hitbox)을 가리키는
+  `Id(ref=…)` 필드가 **존재하는 다른 대상**을 가리키게 되는 것. 비우거나 없는 ID를 넣는 것은 "따라가기"가 아니다.
+- 가져온 문서가 `read_only`로 묶은 구역은 그 예외도 없다. binding이 언급하지 않은 구역도 `read_only`다
+  (이전에는 `editable`로 취급했다).
+- ID 변경(`rename_id`)은 경로가 없는 edit이고 그 이름을 쓰는 필드를 전부 고쳐 쓴다. 결과를 보므로, 읽기 전용
+  구역의 필드를 하나라도 고치게 되는 rename은 통째로 거절된다.
+- 어떤 edit도 편집할 수 없는 구역의 참조를 끊어 놓을 수 없다(가리키던 대상을 지우거나 다른 이름으로 바꿔서).
+  사용자가 그 구역에서 고칠 방법이 없기 때문이다.
 
 frame 고유 ID는 도입하지 않았다. V1의 번호 참조는 위 규칙으로 일관되게 유지된다. frame 단위 이벤트가 생기는
 시점에는 번호 대신 ID가 필요해질 수 있다(§13).
@@ -135,10 +139,15 @@ frame을 편집한다.
 
 | 제한 | 값 |
 |---|---|
-| 디코딩된 픽셀 합계(폭 × 높이 × 4) | 96 MiB |
+| **cache 전체** = frame + 보관 중인 시트 (`total_bytes`) | **160 MiB** (`DEFAULT_BUDGET`) |
+| 그중 시트 한 장 | 64 MiB 이하일 때만 보관 (`SHEET_LIMIT`). 시트와 그 frame 하나가 예산에 함께 들어가지 않으면 보관하지 않는다 |
+| frame | 시트를 뺀 나머지. 64 MiB 시트를 보관 중이면 96 MiB (`FRAME_BUDGET`), 시트가 없으면 160 MiB 전부 |
 | 항목 수 | 512 |
 | 한 frame | 예산의 절반 이하. 넘으면 그리되 보관하지 않는다 |
-| 마지막으로 디코딩한 시트 한 장 | 64 MiB 이하일 때만 (frame 예산과 별도) |
+
+STEP 3 안정화 1차에서는 시트가 frame 예산(96 MiB) **밖에** 따로 있어서 "예산 96 MiB"라고 적어 놓고 실제로는
+160 MiB까지 들고 있었다. S2에서 예산을 하나로 합쳤다: `max_bytes`가 곧 cache가 드는 전부이고
+`bytes + sheet_bytes <= max_bytes`가 항상 성립한다. 넘치면 오래된 frame부터, 마지막에 시트를 버린다.
 
 LRU다. key는 (프로젝트, 경로, 파일 내용 해시, rect)이므로 다른 프로젝트·바뀐 파일·다른 rect가 같은 frame을 돌려줄
 수 없다. 실패한 디코딩은 기억하지 않는다. 프로젝트를 떠나면 그 프로젝트의 frame을, 이미지 갱신 시 그 파일의
@@ -160,7 +169,7 @@ frame을 버린다. 편집할 때마다 전체를 비우지 않는다.
 
 32 frame Clip 400회 재생: frame당 0.0225 ms, 디코딩 32회, working set 증가 0 KiB.
 
-cache 추정치는 예산을 넘지 않았다. working set은 그보다 크다 — 보관 중인 시트(64 MiB)와 Qt·할당자의 몫이다.
+cache 추정치(frame + 시트)는 예산 160 MiB를 넘지 않았다. working set의 증가분은 그와 같은 수준이다(약 161 MiB).
 cache를 비우면 시작 수준으로 돌아왔다(누수 없음). 32 frame Clip을 400번 다시 재생해도 디코딩은 32번, working set
 증가는 0 KiB였다.
 
@@ -191,6 +200,12 @@ cache를 비우면 시작 수준으로 돌아왔다(누수 없음). 32 frame Cli
 
 하나라도 아니면 `STAGING_NOT_OWNED`이고 아무것도 지우지 않는다. `remove_staging_copy(path)`는 이 프로세스가 만든
 사본에만 동작한다 — 표식을 복사해 넣은 폴더는 지워지지 않는다.
+
+S2에서 더한 것(§15): 폴더의 **identity**(device, inode)를 만들 때 기록해 두고 삭제 전에 대조한다 — 같은 이름의
+다른 폴더는 표식이 있어도 지우지 않는다. 표식의 사본(`.rtc_monster_staging_owner`)을 사본 **옆**에 하나 더 둔다.
+삭제는 사본의 내용 → 표식 → 사본 폴더 → 옆의 token → 작업 폴더 순서로 하므로, 어디서 멈추든 소유를 증명하는
+파일이 마지막까지 남는다. 표식이 이미 없는 폴더는 **이 세션이 삭제를 시작했던 것**(`leftover`)일 때만, token이나
+identity로 확인한 뒤 다시 지운다.
 
 **삭제 실패.** Windows의 파일 잠금에 대비해 0.25초 간격으로 4번까지 시도한다. 그래도 남으면
 `STAGING_CLEANUP_FAILED`(경로, 첫 실패 항목, 원인, "실제 프로젝트에는 영향 없음")이고 세션은 `leftovers()`에 남아
@@ -223,13 +238,15 @@ OS 경로, `..`, 다른 확장자, 다른 폴더, 링크를 거쳐 사본 밖으
 |---|---|
 | `differences`, `passed` | 구조 비교. `passed`는 렌더링·전투·네트워크·게시에 대해 아무것도 말하지 않는다 |
 | `areas` | `staging` `resources` `readback` `images` `attach` — 검사함. `rendering` `combat_runtime` `network` `publish` — 항상 `NOT_EVALUATED` |
-| `document_fingerprint`, `project_fingerprint` | 결과가 어떤 문서와 어떤 이미지·엔진 버전에 대한 것인가. `is_current(document)` |
+| `document_fingerprint`, `project_fingerprint` | 결과가 어떤 문서와 어떤 프로젝트 파일에 대한 것인가. `is_current(document)` |
+| `dependencies` | stage가 의존한 **모든** 프로젝트 파일의 manifest: 경로 → sha256·크기·수정 시각 (S2, §15) |
 | `resources` | 생성된 두 파일의 SHA-256 |
 | `process` | 호출별 시도 횟수와 crash한 시도의 종료 코드 |
 | `notes`, `cleanup_error`, `godot_version`, `session` | |
 
-편집기는 결과를 문서 fingerprint와 프로젝트 generation에 묶어 둔다. 편집, 다른 문서, 프로젝트 변경 뒤에는
-"Staging: 오래됨"으로 표시하고, 통과한 결과도 "구조 일치 (실제 렌더링·전투는 미검사)"라고 적는다.
+편집기는 결과를 문서 fingerprint와 프로젝트 generation, 그리고 의존 파일 manifest에 묶어 둔다. 편집, 다른 문서,
+프로젝트 설정 변경, **의존 파일의 변경** 뒤에는 "Staging: 오래됨"으로 표시하고, 통과한 결과도 "구조 일치 (실제
+렌더링·전투는 미검사)"라고 적는다.
 
 ## 7. Godot 쪽 검증 (`monster_stager.gd`)
 
@@ -247,8 +264,12 @@ OS 경로, `..`, 다른 확장자, 다른 폴더, 링크를 거쳐 사본 밖으
 - `BridgeResponse.attempts`, `.crashes`(버린 시도의 종료 코드), `.crash_log`(첫 crash의 엔진 로그),
   `.process_result`(`CLEAN` / `CRASHED_THEN_RETRIED`). crash는 성공에 섞이지 않는다.
 - 종료 코드만으로 "알려진 엔진 crash"라고 단정하지 않는다. 로그를 남겨 확인할 수 있게 한다.
-- 재시도는 읽기 명령과, 버려도 되는 사본 안의 자기 출력만 다시 쓰는 `stage_monster`에만 한다(최대 3회). 실제
-  프로젝트에 쓰는 작업은 재시도하지 않는다(그런 작업은 아직 없다).
+- 재시도는 읽기 명령과, 버려도 되는 사본 안의 자기 출력만 다시 쓰는 `stage_monster`·import·렌더 검사에만 한다.
+  실제 프로젝트에 쓰는 작업은 재시도하지 않는다(그런 작업은 아직 없다).
+- S2: crash를 둘로 나눈다. **성공 줄을 출력한 뒤** 죽었고 로그에 실패 표시가 없으면 `exit_after_success`
+  (알려진 엔진 종료 crash의 모양) — 전체 3회까지 다시 한다. 그 밖은 `during_work`(작업 도중, 원인 불명) — **한 번만**
+  더 한다. crash한 실행에 쓴 시간이 600초를 넘거나 취소되면 새로 시작하지 않는다. 시도마다 단계·횟수·종료 코드·
+  분류·소요 시간·로그 끝부분이 기록되고, 성공한 결과에도 실패한 오류에도 붙어 있다(§15).
 - 취소·제한 시간에는 시작한 프로세스의 **트리**를 끝낸다(Windows `taskkill /T`, POSIX 프로세스 그룹). 자식이 남아
   작업 폴더를 잡고 있으면 사본을 지울 수 없기 때문이다. 대상은 편집기가 시작한 PID에서 찾으며 이름으로 찾지 않는다.
 
@@ -445,3 +466,107 @@ Attack Timeline 시간 = 서버 권위. timing.tick_of(초, tick_rate)
 
 공격 패턴 편집기, 타임라인 실행기, `DataEnemyDefinition` / `DataEnemyAgent`, 실제 피해 판정, frame별 Hurtbox의
 런타임 적용, 프로토콜 변경, AI 그래프, 게시, EXE, Godot 엔진 수정·버전 변경, 게임 네트워크 코드 수정.
+
+## 15. STEP 3-S2 — 1차 안정화 뒤에 남은 결함
+
+1차 안정화(`cbf68ce`까지)의 코드를 다시 읽어 찾은 결함 여덟 가지를 고쳤다. 기능을 새로 만들지 않았고 Schema(V1),
+Godot(4.7.2), 프로토콜(20), 세이브(v5), 게임 런타임은 그대로다. 각 결함은 **먼저 테스트로 재현하고**
+(`tests/test_step3_s2.py`를 `cbf68ce`의 코드에 대해 실행: 16 실패, 10 오류, 4 통과 — 통과한 4개는 "이미 안전했던
+것이 계속 안전한지" 보는 가드다) 그 다음에 고쳤다(30 통과).
+
+| 항목 | 결함 | 수정 전 재현 | 수정 | 바뀐 파일 |
+|---|---|---|---|---|
+| FIX-20 | Clip·Hitbox의 ID 변경이, 가져온 문서가 `read_only`로 묶은 구역의 참조까지 고쳐 썼다. binding이 언급하지 않은 구역은 `editable`로 취급됐다. 참조 필드에는 아무 값이나(빈 값, 없는 ID) 넣을 수 있었다 | `DID NOT RAISE DocumentError` 5건 | 세션이 edit의 경로가 아니라 **적용 결과**를 원본과 비교한다(§3). 선언되지 않은 구역은 `read_only` | `application/session.py` |
+| FIX-21 | stage 뒤에 이미지나 스크립트가 바뀌어도 "Staging: 구조 일치"가 유지됐다. 유효성은 문서와 프로젝트 설정 변경만 봤다 | `stage_state()`가 디스크를 보지 않음 | 결과의 의존 파일 manifest와 디스크를 비교한다: 편집마다 크기·시각, 새로고침(F5)에서 전체 내용 | `gui/main_window.py`, `bridge/staging.py` |
+| FIX-22 | 삭제가 중간에 실패하면 표식이 먼저 지워져 있을 수 있었고, 그러면 재시도가 `STAGING_NOT_OWNED`로 영원히 거절됐다 | 잠긴 파일 하나로 실제 재현 | 삭제 순서를 정하고(소유 증명을 마지막에) 사본 옆에 token을 하나 더 둔다. 폴더 identity 대조 | `bridge/staging.py` |
+| FIX-23 | `Path.resolve()`가 링크를 실제 경로로 바꾼 **뒤에** 링크인지 검사해서, 프로젝트 root가 junction이어도 통과했다 | `DID NOT RAISE BridgeError` | 받은 경로 그대로(`abspath`) 먼저 검사한다. 작업 폴더도 같다 | `bridge/staging.py` |
+| FIX-24 | 조사와 복사 사이에 상위 폴더가 링크로 바뀌면 그 링크를 따라 프로젝트 밖의 파일을 복사했다(파일 자신만 검사했다) | 밖의 파일이 복사됨 | 파일마다 읽기 직전에 root부터 그 파일까지의 모든 폴더와 파일 자신을 다시 검사하고, 연 handle이 방금 본 그 파일인지 확인한 뒤 그 handle의 바이트를 복사한다 | `bridge/staging.py` |
+| FIX-25 | fingerprint가 문서의 이미지와 `.godot-version`뿐이었다. stager·presenter·profile 스크립트나 carrier의 파일이 바뀌어도 같았다 | fingerprint 불변 | manifest: 이미지, `.godot-version`, `project.godot`, Bridge 4개 파일, profile·presenter 스크립트, 그리고 엔진이 알려 주는 carrier의 정의·scene·script | `bridge/staging.py`, `tools/monster_bridge/monster_stager.gd` |
+| FIX-26 | crash 재시도가 "3회까지"뿐이었다. 작업 도중의 crash와 종료 crash를 구분하지 않았고 기록은 종료 코드 목록이 전부였다 | 분류·기록 API 없음 | 분류, 분류별 한도, 전체 시간 한도, 시도별 기록(§8) | `bridge/client.py`, `bridge/staging.py`, `bridge/rendering.py` |
+| FIX-27 | frame cache "예산 96 MiB" 밖에 시트 64 MiB가 따로 있었다. STEP 2의 증거 이미지 폴더에는 Godot이 만든 `.import` 13개가 커밋돼 있었다 | 예산 98,404 B에 147,456 B 보유 | 예산을 하나로 합쳤다(§5). 증거 폴더에 `.gdignore`, `.import` 제거, 관리 규칙을 `docs/testing.md`에 | `gui/frame_cache.py`, `check_frame_cache.py`, `docs/monster_editor_step2_screens/` |
+
+### FIX-20: 결과로 판정한다
+
+edit 하나하나의 경로를 보는 검사로는 두 가지를 놓친다. rename은 경로가 없고 그 이름을 쓰는 필드를 전부 고친다.
+여러 edit을 묶으면 하나씩은 허용돼도 합쳐서는 허용되지 않는 변화가 될 수 있다. 그래서 `document.apply(*edits)`로
+새 문서를 만든 다음, history에 넣기 **전에** 원본과 비교한다(`_protected_change`).
+
+- 편집 가능하지 않은 구역의 값 집합(경로까지)이 같아야 한다. 구조가 달라졌으면 거절.
+- 값이 달라진 곳은 전부 "따라갈 수 있는 참조"여야 하고, 새 값은 새 문서에 **존재하는** 대상이어야 한다.
+- Clip·이미지·Hitbox의 ID 집합이 달라졌으면, 편집 불가 구역의 참조 중 이전에는 유효했는데 이제 끊긴 것이 없어야 한다.
+
+비교는 보호 구역이 실제로 달라졌거나 대상 ID 집합이 달라졌을 때만 문서를 순회한다(평소 편집에는 비용이 없다).
+기존 흐름(대체 Clip을 고르는 삭제, 새 초안의 ID 변경)은 그대로 통과한다.
+
+### FIX-21 · FIX-25: 의존 파일 manifest
+
+`StageResult.dependencies` = `{경로: {sha256, size, mtime_ns}}`. sha256은 staging 사본에서, 크기·시각은 복사할 때 본
+원본의 것이다. `project_fingerprint`는 이 manifest의 경로와 sha256을 묶은 해시다.
+
+| 비교 | 언제 | 무엇을 | 한계 |
+|---|---|---|---|
+| 빠른 비교 `changed_dependencies(project, result)` | 편집할 때마다(`stage_state`) | 크기와 수정 시각 | 둘 다 그대로인 채 내용만 바뀐 파일은 못 본다. 내용은 같고 시각만 바뀐 파일은 "바뀜"으로 본다 |
+| 전체 비교 `changed_dependencies(…, deep=True)` | 카탈로그 새로고침(F5) → `verify_stage()` | 모든 파일의 sha256 | 파일 수만큼 읽는다(보통 20개 안팎) |
+
+전체 비교에서 내용이 같은 것으로 확인된 파일의 크기·시각이 빠른 비교의 새 기준이 된다. manifest에 없는 파일
+(다른 몬스터의 리소스, 게임 코드 전반)의 변경은 결과를 오래된 것으로 만들지 않는다 — 그것까지 넣으면 어떤 편집에도
+결과가 무효가 된다. presenter가 간접적으로 부르는 코드까지 추적하지는 않는다.
+
+### FIX-22 ~ FIX-24: 그 사이에 일어나는 일
+
+- **조사 → 복사.** 조사가 본 것을 믿지 않는다. 조사 뒤 새로 생긴 파일은 복사되지 않는다(문서화된 한계). 사라진 파일은
+  `STAGE_FAILED`, 폴더나 파일이 다른 종류(링크, 폴더↔파일)로 바뀌었으면 `STAGING_UNSAFE_SOURCE`, 내용이 바뀐 파일은
+  읽은 그대로 복사하고 `changed_during_copy`에 적는다. 읽는 도중 쓰인 파일도 거기 들어간다.
+- **`O_NOFOLLOW`.** POSIX에서는 마지막 구성요소가 링크면 열기 자체가 실패한다. Windows에는 그 flag가 없어서, 열기
+  직전의 `lstat`과 연 뒤의 `fstat`이 같은 파일(device, inode)인지로 확인한다. 상위 폴더가 검사와 열기 사이의 아주 짧은
+  순간에 바뀌는 경우까지 막지는 못한다 — 그 창을 파일 하나의 검사 직후로 줄였을 뿐이다.
+- **삭제.** §6 참조. 표식이 없는 폴더를 지우는 길은 "이 세션이 이미 삭제를 시작한 폴더"에만 열려 있고, 그때도 token
+  이나 identity가 맞아야 한다. 표식이 없는데 삭제를 시작한 적도 없는 폴더, 같은 이름의 다른 폴더는 거절된다(테스트).
+
+### FIX-26: 기록의 모양
+
+```json
+{"attempts": {"import": 1, "stage_monster": 2, "read_stage": 1},
+ "result": "CRASHED_THEN_RETRIED",
+ "crash_exit_codes": [3221225477],
+ "crashes": [{"step": "stage_monster", "attempt": 1, "exit_code": 3221225477,
+              "classification": "exit_after_success", "seconds": 1.74, "log_tail": "…"}]}
+```
+
+`StageResult.process`와 검사 스크립트의 보고서(`stage_report.json`, `render_report.json`)에 들어간다. 편집기는 로그
+폴더가 설정돼 있으면 crash한 시도의 로그 끝부분을 파일로 남긴다. 엔진의 crash 자체는 고치지 않았다.
+
+### 검증 (S2)
+
+Windows 11, Python 3.14.5, PySide6-Essentials 6.11.3, Godot 4.7.2-stable. 코드 커밋 `468b75c`에서 실행했다(그 뒤는
+문서뿐이다). Godot을 쓰는 검사는 순차로 돌렸다.
+
+| 검사 | 결과 |
+|---|---|
+| `tests/test_step3_s2.py` — 수정 전(`cbf68ce`의 코드) | 16 실패, 10 오류, 4 통과 |
+| `tests/test_step3_s2.py` — 수정 후 | 30 통과 |
+| `pytest tools/python_monster_editor/tests` (네이티브 / offscreen) | 941 통과·8 건너뜀 / 939 통과·10 건너뜀 (1차 안정화: 911) |
+| `pytest tools/python_map_editor/tests` | 184 통과, 3 건너뜀 |
+| `check_godot_contract.py` / `check_contract_extensibility.py` | 205 통과·3 미검사 / PASS |
+| `check_godot_stage.py` | PASS, 검사 72개. manifest가 이미지·도구 파일·carrier 파일 3개를 포함하고 실제 프로젝트와 빠른·전체 비교 모두 차이 없음 |
+| `check_godot_render.py` (forward_plus / gl_compatibility) | PASS / PASS. 딱정벌레 20·개구리 32장 픽셀 동일 |
+| `check_frame_cache.py` | PASS. frame + 시트 최대 160 MiB = 예산 |
+| GUI 스모크 100% / 200% (실제 입력, 실제 Godot) | 각 49 통과 |
+| ENet E2E 9종, Map Editor `check_scene_bridge.py` | 통과 |
+| `tools/check_project.py` | 1차 **실패**, 재실행 2회 통과 (아래) |
+| `check_godot_import.py` | 1차 **실패**, 재실행 2회 통과 (아래) |
+
+**이번 회귀에서 본 엔진 crash.** 전부 `0xC0000005`이고 게임·편집기 코드의 실패 표시는 없었다.
+
+| 어디서 | 모양 | 처리 |
+|---|---|---|
+| `check_godot_stage.py`의 `stage_monster` 1회, 렌더 검사 중 `stage_monster` 2회 | Bridge 호출 | 재시도 1회로 통과. 결과에 `CRASHED_THEN_RETRIED`와 시도 기록이 남았다 — 새 기록이 실제 crash를 잡은 첫 사례다 |
+| `check_project.py`의 `tests/test_runner.tscn -- --restart-write` | `TEST PASS` 출력 **뒤** 종료 중 crash | 이 스크립트는 재시도가 없다(게임 쪽 도구, 이번에 고치지 않음). 다시 실행해 통과 |
+| `check_godot_import.py`의 격리 사본 `--import` | import 도중 종료 | 이 스크립트의 그 단계는 재시도가 없다(STEP 2의 검사). 다시 실행해 통과 |
+
+뒤의 둘은 이 브랜치가 바꾼 코드가 아니다. [known_issues.md](known_issues.md)의 기준으로 `check_project`의 것은 성공
+marker 뒤의 crash이고, import 도중의 것은 marker가 없어 "unknown"으로 남는다. 같은 PC에서 다른 세션의 Godot이 계속
+돌고 있었다.
+
+CI 결과는 이 절 아래 "CI (S2)"에 푸시 뒤 적는다.
+

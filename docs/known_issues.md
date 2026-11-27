@@ -57,7 +57,8 @@
   ([python_map_editor_bridge.md](python_map_editor_bridge.md)).
 - 엔진 버전별 예외는 검증·프로세스 관리 계층(`tools/repeat_stability.py`, CI)에만 둔다. 게임 런타임에
   이 crash를 위한 조건문을 넣지 않는다.
-- Monster Editor Bridge는 crash로 끝난 호출의 결과를 버리고 다시 실행한다(최대 3회). 대상은 읽기 명령과,
+- Monster Editor Bridge는 crash로 끝난 호출의 결과를 버리고 다시 실행한다. 위 분류 기준의 2·3번(성공 marker,
+  실패 표시 없음)을 로그로 확인해 `exit_after_success`면 전체 3회까지, 아니면(`during_work`) 한 번만 더 한다. 대상은 읽기 명령과,
   버려도 되는 staging 사본 안의 자기 출력만 다시 쓰는 `stage_monster`뿐이다. 응답에 시도 횟수, 버린 시도의 종료
   코드, 첫 crash의 로그가 남고(`BridgeResponse.crashes` / `.crash_log` / `.process_result`) 재시도가 통과해도
   지워지지 않는다. Bridge는 종료 코드만 보고 "알려진 엔진 crash"라고 분류하지 않는다 — 위 분류 기준의 판단은 로그를

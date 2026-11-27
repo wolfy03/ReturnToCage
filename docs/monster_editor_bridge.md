@@ -75,7 +75,7 @@ godot --headless --path <project 절대 경로> res://tools/monster_bridge/bridg
 |---|---|
 | `sprite_frames_path`, `profile_path` | 저장한 두 리소스 |
 | `profile` | 저장한 profile을 디스크에서 다시 읽은 결과(`monster_inspector.gd`의 `profile()`과 같은 형식) |
-| `attach` | carrier actor를 표현 actor와 서버 런타임 actor로 한 번씩 ready시킨 결과(`has_presenter`, sprite의 `SpriteFrames` 경로·첫 frame 텍스처·위치·scale·`texture_filter`) |
+| `attach` | carrier actor를 표현 actor와 서버 런타임 actor로 한 번씩 ready시킨 결과(`has_presenter`, sprite의 `SpriteFrames` 경로·첫 frame 텍스처·위치·scale·`texture_filter`). `dependencies`: carrier 자신의 파일(`EnemyDefinition`, actor scene, agent script)의 `res://` 경로 — 편집기가 stage 결과의 의존 파일 manifest에 넣는다 |
 | `monster_id`, `staging_session` | 요청과 대조된다 |
 
 **`read_stage`.** 요청 `"stage": {"staging_session": "…"}`. 같은 세션 검사를 거쳐 staged 두 파일을 **디스크에서**
@@ -142,10 +142,21 @@ Windows의 Godot 4.7.2는 Bridge가 일을 끝내고 결과를 쓴 **뒤**, 종�
 죽는 경우가 있다. 개발 PC 측정: Bridge 150회 중 7회, 60회 중 1회, STEP 1의 `contract_probe` 80회 중 2회, 게임 기본
 씬 120회 중 0회. 종료를 몇 프레임 미뤄도 달라지지 않았고 원인은 밝히지 못했다.
 
-crash한 실행의 결과는 내용이 멀쩡해 보여도 쓰지 않는다. 읽기 명령은 같은 호출을 다시 실행한다(최대 3회).
+crash한 실행의 결과는 내용이 멀쩡해 보여도 쓰지 않는다. 읽기 명령은 같은 호출을 다시 실행한다.
 `stage_monster`도 다시 실행한다 — 버려도 되는 사본 안의 자기 출력 폴더만 쓰고, 시작할 때 이전 시도의 파일을 지우기
-때문이다. 실제 프로젝트에 쓰는 명령은 재시도하지 않는다(그런 명령은 아직 없다). 세 번 모두 crash하면
-`PROCESS_CRASH`다. `check_godot_contract.py`(STEP 1)는 재시도하지 않으므로 같은 이유로 드물게 실패할 수 있다.
+때문이다. staging 사본의 `--import`와 render check도 같다. 실제 프로젝트에 쓰는 명령은 재시도하지 않는다(그런
+명령은 아직 없다). `check_godot_contract.py`(STEP 1)는 재시도하지 않으므로 같은 이유로 드물게 실패할 수 있다.
+
+**재시도의 한도** (`client.retry_crashes`, S2).
+
+| 분류 | 조건 | 다시 실행 |
+|---|---|---|
+| `exit_after_success` | 로그에 그 실행의 성공 줄(`MONSTER BRIDGE <명령> PASS/FAIL`, `MONSTER RENDER CHECK PASS`)이 있고 실패 표시(`SCRIPT ERROR:`, `ERROR:`, `Parse Error`, leak)가 없다 | 전체 3회까지 |
+| `during_work` | 그 밖의 모든 crash. `--import`는 완료를 알리는 줄이 없으므로 항상 이쪽이다 | **1회만** 더 |
+
+crash한 실행들에 쓴 시간이 600초를 넘었거나 취소됐으면 새 실행을 시작하지 않는다. 한도에 걸리면 `PROCESS_CRASH`이고
+메시지에 이유가 붙는다. 분류는 [known_issues.md](known_issues.md)의 기준을 따른 것이며, 종료 코드만으로
+`exit_after_success`가 되는 일은 없다.
 
 기능 결과와 프로세스 결과는 따로 남는다.
 
@@ -153,6 +164,7 @@ crash한 실행의 결과는 내용이 멀쩡해 보여도 쓰지 않는다. 읽
 |---|---|
 | `attempts` | 몇 번째 시도에서 답을 얻었나 |
 | `crashes` | 버린 시도들의 종료 코드 |
+| `crash_records` | 시도별 기록: `step`, `attempt`, `exit_code`, `classification`, `seconds`, `log_tail`. 실패로 끝나면 `BridgeError.crash_records`에 같은 것이 있다 |
 | `crash_log` | 첫 crash의 엔진 로그 |
 | `process_result` | `CLEAN` / `CRASHED_THEN_RETRIED` |
 

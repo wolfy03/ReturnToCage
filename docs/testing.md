@@ -551,14 +551,21 @@ GUI native mouse-enter 입력 수정 및 공식 바이너리의 최종 반복 �
 | 안정화 GUI (`tests/test_gui_stabilization.py`) | 〃 | 버튼으로 frame 이동(세트·타격 frame·선택·Undo·저장), 삭제 확인 흐름, Clip·Hitbox 대체, 반전 상태의 핸들, 확대·pan·scale 분리, 드래그 취소 10가지, 재생 버튼, 선택 계약 |
 | 실제 Godot Staging | `python tools/python_monster_editor/check_godot_stage.py --godot <godot> --artifacts <dir>` | 세 문서 staging: 두 번째 프로세스의 재읽기가 문서와 같음, 영역별 상태, texture filter(1·2·0), 이미지 해시 불일치 보고, 실제 프로젝트와 다른 세션의 거절, 잘못된 요청 13종이 `INVALID_REQUEST`, 이전 시도의 출력 교체, 사본이 남지 않음, **`.godot`을 제외한 프로젝트 전체 파일**의 해시가 전후 같음 |
 | **실제 렌더링** | `python tools/python_monster_editor/check_godot_render.py --godot <godot> --artifacts <dir> [--rendering-method gl_compatibility] [--allow-no-renderer]` | 창과 렌더러로 딱정벌레·개구리·새 초안을 그려 편집기 미리보기와 비교(위치, 픽셀, region, 필터, 역할, 실제 재생 시간). 증거 PNG와 `render_report.json`. 렌더러가 없으면 실패하거나 `--allow-no-renderer`로 NOT_EVALUATED — headless로 대체하지 않는다 |
+| S2 회귀 (`tests/test_step3_s2.py`) | core와 같은 pytest 명령 | FIX-20~27 각각: 읽기 전용 구역을 고치는 rename과 묶음 edit의 거절, 선언되지 않은 구역, 링크인 프로젝트 root·작업 폴더, 조사 뒤 링크로 바뀐 폴더와 사라진·바뀐 파일, 표식이 지워진 뒤의 cleanup 재시도와 그 우회 방지, 의존 파일 manifest와 "오래됨" 표시(크기·시각이 같은 변경 포함), crash 분류와 재시도 한도·기록, frame + 시트 합산 예산, `docs/`의 증거 이미지에 `.import`가 없고 `.gdignore` 아래에 있는지 |
 | Frame cache 실측 | `python tools/python_monster_editor/check_frame_cache.py --output <json>` | cache 추정치가 예산 안인지, 프로세스 working set(cache 추정치와 다른 양으로 따로 기록), 장시간 재생, 프로젝트 전환 |
 
 CI(`python-monster-editor.yml`): `core`가 안정화 테스트 묶음과 frame cache 실측을 Ubuntu·Windows에서, `gui-windows`가
 스모크(Animation / Collision 흐름 포함)·Import·Staging·렌더링을, `godot-contract`가 Linux의 계약·Import·Staging을 돌린다.
 렌더링 step은 runner에 렌더러가 없으면 NOT_EVALUATED를 job summary에 적는다.
 
-`docs/` 아래에 PNG를 추가할 때는 그 폴더에 빈 `.gdignore`를 둔다. 없으면 Godot이 문서용 이미지를 import해
-`.png.import` 파일을 만들고, CI의 "작업 트리 미변경" 확인이 실패한다.
+**개발 증거 이미지.** `docs/` 아래의 PNG(스크린샷, 비교 시트)는 다음을 지킨다. `tests/test_step3_s2.py`가 검사한다.
+
+- 그 폴더(또는 상위 폴더)에 빈 `.gdignore`를 둔다. 없으면 Godot이 문서용 이미지를 import해 `.png.import` 파일을
+  만들고, CI의 "작업 트리 미변경" 확인이 실패한다. `.import` 파일은 커밋하지 않는다.
+- 한 장 1 MiB 이하. 저장소에는 대표 몇 장과 요약 JSON만 두고, 전체 스크린샷과 shot별 수치는 CI artifact
+  (`Monster-Editor-gui-evidence`)에 남긴다.
+- 보고서 JSON에서 사용자 홈 경로는 `<home>`으로 바꾼다.
+- staging 사본은 `docs/`를 복사하지 않으므로 증거 이미지는 게임에도 staging에도 들어가지 않는다.
 
 `check_godot_stage.py`와 `check_godot_render.py`는 실행 전후 프로젝트 전체의 해시를 비교한다. 그 사이에 프로젝트의
 파일을(문서 포함) 고치면 "프로젝트가 바뀌었다"로 실패한다 — 검사가 도는 동안 저장소를 편집하지 않는다.
