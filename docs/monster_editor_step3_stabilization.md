@@ -648,7 +648,11 @@ CI 결과는 아래 "CI (Final patch)"에 푸시 뒤 적는다.
 | Python Monster Editor / `godot-contract` (Linux: 계약·확장성·Import·Staging) | 성공 |
 | Python Monster Editor / `gui-windows` (스모크 3배율, Import, Staging, 실제 렌더링, 작업 트리 미변경) | 성공, 첫 실행 |
 | Godot validation / `headless` | 성공 |
-| Godot validation / `windows-demo` | 이 기록을 쓰는 시점에 실행 중. 직전 커밋들의 결과는 [known_issues.md](known_issues.md)의 "Windows 릴리스 probe의 미해결 기능 실패" |
+| Godot validation / `windows-demo` | **성공** (`e18ad03`). 이 job이 이 브랜치에서 통과한 첫 실행이다 |
+
+`windows-demo`는 같은 게임 코드로 `43ea113`·`d30baab`·`1b19bb1`·`0513b42`에서 서로 다른 자리에서 실패했고 `e18ad03`에서
+통과했다. 통과 한 번이 그 실패들이 해결됐다는 뜻은 아니다 — 간헐적이라는 뜻이다
+([known_issues.md](known_issues.md)의 "Windows 릴리스 probe의 미해결 기능 실패"). 이 줄보다 뒤의 커밋은 문서만 고친다.
 
 이것으로 MONSTER-STEP 3 안정화를 닫는다. 남은 것은 이 브랜치 밖의 일이다: 엔진의 종료 crash(엔진 버전을 올릴 때),
 Windows 릴리스 probe의 기능 실패(MONSTER-STEP 4-B 전에 별도 검증).

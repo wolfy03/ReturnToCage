@@ -84,7 +84,7 @@ python tools/repeat_stability.py --godot <new godot> --repeat 30 --case physics 
 | `1b19bb1` | Disconnect menu input and session recovery E2E | 릴리스 EXE 프로세스가 `0xC0000005`로 종료 |
 | `0513b42` | Build release EXE and execute content and ENet validation | Role B `slot_ui` — `slot GUI did not reconcile the owner snapshot and result` |
 
-master `8a24f91`에서는 같은 job이 한 번 성공했다. 원인은 [runtime_stabilization.md](runtime_stabilization.md)의 미해결
+master `8a24f91`과 이 브랜치의 `e18ad03`에서는 같은 job이 성공했다(같은 게임 코드) — 실패는 간헐적이다. 원인은 [runtime_stabilization.md](runtime_stabilization.md)의 미해결
 항목(snapshot 적용, 입력 확인)과 같은 계열로 보이지만 `slot_ui`는 거기에 없던 증상이다 — 같은 원인이라고 확인한 것은
 아니다.
 
