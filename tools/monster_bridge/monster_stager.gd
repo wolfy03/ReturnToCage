@@ -248,6 +248,14 @@ static func _attach(profile_path: String, carrier: String, host: Node) -> Dictio
 		var actor := definition.actor_scene.instantiate() as EnemyAgent
 		if actor == null:
 			return {"evaluated": false, "reason": "%s has no EnemyAgent actor" % definition.id}
+		if not result.has("dependencies"):
+			# The carrier's own files. The editor adds them to what a stage result depends on: a changed
+			# actor scene or script makes an earlier result stale, and only the engine knows their paths.
+			var files: Array[String] = [definition.resource_path, definition.actor_scene.resource_path]
+			var script := actor.get_script() as Script
+			if script != null:
+				files.append(script.resource_path)
+			result["dependencies"] = files.filter(func(path: String) -> bool: return path.begins_with("res://"))
 		actor.setup_enemy(definition, 1, false, &"", mode == "presentation")
 		actor.animation_profile_path = profile_path
 		host.add_child(actor)

@@ -69,6 +69,8 @@ class MainWindow(QMainWindow):
         self._last_message = ""
         self.last_stage = None
         self._stage_project = None          # (project generation, source fingerprint) the result was made against
+        self._stage_baseline = {}           # dependency path -> (size, mtime) last known to be the staged content
+        self._stage_changed = []            # dependencies a full re-read found changed
         self.setObjectName("MonsterEditorMainWindow")
         self.resize(1360, 860)
 
@@ -286,6 +288,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------------------------------ catalog
     def refresh_catalog(self):
+        self.verify_stage()                 # a refresh means "look at the files again", the staged ones included
         catalog = self.project.catalog()
         self.catalog_panel.set_catalog(catalog, self._import_support, self.project.connected)
         registry = self.project.registry()
@@ -755,6 +758,11 @@ class MainWindow(QMainWindow):
 
         def done(result):
             self.last_stage, self._stage_project = result, (generation, result.project_fingerprint)
+            self._stage_baseline = {path: (row["size"], row["mtime_ns"]) for path, row in result.dependencies.items()}
+            self._stage_changed = []
+            for crash in result.process.get("crashes", []):
+                self._keep_engine_log("stage_monster", f"crash-{crash['step']}-{crash['classification']}",
+                                      crash.get("log_tail", ""))
             if result.passed:
                 text = strings.STAGE["passed"].format(clips=len(result.profile.get("animations", {})),
                                                       carrier=result.attach.get("carrier", "–"))
@@ -783,7 +791,29 @@ class MainWindow(QMainWindow):
         if not result.is_current(self.session.document) or self._stage_project is None \
                 or self._stage_project[0] != self.project.generation:
             return "stale"
+        # The files the stage read: its images, the engine pin, the bridge and presenter scripts, the
+        # carrier actor. Size and time are compared here (this runs after every edit); refreshing the
+        # catalog re-reads them in full, see verify_stage.
+        if self._stage_changed or self.project.root is None \
+                or staging.changed_dependencies(self.project.root, result, baseline=self._stage_baseline):
+            return "stale"
         return "passed" if result.passed else "differs"
+
+    def verify_stage(self):
+        """Re-read every file the last stage depended on and compare contents. Returns the changed paths.
+
+        This is the full check behind "refresh": it finds a file rewritten with the same size and time,
+        and it clears a file that was only touched. Files that still hold the staged content become the
+        new baseline for the quick check.
+        """
+        result = self.last_stage
+        if result is None or self.project.root is None or self._stage_project is None \
+                or self._stage_project[0] != self.project.generation:
+            return []
+        self._stage_changed = staging.changed_dependencies(self.project.root, result, deep=True)
+        current = staging.dependency_stats(self.project.root, result)
+        self._stage_baseline = {path: stats for path, stats in current.items() if path not in self._stage_changed}
+        return list(self._stage_changed)
 
     def wait_for_jobs(self, timeout_ms=200000):
         """Block until background jobs have delivered their results. For tests and for closing."""

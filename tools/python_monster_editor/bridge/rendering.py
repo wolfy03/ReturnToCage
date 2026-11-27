@@ -53,6 +53,7 @@ class RenderResult:
     seconds: float = 0.0
     notes: tuple = field(default_factory=tuple)
     crashes: tuple = ()           # exit codes of attempts that crashed and were run again
+    crash_records: tuple = ()     # the same attempts in full: step, attempt, classification, seconds, log tail
 
     @property
     def passed(self):
@@ -219,11 +220,12 @@ def render_staged(godot, session, document, output_dir, shots=None, timings=None
     started = time.monotonic()
     # A run that crashes is repeated: it reads the staged resources and writes only screenshots, which the
     # next attempt overwrites. The crashes stay on the result.
-    result, crashes, _log = client.retry_crashes(
+    result, records, _log = client.retry_crashes(
         lambda: _render_once(godot, session, document, output_dir, shots, timings, carrier, size, zoom, cancel,
-                             timeout, rendering_method), cancel)
+                             timeout, rendering_method), cancel, "render_check", r"MONSTER RENDER CHECK PASS")
     from dataclasses import replace
-    return replace(result, crashes=crashes, seconds=time.monotonic() - started)
+    return replace(result, crashes=tuple(row["exit_code"] for row in records), crash_records=records,
+                   seconds=time.monotonic() - started)
 
 
 def _render_once(godot, session, document, output_dir, shots, timings, carrier, size, zoom, cancel, timeout,

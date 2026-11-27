@@ -48,7 +48,20 @@ from . import client
 from .client import BridgeError
 
 MARKER = ".rtc_monster_staging"
+# A second copy of the marker, beside the project copy instead of inside it. It is the last file a cleanup
+# deletes, so a cleanup that stopped half-way can still prove the folder is its own.
+OWNER_TOKEN = ".rtc_monster_staging_owner"
 STAGING_PREFIX = "rtc-monster-stage-"
+# Project files a stage depends on besides the document's images and the carrier actor's own files: the
+# engine pin, the project settings, the bridge that builds the resources and the scripts that define and
+# draw them. A change to any of them makes an earlier stage result stale.
+TOOL_DEPENDENCIES = (
+    ".godot-version", "project.godot",
+    "tools/monster_bridge/bridge.gd", "tools/monster_bridge/bridge.tscn",
+    "tools/monster_bridge/monster_stager.gd", "tools/monster_bridge/monster_inspector.gd",
+    "presentation/definitions/enemy_animation_profile.gd", "presentation/enemy/enemy_animation_presenter.gd",
+)
+DEPENDENCY_SUFFIXES = (".tres", ".res", ".tscn", ".scn", ".gd", ".png")
 OUTPUT_ROOT = "monster_stage"
 # Top-level entries Godot does not need to load the game. ``.godot`` is copied: it holds the import cache,
 # and without it every staging would re-import the whole project.
@@ -75,11 +88,73 @@ _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 _sessions = {}
 
 
-def _delete_tree(path):
-    """Delete a folder tree. Returns ``[(path, error)]`` for what could not be deleted. Follows no link."""
+def _delete_tree(parent):
+    """Delete a staging folder, proof of ownership last. Returns ``[(path, error)]`` for what stayed.
+
+    Order: everything inside the project copy except its marker; then the marker and the copy's folder;
+    then the owner token and the staging folder itself. Whatever stops the deletion, the files that say
+    whose folder this is are still there for the retry. No link is followed: a link is removed as a link.
+    """
+    parent = Path(parent)
+    root = parent / "project"
     failures = []
-    shutil.rmtree(path, onexc=lambda _function, item, error: failures.append((str(item), error)))
+
+    def drop(path, directory):
+        try:
+            os.rmdir(path) if directory else os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            failures.append((str(path), error))
+
+    def empty(folder, keep=()):
+        try:
+            entries = list(os.scandir(folder))
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            failures.append((str(folder), error))
+            return
+        for entry in entries:
+            if entry.name in keep:
+                continue
+            path = Path(entry.path)
+            if is_link(path):
+                drop(path, entry.is_dir(follow_symlinks=False) or os.name == "nt" and os.path.isdir(path))
+            elif entry.is_dir(follow_symlinks=False):
+                empty(path)
+                drop(path, True)
+            else:
+                drop(path, False)
+
+    if is_link(root):
+        drop(root, True)
+    else:
+        empty(root, keep=(MARKER,))
+        if not failures:
+            drop(root / MARKER, False)
+            drop(root, True)
+    if not failures:
+        empty(parent, keep=(OWNER_TOKEN,))
+    if not failures:
+        drop(parent / OWNER_TOKEN, False)
+        drop(parent, True)
     return failures
+
+
+def _identity(path):
+    """``(device, inode)`` of a folder, or None where the file system gives none."""
+    try:
+        status = os.lstat(path)
+    except OSError:
+        return None
+    return (status.st_dev, status.st_ino) if status.st_ino else None
+
+
+def _copy_bytes(source, descriptor, target):
+    """Copy an already opened source file to ``target``. Separate so tests can slow it down or fail it."""
+    with os.fdopen(os.dup(descriptor), "rb") as stream, open(target, "wb") as out:
+        shutil.copyfileobj(stream, out, 1 << 20)
 
 
 # ------------------------------------------------------------------------------------------- file safety
@@ -165,19 +240,28 @@ class StagingSession:
         self.seconds = 0.0
         self.changed_during_copy = ()                  # source files that moved under the copy
         self.cleanup_error = ""
+        self.surveyed = {}                             # relative path -> (size, mtime_ns) of the source when copied
+        self.identity = None                           # (device, inode) of ``parent`` as created
 
     # ---- create
     @classmethod
     def create(cls, project, work_folder=None, cancel=None, operation="stage_presentation"):
         """Copy ``project`` into a new folder and mark it. Cancelling removes the partial copy."""
         started = time.monotonic()
-        project = Path(project).resolve()
+        # Looked at as given, before anything resolves it: resolve() turns a link into its target, and a
+        # link can then never be seen. Only the root itself is judged; a project that merely lives below a
+        # linked folder (a mapped home directory) is an ordinary project.
+        given = Path(os.path.abspath(project))
+        if is_link(given):
+            raise BridgeError(STAGING_UNSAFE_SOURCE, f"the project folder is a link, junction or reparse point: {given}")
+        project = given.resolve()
         if not (project / "project.godot").is_file():
             raise BridgeError(client.PROJECT_INVALID, f"not a Godot project: {project}")
-        if is_link(project):
-            raise BridgeError(STAGING_UNSAFE_SOURCE, f"the project folder itself is a link: {project}")
         if work_folder is not None:
-            base = Path(work_folder).resolve()
+            chosen = Path(os.path.abspath(work_folder))
+            if is_link(chosen):
+                raise BridgeError(STAGING_UNSAFE_SOURCE, f"the staging work folder is a link: {chosen}")
+            base = chosen.resolve()
             if base == project or project in base.parents:         # the project itself, or a folder inside it
                 raise BridgeError(STAGING_INSIDE_PROJECT, "the staging folder must be outside the project")
         rows = survey(project)                         # refuses links before anything is created
@@ -197,6 +281,7 @@ class StagingSession:
             if free < total + FREE_SPACE_RESERVE:
                 raise BridgeError(STAGING_TOO_LARGE, f"not enough free space for the staging copy: "
                                   f"{total} bytes needed, {free} free at {parent}")
+            session.identity = _identity(parent)
             session._copy(rows, cancel)
             session._write_marker()
         except BaseException:
@@ -208,31 +293,69 @@ class StagingSession:
         return session
 
     def _copy(self, rows, cancel):
+        """Copy the surveyed files. The survey is not trusted to still be true: see ``_copy_one``."""
         changed = []
         self.root.mkdir()
         made = {self.root}
         for relative, size, mtime in rows:
             if cancel is not None and cancel.is_set():
                 raise BridgeError(client.CANCELLED, "the operation was cancelled")
-            source, target = self.source / relative, self.root / relative
+            target = self.root / relative
             try:
                 if target.parent not in made:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     made.add(target.parent)
-                if is_link(source):                    # replaced by a link since the survey
-                    raise BridgeError(STAGING_UNSAFE_SOURCE, f"{relative} became a link while the project was copied")
-                shutil.copyfile(source, target, follow_symlinks=False)
-                shutil.copystat(source, target, follow_symlinks=False)
-                after = os.lstat(source)
+                copied = self._copy_one(relative, target)
             except BridgeError:
                 raise
+            except FileNotFoundError as error:
+                raise BridgeError(STAGE_FAILED, f"{relative} disappeared while the project was copied: {error}") from error
             except OSError as error:
                 raise BridgeError(STAGE_FAILED, f"cannot copy {relative}: {error}") from error
-            if (after.st_size, after.st_mtime_ns) != (size, mtime):
-                changed.append(relative)
+            if copied != (size, mtime):
+                changed.append(relative)               # not the file the survey saw; the copy holds what was read
+            self.surveyed[relative] = copied
             self.files += 1
-            self.bytes += size
+            self.bytes += copied[0]
         self.changed_during_copy = tuple(changed)
+
+    def _copy_one(self, relative, target):
+        """Copy one file and return ``(size, mtime_ns)`` of what was copied.
+
+        Between the survey and this moment a folder on the way, or the file itself, may have been replaced.
+        So, again and right before reading: every folder from the project down to the file must still be a
+        plain folder, and the file a plain file. The file is then opened without following a link where
+        the platform can refuse one, and the open handle must be the same file that was just looked at -
+        the bytes copied are the bytes of that handle, whatever happens to the name afterwards.
+        """
+        walked = self.source
+        parts = relative.split("/")
+        for part in parts[:-1]:
+            walked = walked / part
+            status = os.lstat(walked)
+            if is_link(walked) or not stat.S_ISDIR(status.st_mode):
+                raise BridgeError(STAGING_UNSAFE_SOURCE,
+                                  f"{walked.relative_to(self.source).as_posix()} is no longer a plain folder; "
+                                  f"it changed after the project was surveyed (copying {relative})")
+        source = walked / parts[-1]
+        seen = os.lstat(source)
+        if is_link(source) or not stat.S_ISREG(seen.st_mode):
+            raise BridgeError(STAGING_UNSAFE_SOURCE, f"{relative} is no longer a plain file; it changed after the "
+                              "project was surveyed")
+        descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode) or (seen.st_ino and opened.st_ino
+                                                    and (seen.st_dev, seen.st_ino) != (opened.st_dev, opened.st_ino)):
+                raise BridgeError(STAGING_UNSAFE_SOURCE, f"{relative} was replaced while it was being opened")
+            _copy_bytes(source, descriptor, target)
+            after = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        os.utime(target, ns=(after.st_atime_ns, after.st_mtime_ns))
+        if (after.st_size, after.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns):
+            return (-1, after.st_mtime_ns)             # written to while it was read: never equal to a survey row
+        return (after.st_size, after.st_mtime_ns)
 
     def _write_marker(self):
         text = json.dumps({"tool": "ReturnToCage Monster Editor", "session": self.id, "source": str(self.source),
@@ -240,8 +363,19 @@ class StagingSession:
                            "note": "staging copy; safe to delete"}, ensure_ascii=False, indent=2)
         try:
             (self.root / MARKER).write_text(text + "\n", encoding="utf-8")
+            (self.parent / OWNER_TOKEN).write_text(text + "\n", encoding="utf-8")
         except OSError as error:
             raise BridgeError(STAGE_FAILED, f"cannot mark the staging copy: {error}") from error
+
+    def _marker_session(self, path):
+        """The session ID a marker file names; "" when the file is missing; None when it is unreadable."""
+        try:
+            marker = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return ""
+        except (OSError, ValueError):
+            return None
+        return marker.get("session") if isinstance(marker, dict) else None
 
     def _delete_new(self):
         """Remove a folder this constructor just made and nobody else has seen."""
@@ -285,12 +419,26 @@ class StagingSession:
             refuse("it no longer resolves to the path that was created")
         if not _outside(source, resolved):
             refuse("it contains, or lies inside, the real project")
-        try:
-            marker = json.loads((root / MARKER).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            refuse(f"its marker cannot be read ({error})")
-        if not isinstance(marker, dict) or marker.get("session") != self.id:
+        if self.identity is not None and _identity(parent) != self.identity:
+            refuse("it is not the folder this session created (another folder now has its name)")
+        inside, beside = self._marker_session(root / MARKER), self._marker_session(parent / OWNER_TOKEN)
+        if inside == self.id:
+            return
+        if inside:
             refuse("its marker belongs to another staging session")
+        if inside is None:
+            refuse("its marker cannot be read")
+        # No marker inside the copy. That is only acceptable for a folder this session already started to
+        # delete (the marker is among the last things a cleanup removes, but a cleanup can be interrupted
+        # anywhere): then the token beside the copy, or failing that the folder's own identity, is the proof.
+        if self.state != "leftover":
+            refuse("its marker cannot be read (it is missing, and this session never started deleting it)")
+        if beside == self.id:
+            return
+        if beside:
+            refuse("its owner token belongs to another staging session")
+        if self.identity is None:
+            refuse("nothing is left that shows it belongs to this session")
 
     def remove(self):
         """Delete the copy. Returns False when it was already gone.
@@ -364,11 +512,15 @@ def find_stale_copies(work_folder=None):
         if any(session.parent == parent for session in _sessions.values()) or is_link(parent):
             continue
         row = {"path": str(parent), "session": "", "created": "", "source": "", "pid": None}
-        try:
-            marker = json.loads((parent / "project" / MARKER).read_text(encoding="utf-8"))
+        for candidate in (parent / "project" / MARKER, parent / OWNER_TOKEN):      # the token outlives the marker
+            try:
+                marker = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
             if isinstance(marker, dict):
                 row.update({key: marker.get(key, row[key]) for key in ("session", "created", "source", "pid")})
-        except (OSError, ValueError):
+                break
+        else:
             row["session"] = "(no readable marker)"
         found.append(row)
     return found
@@ -403,7 +555,9 @@ class StageResult:
     kept: bool = False
     cleanup_error: str = ""         # the copy could not be deleted: where and why
     document_fingerprint: str = ""
-    project_fingerprint: str = ""   # of the staged source images, see ``source_fingerprint``
+    project_fingerprint: str = ""   # ``manifest_fingerprint(dependencies)``
+    # Every project file the stage depended on: relative path -> {"sha256", "size", "mtime_ns"} as copied.
+    dependencies: dict = field(default_factory=dict)
     resources: dict = field(default_factory=dict)    # res:// path -> sha256 of each generated resource
     godot_version: str = ""
     areas: dict = field(default_factory=dict)        # area -> PASS / FAIL / WARNING / NOT_EVALUATED
@@ -434,21 +588,86 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
-def source_fingerprint(project, document):
-    """One hash over the files a stage of this document depends on: its images and the engine pin.
+def dependency_paths(document, extra=()):
+    """Project-relative paths a stage of this document depends on, sorted.
 
-    A changed image, or another engine version, makes an earlier stage result stale.
+    The document's images; the engine pin and project settings; the bridge that builds the resources; the
+    scripts that define and draw an ``EnemyAnimationProfile``; and ``extra`` - the carrier actor's own
+    definition, scene and script, which only the engine can name (``attach.dependencies``).
     """
-    digest = hashlib.sha256()
-    names = sorted({row["path"] for row in document.data["assets"]["images"]}) + [".godot-version"]
-    for name in names:
-        digest.update(name.encode("utf-8") + b"\0")
+    return sorted({row["path"] for row in document.data["assets"]["images"]} | set(TOOL_DEPENDENCIES) | set(extra))
+
+
+def dependency_manifest(root, paths, surveyed=None):
+    """``{path: {"sha256", "size", "mtime_ns"}}`` for the paths that exist as files under ``root``.
+
+    ``surveyed`` (a staging session's ``{path: (size, mtime_ns)}``) gives the size and time of the *source*
+    file as it was copied; without it the file under ``root`` is asked.
+    """
+    manifest = {}
+    for relative in paths:
+        path = Path(root) / relative
         try:
-            digest.update(file_sha256(Path(project) / name).encode("ascii"))
+            status = os.lstat(path)
+            if not stat.S_ISREG(status.st_mode):
+                continue
+            size, mtime = (surveyed or {}).get(relative, (status.st_size, status.st_mtime_ns))
+            manifest[relative] = {"sha256": file_sha256(path), "size": size, "mtime_ns": mtime}
         except OSError:
-            digest.update(b"missing")
-        digest.update(b"\0")
+            continue
+    return manifest
+
+
+def manifest_fingerprint(manifest):
+    """One hash over a dependency manifest's paths and contents (not its times)."""
+    digest = hashlib.sha256()
+    for relative in sorted(manifest):
+        digest.update(relative.encode("utf-8") + b"\0" + manifest[relative]["sha256"].encode("ascii") + b"\0")
     return digest.hexdigest()
+
+
+def source_fingerprint(project, document, extra=()):
+    """The fingerprint a stage of ``document`` in ``project`` would have right now."""
+    return manifest_fingerprint(dependency_manifest(project, dependency_paths(document, extra)))
+
+
+def changed_dependencies(project, result, deep=False, baseline=None):
+    """Paths of ``result.dependencies`` that are no longer the files the stage used, sorted.
+
+    The quick form compares size and modification time with ``baseline`` (default: what the stage
+    recorded) - cheap enough to ask after every edit, and it never calls a changed file unchanged unless
+    both numbers were preserved. ``deep`` hashes every file instead: it sees a rewrite that kept size and
+    time, and it does not mistake a file that was merely touched for a changed one.
+    """
+    changed = []
+    for relative, row in result.dependencies.items():
+        path = Path(project) / relative
+        try:
+            status = os.lstat(path)
+            if not stat.S_ISREG(status.st_mode) or is_link(path):
+                raise OSError("not a plain file")
+            if deep:
+                same = file_sha256(path) == row["sha256"]
+            else:
+                expected = (baseline or {}).get(relative, (row["size"], row["mtime_ns"]))
+                same = (status.st_size, status.st_mtime_ns) == tuple(expected)
+        except OSError:
+            same = False
+        if not same:
+            changed.append(relative)
+    return sorted(changed)
+
+
+def dependency_stats(project, result):
+    """``{path: (size, mtime_ns)}`` of the dependencies as they are on disk now (a baseline for the quick check)."""
+    stats = {}
+    for relative in result.dependencies:
+        try:
+            status = os.lstat(Path(project) / relative)
+            stats[relative] = (status.st_size, status.st_mtime_ns)
+        except OSError:
+            continue
+    return stats
 
 
 # ------------------------------------------------------------------------------------------------ request
@@ -493,8 +712,9 @@ def import_assets(godot, staging_root, cancel=None, timeout=IMPORT_TIMEOUT, cras
     """Let the editor import the copy's assets. Returns the engine log.
 
     An import that crashes is run again (``client.retry_crashes``): it only fills the import cache of a
-    disposable copy, and importing twice gives the same cache. Exit codes of crashed attempts are appended
-    to ``crashes`` when a list is given.
+    disposable copy, and importing twice gives the same cache. The engine prints no line that says an
+    import is complete, so a crash here is always the unexplained kind and gets one more try, not two.
+    The records of crashed attempts are appended to ``crashes`` when a list is given.
     """
     def once():
         code, log = client._run([str(godot), "--headless", "--path", str(staging_root), "--import"], staging_root,
@@ -507,7 +727,7 @@ def import_assets(godot, staging_root, cancel=None, timeout=IMPORT_TIMEOUT, cras
         if code != 0:
             raise BridgeError(STAGE_FAILED, f"Godot could not import the staging copy (exit {code})", log)
         return log
-    log, crashed, _first = client.retry_crashes(once, cancel)
+    log, crashed, _first = client.retry_crashes(once, cancel, "import")
     if crashes is not None:
         crashes.extend(crashed)
     return log
@@ -611,6 +831,21 @@ def check_stage_response(data, session, monster_id):
             not isinstance(attach.get(mode, {}), dict) for mode in ("presentation", "server")):
         raise BridgeError(client.INVALID_RESPONSE, "attach result is malformed")
     return files
+
+
+def check_attach_dependencies(attach, staging_root):
+    """Project-relative paths of the carrier actor's own files, as the engine named them.
+
+    Each must be a plain resource file inside the copy; anything else is a malformed answer.
+    """
+    listed = attach.get("dependencies", [])
+    if not isinstance(listed, list):
+        raise BridgeError(client.INVALID_RESPONSE, "attach.dependencies is not a list")
+    paths = []
+    for entry in listed:
+        staged_file(staging_root, entry, DEPENDENCY_SUFFIXES)
+        paths.append(entry[len("res://"):])
+    return paths
 
 
 # ------------------------------------------------------------------------------------------------ compare
@@ -769,12 +1004,14 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
     session = StagingSession.create(project, work_folder, cancel)
     result = None
     try:
-        project_fingerprint = source_fingerprint(session.root, document)
         import_crashes = []
         import_assets(godot, session.root, cancel, crashes=import_crashes)
         built = client.call(godot, session.root, "stage_monster", monster_id, cancel, timeout, work_folder,
                             stage=stage_request(document, carrier, session.id))
         files = check_stage_response(built.data, session, monster_id)
+        carrier_files = check_attach_dependencies(built.data["attach"], session.root)
+        dependencies = dependency_manifest(session.root, dependency_paths(document, carrier_files), session.surveyed)
+        project_fingerprint = manifest_fingerprint(dependencies)
         # A second process: nothing of the first one's memory can stand in for the files.
         reread = client.call(godot, session.root, "read_stage", monster_id, cancel, timeout, work_folder,
                              stage={"staging_session": session.id})
@@ -803,19 +1040,25 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
             "rendering": NOT_EVALUATED, "combat_runtime": NOT_EVALUATED, "network": NOT_EVALUATED,
             "publish": NOT_EVALUATED,
         }
+        crashes = import_crashes + list(built.crash_records) + list(reread.crash_records)
         process = {"attempts": {"import": len(import_crashes) + 1, "stage_monster": built.attempts,
                                 "read_stage": reread.attempts},
-                   "crash_exit_codes": import_crashes + list(built.crashes) + list(reread.crashes)}
+                   # Kept apart from ``passed``: what the processes did, crash by crash.
+                   "result": "CRASHED_THEN_RETRIED" if crashes else "CLEAN",
+                   "crash_exit_codes": [row["exit_code"] for row in crashes],
+                   "crashes": [dict(row) for row in crashes]}
         result = StageResult(monster_id, session.root, built.data["sprite_frames_path"], built.data["profile_path"],
                              tuple(structure + disk + image_lines), profile, built.data["attach"],
                              max(built.attempts, reread.attempts), time.monotonic() - started, session, keep, "",
-                             fingerprint, project_fingerprint, resources, version, areas, process, tuple(notes))
+                             fingerprint, project_fingerprint, dependencies, resources, version, areas, process,
+                             tuple(notes))
     except BaseException as error:
         cancelled = isinstance(error, BridgeError) and error.code == client.CANCELLED
         if keep_on_failure and not cancelled and isinstance(error, Exception):
             session.keep()
             if isinstance(error, BridgeError):
-                raise BridgeError(error.code, f"{error.detail} (staging copy kept: {session.root})", error.log) from error
+                raise BridgeError(error.code, f"{error.detail} (staging copy kept: {session.root})", error.log,
+                                  error.exit_code, error.crash_records) from error
             raise
         _remove_quietly(session)
         raise

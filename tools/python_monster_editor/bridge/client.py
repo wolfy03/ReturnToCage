@@ -31,6 +31,15 @@ OPERATIONS = ("inspect_monsters", "import_monster", "stage_monster", "read_stage
 STAGE_OPERATIONS = ("stage_monster", "read_stage")      # carry a ``stage`` payload; only run in a staging copy
 DEFAULT_TIMEOUT = 180
 CRASH_ATTEMPTS = 3
+# How a crashed run is classified (docs/known_issues.md). "After success": the run printed the line that
+# says its work was done, with no failure mark anywhere in its log, and then the process died - the shape of
+# the known engine shutdown crash. Anything else died in the middle of the work and is unexplained.
+CRASH_AFTER_SUCCESS, CRASH_DURING_WORK = "exit_after_success", "during_work"
+DURING_WORK_RETRIES = 1          # an unexplained crash gets one more try, then it is reported
+RETRY_BUDGET_SECONDS = 600       # no new attempt is started once this much time went into crashed ones
+FAILURE_MARKS = re.compile(r"SCRIPT ERROR:|(?:^|\n)ERROR:|Parse Error|PROBE FAIL|ObjectDB instances leaked|"
+                           r"resources still in use", re.I)
+LOG_TAIL = 1500
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 ENGINE_ERRORS = re.compile(r"SCRIPT ERROR:|Parse Error|ObjectDB instances leaked|resources still in use", re.I)
 BRIDGE_SCENE = "res://tools/monster_bridge/bridge.tscn"
@@ -43,12 +52,13 @@ INVALID_RESPONSE, RESPONSE_MISMATCH, UNKNOWN_MONSTER = "INVALID_RESPONSE", "RESP
 
 
 class BridgeError(RuntimeError):
-    def __init__(self, code, message, log="", exit_code=None):
+    def __init__(self, code, message, log="", exit_code=None, crash_records=()):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.detail = message
         self.log = log
         self.exit_code = exit_code      # the process's exit code, when the failure is about the process
+        self.crash_records = tuple(crash_records)      # every crashed attempt that led here
 
 
 @dataclass(frozen=True)
@@ -64,6 +74,7 @@ class BridgeResponse:
     # crashed (their answers were thrown away) and the engine log of the first of them.
     crashes: tuple = ()
     crash_log: str = ""
+    crash_records: tuple = ()        # one dict per crashed attempt: step, attempt, exit_code, classification, ...
 
     @property
     def process_result(self):
@@ -140,22 +151,56 @@ def _run(command, cwd, cancel, timeout):
     return process.returncode, log
 
 
-def retry_crashes(run, cancel=None):
-    """Call ``run()`` again when it ends in ``PROCESS_CRASH``, at most ``CRASH_ATTEMPTS`` times in all.
+def classify_crash(log, marker):
+    """``CRASH_AFTER_SUCCESS`` only when the log holds the run's success line (``marker``, a regular
+    expression) and no failure mark. An exit code alone never earns that label."""
+    if marker and re.search(marker, log or "") and not FAILURE_MARKS.search(log or ""):
+        return CRASH_AFTER_SUCCESS
+    return CRASH_DURING_WORK
 
-    Returns ``(value, crash exit codes, log of the first crash)``. Only for work that is safe to repeat:
-    reads, and writes confined to a disposable staging copy that start from a clean slate. The crashes are
-    handed back so the caller reports them next to the functional result instead of hiding them.
+
+def retry_crashes(run, cancel=None, step="", marker=""):
+    """Call ``run()`` again when it ends in ``PROCESS_CRASH``, within limits. Only for work that is safe
+    to repeat: reads, and writes confined to a disposable staging copy that start from a clean slate.
+
+    Returns ``(value, crash records, log of the first crash)``. A record is
+    ``{"step", "attempt", "exit_code", "classification", "seconds", "log_tail"}``. The records come back
+    with a success as well as on the final ``BridgeError`` (``.crash_records``): a crash is reported next
+    to the functional result, never folded into it.
+
+    Limits: ``CRASH_ATTEMPTS`` runs in all; an unexplained crash (``CRASH_DURING_WORK``) is repeated at
+    most ``DURING_WORK_RETRIES`` times; no new run starts after cancel or once ``RETRY_BUDGET_SECONDS``
+    have gone into crashed runs.
     """
-    crashes, crash_log = [], ""
-    for attempt in range(1, CRASH_ATTEMPTS + 1):
+    records, first_log, unexplained, began = [], "", 0, time.monotonic()
+    attempt = 0
+    while True:
+        attempt += 1
+        started = time.monotonic()
         try:
-            return run(), tuple(crashes), crash_log
+            return run(), tuple(records), first_log
         except BridgeError as error:
-            if error.code != PROCESS_CRASH or attempt == CRASH_ATTEMPTS or (cancel is not None and cancel.is_set()):
+            if error.code != PROCESS_CRASH:
+                if records and not error.crash_records:
+                    error.crash_records = tuple(records)
                 raise
-            crashes.append(error.exit_code)
-            crash_log = crash_log or error.log
+            kind = classify_crash(error.log, marker)
+            records.append({"step": step, "attempt": attempt, "exit_code": error.exit_code, "classification": kind,
+                            "seconds": round(time.monotonic() - started, 3), "log_tail": (error.log or "")[-LOG_TAIL:]})
+            first_log = first_log or error.log
+            unexplained += kind == CRASH_DURING_WORK
+            if cancel is not None and cancel.is_set():
+                stop = "cancelled"
+            elif attempt >= CRASH_ATTEMPTS:
+                stop = f"crashed {attempt} times"
+            elif kind == CRASH_DURING_WORK and unexplained > DURING_WORK_RETRIES:
+                stop = "crashed in the middle of its work again"
+            elif time.monotonic() - began >= RETRY_BUDGET_SECONDS:
+                stop = "the retry time limit was reached"
+            else:
+                continue
+            raise BridgeError(PROCESS_CRASH, f"{error.detail} ({stop}; not run again)", error.log, error.exit_code,
+                              records) from error
 
 
 def godot_version(godot, cancel=None, timeout=30):
@@ -199,17 +244,13 @@ def call(godot, project, operation, monster_id="", cancel=None, timeout=DEFAULT_
     """
     if operation not in OPERATIONS:
         raise ValueError(f"unknown bridge operation: {operation}")
-    crashes, crash_log = [], ""
-    for attempt in range(1, CRASH_ATTEMPTS + 1):
-        try:
-            response = _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage)
-        except BridgeError as error:
-            if error.code != PROCESS_CRASH or attempt == CRASH_ATTEMPTS:
-                raise
-            crashes.append(error.exit_code)
-            crash_log = crash_log or error.log
-            continue
-        return replace(response, attempts=attempt, crashes=tuple(crashes), crash_log=crash_log)
+    # The bridge prints this line when it has written its answer, refused requests included.
+    marker = rf"MONSTER BRIDGE {re.escape(operation)} (PASS|FAIL)"
+    response, records, crash_log = retry_crashes(
+        lambda: _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage),
+        cancel, operation, marker)
+    return replace(response, attempts=len(records) + 1, crashes=tuple(row["exit_code"] for row in records),
+                   crash_log=crash_log, crash_records=records)
 
 
 def _call_once(godot, project, operation, monster_id, cancel, timeout, work_folder, stage=None):
