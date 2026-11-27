@@ -638,3 +638,17 @@ Windows 11, Python 3.14.5, PySide6-Essentials 6.11.3, Godot 4.7.2-stable. 코드
 
 CI 결과는 아래 "CI (Final patch)"에 푸시 뒤 적는다.
 
+
+**CI (Final patch)** — GitHub Actions, 커밋 `e18ad03`(코드는 `0a6c337`과 같다).
+
+| 워크플로 / job | 결과 |
+|---|---|
+| Python Monster Editor / `core` (Ubuntu) | 성공 — 970 통과, 4 건너뜀 |
+| Python Monster Editor / `core` (Windows) | 성공 — 974 통과, 건너뜀 없음 |
+| Python Monster Editor / `godot-contract` (Linux: 계약·확장성·Import·Staging) | 성공 |
+| Python Monster Editor / `gui-windows` (스모크 3배율, Import, Staging, 실제 렌더링, 작업 트리 미변경) | 성공, 첫 실행 |
+| Godot validation / `headless` | 성공 |
+| Godot validation / `windows-demo` | 이 기록을 쓰는 시점에 실행 중. 직전 커밋들의 결과는 [known_issues.md](known_issues.md)의 "Windows 릴리스 probe의 미해결 기능 실패" |
+
+이것으로 MONSTER-STEP 3 안정화를 닫는다. 남은 것은 이 브랜치 밖의 일이다: 엔진의 종료 crash(엔진 버전을 올릴 때),
+Windows 릴리스 probe의 기능 실패(MONSTER-STEP 4-B 전에 별도 검증).
