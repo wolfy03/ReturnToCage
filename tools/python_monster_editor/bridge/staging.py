@@ -72,6 +72,9 @@ STAGE_FAILED, STAGING_INSIDE_PROJECT, NOTHING_TO_STAGE = "STAGE_FAILED", "STAGIN
 STAGING_UNSAFE_SOURCE, STAGING_TOO_LARGE, STAGING_NOT_OWNED, STAGING_CLEANUP_FAILED, RESOURCE_PATH_INVALID = (
     "STAGING_UNSAFE_SOURCE", "STAGING_TOO_LARGE", "STAGING_NOT_OWNED", "STAGING_CLEANUP_FAILED",
     "RESOURCE_PATH_INVALID")
+# A file a stage depends on is missing, unreadable, not a plain file, or named by a path that is not a
+# plain project-relative one. No manifest is produced: an incomplete one must never pass for the whole.
+STAGING_DEPENDENCY_INVALID = "STAGING_DEPENDENCY_INVALID"
 IMPORT_TIMEOUT = 600
 TOLERANCE = 1e-4
 MAX_FILES = 200_000
@@ -242,6 +245,7 @@ class StagingSession:
         self.cleanup_error = ""
         self.surveyed = {}                             # relative path -> (size, mtime_ns) of the source when copied
         self.identity = None                           # (device, inode) of ``parent`` as created
+        self.creation_error = ""                       # why the copy could not be made, when it could not
 
     # ---- create
     @classmethod
@@ -273,19 +277,18 @@ class StagingSession:
         except OSError as error:
             raise BridgeError(STAGE_FAILED, f"cannot create a staging folder: {error}") from error
         session = cls(project, parent, operation)
-        if not _outside(project, parent):
-            session._delete_new()
-            raise BridgeError(STAGING_INSIDE_PROJECT, "the staging folder must be outside the project")
+        session.identity = _identity(parent)           # before anything else can happen to the folder
         try:
+            if not _outside(project, parent):
+                raise BridgeError(STAGING_INSIDE_PROJECT, "the staging folder must be outside the project")
             free = shutil.disk_usage(parent).free
             if free < total + FREE_SPACE_RESERVE:
                 raise BridgeError(STAGING_TOO_LARGE, f"not enough free space for the staging copy: "
                                   f"{total} bytes needed, {free} free at {parent}")
-            session.identity = _identity(parent)
             session._copy(rows, cancel)
             session._write_marker()
-        except BaseException:
-            session._delete_new()                      # a partial copy belongs to nobody yet: just remove it
+        except BaseException as error:
+            session._abandon(error)                    # raises the error, with the cleanup's own failure if any
             raise
         session.state = "ready"
         session.seconds = time.monotonic() - started
@@ -377,11 +380,48 @@ class StagingSession:
             return None
         return marker.get("session") if isinstance(marker, dict) else None
 
-    def _delete_new(self):
-        """Remove a folder this constructor just made and nobody else has seen."""
-        if self.parent.name.startswith(STAGING_PREFIX) and not is_link(self.parent) and _outside(self.source, self.parent):
-            shutil.rmtree(self.parent, ignore_errors=True)
-        self.state = "removed" if not self.parent.exists() else "leftover"
+    def _abandon(self, error):
+        """Clean up after a creation that failed, then re-raise ``error``.
+
+        The partial copy is removed like any other: with this session's ownership checks, proof of
+        ownership last, and no error swallowed. When the removal fails as well, the session stays
+        registered (``leftovers()``) in state ``leftover`` so ``remove()`` can be tried again, and the
+        error that is raised says all of it: what went wrong first, why the cleanup failed, where the
+        folder is, which session owns it and what to do about it.
+        """
+        self.creation_error = f"{type(error).__name__}: {error}"
+        self.state = "leftover"                        # this session has started deleting its folder
+        problem = ""
+        try:
+            if self.parent.exists():
+                self.check_deletable()
+                for attempt in range(CLEANUP_ATTEMPTS):
+                    failures = _delete_tree(self.parent)
+                    if not self.parent.exists():
+                        break
+                    if attempt + 1 < CLEANUP_ATTEMPTS:
+                        time.sleep(CLEANUP_PAUSE)
+                if self.parent.exists():
+                    path, reason = failures[0] if failures else (str(self.parent), "unknown reason")
+                    problem = f"{len(failures)} item(s) could not be deleted, first: {path}: {reason}"
+        except BridgeError as refusal:                 # the ownership check said no: nothing was deleted
+            problem = refusal.detail
+        except OSError as failure:
+            problem = str(failure)
+        if not problem:
+            self.state = "removed"
+            return
+        self.cleanup_error = problem
+        _sessions[self.id] = self
+        advice = (f"The partial staging copy at {self.parent} could not be removed ({problem}). Staging session "
+                  f"{self.id}. The real project is not affected. Retry the removal with that session's remove() "
+                  "(it is listed by bridge.staging.leftovers() while the editor runs), or delete the folder by hand "
+                  "once nothing holds its files.")
+        if isinstance(error, BridgeError):
+            combined = BridgeError(error.code, f"{error.detail}. {advice}", error.log, error.exit_code, error.crash_records)
+            combined.leftover, combined.session_id, combined.cleanup_error = self.parent, self.id, problem
+            raise combined from error
+        error.add_note(advice)                         # an interrupt or a bug stays what it is, with the note
 
     # ---- queries
     @property
@@ -563,16 +603,52 @@ class StageResult:
     areas: dict = field(default_factory=dict)        # area -> PASS / FAIL / WARNING / NOT_EVALUATED
     process: dict = field(default_factory=dict)      # attempts and exit codes of crashed attempts, per call
     notes: tuple = ()               # things worth knowing that are not differences
+    # Dependencies that, when the stage finished, were no longer the files that had been copied.
+    changed_since_copy: tuple = ()
 
     @property
     def passed(self):
         """The resources Godot built and read back from disk equal the document.
 
-        This is a structural comparison. It says nothing about how the monster looks when rendered
-        (``areas["rendering"]``), and nothing about combat, networking or publishing, which no
-        MONSTER-STEP 3 code runs: those areas are always ``NOT_EVALUATED`` here.
+        This is a structural comparison and nothing more - see ``verdicts`` for the rest and
+        ``confirmed`` for "and it holds for the project as it is". It says nothing about how the monster
+        looks when rendered (``areas["rendering"]``), and nothing about combat, networking or publishing,
+        which no MONSTER-STEP 3 code runs: those areas are always ``NOT_EVALUATED`` here.
         """
         return not self.differences
+
+    @property
+    def verdicts(self):
+        """What is known about this result, one question at a time.
+
+        ``structure``     PASS / FAIL       the staged resources equal the document (= ``passed``)
+        ``copy``          PASS / WARNING    the project copy was one snapshot; WARNING: files changed while
+                                            they were copied, so what was checked may be no state the
+                                            project was ever in
+        ``dependencies``  PASS              every file the stage depends on is in the manifest (a stage
+                                            that cannot say so raises instead of returning a result)
+        ``current``       PASS / FAIL       when the stage finished, those files were still the ones copied
+        ``process``       CLEAN / CRASHED_THEN_RETRIED
+        ``cleanup``       PASS / FAIL / KEPT   the copy was removed, could not be, or was kept on request
+        """
+        return {"structure": PASS if not self.differences else FAIL,
+                "copy": WARNING if self.areas.get("staging") == WARNING else PASS,
+                "dependencies": PASS if self.dependencies else FAIL,
+                "current": FAIL if self.changed_since_copy else PASS,
+                "process": self.process.get("result", "CLEAN"),
+                "cleanup": "KEPT" if self.kept else (FAIL if self.cleanup_error else PASS)}
+
+    @property
+    def confirmed(self):
+        """The structure matches *and* that is a statement about the project as it is.
+
+        False when the copy was not one snapshot, when the manifest is not complete or when a dependency
+        changed before the stage finished: the comparison may still have come out equal, but not for a
+        project state anyone can point at. A crashed-and-retried process and a copy that could not be
+        deleted are reported in ``verdicts`` and do not take the result back.
+        """
+        verdicts = self.verdicts
+        return all(verdicts[key] == PASS for key in ("structure", "copy", "dependencies", "current"))
 
     def is_current(self, document, project_fingerprint=None):
         """True while the result still describes ``document`` (and, when given, the same source images)."""
@@ -589,32 +665,86 @@ def file_sha256(path):
 
 
 def dependency_paths(document, extra=()):
-    """Project-relative paths a stage of this document depends on, sorted.
+    """Project-relative paths a stage of this document cannot do without, sorted.
 
     The document's images; the engine pin and project settings; the bridge that builds the resources; the
     scripts that define and draw an ``EnemyAnimationProfile``; and ``extra`` - the carrier actor's own
-    definition, scene and script, which only the engine can name (``attach.dependencies``).
+    definition, scene and script, which only the engine can name (``attach.dependencies``). Every one of
+    them is *required*: a stage that cannot read one has no complete manifest and returns no result.
     """
     return sorted({row["path"] for row in document.data["assets"]["images"]} | set(TOOL_DEPENDENCIES) | set(extra))
 
 
-def dependency_manifest(root, paths, surveyed=None):
-    """``{path: {"sha256", "size", "mtime_ns"}}`` for the paths that exist as files under ``root``.
+def optional_dependency_paths(document):
+    """Files a stage uses when they exist and can do without: each image's Godot import settings.
+
+    ``<image>.png.import`` decides how the engine turns the PNG into a texture. A project that has not
+    been imported yet has none, and the stage is still valid; once there, a change to it changes what was
+    staged, so it belongs in the manifest.
+    """
+    return sorted(row["path"] + ".import" for row in document.data["assets"]["images"])
+
+
+def _dependency_file(root, relative):
+    """The plain file a dependency path names under ``root``, or None when no such file exists.
+
+    Raises ``STAGING_DEPENDENCY_INVALID`` for a path that is not a plain project-relative one, that
+    reaches its file through a link, or that names something other than a regular file. The same rules as
+    for every other path this module takes from a document or from the engine.
+    """
+    def refuse(reason):
+        raise BridgeError(STAGING_DEPENDENCY_INVALID, f"dependency {relative!r}: {reason}")
+    if not isinstance(relative, str) or not relative or relative.startswith("/") or "\\" in relative \
+            or ":" in relative or any(part in ("", ".", "..") for part in relative.split("/")):
+        refuse("not a plain project-relative path")
+    walked = Path(root)
+    for part in relative.split("/"):
+        walked = walked / part
+        if is_link(walked):
+            refuse(f"reaches the file through a link ({walked.relative_to(root).as_posix()})")
+    try:
+        status = os.lstat(walked)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        refuse(f"cannot be read ({error})")
+    if not stat.S_ISREG(status.st_mode):
+        refuse("not a plain file")
+    return walked
+
+
+def dependency_manifest(root, paths, surveyed=None, optional=()):
+    """``{path: {"sha256", "size", "mtime_ns"}}`` of every dependency under ``root``.
+
+    ``paths`` are required: one that is missing, unreadable, not a plain file inside ``root`` or badly
+    named raises ``STAGING_DEPENDENCY_INVALID`` naming every such path - there is no partial manifest.
+    ``optional`` paths are held to the same naming and safety rules, and are simply left out when the file
+    does not exist.
 
     ``surveyed`` (a staging session's ``{path: (size, mtime_ns)}``) gives the size and time of the *source*
     file as it was copied; without it the file under ``root`` is asked.
     """
-    manifest = {}
-    for relative in paths:
-        path = Path(root) / relative
+    manifest, problems = {}, []
+    required = list(dict.fromkeys(paths))
+    for relative in required + [path for path in dict.fromkeys(optional) if path not in required]:
+        needed = relative in required
         try:
-            status = os.lstat(path)
-            if not stat.S_ISREG(status.st_mode):
+            path = _dependency_file(root, relative)
+            if path is None:
+                if needed:
+                    problems.append(f"{relative}: missing")
                 continue
+            status = os.lstat(path)
             size, mtime = (surveyed or {}).get(relative, (status.st_size, status.st_mtime_ns))
             manifest[relative] = {"sha256": file_sha256(path), "size": size, "mtime_ns": mtime}
-        except OSError:
-            continue
+        except BridgeError as error:
+            problems.append(error.detail.removeprefix("dependency "))
+        except OSError as error:
+            problems.append(f"{relative}: cannot be read ({error})")
+    if problems:
+        raise BridgeError(STAGING_DEPENDENCY_INVALID,
+                          "the files this stage depends on cannot all be accounted for, so no result is given: "
+                          + "; ".join(problems))
     return manifest
 
 
@@ -627,8 +757,12 @@ def manifest_fingerprint(manifest):
 
 
 def source_fingerprint(project, document, extra=()):
-    """The fingerprint a stage of ``document`` in ``project`` would have right now."""
-    return manifest_fingerprint(dependency_manifest(project, dependency_paths(document, extra)))
+    """The fingerprint a stage of ``document`` in ``project`` would have right now.
+
+    Raises ``STAGING_DEPENDENCY_INVALID`` when a required file is not there: there is no fingerprint of
+    an incomplete set."""
+    return manifest_fingerprint(dependency_manifest(project, dependency_paths(document, extra),
+                                                    optional=optional_dependency_paths(document)))
 
 
 def changed_dependencies(project, result, deep=False, baseline=None):
@@ -1010,7 +1144,8 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
                             stage=stage_request(document, carrier, session.id))
         files = check_stage_response(built.data, session, monster_id)
         carrier_files = check_attach_dependencies(built.data["attach"], session.root)
-        dependencies = dependency_manifest(session.root, dependency_paths(document, carrier_files), session.surveyed)
+        dependencies = dependency_manifest(session.root, dependency_paths(document, carrier_files), session.surveyed,
+                                           optional_dependency_paths(document))
         project_fingerprint = manifest_fingerprint(dependencies)
         # A second process: nothing of the first one's memory can stand in for the files.
         reread = client.call(godot, session.root, "read_stage", monster_id, cancel, timeout, work_folder,
@@ -1052,6 +1187,14 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
                              max(built.attempts, reread.attempts), time.monotonic() - started, session, keep, "",
                              fingerprint, project_fingerprint, dependencies, resources, version, areas, process,
                              tuple(notes))
+        # Godot ran for a while. Are the files it was given still the files in the project? (Contents, not
+        # times: this is the one place where the answer goes into the result itself.)
+        moved = tuple(changed_dependencies(session.source, result, deep=True))
+        if moved:
+            from dataclasses import replace as _replace
+            result = _replace(result, changed_since_copy=moved, notes=result.notes + (
+                "files the stage depends on changed in the project while it ran (" + ", ".join(moved[:5])
+                + "); the result describes the copy, not the project as it is now",))
     except BaseException as error:
         cancelled = isinstance(error, BridgeError) and error.code == client.CANCELLED
         if keep_on_failure and not cancelled and isinstance(error, Exception):

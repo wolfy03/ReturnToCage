@@ -189,13 +189,20 @@ def main():
                   staging.changed_dependencies(PROJECT, result) == []
                   and staging.changed_dependencies(PROJECT, result, deep=True) == [],
                   str(staging.changed_dependencies(PROJECT, result, deep=True)))
+            optional = set(staging.optional_dependency_paths(document)) & set(result.dependencies)
+            check(f"{name}: the result is confirmed for the project: one snapshot, complete manifest, files unchanged",
+                  result.confirmed and result.verdicts["copy"] == result.verdicts["dependencies"]
+                  == result.verdicts["current"] == "PASS" and result.verdicts["cleanup"] == "KEPT"
+                  and result.changed_since_copy == (), str(result.verdicts))
+            check(f"{name}: the images' import settings are in the manifest", len(optional) == len(images), str(optional))
             check(f"{name}: the process record says how the run went, crash by crash",
                   result.process["result"] in ("CLEAN", "CRASHED_THEN_RETRIED")
                   and len(result.process["crashes"]) == len(result.process["crash_exit_codes"])
                   and (result.process["result"] == "CLEAN") == (not result.process["crashes"]), str(result.process))
             report["stages"][name] = {"differences": list(result.differences), "attempts": result.attempts,
                                       "process": result.process, "areas": result.areas, "notes": list(result.notes),
-                                      "dependencies": sorted(result.dependencies),
+                                      "dependencies": sorted(result.dependencies), "verdicts": result.verdicts,
+                                      "confirmed": result.confirmed,
                                       "seconds": round(result.seconds, 2), "carrier": attach.get("carrier"),
                                       "clips": sorted(result.profile.get("animations", {})),
                                       "texture_filter": result.profile.get("texture_filter"),

@@ -764,8 +764,8 @@ class MainWindow(QMainWindow):
                 self._keep_engine_log("stage_monster", f"crash-{crash['step']}-{crash['classification']}",
                                       crash.get("log_tail", ""))
             if result.passed:
-                text = strings.STAGE["passed"].format(clips=len(result.profile.get("animations", {})),
-                                                      carrier=result.attach.get("carrier", "–"))
+                text = strings.STAGE["passed" if result.confirmed else "unconfirmed"].format(
+                    clips=len(result.profile.get("animations", {})), carrier=result.attach.get("carrier", "–"))
                 if result.process.get("crash_exit_codes"):
                     text += " " + strings.STAGE["crashed"].format(count=len(result.process["crash_exit_codes"]))
                 if result.notes:
@@ -783,8 +783,10 @@ class MainWindow(QMainWindow):
         return self._start_job("stage_monster", work, done, same_document=True, label="표현 리소스 Staging")
 
     def stage_state(self):
-        """``none`` / ``passed`` / ``differs`` / ``stale``. A result counts only for the document and the
-        project state it was made against: any edit, another document or another project makes it stale."""
+        """``none`` / ``passed`` / ``unconfirmed`` / ``differs`` / ``stale``. A result counts only for the
+        document and the project state it was made against: any edit, another document or another project
+        makes it stale. ``unconfirmed``: the structure matched, but not for a project state that can be
+        pointed at (``StageResult.confirmed``)."""
         result = self.last_stage
         if result is None or self.session is None or result.monster_id != self.session.document.data["monster_id"]:
             return "none"
@@ -797,7 +799,11 @@ class MainWindow(QMainWindow):
         if self._stage_changed or self.project.root is None \
                 or staging.changed_dependencies(self.project.root, result, baseline=self._stage_baseline):
             return "stale"
-        return "passed" if result.passed else "differs"
+        if not result.passed:
+            return "differs"
+        # The structure matches. Whether that is a statement about this project is a second question:
+        # a copy that changed while it was made, or files that changed while Godot ran, leave it open.
+        return "passed" if result.confirmed else "unconfirmed"
 
     def verify_stage(self):
         """Re-read every file the last stage depended on and compare contents. Returns the changed paths.

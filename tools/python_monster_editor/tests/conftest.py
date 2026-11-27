@@ -152,6 +152,12 @@ def fake(tmp_path, monkeypatch):
     (project / "project.godot").write_text("", encoding="utf-8")
     (project / "tools/monster_bridge/bridge.tscn").write_text("", encoding="utf-8")
     (project / ".godot-version").write_text("4.7.2\n", encoding="utf-8")
+    from bridge import staging
+    for relative in staging.TOOL_DEPENDENCIES:                 # what every stage requires of a project
+        target = project / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            target.write_text(f"# {relative}\n", encoding="utf-8")
 
     def set_mode(mode, **extra):
         monkeypatch.setenv("RTC_FAKE_MODE", mode)
