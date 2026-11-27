@@ -165,7 +165,9 @@ def main():
             "timings": [{"clip": row["clip"], "samples": len(row.get("samples", [])), "loop": row.get("loop"),
                          "largest_delta": row.get("largest_delta")} for row in drawn.data.get("timings", [])],
             "differences": list(drawn.differences), "shots": rows, "seconds": round(drawn.seconds, 2),
-            "process": {"stage": result.process, "render_crash_exit_codes": list(drawn.crashes)}}
+            "process": {"stage": result.process, "render_crash_exit_codes": list(drawn.crashes),
+                        "render_crashes": [{key: row[key] for key in ("step", "attempt", "exit_code", "classification")}
+                                           for row in drawn.crash_records]}}
 
     left = [path.name for path in work.iterdir() if path.name.startswith(staging.STAGING_PREFIX)]
     check("no staging copy is left behind", not left and not staging.leftovers(), str(left))

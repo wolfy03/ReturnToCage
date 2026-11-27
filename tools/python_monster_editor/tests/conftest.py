@@ -44,12 +44,21 @@ FAKE = textwrap.dedent('''
     import hashlib, json, os, signal, sys, time
     mode = os.environ.get("RTC_FAKE_MODE", "ok")
     args = sys.argv[1:]
+    def crash():
+        if os.name == "nt":
+            os._exit(-1073741819)          # 0xC0000005, an access violation
+        os.kill(os.getpid(), signal.SIGSEGV)
+    def note(kind):                        # lets a test count how often the engine was really started
+        if os.environ.get("RTC_FAKE_CALLS"):
+            with open(os.environ["RTC_FAKE_CALLS"], "a", encoding="utf-8") as stream:
+                stream.write(kind + " ")
     if args == ["--version"]:
         if mode == "not_godot":
             sys.exit(7)
         print(os.environ.get("RTC_FAKE_VERSION", "4.7.2.stable.official.ed1daf0bf"))
         sys.exit(0)
     if "--import" in args:                # the editor's asset import of a staging copy
+        note("import")
         sys.exit(int(os.environ.get("RTC_FAKE_IMPORT_EXIT", "0")))
     request = json.load(open(args[args.index("--request") + 1], encoding="utf-8"))
     project = args[args.index("--path") + 1]
@@ -97,10 +106,9 @@ FAKE = textwrap.dedent('''
                               "resources": json.loads(os.environ.get("RTC_FAKE_READ_RESOURCES", "null")) or hashes}
     if mode == "hang":
         time.sleep(float(os.environ.get("RTC_FAKE_SECONDS", "20")))
+    note(operation)
     if mode == "crash":
-        if os.name == "nt":
-            os._exit(-1073741819)          # 0xC0000005, an access violation
-        os.kill(os.getpid(), signal.SIGSEGV)
+        crash()
     if mode == "wrong_request":
         result["request_id"] = "someone-elses-request"
     if mode == "wrong_protocol":
@@ -119,7 +127,9 @@ FAKE = textwrap.dedent('''
         with open(request["result_path"], "w", encoding="utf-8") as stream:
             stream.write("{ this is not json" if mode == "bad_json" else
                          "[1, 2, 3]" if mode == "not_an_object" else json.dumps(result))
-    print("MONSTER BRIDGE", operation, result["status"])
+    print("MONSTER RENDER CHECK" if render else "MONSTER BRIDGE " + operation, result["status"], flush=True)
+    if mode == "crash_after":              # the work is done and reported; the engine dies while shutting down
+        crash()
     sys.exit(3 if mode == "fail" else 0)
 ''')
 

@@ -313,14 +313,14 @@ def test_the_copy_has_limits_and_can_be_cancelled(fake, tmp_path, monkeypatch):
 
     cancel = threading.Event()
     copied = []
-    real = shutil.copyfile
+    real = staging._copy_bytes
 
-    def slow(source, target, **options):
+    def slow(source, descriptor, target):
         copied.append(source)
         if len(copied) == 5:
             cancel.set()                                         # the user cancels while files are being copied
-        return real(source, target, **options)
-    monkeypatch.setattr(staging.shutil, "copyfile", slow)
+        return real(source, descriptor, target)
+    monkeypatch.setattr(staging, "_copy_bytes", slow)
     with pytest.raises(BridgeError) as caught:
         StagingSession.create(project, work, cancel)
     assert caught.value.code == client.CANCELLED and len(copied) == 5 and copies(work) == []
@@ -330,13 +330,13 @@ def test_a_file_that_cannot_be_copied_fails_the_stage_and_leaves_nothing(fake, t
     _godot, project, _set_mode = fake
     (project / "assets").mkdir()
     (project / "assets/a.png").write_bytes(b"x")
-    real = shutil.copyfile
+    real = staging._copy_bytes
 
-    def failing(source, target, **options):
+    def failing(source, descriptor, target):
         if str(source).endswith("a.png"):
             raise PermissionError("locked by another program")
-        return real(source, target, **options)
-    monkeypatch.setattr(staging.shutil, "copyfile", failing)
+        return real(source, descriptor, target)
+    monkeypatch.setattr(staging, "_copy_bytes", failing)
     with pytest.raises(BridgeError) as caught:
         StagingSession.create(project, tmp_path)
     assert caught.value.code == staging.STAGE_FAILED and "assets/a.png" in caught.value.detail
@@ -346,14 +346,14 @@ def test_a_file_that_cannot_be_copied_fails_the_stage_and_leaves_nothing(fake, t
 def test_a_source_file_that_changes_during_the_copy_is_noticed(fake, tmp_path, monkeypatch):
     _godot, project, _set_mode = fake
     (project / "data.tres").write_text("before", encoding="utf-8")
-    real = shutil.copyfile
+    real = staging._copy_bytes
 
-    def racing(source, target, **options):
-        done = real(source, target, **options)
+    def racing(source, descriptor, target):
+        done = real(source, descriptor, target)
         if str(source).endswith("data.tres"):
             (project / "data.tres").write_text("after, and longer", encoding="utf-8")     # another program saves it
         return done
-    monkeypatch.setattr(staging.shutil, "copyfile", racing)
+    monkeypatch.setattr(staging, "_copy_bytes", racing)
     session = StagingSession.create(project, tmp_path)
     assert not session.consistent and session.changed_during_copy == ("data.tres",)
     assert session.describe()["changed_during_copy"] == ["data.tres"]
@@ -514,7 +514,8 @@ def test_a_stage_runs_in_the_copy_and_never_in_the_project(staged, tmp_path, bee
     assert result.areas == {"staging": "PASS", "resources": "PASS", "readback": "PASS", "images": "PASS",
                             "attach": "PASS", "rendering": "NOT_EVALUATED", "combat_runtime": "NOT_EVALUATED",
                             "network": "NOT_EVALUATED", "publish": "NOT_EVALUATED"}
-    assert result.process == {"attempts": {"import": 1, "stage_monster": 1, "read_stage": 1}, "crash_exit_codes": []}
+    assert result.process == {"attempts": {"import": 1, "stage_monster": 1, "read_stage": 1}, "result": "CLEAN",
+                              "crash_exit_codes": [], "crashes": []}
 
 
 def test_the_caller_can_keep_the_copy_and_then_owns_it(staged, beetle):

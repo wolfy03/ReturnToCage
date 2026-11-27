@@ -131,6 +131,9 @@ def main():
             except BridgeError as error:
                 if error.code == client.PROCESS_CRASH and _round < 2:
                     report["process_crash_rounds"] = report.get("process_crash_rounds", 0) + 1
+                    report.setdefault("process_crashes", []).extend(
+                        {key: row[key] for key in ("step", "attempt", "exit_code", "classification")}
+                        for row in error.crash_records)
                     continue
                 report["safety"][name] = error.code
                 return check(name, error.code == code, f"{error.code}: {error.detail}")
@@ -175,8 +178,24 @@ def main():
                   text.startswith("[gd_resource type=\"SpriteFrames\"") and "ext_resource" in text)
             check(f"{name}: the engine and the editor agree on the generated files' hashes",
                   len(result.resources) == 2 and all(len(value) == 64 for value in result.resources.values()))
+            images = {row["path"] for row in document.data["assets"]["images"]}
+            carrier_files = [path for path in result.dependencies
+                             if path not in images and path not in staging.TOOL_DEPENDENCIES]
+            check(f"{name}: the dependency manifest covers the images, the tool files and the carrier's own files",
+                  images <= set(result.dependencies) and set(staging.TOOL_DEPENDENCIES) <= set(result.dependencies)
+                  and len(carrier_files) >= 3 and result.project_fingerprint == staging.manifest_fingerprint(result.dependencies),
+                  f"carrier files {carrier_files}; missing {sorted(set(staging.TOOL_DEPENDENCIES) - set(result.dependencies))}")
+            check(f"{name}: no dependency differs from the real project (quick and full comparison)",
+                  staging.changed_dependencies(PROJECT, result) == []
+                  and staging.changed_dependencies(PROJECT, result, deep=True) == [],
+                  str(staging.changed_dependencies(PROJECT, result, deep=True)))
+            check(f"{name}: the process record says how the run went, crash by crash",
+                  result.process["result"] in ("CLEAN", "CRASHED_THEN_RETRIED")
+                  and len(result.process["crashes"]) == len(result.process["crash_exit_codes"])
+                  and (result.process["result"] == "CLEAN") == (not result.process["crashes"]), str(result.process))
             report["stages"][name] = {"differences": list(result.differences), "attempts": result.attempts,
                                       "process": result.process, "areas": result.areas, "notes": list(result.notes),
+                                      "dependencies": sorted(result.dependencies),
                                       "seconds": round(result.seconds, 2), "carrier": attach.get("carrier"),
                                       "clips": sorted(result.profile.get("animations", {})),
                                       "texture_filter": result.profile.get("texture_filter"),
