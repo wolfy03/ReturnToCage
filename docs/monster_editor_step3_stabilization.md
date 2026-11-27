@@ -570,3 +570,20 @@ marker 뒤의 crash이고, import 도중의 것은 marker가 없어 "unknown"으
 
 CI 결과는 이 절 아래 "CI (S2)"에 푸시 뒤 적는다.
 
+
+**CI (S2)** — GitHub Actions, 커밋 `1b19bb1`(코드는 `468b75c`와 같다).
+
+| 워크플로 / job | 결과 |
+|---|---|
+| Python Monster Editor / `core` (Ubuntu) | 성공 — 945 통과, 4 건너뜀 |
+| Python Monster Editor / `core` (Windows) | 성공 — 949 통과, 건너뜀 없음 (심볼릭 링크 테스트 포함) |
+| Python Monster Editor / `godot-contract` (Linux: 계약·확장성·Import·Staging) | 성공 |
+| Python Monster Editor / `gui-windows` (스모크 3배율, Import, Staging, 실제 렌더링, 작업 트리 미변경) | 성공, 첫 실행 |
+| Godot validation / `headless` | 성공 |
+| Godot validation / `windows-demo` | **실패** — `Disconnect menu input and session recovery E2E` 단계에서 릴리스 EXE 프로세스가 `3221225477`(`0xC0000005`)로 종료 |
+
+`windows-demo`의 실패 지점은 실행마다 달랐다: `43ea113`·`d30baab`에서는 `Build release EXE and execute content and ENet
+validation` 단계의 lifecycle probe(`assert_motion`), `1b19bb1`에서는 그 단계는 통과하고 다음 단계의 프로세스 crash다.
+`cbf68ce`의 실행은 취소됐다. 어느 쪽도 Monster Editor의 코드를 실행하지 않으며, 이 브랜치는 게임 런타임·네트워크
+코드를 바꾸지 않았다. master `8a24f91`에서는 같은 job이 한 번 성공했다. Runtime 안정화의 미해결 항목과 엔진 crash로
+분류하고 여기서 고치지 않았다 — master 병합 판단에서는 "이 브랜치가 만든 실패가 아니지만, 통과한 적도 없다"로 읽어야 한다.
