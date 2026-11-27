@@ -1,12 +1,12 @@
 """Measure the frame cache against real memory (MONSTER-STEP 3 stabilization, FIX-08).
 
-    python tools/python_monster_editor/check_frame_cache.py [--output <json>] [--budget-mib 96]
+    python tools/python_monster_editor/check_frame_cache.py [--output <json>] [--budget-mib 160]
 
 For 256, 512 and 1024 pixel frames, and for one large sheet cut into frames, this decodes many more
 frames than the budget holds and records, side by side:
 
-* ``cache bytes``: the cache's own estimate (width x height x 4 per kept frame), which must never exceed
-  the budget;
+* ``cache bytes``: the cache's own estimate (width x height x 4 per kept frame, plus the one decoded
+  sheet it holds), which must never exceed the budget - one budget for both, 160 MiB by default;
 * ``working set``: what the operating system says the process uses, read before the run, at its peak and
   after the cache is emptied.
 
@@ -77,7 +77,8 @@ def make_sheet(path, frame, columns, rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--budget-mib", type=int, default=96)
+    parser.add_argument("--budget-mib", type=int, default=160,
+                        help="the whole cache: frames and the kept sheet together (default: the editor's)")
     args = parser.parse_args()
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")       # nothing is shown; pixmaps only need an application
 
@@ -118,7 +119,7 @@ def main():
                 if pixmap is None:
                     check(f"{frame}px: frame {index} decodes", False, state)
                     break
-                peak_bytes = max(peak_bytes, cache.bytes)
+                peak_bytes = max(peak_bytes, cache.total_bytes)
                 if index % 8 == 0:
                     peak_set = max(peak_set, working_set())
             decode_seconds = time.perf_counter() - started
@@ -131,10 +132,11 @@ def main():
             hit_seconds = time.perf_counter() - started
             demanded = pixel_bytes(frame, frame) * count
             check(f"{frame}px: {count} frames ({demanded // MiB} MiB of pixels) stay inside the {args.budget_mib} MiB budget",
-                  peak_bytes <= budget and cache.bytes <= budget, f"peak {peak_bytes}")
-            check(f"{frame}px: frames beyond the budget were evicted, oldest first",
-                  (cache.evictions > 0) == (demanded > budget) and kept == min(count, budget // pixel_bytes(frame, frame)),
-                  f"kept {kept}, evictions {cache.evictions}")
+                  peak_bytes <= budget and cache.total_bytes <= budget, f"peak {peak_bytes}")
+            room = (budget - cache.sheet_bytes) // pixel_bytes(frame, frame)       # what is left beside the sheet
+            check(f"{frame}px: frames beyond the budget were evicted, oldest first, the kept sheet counted in",
+                  (cache.evictions > 0) == (count > room) and kept == min(count, room),
+                  f"kept {kept}, room {room}, evictions {cache.evictions}")
             sheet_decodes, sheet_kept = cache.sheet_decodes, cache.sheet_bytes
             check(f"{frame}px: each sheet was decoded once, not once per frame", sheet_decodes == len(sheets),
                   f"{sheet_decodes} decodes")
@@ -151,10 +153,10 @@ def main():
                          "decode_ms_per_frame": round(decode_seconds * 1000 / count, 2),
                          "cached_ms_per_frame": round(hit_seconds * 1000 / max(1, min(kept, count)), 3)})
             if before and peak_set:
-                # Not a promise of the cache, but a sanity bound: frames inside the budget, one decoded sheet
+                # Not a promise of the cache, but a sanity bound: frames and the decoded sheet inside the budget
                 # and Qt's own overhead - the process should not hold several times that because of the cache.
-                check(f"{frame}px: the process grew by less than twice (budget + one sheet) while the cache was full",
-                      peak_set - before < 2 * (budget + frame_cache.SHEET_LIMIT), f"grew {(peak_set - before) // MiB} MiB")
+                check(f"{frame}px: the process grew by less than twice the budget while the cache was full",
+                      peak_set - before < 2 * budget, f"grew {(peak_set - before) // MiB} MiB")
 
         # ---- one frame that is larger than half the budget
         make_sheet(project / "art/huge.png", 2048, 2, 1)

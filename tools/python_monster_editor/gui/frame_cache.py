@@ -4,6 +4,11 @@
 estimated pixel bytes (width x height x 4), and a per-frame share of that total. A count alone is no
 bound at all - 128 frames are 32 MiB at 256x256 and 2 GiB at 2048x2048.
 
+**One budget.** ``max_bytes`` is everything the cache holds: the frames *and* the one decoded sheet it
+keeps between frames (``total_bytes = bytes + sheet_bytes <= max_bytes``, always). The default is
+``DEFAULT_BUDGET`` = 160 MiB = ``FRAME_BUDGET`` (96 MiB, what frames get while a full-size sheet is held)
++ ``SHEET_LIMIT`` (64 MiB, the largest sheet that is kept). With no sheet held, frames may use all of it.
+
 The estimate is the decoded RGBA size. Qt keeps some bookkeeping per pixmap and the process does not
 return freed memory to the system at once, so the process's working set is larger than ``bytes`` and
 falls later; ``check_frame_cache.py`` measures both.
@@ -13,8 +18,9 @@ the same sheet decode it once.
 
 A PNG cannot be read from the middle: cutting one frame out of a sheet decodes the whole sheet. Doing that
 once per frame made a 256-frame strip of a 4096x4096 sheet cost about 160 ms *per frame* (measured). The
-cache therefore also holds the one sheet decoded last (``SHEET_LIMIT`` at most, on top of the frame
-budget) and cuts further frames out of it in memory.
+cache therefore also holds the one sheet decoded last (``SHEET_LIMIT`` at most, counted inside the same
+budget) and cuts further frames out of it in memory. A sheet that would not leave room for even one of
+its own frames is not kept; its frames are then read one at a time, slowly but within the budget.
 """
 
 from collections import OrderedDict
@@ -26,13 +32,14 @@ from PySide6.QtGui import QImageReader, QPixmap
 from .panels import DECODE_LIMIT_MB, forget_image_checks, image_digest
 
 MiB = 1024 * 1024
-DEFAULT_BUDGET = 96 * MiB
+FRAME_BUDGET = 96 * MiB
+# The decoded sheet kept between frames. A larger sheet is read frame by frame instead, slowly but bounded.
+SHEET_LIMIT = 64 * MiB
+DEFAULT_BUDGET = FRAME_BUDGET + SHEET_LIMIT       # the whole cache: frames and the kept sheet together
 DEFAULT_ENTRIES = 512
 # A frame larger than this share of the budget is shown but not kept: it would push everything else out.
 LARGEST_SHARE = 0.5
 BYTES_PER_PIXEL = 4
-# The decoded sheet kept between frames. A larger sheet is read frame by frame instead, slowly but bounded.
-SHEET_LIMIT = 64 * MiB
 
 
 def pixel_bytes(width, height):
@@ -48,11 +55,33 @@ class FrameCache:
         self.sheet_key, self.sheet, self.sheet_bytes = None, None, 0     # the sheet decoded last, if small enough
         self.sheet_decodes = 0
 
-    def keep_sheet(self, key, image, size):
+    @property
+    def total_bytes(self):
+        """Everything held: frames and the kept sheet. Never more than ``max_bytes``."""
+        return self.bytes + self.sheet_bytes
+
+    def keep_sheet(self, key, image, size, room_for=0):
+        """Keep a decoded sheet, making room among the frames. Returns False (and keeps nothing) when the
+        sheet plus ``room_for`` bytes - one frame cut from it - would not fit the budget at all."""
+        size = max(0, int(size))
+        if size > SHEET_LIMIT or size + max(0, int(room_for)) > self.max_bytes:
+            self.drop_sheet()
+            return False
         self.sheet_key, self.sheet, self.sheet_bytes = key, image, size
+        self._trim()
+        return True
 
     def drop_sheet(self):
         self.sheet_key, self.sheet, self.sheet_bytes = None, None, 0
+
+    def _trim(self):
+        """Evict the oldest frames until the whole cache fits; the sheet goes last."""
+        while self._rows and (self.total_bytes > self.max_bytes or len(self._rows) > self.max_entries):
+            _old, (_value, freed) = self._rows.popitem(last=False)
+            self.bytes -= freed
+            self.evictions += 1
+        if self.total_bytes > self.max_bytes:
+            self.drop_sheet()
 
     def __len__(self):
         return len(self._rows)
@@ -78,11 +107,8 @@ class FrameCache:
             return False
         self._rows[key] = (value, size)
         self.bytes += size
-        while self._rows and (self.bytes > self.max_bytes or len(self._rows) > self.max_entries):
-            _old, (_value, freed) = self._rows.popitem(last=False)
-            self.bytes -= freed
-            self.evictions += 1
-        return True
+        self._trim()
+        return key in self._rows
 
     def discard(self, key):
         row = self._rows.pop(key, None)
@@ -104,7 +130,8 @@ class FrameCache:
         self.drop_sheet()
 
     def stats(self):
-        return {"entries": len(self._rows), "bytes": self.bytes, "max_bytes": self.max_bytes,
+        return {"entries": len(self._rows), "bytes": self.bytes, "total_bytes": self.total_bytes,
+                "max_bytes": self.max_bytes,
                 "max_entries": self.max_entries, "hits": self.hits, "misses": self.misses,
                 "evictions": self.evictions, "uncached": self.uncached, "sheet_bytes": self.sheet_bytes,
                 "sheet_decodes": self.sheet_decodes}
@@ -148,12 +175,13 @@ def _decode(path, sheet_key, rect, cache):
     reader = QImageReader(str(path))
     reader.setAllocationLimit(DECODE_LIMIT_MB)
     size = reader.size()
-    if rect and size.isValid() and pixel_bytes(size.width(), size.height()) <= SHEET_LIMIT:
+    sheet_size = pixel_bytes(size.width(), size.height()) if size.isValid() else 0
+    if rect and 0 < sheet_size <= SHEET_LIMIT and sheet_size + pixel_bytes(rect[2], rect[3]) <= cache.max_bytes:
         sheet = reader.read()                       # the whole sheet, once
         if sheet.isNull():
             return None
         cache.sheet_decodes += 1
-        cache.keep_sheet(sheet_key, sheet, pixel_bytes(sheet.width(), sheet.height()))
+        cache.keep_sheet(sheet_key, sheet, pixel_bytes(sheet.width(), sheet.height()), pixel_bytes(rect[2], rect[3]))
         return sheet.copy(QRect(*rect))
     if rect:
         reader.setClipRect(QRect(*rect))            # too large to keep: decode, cut, forget
