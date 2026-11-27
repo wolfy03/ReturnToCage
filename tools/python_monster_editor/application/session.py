@@ -15,13 +15,36 @@ from dataclasses import dataclass
 import itertools
 from pathlib import Path
 
-from rtcmonster.schema import REFERENCE_SOURCES
+from rtcmonster.schema import REFERENCE_SOURCES, format_path
 from rtcmonster.spec import Id
 
 from rtcmonster import (DocumentError, EDITOR_EDITABLE_SECTIONS, clone_document, document_revision, new_document,
                         read_document, write_document)
 
 HISTORY_LIMIT = 500
+# Reference kinds whose targets this editor edits. A reference of another kind (to a state, to a pattern)
+# names an object in a section that has no editor at all and never "follows" anything.
+_FOLLOWED_KINDS = tuple(kind for kind, path in REFERENCE_SOURCES.items() if path[0] in EDITOR_EDITABLE_SECTIONS)
+
+
+def _followable(node):
+    return isinstance(node, Id) and node.ref in _FOLLOWED_KINDS
+
+
+def _ids(data, kind):
+    rows = data
+    for key in REFERENCE_SOURCES[kind]:
+        rows = rows[key]
+    return {row["id"] for row in rows}
+
+
+def _leaves(document):
+    """``{section: {path: (node, value)}}`` of every plain value, from one walk of the document."""
+    sections = {}
+    for path, node, value in document.schema.fields(document.data):
+        if path and not isinstance(value, (dict, list, tuple)):
+            sections.setdefault(path[0], {})[tuple(path)] = (node, value)
+    return sections
 _session_ids = itertools.count(1)
 
 
@@ -146,12 +169,19 @@ class DocumentSession:
     def is_draft_of_new_content(self):
         return self.binding is None
 
+    def _declared(self, section):
+        """What the document's binding says about a section. A draft of new content has no binding and
+        everything in it is its own. An imported document owns only what its binding names ``editable``:
+        a section the binding does not mention at all is the game's, not the editor's."""
+        if self.binding is None:
+            return "editable"
+        return self.binding.get("editability", {}).get(section, "read_only")
+
     def editability(self, section):
         """``editable``, ``read_only`` or ``unsupported`` for a top-level section."""
         if section not in EDITOR_EDITABLE_SECTIONS:
             return "read_only"
-        declared = (self.binding or {}).get("editability", {}).get(section, "editable")
-        return "editable" if declared == "editable" else declared
+        return self._declared(section)
 
     def is_editable(self, path):
         return bool(path) and self.editability(path[0]) == "editable"
@@ -165,18 +195,56 @@ class DocumentSession:
         section an imported document declares read-only: those belong to the game's own scripts.
         """
         section = path[0]
-        if section in EDITOR_EDITABLE_SECTIONS:
-            return False
-        if (self.binding or {}).get("editability", {}).get(section, "editable") != "editable":
+        if section in EDITOR_EDITABLE_SECTIONS or self._declared(section) != "editable":
             return False
         try:
             node = self.document.schema.field(self.document.data, tuple(path))[0]
         except (DocumentError, KeyError, IndexError, TypeError):
             return False
-        # ... and only a reference to something this editor edits (a clip, an image, a hitbox). A state
-        # or pattern reference names an object in a section that has no editor at all.
-        return (isinstance(node, Id) and node.ref in REFERENCE_SOURCES
-                and REFERENCE_SOURCES[node.ref][0] in EDITOR_EDITABLE_SECTIONS)
+        return _followable(node)
+
+    def _protected_change(self, old, new):
+        """Why ``new`` may not replace ``old``, or "" when it may.
+
+        The per-edit check above looks at paths. This looks at the *result*, which is what matters: a
+        rename has no path and rewrites every field that names the object, and several edits together can
+        add up to something none of them is alone. After the edits,
+
+        * a section this session may not edit is unchanged - except, in a draft's sections that merely
+          have no editor yet, reference fields that now name another existing clip, image or hitbox;
+        * no reference from such a section points at an object the edits removed. The user could not
+          repair it there, so the edit that would strand it is refused instead.
+        """
+        targets_changed = any(_ids(old.data, kind) != _ids(new.data, kind) for kind in _FOLLOWED_KINDS)
+        walked = []                                   # both documents are walked once, and only when needed
+        for section in new.data:
+            protected = self.editability(section) != "editable"
+            if not protected:
+                continue
+            same = old.data[section] == new.data[section]
+            if same and not targets_changed:
+                continue
+            if not walked:
+                walked += [_leaves(old), _leaves(new)]
+            before, after = walked[0].get(section, {}), walked[1].get(section, {})
+            if not same:
+                if set(before) != set(after):
+                    return f"{section} is {self.editability(section)} in this document"
+                may_follow = section not in EDITOR_EDITABLE_SECTIONS and self._declared(section) == "editable"
+                for path, (node, value) in after.items():
+                    if before[path][1] == value:
+                        continue
+                    if not may_follow or not _followable(node):
+                        return f"{format_path(path)}: {section} is {self.editability(section)} in this document"
+                    if value not in _ids(new.data, node.ref):
+                        return (f"{format_path(path)}: a reference in {section} can follow its target to another "
+                                f"{node.ref}, not be cleared or point at {value!r}")
+            for path, (node, value) in after.items():
+                if _followable(node) and value and value not in _ids(new.data, node.ref) \
+                        and value in _ids(old.data, node.ref):
+                    return (f"{format_path(path)} in {section} still names {node.ref} {value!r}; {section} cannot be "
+                            "edited here, so the object it names cannot be removed or renamed away")
+        return ""
 
     def subscribe(self, listener):
         """``listener(session, reason)`` with reason in edit / undo / redo / saved / replaced."""
@@ -203,6 +271,9 @@ class DocumentSession:
         changed = self.document.apply(*edits)
         if changed.fingerprint == self.document.fingerprint:
             return False
+        refusal = self._protected_change(self.document, changed)
+        if refusal:
+            raise DocumentError(refusal)
         self.history.push(changed, label)
         self._changed("edit")
         return True
