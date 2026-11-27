@@ -587,3 +587,54 @@ validation` 단계의 lifecycle probe(`assert_motion`), `1b19bb1`에서는 그 �
 `cbf68ce`의 실행은 취소됐다. 어느 쪽도 Monster Editor의 코드를 실행하지 않으며, 이 브랜치는 게임 런타임·네트워크
 코드를 바꾸지 않았다. master `8a24f91`에서는 같은 job이 한 번 성공했다. Runtime 안정화의 미해결 항목과 엔진 crash로
 분류하고 여기서 고치지 않았다 — master 병합 판단에서는 "이 브랜치가 만든 실패가 아니지만, 통과한 적도 없다"로 읽어야 한다.
+
+## 16. Final patch — 병합 전 마지막 세 가지
+
+`0513b42`의 코드 검토에서 남은 세 항목만 고쳤다. 새 안정화 단계가 아니다. 각 항목은 먼저 테스트로 재현했다
+(`tests/test_step3_final.py`를 `0513b42`의 코드에 대해 실행: 24 실패, 1 통과 — 통과한 하나는 가드) → 수정 후 25 통과.
+
+| 항목 | 결함 | 수정 | 바뀐 파일 |
+|---|---|---|---|
+| 1. 필수 의존성 | `dependency_manifest()`가 없는 파일·읽을 수 없는 파일을 조용히 뺐다. stager 스크립트가 없어도 stage가 "통과"했고, 그 파일이 계속 없는 한 fingerprint도 같았다 | 필수 파일의 누락·읽기 실패·일반 파일 아님·잘못된 경로·링크 경유는 `STAGING_DEPENDENCY_INVALID`. manifest를 만들지 않으므로 결과도 없다. 선택 의존 파일(이미지의 `.png.import`)은 있으면 포함, 없으면 생략 — 경로 규칙은 똑같이 적용 | `bridge/staging.py` |
+| 2. 결과 판정 | 복사 도중 원본이 바뀌면 `areas["staging"]`만 WARNING이 되고 `passed`와 편집기 표시는 그대로 "통과"였다 | `passed`의 뜻은 그대로(구조 일치). `verdicts`가 구조 / 복사 일관성 / 의존성 완전성 / 현재 파일과의 일치 / 프로세스 / cleanup을 따로 말하고, `confirmed`는 앞의 넷이 모두 PASS일 때만 참. 편집기는 `passed`이지만 `confirmed`가 아닌 결과를 "구조는 일치, 확정 아님"으로 표시 | `bridge/staging.py`, `gui/main_window.py`, `gui/strings.py` |
+| 3. 생성 실패의 cleanup | 복사나 표식 쓰기가 실패하면 `shutil.rmtree(..., ignore_errors=True)`로 지웠다. 그 삭제가 실패해도 아무 말이 없었고 폴더를 기억하는 세션도 없었다 | 부분 사본도 소유 확인을 거쳐 순서대로 지운다. 실패하면 처음 실패의 원인, 삭제 실패의 원인, 폴더 경로, 세션 ID, 조치 방법을 오류에 담고 세션을 `leftovers()`에 남긴다. 소유를 확인할 수 없는 폴더는 지우지 않는다 | `bridge/staging.py` |
+
+**기존 호출과의 호환.** `StageResult.passed`, `differences`, `areas`, `is_current`, `process`, `cleanup_error`는 그대로다.
+`verdicts`·`confirmed`·`changed_since_copy`가 더해졌다. 편집기의 `stage_state()`는 기존 값(`none`·`passed`·`differs`·
+`stale`)에 `unconfirmed`가 하나 늘었다. `dependency_manifest(root, paths, surveyed=None)` 호출은 그대로 동작하되 이제
+누락을 숨기지 않는다 — 누락을 허용하려면 `optional=`로 넘긴다.
+
+**"현재 파일과의 일치"를 어디서 보는가.** 두 곳이다. stage가 끝나는 순간 의존 파일의 내용을 실제 프로젝트와 한 번
+대조해 결과에 적는다(`changed_since_copy`, `verdicts["current"]`) — Godot이 도는 수십 초 사이의 변경. 그 뒤의 변경은
+결과가 아니라 편집기가 본다(§15의 "오래됨").
+
+**한계.** 선택 의존 파일은 이미지의 import 설정뿐이다. `.png.import`가 없는 프로젝트(아직 import하지 않은)에서의
+stage는 사본 안에서 Godot이 만든 설정으로 돌았을 것이고, 그 설정은 manifest에 없다. 복사가 한 시점의 상태가 아니었을
+때(`copy` WARNING)는 무엇이 바뀌었는지(`changed_during_copy`)를 알려 줄 뿐 다시 복사하지 않는다 — 다시 실행하는 것이
+사용자의 다음 행동이다.
+
+### 검증 (Final patch)
+
+Windows 11, Python 3.14.5, PySide6-Essentials 6.11.3, Godot 4.7.2-stable. 코드 커밋 `0a6c337`에서 실행했다(그 뒤는
+문서뿐이다).
+
+| 검사 | 결과 |
+|---|---|
+| `tests/test_step3_final.py` — 수정 전(`0513b42`의 코드) / 수정 후 | 24 실패·1 통과 / 25 통과 |
+| `pytest tools/python_monster_editor/tests` (네이티브 / offscreen) | 966 통과·8 건너뜀 / 964 통과·10 건너뜀 |
+| 실제 Godot Staging (`check_godot_stage.py`) | PASS, 검사 78개. 세 문서 모두 `confirmed`, manifest에 이미지의 `.png.import` 포함 |
+| 실제 Godot Rendering (`check_godot_render.py`, forward_plus) | PASS. 딱정벌레 20·개구리 32장 픽셀 동일 |
+| Native GUI 스모크 100% / 150% / 200% | 각 49 통과 |
+| `check_godot_import.py` / `check_godot_contract.py` / `check_contract_extensibility.py` | 45 통과 / 205 통과·3 미검사 / PASS |
+| Map Editor: `pytest tools/python_map_editor/tests`, `check_scene_bridge.py` | 184 통과·3 건너뜀 / 통과 |
+| `tools/check_project.py` | 3회 실행: **실패, 실패, 통과** (아래) |
+
+`check_project.py`의 두 실패는 서로 다른 씬에서 같은 모양이다: 검사가 자기 PASS 줄을 출력한 **뒤** Godot 프로세스가
+`0xC0000005`로 종료했다(`validate_player_sprite_pipeline.tscn`에서 `SPRITE PIPELINE VALIDATION PASS` 뒤, 그리고
+`test_runner.tscn -- --restart-write`에서). 기능 실패 표시는 없었다. [known_issues.md](known_issues.md)의 분류로
+알려진 엔진 종료 crash이며, 이 스크립트는 재시도하지 않으므로 그대로 실패로 끝난다. 이 브랜치는 그 씬들도
+`check_project.py`도 바꾸지 않았다. 이 PC에서의 빈도가 이전 회귀들보다 높았다(같은 시간에 다른 세션의 Godot이 돌고
+있었다) — 엔진 버전을 올릴 때 다시 볼 항목이다.
+
+CI 결과는 아래 "CI (Final patch)"에 푸시 뒤 적는다.
+

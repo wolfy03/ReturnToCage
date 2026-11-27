@@ -97,6 +97,25 @@ Python 쪽(`bridge/staging.py`)의 코드:
 | `STAGING_NOT_OWNED` | 삭제하려는 폴더가 이 세션이 만든 사본이 아니다(표식 없음·다른 세션·링크·잘못된 위치) |
 | `STAGING_CLEANUP_FAILED` | 사본을 다 지우지 못했다. 경로와 원인을 담는다. 다시 시도할 수 있다 |
 | `RESOURCE_PATH_INVALID` | 응답이 가리키는 경로가 사본 안의 허용된 파일이 아니다 |
+| `STAGING_DEPENDENCY_INVALID` | stage가 의존하는 필수 파일이 없거나, 읽을 수 없거나, 일반 파일이 아니거나, 경로가 프로젝트 기준의 평범한 경로가 아니다. manifest를 만들지 않으므로 결과도 없다 |
+
+**결과가 말하는 것** (`StageResult`). `passed`는 "구조가 문서와 같다"이고 그 이상이 아니다. 나머지는 `verdicts`에 따로 있다.
+
+| `verdicts` | 값 | 뜻 |
+|---|---|---|
+| `structure` | PASS / FAIL | staged 리소스가 문서와 같다 (= `passed`) |
+| `copy` | PASS / WARNING | 프로젝트 사본이 한 시점의 상태였다. WARNING: 복사하는 동안 파일이 바뀌었다 |
+| `dependencies` | PASS | 의존 파일이 전부 manifest에 있다 (아니면 결과 대신 `STAGING_DEPENDENCY_INVALID`) |
+| `current` | PASS / FAIL | stage가 끝났을 때 그 파일들이 복사한 그대로였다 (`changed_since_copy`) |
+| `process` | CLEAN / CRASHED_THEN_RETRIED | |
+| `cleanup` | PASS / FAIL / KEPT | 사본을 지웠다 / 못 지웠다(`cleanup_error`) / 요청대로 남겼다 |
+
+`confirmed`는 `structure`·`copy`·`dependencies`·`current`가 모두 PASS일 때만 참이다 — "구조가 맞고, 그것이 지금
+프로젝트에 대한 말이다". crash 후 재시도와 삭제 실패는 따로 보고될 뿐 결과를 무효로 하지 않는다.
+
+**사본을 만들다 실패했을 때.** 부분 사본도 다른 사본과 같은 소유 확인을 거쳐 지운다. 그 삭제까지 실패하면 오류
+메시지에 처음 실패한 이유, 삭제가 실패한 이유, 남은 폴더, 세션 ID, 조치 방법이 함께 들어가고(코드는 처음 실패의
+것), 세션은 `leftovers()`에 남아 `remove()`로 다시 지울 수 있다. 소유를 확인할 수 없으면 지우지 않고 그렇게 알린다.
 
 사본의 소유권, 수명, 응답 검사, 비교 항목은 [monster_editor_step3_stabilization.md](monster_editor_step3_stabilization.md) §6~7.
 

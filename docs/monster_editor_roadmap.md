@@ -93,7 +93,10 @@ workspace의 선택 계약(`select_frame` / `seek` / `highlight_box` / `selectio
 
 ## MONSTER-STEP 4 — Attack Pattern Editor / Combat Runtime
 
-- **선행**: STEP 3과 그 안정화. **이 단계부터 게임 런타임과 프로토콜이 바뀐다.** 프로토콜을 21로 올릴 때,
+- **나눔**: **4-A** Attack Pattern Editor / Timeline GUI — 게임 런타임을 바꾸지 않는다. **4-B** 실제 Combat
+  Runtime과 프로토콜 변경. 4-B 전에 Windows 릴리스 probe의 미해결 실패(snapshot 적용, 입력 확인, slot UI 동기화 —
+  [known_issues.md](known_issues.md))를 따로 검증한다.
+- **선행**: STEP 3과 그 안정화. **4-B부터 게임 런타임과 프로토콜이 바뀐다.** 프로토콜을 21로 올릴 때,
   master의 Runtime 안정화가 현재 프로토콜 안에서 임시로 푼 문제(점프 press를 150 ms 재전송)의 장기 계약을 같이
   정한다: 지속 입력과 순간 action의 분리, action sequence와 중복 제거, 유실 시 재전송·ACK, 세션 generation
   ([runtime_stabilization.md](runtime_stabilization.md)). 그리고 Windows lifecycle probe의 미해결 실패가 새 전투

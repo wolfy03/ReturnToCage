@@ -72,6 +72,26 @@ python tools/repeat_stability.py --godot <new godot> --repeat 30 --case physics 
 
 `known_engine_crash=0`이 30회 이어지면 이 항목과 CI의 예외 판단을 지운다.
 
+## Windows 릴리스 probe의 미해결 기능 실패
+
+`Godot validation / windows-demo`(릴리스 EXE로 도는 session lifecycle·disconnect E2E)가 실행마다 다른 자리에서 실패한다.
+전부 게임 런타임·네트워크 쪽이며 Monster Editor의 코드는 이 job에서 실행되지 않는다. MONSTER-STEP 3 안정화 브랜치는
+게임 코드를 바꾸지 않았고, 이 항목들도 고치지 않았다.
+
+| 커밋 | 단계 | 실패 |
+|---|---|---|
+| `43ea113`, `d30baab` | Build release EXE and execute content and ENet validation | Role B `assert_motion` — client 자신의 actor snapshot 적용 / run animation 관측 / 서버 권위 입력 확인 |
+| `1b19bb1` | Disconnect menu input and session recovery E2E | 릴리스 EXE 프로세스가 `0xC0000005`로 종료 |
+| `0513b42` | Build release EXE and execute content and ENet validation | Role B `slot_ui` — `slot GUI did not reconcile the owner snapshot and result` |
+
+master `8a24f91`에서는 같은 job이 한 번 성공했다. 원인은 [runtime_stabilization.md](runtime_stabilization.md)의 미해결
+항목(snapshot 적용, 입력 확인)과 같은 계열로 보이지만 `slot_ui`는 거기에 없던 증상이다 — 같은 원인이라고 확인한 것은
+아니다.
+
+**순서.** MONSTER-STEP 4-A(Attack Pattern Editor / Timeline GUI)는 게임 런타임을 바꾸지 않으므로 이 문제와 독립이다.
+MONSTER-STEP 4-B(실제 Combat Runtime, 프로토콜 변경) **전에** snapshot 적용, 입력 확인, slot UI 동기화를 따로 검증하고
+정리한다. 새 전투 복제를 이 위에 얹으면 실패의 원인을 가를 수 없게 된다.
+
 ## Unknown native crash
 
 성공 marker 없이 난 `0xC0000005`. 2026-11 안정화 중 관찰된 것:
