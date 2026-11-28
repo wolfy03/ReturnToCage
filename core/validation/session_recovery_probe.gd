@@ -27,6 +27,7 @@ var _input_sample: Dictionary = {}
 # Diagnostics only: which check of a multi-part fixture said no, and how the observer's own frames ran
 # while it watched another actor. Neither changes what is asserted.
 var _slot_stage := ""
+var _click_note := ""
 var _watch_frames := 0
 var _watch_max_gap_msec := 0
 var _watch_last_msec := 0
@@ -257,7 +258,7 @@ func _execute(command: Dictionary) -> void:
 				return
 		"slot_ui":
 			if not await _slot_ui(command):
-				_fail("slot GUI did not reconcile the owner snapshot and result: %s stage=%s" % [command, _slot_stage])
+				_fail("slot GUI did not reconcile the owner snapshot and result: %s stage=%s click=%s" % [command, _slot_stage, _click_note])
 				return
 		"slot_drop_observe":
 			var peer := NetworkManager.peer_id_for_player(target)
@@ -1302,6 +1303,11 @@ func _check_item_windows() -> bool:
 func _click(button: Button) -> bool:
 	var received := [false]
 	var listener := func() -> void: received[0] = true
+	var viewport := button.get_viewport()
+	var hovered_before := viewport.gui_get_hovered_control()
+	_click_note = "before: dragging=%s hovered=%s focus=%s rect=%s disabled=%s visible=%s" % [
+		viewport.gui_is_dragging(), hovered_before.get_path() if hovered_before != null else NodePath(),
+		viewport.gui_get_focus_owner(), button.get_global_rect(), button.disabled, button.is_visible_in_tree()]
 	button.pressed.connect(listener, CONNECT_ONE_SHOT)
 	var position := button.get_global_rect().get_center()
 	var motion := InputEventMouseMotion.new()
@@ -1324,6 +1330,10 @@ func _click(button: Button) -> bool:
 	await get_tree().process_frame
 	if button.pressed.is_connected(listener):
 		button.pressed.disconnect(listener)
+	var hovered_after := viewport.gui_get_hovered_control()
+	_click_note += " after: dragging=%s hovered=%s rect=%s received=%s" % [
+		viewport.gui_is_dragging(), hovered_after.get_path() if hovered_after != null else NodePath(),
+		button.get_global_rect(), received[0]]
 	return received[0]
 
 func _state_dump() -> Dictionary:
