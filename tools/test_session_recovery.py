@@ -17,10 +17,9 @@ from test_windows_export import ERRORS
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# A buff's remaining time and the Host's clock are sampled a frame apart, and the buff ticks once per
-# rendered frame: allow that much disagreement, no more.
-BUFF_CLOCK_TOLERANCE_SECONDS = 1.0
-BUFF_RATE_TOLERANCE = 0.15
+# A buff's remaining time and the Host's tick counter are read in the same frame, but the buff is
+# advanced once per rendered frame and the counter once per physics tick: they can be a frame apart.
+BUFF_CLOCK_TOLERANCE_SECONDS = 0.5
 INJECTIONS = ("buff-delay", "stall-observer", "hold-result")
 
 
@@ -33,9 +32,14 @@ def blocked_tick_problem(before: dict, after: dict) -> str:
     - snapshots: the sequence must have advanced.
     - hunger, thirst: must have gone down - unless the value was already at its minimum, which says
       nothing either way and is reported as such instead of being read as "stopped".
-    - the buff: its remaining time must have gone down by the time that passed on the Host's clock. A
-      buff that is gone is fine exactly when more time passed than it had left (it ran out); gone
+    - the buff: its remaining time must have gone down by the *game time* that passed on the Host. A
+      buff that is gone is fine exactly when more game time passed than it had left (it ran out); gone
       earlier than that, or unchanged, or draining at another rate, is a failure.
+
+    Game time is the Host's physics tick counter, not its wall clock. The engine limits how much time one
+    long frame may advance (``max_physics_steps_per_frame``), so on a starved machine game time runs
+    slower than the wall clock - for the buff, for survival and for physics alike. Run 46112525461
+    measured it: 22.19 s on the wall, 1002 ticks (16.70 s), and the buff had lost exactly 16.70 s.
     """
     for key in ("actor_instance", "world", "world_revision", "player_id"):
         if before.get(key) != after.get(key):
@@ -47,21 +51,23 @@ def blocked_tick_problem(before: dict, after: dict) -> str:
             return f"{need} was already at its minimum; this window cannot show whether survival ticks ran"
         if not after[need] < before[need]:
             return f"{need} did not go down ({before[need]} -> {after[need]}): survival ticks stopped"
-    if "ticks_msec" not in before or "ticks_msec" not in after:
+    if any(key not in sample for sample in (before, after) for key in ("physics_tick", "physics_hz")):
         return "the samples carry no Host clock, so a buff that ran out cannot be told from one that vanished"
-    elapsed = (after["ticks_msec"] - before["ticks_msec"]) / 1000.0
+    elapsed = (after["physics_tick"] - before["physics_tick"]) / float(after["physics_hz"])
+    if elapsed <= 0.0:
+        return f"the Host's physics did not advance ({before['physics_tick']} -> {after['physics_tick']})"
     had, has = before["quick_paws"], after["quick_paws"]
     if had <= 0.0:
         return "the buff was not active at the first sample; this window cannot show whether its time ran"
     if has < 0.0:                                     # the effect is gone
         if elapsed + BUFF_CLOCK_TOLERANCE_SECONDS >= had:
             return ""                                 # it ran out: {had} s were left and {elapsed} s passed
-        return f"the buff disappeared with {had:.2f} s left after only {elapsed:.2f} s"
+        return f"the buff disappeared with {had:.2f} s left after only {elapsed:.2f} s of game time"
     if not 0.0 < has < had:
-        return f"the buff's time did not go down ({had} -> {has} in {elapsed:.2f} s): buff ticks stopped"
+        return f"the buff's time did not go down ({had} -> {has} in {elapsed:.2f} s of game time): buff ticks stopped"
     drained = had - has
-    if abs(drained - elapsed) > BUFF_CLOCK_TOLERANCE_SECONDS + BUFF_RATE_TOLERANCE * elapsed:
-        return f"the buff lost {drained:.2f} s while {elapsed:.2f} s passed on the Host"
+    if abs(drained - elapsed) > BUFF_CLOCK_TOLERANCE_SECONDS:
+        return f"the buff lost {drained:.2f} s while {elapsed:.2f} s of game time passed on the Host"
     return ""
 
 

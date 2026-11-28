@@ -194,15 +194,23 @@ snapshot·허기·갈증은 전부 진행했다. 허기가 준 양(3.168)을 같
 
 수정(`ce0ea5f`):
 
-- `blocked_tick_problem(before, after)`가 snapshot, 생존 수치, 버프를 따로 판정한다. 버프가 없어진 경우는 Host 시계로
-  잰 경과 시간이 남은 시간보다 길 때만 통과한다(정상 만료). 일찍 사라지거나, 줄지 않거나, 다른 속도로 줄면 실패다 —
-  이전보다 엄격하다. 생존 수치가 이미 최소값이면 "멈춤"이 아니라 "이 구간으로는 알 수 없음"으로 보고한다.
+- `blocked_tick_problem(before, after)`가 snapshot, 생존 수치, 버프를 따로 판정한다. 버프가 없어진 경우는 Host의
+  **게임 시간**(physics tick 수 ÷ tick rate)으로 잰 경과가 남은 시간보다 길 때만 통과한다(정상 만료). 일찍 사라지거나,
+  줄지 않거나, 다른 속도로 줄면 실패다(허용 오차 0.5초) — 이전보다 엄격하다. 생존 수치가 이미 최소값이면 "멈춤"이
+  아니라 "이 구간으로는 알 수 없음"으로 보고한다.
+- **시계는 벽시계가 아니다.** 처음에는 Host의 벽시계(`ticks_msec`)와 비교했고, 그 판정이 `536d950`의 CI에서 실패했다
+  ([run 46112525461](https://github.com/wolfy03/ReturnToCage/actions/runs/46112525461)): "버프가 22.19초 동안 16.70초
+  줄었다". 같은 표본의 physics tick은 1002개(60Hz에서 16.70초)였다 — 버프는 게임 시간과 **정확히** 같이 갔다. 엔진은
+  긴 프레임 하나가 진행시킬 수 있는 시간을 제한하므로(`max_physics_steps_per_frame`), 굶는 장비에서는 게임 시간이
+  벽시계보다 느리다(이 실행에서 75%). 버프·생존·물리가 모두 같은 시간으로 가므로 게임 안에서는 일관된다. 이것은
+  판정의 오류였고, 동시에 그 runner가 얼마나 느린지를 처음으로 잰 수치다: 0.6초짜리 이동이나 1초 안의 관측을 벽시계로
+  기다리는 검사는 이 장비에서 게임 시간 기준으로 그만큼 짧아진다.
 - 버프 fixture를 비교할 표본 바로 앞에서 건다(`input_effect`). 그 사이 단계가 얼마나 걸리는지에 기대지 않는다.
 - 표본에 peer, player id, actor instance id, world id·revision, physics tick, Host 시계, 차단 상태
   (`host_ui_blocked`, `controls_locked`), 효과의 존재·지속 시간, 생존 수치의 최소값 여부를 더했다. 두 표본이 같은
   actor·같은 world의 것이 아니면 비교하지 않는다. 결과는 `tick_checks.json`에 남는다.
-- `tools/tests/test_lifecycle_tick_check.py`: 위 CI 표본으로 옛 조건의 실패를 재현하고(11개 경우), 정지·조기 소멸·
-  속도 이상은 여전히 실패임을 확인한다.
+- `tools/tests/test_lifecycle_tick_check.py`: 위 두 CI 표본(옛 조건의 실패, 벽시계와 게임 시간의 차이)을 그대로
+  쓰고(13개 경우), 정지·조기 소멸·속도 이상·physics 정지는 여전히 실패임을 확인한다.
 
 ### 6.2 제어된 재현 (`--inject`)
 
