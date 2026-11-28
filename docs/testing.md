@@ -109,6 +109,13 @@ EXE lifecycle도 `ipv6_mode="require"`를 쓰므로 기존 IPv6 검증은 약화
 `ready_action`(CombatAction IDLE + 접지)을 기다린다. dodge 실행 tick에는 속도가 아직 적용되지
 않아, 그 전에 정지를 판정하면 이어지는 dodge 이동을 위반으로 오판한다.
 
+`test_session_recovery.py --inject NAME=VALUE`는 재현용이다(판정은 바꾸지 않는다): `buff-delay=<초>`는 막힌 UI의
+둘째 표본 전에 기다리고, `stall-observer=<ms>`는 관찰 프로세스가 그동안 프레임을 돌지 않게 하며, `hold-result=<초>`는
+B의 결과 파일을 열어 둔다. "막힌 UI 동안 시뮬레이션이 계속됐는가"의 판정(`blocked_tick_problem`)은
+`tools/tests/test_lifecycle_tick_check.py`가 검사한다 — 버프의 정상 만료와 정지를 Host 시계로 구분한다. lifecycle 실패
+메시지는 `slot_ui`의 단계 이름과 합성 클릭의 viewport 상태, `assert_motion`의 관찰자 프레임 수·최대 간격을 포함하고,
+모든 결과에 그 프로세스의 `local_input`이 들어간다. 근거는 [runtime_stabilization.md](runtime_stabilization.md) §6.
+
 lifecycle probe(`core/validation/session_recovery_probe.gd`)의 watchdog은 둘이다. 실행 중인 명령은
 60초(`COMMAND_TIMEOUT_MSEC`) 안에 끝나야 하고, 다음 명령을 기다리기만 하는 역할은 300초
 (`IDLE_TIMEOUT_MSEC`)까지 허용한다. controller가 다른 역할을 구동하는 동안 한 역할이 쉬는 시간은 느린

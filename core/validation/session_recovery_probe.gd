@@ -1380,6 +1380,10 @@ func _write(status: String, error: String = "") -> void:
 		"process_id": OS.get_process_id(), "rendering_method": RenderingServer.get_current_rendering_method(),
 		"rendered_frames": Engine.get_frames_drawn(),
 		"session_id": GameSession.session_id, "field_gear_won": _field_gear_won, "input_sample": _input_sample,
+		# This process's own keyboard state when it answered (not when another role later failed).
+		"local_input": {"gameplay_blocked": LocalInputContext.is_gameplay_blocked(),
+			"move_left": Input.is_action_pressed(&"move_left"), "move_right": Input.is_action_pressed(&"move_right"),
+			"window_focused": get_window().has_focus(), "ticks_msec": Time.get_ticks_msec()},
 		"state": _state_dump(), "export_context": _context}
 	var file := FileAccess.open(result_path + ".tmp", FileAccess.WRITE)
 	file.store_string(JSON.stringify(data, "\t"))

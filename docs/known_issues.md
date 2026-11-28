@@ -72,25 +72,32 @@ python tools/repeat_stability.py --godot <new godot> --repeat 30 --case physics 
 
 `known_engine_crash=0`이 30회 이어지면 이 항목과 CI의 예외 판단을 지운다.
 
-## Windows 릴리스 probe의 미해결 기능 실패
+## Windows 릴리스 probe (`windows-demo`)의 간헐 실패
 
-`Godot validation / windows-demo`(릴리스 EXE로 도는 session lifecycle·disconnect E2E)가 실행마다 다른 자리에서 실패한다.
-전부 게임 런타임·네트워크 쪽이며 Monster Editor의 코드는 이 job에서 실행되지 않는다. MONSTER-STEP 3 안정화 브랜치는
-게임 코드를 바꾸지 않았고, 이 항목들도 고치지 않았다.
+`Godot validation / windows-demo`가 실행마다 다른 자리에서 실패한다. 2026-11-28에 실패한 실행의 산출물(`steps.json`,
+`failure.json`, 역할별 `engine.log`)을 하나씩 읽어 다시 분류했다. 근거와 재현은
+[runtime_stabilization.md](runtime_stabilization.md) §6에 있다. 서로 같은 원인이라고 가정하지 않았다.
 
-| 커밋 | 단계 | 실패 |
+| 커밋 (run) | 실패한 자리 | 실제로 실패한 조건 | 분류 | 상태 |
+|---|---|---|---|---|
+| `98fd8b3` master ([46099981595](https://github.com/wolfy03/ReturnToCage/actions/runs/46099981595/job/140841090742)), `07bf5f0` ([46108080023](https://github.com/wolfy03/ReturnToCage/actions/runs/46108080023)) | Role A `input_authority` (`axis=0`, `after=1329`), 종료 코드 1, `B's blocked UI stopped authority, survival, or buff ticks` | probe가 아니라 **제어기**의 비교(`0 < 버프 남은 시간 < 이전 값`). 버프가 20.6초 남았을 때 첫 표본을 뜨고 약 26초 뒤 둘째 표본을 떴다 — 버프는 정상 만료됐고 허기·갈증·snapshot은 모두 진행했다 | 테스트 판정 오류 (느린 runner에서 드러남) | **수정** (`ce0ea5f`) |
+| `43ea113` | Role D `check_menu` | 게임은 정상적으로 메뉴에 있었다. probe가 결과 파일을 3초 동안 게시하지 못했다(`PLAYER ROSTER RESULT publication failed`). 이전 기록의 "`assert_motion`"은 틀렸다 | 테스트 fixture (파일 게시). 무엇이 파일을 잡고 있었는지는 미확인 | 재시도를 프레임이 아니라 시계에 맞춤, 시도 횟수 기록 |
+| `d30baab` | Role B `assert_motion` (B가 Host A를 관찰) | 관찰 기록이 `idle/facing=1 → idle/facing=-1`뿐이고 위치는 한 번에 바뀌었다 | CI 타이밍 **의심**: 관찰 프로세스가 프레임을 돌리지 못한 경우와 같은 모양(제어된 재현으로 확인). 그 실행에서 실제로 그랬다는 기록은 없다 | 미확정. 다음 발생 때 프레임 간격이 기록된다 |
+| `0513b42` | Role B `slot_ui` | 그 실행의 기록으로는 알 수 없다(12개 조건이 한 메시지였다) | 미확정 | 조건마다 이름을 붙임. 로컬 rendered에서 2/27 재발: 요청을 보내기 **전**, probe의 합성 클릭이 가방 탭 버튼에 전달되지 않았다 — 테스트 fixture (합성 입력), 기전 미확인 |
+| `1b19bb1` | Disconnect menu input and session recovery E2E | `DISCONNECT RECOVERY PROBE PASS D` 뒤 `process exit=3221225477`. 이 단계는 릴리스 EXE가 아니라 에디터 바이너리로 돈다 | 알려진 엔진 종료 crash 유형 (Functional PASS / Process KNOWN_ENGINE_CRASH) | 대상 아님 |
+
+`last_reports`의 상태 덤프는 각 역할이 **마지막으로 답한 때**의 상태다. 실패 순간의 상태가 아니다.
+
+**새로 드러난, 해결하지 못한 항목** (로컬 릴리스 EXE 3회 중):
+
+| 증상 | 기록 | 분류 |
 |---|---|---|
-| `43ea113`, `d30baab` | Build release EXE and execute content and ENet validation | Role B `assert_motion` — client 자신의 actor snapshot 적용 / run animation 관측 / 서버 권위 입력 확인 |
-| `1b19bb1` | Disconnect menu input and session recovery E2E | 릴리스 EXE 프로세스가 `0xC0000005`로 종료 |
-| `0513b42` | Build release EXE and execute content and ENet validation | Role B `slot_ui` — `slot GUI did not reconcile the owner snapshot and result` |
-
-master `8a24f91`과 이 브랜치의 `e18ad03`에서는 같은 job이 성공했다(같은 게임 코드) — 실패는 간헐적이다. 원인은 [runtime_stabilization.md](runtime_stabilization.md)의 미해결
-항목(snapshot 적용, 입력 확인)과 같은 계열로 보이지만 `slot_ui`는 거기에 없던 증상이다 — 같은 원인이라고 확인한 것은
-아니다.
+| Role A `input_authority` (`axis=1`, D를 관찰): D가 오른쪽 키를 누른 뒤 10초 동안 Host의 D actor가 5px 이상 움직이지 않았다 | Host 표본: `axes=(0,0)`, `x=180.36`(시작 180.0), `sequence=660`(명령은 계속 도착), `controls_locked=false`, `world_revision=1` | **미확정 — 실제 기능 실패일 수 있다.** D의 클라이언트가 0축을 보낸 것(키 입력이 풀렸거나 로컬 차단)인지 Host가 버린 것인지 가를 기록이 없었다. 이후 결과에 각 프로세스의 `local_input`(차단 여부, 키 상태, 창 focus)을 넣었다 |
+| `editor-exe-client exit=3221225477` (에디터·EXE 혼합 ENet 단계) | 성공 marker 이전 | Unknown native crash |
 
 **순서.** MONSTER-STEP 4-A(Attack Pattern Editor / Timeline GUI)는 게임 런타임을 바꾸지 않으므로 이 문제와 독립이다.
-MONSTER-STEP 4-B(실제 Combat Runtime, 프로토콜 변경) **전에** snapshot 적용, 입력 확인, slot UI 동기화를 따로 검증하고
-정리한다. 새 전투 복제를 이 위에 얹으면 실패의 원인을 가를 수 없게 된다.
+MONSTER-STEP 4-B(실제 Combat Runtime, 프로토콜 변경)는 위의 "D의 입력이 Host에서 움직임이 되지 않음"이 실제 결함인지
+가려질 때까지 시작하지 않는다.
 
 ## Unknown native crash
 

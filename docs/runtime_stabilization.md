@@ -172,3 +172,111 @@ KNOWN_ENGINE_CRASH. 이 job은 여러 프로세스를 띄우는 단계를 연속
   브리지는 이제 프로젝트의 `FieldPlatform.rectangle_polygon()`을 호출하므로, 이 커밋 이전의 프로젝트 사본에는
   새 EXE를 쓸 수 없다.
 - **사용자 제작 아트·지형:** 변경 없음. 스폰 위치·지형 데이터를 옮기지 않았다.
+
+## 6. `windows-demo` 실패의 재분류 (2026-11-28, `feature/runtime-stability-input-snapshot`)
+
+master `98fd8b3` 기준. 게임 런타임과 프로토콜은 바꾸지 않았다 — 고칠 런타임 결함을 확인하지 못했다. 바뀐 것은 검증
+도구(`core/validation/session_recovery_probe.gd`, `tools/test_session_recovery.py`)와 단위 테스트뿐이다.
+
+### 6.1 `input_authority` — 버프가 멈춘 것이 아니라 끝난 것
+
+마지막 `A input_authority PASS` 뒤에 실패한 것은 probe가 아니라 제어기의 비교였다(`verify_input_isolation(third=True)`).
+실패한 실행의 `steps.json`에서 두 표본(B의 권위 actor, B의 UI가 입력을 막고 있는 동안):
+
+| | sequence | snapshot | hunger | thirst | quick_paws 남은 시간 |
+|---|---|---|---|---|---|
+| 이전 (104번째 단계) | 1329 | 1658 | 91.319 | 84.998 | 20.57 |
+| 이후 (129번째 단계) | 1538 | 2186 | 88.152 | 80.246 | −1 (효과 없음) |
+
+snapshot·허기·갈증은 전부 진행했다. 허기가 준 양(3.168)을 같은 실행의 다른 구간에서 잰 속도(0.12/s)로 나누면 두 표본
+사이는 약 26.4초이고, 버프는 20.57초 남아 있었다. 즉 **버프는 약 6초 전에 정상 만료**됐다. 조건식
+`0 < 이후 < 이전`은 "만료"를 "정지"로 읽었다. 로컬에서는 같은 구간이 2.7초라 드러나지 않는다.
+
+수정(`ce0ea5f`):
+
+- `blocked_tick_problem(before, after)`가 snapshot, 생존 수치, 버프를 따로 판정한다. 버프가 없어진 경우는 Host 시계로
+  잰 경과 시간이 남은 시간보다 길 때만 통과한다(정상 만료). 일찍 사라지거나, 줄지 않거나, 다른 속도로 줄면 실패다 —
+  이전보다 엄격하다. 생존 수치가 이미 최소값이면 "멈춤"이 아니라 "이 구간으로는 알 수 없음"으로 보고한다.
+- 버프 fixture를 비교할 표본 바로 앞에서 건다(`input_effect`). 그 사이 단계가 얼마나 걸리는지에 기대지 않는다.
+- 표본에 peer, player id, actor instance id, world id·revision, physics tick, Host 시계, 차단 상태
+  (`host_ui_blocked`, `controls_locked`), 효과의 존재·지속 시간, 생존 수치의 최소값 여부를 더했다. 두 표본이 같은
+  actor·같은 world의 것이 아니면 비교하지 않는다. 결과는 `tick_checks.json`에 남는다.
+- `tools/tests/test_lifecycle_tick_check.py`: 위 CI 표본으로 옛 조건의 실패를 재현하고(11개 경우), 정지·조기 소멸·
+  속도 이상은 여전히 실패임을 확인한다.
+
+### 6.2 제어된 재현 (`--inject`)
+
+| 주입 | 무엇을 흉내 내는가 | 결과 |
+|---|---|---|
+| `buff-delay=62` | 차단 구간이 버프(60초)보다 길다 | 경과 64.6초, 버프 59.79 → 없음, 판정 통과. 359단계 전부 PASS (그 실행은 끝에서 D가 `PROBE PASS` 뒤 `0xC0000005` — 엔진 종료 crash) |
+| `stall-observer=1500` (rendered) | 관찰 프로세스가 1.5초 동안 프레임을 못 돈다 | `d30baab`와 같은 실패: `observed=["idle/GROUND/facing=1", "idle/GROUND/facing=-1"]`, `motion=true run=false`, `max_frame_gap_msec=1515` |
+| `hold-result=4` | 결과 파일이 4초 동안 열려 있다 | `publication failed after 290 attempts in 3000 ms` — `43ea113`과 같은 메시지 |
+
+둘째와 셋째는 "그런 일이 있으면 그 모양이 된다"를 보일 뿐, CI에서 실제로 그랬다는 증거가 아니다. 그래서 판정은
+바꾸지 않았다: 달리기 관측 조건도, 게시 제한 3초도 그대로다. 달라진 것은 기록(관찰자의 프레임 수와 최대 간격, 게시
+시도 횟수)과, 게시 재시도가 프레임 수가 아니라 시계에 맞춰진다는 점이다(한 프레임이 몇 초인 장면 전환 중에도 3초를
+다 쓴다).
+
+### 6.3 `slot_ui`
+
+12개 조건이 한 메시지였으므로 단계마다 이름을 붙였다. 로컬 rendered 27회 중 2회 재발했고 둘 다 같은 자리다:
+
+```text
+stage=bag window open (visible=true) and its consumable tab clickable
+click=before: dragging=false hovered=.../GameHUD/.../@HBoxContainer@21 ... disabled=false visible=true
+      after:  dragging=false hovered=.../InventoryWindow/Content/Tabs/@Button@67 ... received=false
+```
+
+probe가 만든 mouse motion·press·release가 탭 버튼의 `pressed`가 되지 않았다. 슬롯 요청을 보내기 **전**이므로 owner
+snapshot과 result의 순서, 복제와는 무관하다(Host는 같은 reliable 채널로 snapshot을 result보다 먼저 보낸다 —
+`PlayerItemReplicationService._execute_slot`). 합성 입력 쪽 문제로 분류하되 기전은 확인하지 못했고, 재시도로 덮지 않았다.
+`0513b42`의 실패가 같은 것이었는지는 그 실행의 기록으로는 알 수 없다.
+
+### 6.4 UI 입력 차단 범위 — 기존 lifecycle이 보는 것
+
+`verify_input_isolation`(2인·3인 각각)이 실제 키 입력으로 본다. 새 검사를 더하지는 않았다.
+
+| 항목 | 어디서 |
+|---|---|
+| 차단: 이동 | Host: 장비창을 연 채 왼쪽 키 → 권위 축 0·정지. Client: 가방을 열면 누르고 있던 오른쪽 키가 0이 됨 |
+| 차단: 점프·공격·회피 | `input_blocked_edges` + 권위 쪽 jump/attack/dodge 횟수 불변 |
+| 키를 누른 채 UI를 열고 닫기 | 누른 채 열기(위), ESC로 닫은 뒤 입력 재개, 세션을 나갔다 들어온 뒤 누르고 있던 키(`held_right`) |
+| 유지: 다른 플레이어 조작 | A가 막힌 동안 B·D 이동 |
+| 유지: 권위 물리, snapshot | 막힌 플레이어의 snapshot sequence 증가 |
+| 유지: 생존 수치, 버프 시간 | `blocked_tick_problem` (§6.1) |
+| 유지: Enemy AI | `input_world_tick`: Host UI가 막힌 동안 Sewer 적의 이동과 복제 |
+| 유지: 네트워크 메시지 | 막힌 owner의 장착(`item_ui`), 창고 왕복(`input_storage`) |
+
+Host UI와 Client UI는 따로 본다(A의 장비창·ESC, B의 가방·장비창·ESC). 보지 않는 것: 메뉴(ESC) 상태에서의 버프 시간,
+막힌 Client에서의 Enemy AI.
+
+### 6.5 Snapshot·Slot UI 경계 — 이번에 한 것과 하지 않은 것
+
+메시지 순서를 제어하는 새 테스트는 만들지 않았다. 지연 주입(§6.2)이 전부다. 오래된 snapshot의 거절
+(`snapshots_stale`), world revision 불일치, sequence 초기화는 기존 unit test와 lifecycle의 `slot_rpc reject=...` /
+`slot_check`(중도 참가·지역 이동·재접속 뒤)가 본다. 이번 분석에서 그 경로의 결함은 찾지 못했다.
+
+### 6.6 반복 검증
+
+Windows 11, Godot 4.7.2-stable, 같은 PC, 순차 실행, 실행마다 새 프로세스. 성공할 때까지 돌린 것이 아니라 정한 횟수를
+전부 적는다.
+
+| 검사 | commit | 실행 | 완전 PASS | 기능 FAIL | Known engine crash | Unknown native crash |
+|---|---|---|---|---|---|---|
+| Headless lifecycle (`repeat_stability --case lifecycle`) | `ce0ea5f` | 10 | 10 | 0 | 0 | 0 |
+| Rendered lifecycle (소스) | `ce0ea5f` | 10 | 9 | 1 (`slot_ui`, §6.3) | 0 | 0 |
+| Rendered lifecycle (소스) | `508f529` | 15 | 14 | 0 | 1 (전 역할 `PROBE PASS` 뒤 B 종료) | 0 |
+| Rendered lifecycle (소스), 진단 추가 뒤 확인 | 작업 트리 | 1 | 0 | 1 (`slot_ui`, §6.3) | 0 | 0 |
+| Headless lifecycle, 진단 추가 뒤 확인 | 작업 트리 | 1 | 1 | 0 | 0 | 0 |
+| ENet world runtime 2인 / 3인 | `ce0ea5f` | 3 / 3 | 3 / 3 | 0 | 0 | 0 |
+| Local multiplayer probe 2인 / 3인 | `ce0ea5f` | 3 / 3 | 3 / 3 | 0 | 0 | 0 |
+| Disconnect recovery | `ce0ea5f` | 3 | 3 | 0 | 0 | 0 |
+| Windows release 빌드 + EXE 검증 (`--rendered`) | `508f529` | 3 | 1 | 1 (D의 입력, 아래) | 0 | 1 (`editor-exe-client`) |
+
+- 수정한 판정(버프)에 의한 실패는 수정 뒤 39회의 lifecycle 실행에서 0이다. 수정 전의 실패는 로컬에서 자연 발생하지
+  않으므로(구간이 2.7초) CI의 실제 표본과 `buff-delay` 주입으로 재현했다.
+- 릴리스 3회 중 기능 실패 1건은 새 증상이다: D가 오른쪽 키를 눌렀는데 Host의 D actor가 10초 동안 움직이지 않았다
+  (`axes=(0,0)`, 명령은 도착). **원인 미확정**이고 실제 기능 실패일 수 있다 — [known_issues.md](known_issues.md).
+- 릴리스 EXE 반복은 3회뿐이다. 10회를 채우지 않았다.
+
+로그: 로컬 scratch 폴더(커밋하지 않음). CI 결과는 이 브랜치의 보고에 적는다.
