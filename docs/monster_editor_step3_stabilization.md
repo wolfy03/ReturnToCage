@@ -656,3 +656,64 @@ CI 결과는 아래 "CI (Final patch)"에 푸시 뒤 적는다.
 
 이것으로 MONSTER-STEP 3 안정화를 닫는다. 남은 것은 이 브랜치 밖의 일이다: 엔진의 종료 crash(엔진 버전을 올릴 때),
 Windows 릴리스 probe의 기능 실패(MONSTER-STEP 4-B 전에 별도 검증).
+
+## 17. Closure patch — 남은 경계 조건 세 가지
+
+master `98fd8b3` 위의 `feature/monster-editor-step3-closure`. 기존 구현은 그대로 두고 `bridge/staging.py`의 세 자리만
+고쳤다. 각 항목은 먼저 테스트로 재현했다(`tests/test_step3_closure.py`를 `98fd8b3`의 코드에 대해 실행: 20 실패, 6 통과 —
+통과한 6개는 가드이거나 그 코드에서도 옳았던 경우) → 수정 후 26 통과.
+
+| 항목 | 결함 | 수정 |
+|---|---|---|
+| FIX-29 재검증의 경로 | `changed_dependencies()`와 `dependency_stats()`는 경로의 마지막 파일만 봤다. 상위 폴더가 프로젝트 밖을 가리키는 링크·junction으로 바뀌고 그 안에 같은 바이트의 파일이 있으면 "바뀌지 않음"이었다. 기록된 경로가 `../x` 같은 모양이어도 그대로 따라갔다 | 둘 다 manifest를 만들 때와 같은 `_dependency_file()`을 쓴다. 어느 단계든 링크를 거치는 경로, 일반 파일이 아닌 것, 프로젝트 기준의 평범한 경로가 아닌 것은 내용과 무관하게 **바뀐 것**이다. quick과 deep 모두 같다. `dependency_stats()`는 그런 경로의 baseline을 만들지 않는다 |
+| FIX-30 선택 의존 파일의 존재 | manifest를 Godot이 돈 **뒤의 사본**에서 읽었다. Godot이 사본에 만든 `.png.import`가 프로젝트의 파일로 기록됐고(그 뒤 "프로젝트에 없음"으로 판정), 원본에 없던 파일은 manifest에 없으므로 나중에 생겨도 다시 보지 않았다 | 선택 파일의 존재는 **복사할 때의 원본**(survey)에서 정하고, 있던 파일의 해시는 Godot이 돌기 전에 사본에서 읽는다. `StageResult.optional_dependencies`가 경로마다 `present`/`absent`를 기록한다. `absent`였던 경로에 무엇이든 생기면 `changed_dependencies()`가 그 경로를 보고한다 |
+| FIX-31 재시도 사이의 소유 | 삭제가 실패하면 소유 확인 없이 같은 경로를 다시 지웠다(최대 4회). 첫 시도와 재시도 사이에 같은 이름의 다른 폴더가 생기면 그 폴더가 지워졌다 | `remove()`와 `_abandon()`이 `_delete_owned()` 하나를 쓰고, **매 시도 전에** `check_deletable()`을 다시 한다. 재시도에서 거절되면 더 지우지 않고, 오류와 `cleanup_error`에 거절 이유와 앞선 삭제 실패의 이유를 함께 남긴다. 세션은 `leftovers()`에 남는다 |
+
+**선택 의존 파일의 여섯 상태.**
+
+| 상태 | 결과 |
+|---|---|
+| 원본에 처음부터 없음 | `optional_dependencies[path] == "absent"`, `dependencies`에 없음, `confirmed` 가능 |
+| 원본에 처음부터 있음 | `"present"`, `dependencies`에 있음 |
+| Staging 도중 원본에 새로 생김 | `changed_since_copy`에 그 경로, `verdicts["current"] == FAIL`, `confirmed` 아님 |
+| Staging 도중 원본에서 삭제됨 | 위와 같음 |
+| 사본에서만 Godot이 생성(또는 다시 씀) | 프로젝트의 변경이 아니다. 결과에 영향 없음 |
+| 원본의 내용 변경 | `changed_since_copy`에 그 경로 (크기가 같아도 — deep 비교) |
+
+stage가 끝난 뒤의 생성·삭제·변경은 편집기의 "오래됨" 판정이 같은 함수로 본다(§15).
+
+**기존 호출과의 호환.** `StageResult`에 기본값이 있는 필드 `optional_dependencies` 하나가 끝에 더해졌다. `passed`,
+`differences`, `areas`, `verdicts`의 키, `confirmed`, `is_current`, `project_fingerprint`의 계산은 그대로다.
+`changed_dependencies(project, result, deep=False, baseline=None)`와 `dependency_stats(project, result)`의 모양도 같고,
+`optional_dependencies`가 없는 결과 객체도 받는다. 소유 확인의 규칙(표식, owner token, 폴더 identity)은 바꾸지 않았다.
+
+**정상적인 재시도는 그대로다.** 한 번의 시도가 표식까지 지운 뒤 다른 파일에서 막힌 경우, 세션은 그 시점에 `leftover`
+상태이므로 다음 확인은 owner token이나 폴더의 identity로 통과한다. 첫 확인에서 거절된 `remove()`는 전처럼 세션의 상태를
+바꾸지 않는다.
+
+**한계.**
+
+- 이것은 **시도와 시도 사이**의 보호다. 한 번의 확인과 그 뒤의 삭제 사이에 폴더가 바뀌는 경쟁은 막지 못한다 — 폴더를
+  열어 둔 채 그 핸들 기준으로 지우는 구현이 아니다.
+- 폴더의 identity는 `(device, inode)`다. 파일 시스템이 값을 주지 않으면 표식과 token만이 근거이고, 지워진 폴더의 inode를
+  새 폴더가 다시 받는 경우는 구분하지 못한다.
+- 세션의 폴더가 다른 이름으로 옮겨져 그 경로에 아무것도 없으면 `remove()`는 "이미 없음"으로 끝난다. 옮겨진 폴더는
+  찾지 않는다.
+- 재검증의 경로 규칙은 프로젝트 루트 **아래**에 적용된다. 루트 자체가 링크인지는 stage를 시작할 때만 본다.
+- 선택 의존 파일은 여전히 이미지의 `.png.import`뿐이다.
+
+### 검증 (Closure patch)
+
+Windows 11, Python 3.14.5, PySide6-Essentials 6.11.3, Godot 4.7.2-stable.
+
+| 검사 | 결과 |
+|---|---|
+| `tests/test_step3_closure.py` — 수정 전(`98fd8b3`의 코드) / 수정 후 | 20 실패·6 통과 / 26 통과 |
+| `pytest tools/python_monster_editor/tests` (네이티브 / offscreen) | 992 통과·8 건너뜀 / 990 통과·10 건너뜀 |
+| 실제 Godot Staging (`check_godot_stage.py`) | PASS, 검사 78개. 세 문서 모두 `confirmed`, 이미지의 import 설정이 manifest에 있음 |
+| 실제 Godot Rendering (`check_godot_render.py`) | PASS, 검사 20개 |
+| Native GUI 스모크 100% / 150% / 200% (`--godot` 없이) | 각 27 통과 |
+
+전체 pytest의 첫 실행에서 기존 테스트 하나(`test_step3_final.py`의 `project.godot` 경우)가 실패했다. 그 테스트는
+`dependency_manifest`의 호출을 가로채는데, 선택 파일을 미리 읽는 새 호출이 같은 함수를 지났기 때문이다. 테스트는
+고치지 않았고, 미리 읽는 쪽이 내부 함수(`_manifest`)를 쓰게 했다.

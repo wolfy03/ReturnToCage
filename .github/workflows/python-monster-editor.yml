@@ -91,7 +91,7 @@ jobs:
       # failure path, bridge response and resource path validation, texture filter and readback comparison,
       # stale results, the playback contract and the byte-budget frame cache. (Also part of the run above.)
       - name: Stabilization gates (reference integrity, staging safety, response validation, playback, cache)
-        run: python -X faulthandler -m pytest tools/python_monster_editor/tests/test_reference_integrity.py tools/python_monster_editor/tests/test_staging.py tools/python_monster_editor/tests/test_rendering.py tools/python_monster_editor/tests/test_playback_cache.py tools/python_monster_editor/tests/test_gui_stabilization.py tools/python_monster_editor/tests/test_step3_s2.py tools/python_monster_editor/tests/test_step3_final.py -q -rs -p no:cacheprovider
+        run: python -X faulthandler -m pytest tools/python_monster_editor/tests/test_reference_integrity.py tools/python_monster_editor/tests/test_staging.py tools/python_monster_editor/tests/test_rendering.py tools/python_monster_editor/tests/test_playback_cache.py tools/python_monster_editor/tests/test_gui_stabilization.py tools/python_monster_editor/tests/test_step3_s2.py tools/python_monster_editor/tests/test_step3_final.py tools/python_monster_editor/tests/test_step3_closure.py -q -rs -p no:cacheprovider
       - name: Frame cache budget against the process's real memory
         run: python -X utf8 tools/python_monster_editor/check_frame_cache.py --output monster-editor-frame-cache.json
       - name: Static validation of the example documents

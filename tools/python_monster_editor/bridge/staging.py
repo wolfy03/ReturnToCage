@@ -394,17 +394,8 @@ class StagingSession:
         problem = ""
         try:
             if self.parent.exists():
-                self.check_deletable()
-                for attempt in range(CLEANUP_ATTEMPTS):
-                    failures = _delete_tree(self.parent)
-                    if not self.parent.exists():
-                        break
-                    if attempt + 1 < CLEANUP_ATTEMPTS:
-                        time.sleep(CLEANUP_PAUSE)
-                if self.parent.exists():
-                    path, reason = failures[0] if failures else (str(self.parent), "unknown reason")
-                    problem = f"{len(failures)} item(s) could not be deleted, first: {path}: {reason}"
-        except BridgeError as refusal:                 # the ownership check said no: nothing was deleted
+                problem = self._delete_owned()
+        except BridgeError as refusal:                 # the ownership check said no: nothing (more) was deleted
             problem = refusal.detail
         except OSError as failure:
             problem = str(failure)
@@ -480,6 +471,42 @@ class StagingSession:
         if self.identity is None:
             refuse("nothing is left that shows it belongs to this session")
 
+    def _delete_owned(self):
+        """Delete this session's folder, asking whose folder it is before *every* attempt.
+
+        Returns "" when the folder is gone, or what could not be deleted after the last attempt. Raises
+        ``STAGING_NOT_OWNED`` when a check says no. When that happens after an attempt already failed,
+        the folder at the path is no longer the one the earlier attempt worked on (it was replaced, or a
+        folder above it changed): nothing more is deleted, and the error keeps the earlier failure too.
+
+        Once an attempt has run, the session is in state ``leftover``: this session started deleting the
+        folder, so a missing marker is no longer by itself a reason to refuse (``check_deletable``).
+
+        This closes the gap *between* attempts. It is not a defence against a folder that is swapped
+        between a check and the deletion that follows it; nothing here holds the folder open.
+        """
+        earlier = ""
+        for attempt in range(CLEANUP_ATTEMPTS):
+            try:
+                self.check_deletable()
+            except BridgeError as refusal:
+                if not earlier:
+                    raise
+                combined = BridgeError(refusal.code, f"{refusal.detail}. An earlier attempt to delete it had "
+                                       f"failed ({earlier}); the folder at that path changed before the retry, "
+                                       "so nothing more was deleted")
+                combined.earlier = earlier
+                raise combined from refusal
+            failures = _delete_tree(self.parent)
+            if not self.parent.exists():
+                return ""
+            self.state = "leftover"
+            path, reason = failures[0] if failures else (str(self.parent), "unknown reason")
+            earlier = f"{len(failures)} item(s) could not be deleted, first: {path}: {reason}"
+            if attempt + 1 < CLEANUP_ATTEMPTS:
+                time.sleep(CLEANUP_PAUSE)              # Windows: a file Godot or a scanner still holds
+        return earlier
+
     def remove(self):
         """Delete the copy. Returns False when it was already gone.
 
@@ -493,18 +520,16 @@ class StagingSession:
             self.state = "removed"
             _sessions.pop(self.id, None)
             return False
-        self.check_deletable()
-        failures = []
-        for attempt in range(CLEANUP_ATTEMPTS):
-            failures = _delete_tree(self.parent)
-            if not self.parent.exists():
-                break
-            if attempt + 1 < CLEANUP_ATTEMPTS:
-                time.sleep(CLEANUP_PAUSE)              # Windows: a file Godot or a scanner still holds
-        if self.parent.exists():
-            path, error = failures[0] if failures else (str(self.parent), "unknown reason")
-            self.state = "leftover"
-            self.cleanup_error = f"{len(failures)} item(s) could not be deleted, first: {path}: {error}"
+        try:
+            problem = self._delete_owned()
+        except BridgeError as refusal:
+            if getattr(refusal, "earlier", ""):        # refused between two attempts: both reasons are kept
+                self.cleanup_error = refusal.detail
+                _sessions[self.id] = self
+            raise
+        if problem:
+            self.cleanup_error = problem
+            _sessions[self.id] = self
             raise BridgeError(STAGING_CLEANUP_FAILED,
                               f"the staging copy at {self.parent} was not fully deleted ({self.cleanup_error}). "
                               "The real project is not affected; delete the folder by hand or retry.")
@@ -605,6 +630,9 @@ class StageResult:
     notes: tuple = ()               # things worth knowing that are not differences
     # Dependencies that, when the stage finished, were no longer the files that had been copied.
     changed_since_copy: tuple = ()
+    # Optional files (image import settings): path -> "present" / "absent" in the source as it was copied.
+    # A present one is in ``dependencies``; an absent one is watched for appearing (``changed_dependencies``).
+    optional_dependencies: dict = field(default_factory=dict)
 
     @property
     def passed(self):
@@ -724,6 +752,10 @@ def dependency_manifest(root, paths, surveyed=None, optional=()):
     ``surveyed`` (a staging session's ``{path: (size, mtime_ns)}``) gives the size and time of the *source*
     file as it was copied; without it the file under ``root`` is asked.
     """
+    return _manifest(root, paths, surveyed, optional)
+
+
+def _manifest(root, paths, surveyed, optional):
     manifest, problems = {}, []
     required = list(dict.fromkeys(paths))
     for relative in required + [path for path in dict.fromkeys(optional) if path not in required]:
@@ -765,42 +797,78 @@ def source_fingerprint(project, document, extra=()):
                                                     optional=optional_dependency_paths(document)))
 
 
-def changed_dependencies(project, result, deep=False, baseline=None):
-    """Paths of ``result.dependencies`` that are no longer the files the stage used, sorted.
+def optional_dependency_states(optional, surveyed):
+    """``{path: "present" | "absent"}``: whether each optional file was in the *source* when it was copied.
 
-    The quick form compares size and modification time with ``baseline`` (default: what the stage
+    Asked of the survey, not of the copy: Godot writes ``.import`` files into a copy it imports, and a
+    file it made there says nothing about the project.
+    """
+    return {relative: ("present" if relative in surveyed else "absent") for relative in dict.fromkeys(optional)}
+
+
+def _current_dependency(project, relative):
+    """The dependency's file in ``project`` right now, by the manifest's own rules (``_dependency_file``):
+    ``(path, lstat)``, ``(None, None)`` when there is no such file, or ``("unsafe", None)`` when the path
+    is not a plain project-relative one, passes through a link on any level, or is not a regular file."""
+    try:
+        path = _dependency_file(project, relative)
+        if path is None:
+            return None, None
+        return path, os.lstat(path)
+    except FileNotFoundError:
+        return None, None
+    except (BridgeError, OSError, ValueError):
+        return "unsafe", None
+
+
+def changed_dependencies(project, result, deep=False, baseline=None):
+    """Paths the stage depended on that are no longer what the stage used, sorted.
+
+    Every path is held to the rules the manifest was made with: a file that is now reached through a
+    link or junction (on any level), that is no longer a regular file, or whose recorded path is not a
+    plain project-relative one is *changed*, whatever its bytes are. Both forms apply this.
+
+    The quick form then compares size and modification time with ``baseline`` (default: what the stage
     recorded) - cheap enough to ask after every edit, and it never calls a changed file unchanged unless
     both numbers were preserved. ``deep`` hashes every file instead: it sees a rewrite that kept size and
     time, and it does not mistake a file that was merely touched for a changed one.
+
+    An optional file the source did not have when it was copied (``result.optional_dependencies``) is
+    changed as soon as anything is at its path.
     """
+    project = Path(project)
     changed = []
     for relative, row in result.dependencies.items():
-        path = Path(project) / relative
-        try:
-            status = os.lstat(path)
-            if not stat.S_ISREG(status.st_mode) or is_link(path):
-                raise OSError("not a plain file")
-            if deep:
-                same = file_sha256(path) == row["sha256"]
-            else:
-                expected = (baseline or {}).get(relative, (row["size"], row["mtime_ns"]))
-                same = (status.st_size, status.st_mtime_ns) == tuple(expected)
-        except OSError:
-            same = False
+        path, status = _current_dependency(project, relative)
+        same = False
+        if status is not None:
+            try:
+                if deep:
+                    same = file_sha256(path) == row["sha256"]
+                else:
+                    expected = (baseline or {}).get(relative, (row["size"], row["mtime_ns"]))
+                    same = (status.st_size, status.st_mtime_ns) == tuple(expected)
+            except OSError:
+                same = False
         if not same:
+            changed.append(relative)
+    for relative, state in (getattr(result, "optional_dependencies", None) or {}).items():
+        if state == "absent" and relative not in result.dependencies \
+                and _current_dependency(project, relative)[0] is not None:
             changed.append(relative)
     return sorted(changed)
 
 
 def dependency_stats(project, result):
-    """``{path: (size, mtime_ns)}`` of the dependencies as they are on disk now (a baseline for the quick check)."""
+    """``{path: (size, mtime_ns)}`` of the dependencies as they are on disk now (a baseline for the quick check).
+
+    A dependency that is not a plain file reached without a link has no entry: there is nothing to take
+    a baseline of, and ``changed_dependencies`` reports it as changed either way."""
     stats = {}
     for relative in result.dependencies:
-        try:
-            status = os.lstat(Path(project) / relative)
+        _path, status = _current_dependency(Path(project), relative)
+        if status is not None:
             stats[relative] = (status.st_size, status.st_mtime_ns)
-        except OSError:
-            continue
     return stats
 
 
@@ -1138,14 +1206,20 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
     session = StagingSession.create(project, work_folder, cancel)
     result = None
     try:
+        # Optional files are read before Godot runs in the copy: the import below may write or rewrite
+        # ``.import`` files there, and those are the copy's, not the project's.
+        optional = optional_dependency_paths(document)
+        optional_states = optional_dependency_states(optional, session.surveyed)
+        optional_manifest = _manifest(
+            session.root, (), session.surveyed, [path for path in optional if optional_states[path] == "present"])
         import_crashes = []
         import_assets(godot, session.root, cancel, crashes=import_crashes)
         built = client.call(godot, session.root, "stage_monster", monster_id, cancel, timeout, work_folder,
                             stage=stage_request(document, carrier, session.id))
         files = check_stage_response(built.data, session, monster_id)
         carrier_files = check_attach_dependencies(built.data["attach"], session.root)
-        dependencies = dependency_manifest(session.root, dependency_paths(document, carrier_files), session.surveyed,
-                                           optional_dependency_paths(document))
+        dependencies = dependency_manifest(session.root, dependency_paths(document, carrier_files), session.surveyed)
+        dependencies.update({path: row for path, row in optional_manifest.items() if path not in dependencies})
         project_fingerprint = manifest_fingerprint(dependencies)
         # A second process: nothing of the first one's memory can stand in for the files.
         reread = client.call(godot, session.root, "read_stage", monster_id, cancel, timeout, work_folder,
@@ -1186,7 +1260,7 @@ def stage_presentation(godot, project, document, work_folder=None, carrier="", c
                              tuple(structure + disk + image_lines), profile, built.data["attach"],
                              max(built.attempts, reread.attempts), time.monotonic() - started, session, keep, "",
                              fingerprint, project_fingerprint, dependencies, resources, version, areas, process,
-                             tuple(notes))
+                             tuple(notes), (), optional_states)
         # Godot ran for a while. Are the files it was given still the files in the project? (Contents, not
         # times: this is the one place where the answer goes into the result itself.)
         moved = tuple(changed_dependencies(session.source, result, deep=True))
