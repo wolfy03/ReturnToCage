@@ -24,6 +24,13 @@ var _saw_run := false
 ## first-seen order. Reported when the run assertion fails.
 var _watch_trace: Array[String] = []
 var _input_sample: Dictionary = {}
+# Diagnostics only: which check of a multi-part fixture said no, and how the observer's own frames ran
+# while it watched another actor. Neither changes what is asserted.
+var _slot_stage := ""
+var _watch_frames := 0
+var _watch_max_gap_msec := 0
+var _watch_last_msec := 0
+var _watch_applied_at_start := 0
 var _input_edges: Dictionary[int, Array] = {}
 const INPUT_KEYS := {
 	"left": KEY_A, "right": KEY_D, "up": KEY_W, "jump": KEY_SPACE,
@@ -96,6 +103,11 @@ func _process(_delta: float) -> void:
 		return
 	var watched := _actor(_watched_id)
 	if watched != null:
+		var frame_msec := Time.get_ticks_msec()
+		if _watch_last_msec > 0:
+			_watch_max_gap_msec = maxi(_watch_max_gap_msec, frame_msec - _watch_last_msec)
+		_watch_last_msec = frame_msec
+		_watch_frames += 1
 		_saw_motion = _saw_motion or (watched.position.x - _watch_origin.x) * _watch_direction > 12.0
 		var visual := watched.player_visual().get_node("PlayerAnimationPresenter") as PlayerAnimationPresenter
 		_saw_run = _saw_run or visual != null and visual.current_animation() == &"run" and watched.facing == _watch_direction
@@ -245,7 +257,7 @@ func _execute(command: Dictionary) -> void:
 				return
 		"slot_ui":
 			if not await _slot_ui(command):
-				_fail("slot GUI did not reconcile the owner snapshot and result: %s" % command)
+				_fail("slot GUI did not reconcile the owner snapshot and result: %s stage=%s" % [command, _slot_stage])
 				return
 		"slot_drop_observe":
 			var peer := NetworkManager.peer_id_for_player(target)
@@ -407,6 +419,26 @@ func _execute(command: Dictionary) -> void:
 				actor.player_state().effects.apply_effect(effect, ItemDefinition.FoodSlot.SNACK)
 			await get_tree().physics_frame
 			await get_tree().physics_frame
+		"input_effect":
+			# Start the buff's clock at a known moment, so a later sample can tell "it ran out" from "it stopped".
+			var actor := NetworkManager.authoritative_actor(NetworkManager.peer_id_for_player(target))
+			if not NetworkManager.is_server() or actor == null:
+				_fail("effect fixture needs a real authoritative actor")
+				return
+			var effect := ContentRegistry.get_definition(&"quick_paws") as EffectDefinition
+			var state := actor.player_state()
+			state.effects.remove_effect(&"quick_paws")
+			state.effects.apply_effect(effect, ItemDefinition.FoodSlot.SNACK)
+			await get_tree().physics_frame
+		"noop":
+			pass # Answers with the usual result; used to exercise publication itself.
+		"stall":
+			# Reproduction aid: this process renders and polls nothing for the given time, as a starved
+			# CI runner does. The command is acknowledged first so the controller can move on meanwhile.
+			await _write("pass")
+			OS.delay_msec(clampi(int(command.get("msec", 0)), 0, 5000))
+			_busy = false
+			return
 		"input_world_tick":
 			if not await _check_blocked_enemy_tick(target):
 				_fail("blocked Host did not observe Sewer enemy physics and replication progress")
@@ -422,6 +454,10 @@ func _execute(command: Dictionary) -> void:
 			_saw_motion = false
 			_saw_run = false
 			_watch_trace.clear()
+			_watch_frames = 0
+			_watch_max_gap_msec = 0
+			_watch_last_msec = 0
+			_watch_applied_at_start = actor.network.snapshots_applied
 		"move":
 			# Exercise real movement with the item windows closed, then restore
 			# the existing lifecycle fixture's window state for later checks.
@@ -450,9 +486,11 @@ func _execute(command: Dictionary) -> void:
 			if not await _wait(func() -> bool: return _saw_motion and _saw_run):
 				var actor := _actor(_watched_id)
 				var authority := NetworkManager.authoritative_actor(NetworkManager.peer_id_for_player(_watched_id)) if NetworkManager.is_server() else null
-				_fail("transform/run animation missing for %s motion=%s run=%s pos=%s direction=%s transform_sequence=%s observed=%s snapshots=%s authority=%s" % [
+				_fail("transform/run animation missing for %s motion=%s run=%s pos=%s direction=%s transform_sequence=%s observed=%s frames=%s max_frame_gap_msec=%s applied_during_watch=%s snapshots=%s authority=%s" % [
 					_watched_id, _saw_motion, _saw_run, actor.position if actor != null else Vector2.INF,
 					_watch_direction, actor.network._snapshot_sequence if actor != null else -1, _watch_trace,
+					_watch_frames, _watch_max_gap_msec,
+					(actor.network.snapshots_applied - _watch_applied_at_start) if actor != null else -1,
 					{"applied": actor.network.snapshots_applied, "stale": actor.network.snapshots_stale, "has": actor.network._has_snapshot,
 					"world_ready": NetworkManager.is_local_world_ready(), "local_authority": actor.is_simulation_authority()} if actor != null else {},
 					{"position": authority.position, "velocity": authority.velocity, "input": authority.input.move_axis,
@@ -740,12 +778,14 @@ func _visible_loot_manager() -> LootSpawnManager:
 
 func _slot_ui(command: Dictionary) -> bool:
 	var offline := not NetworkManager.is_multiplayer_active()
+	_slot_stage = "fixture runs on a client or offline, not on the Host"
 	if NetworkManager.is_server():
 		return false
 	var presenter: InventoryPresenter = app.get_node("UILayer/GameHUD").inventory_presenter
 	var bag := presenter.inventory_window
 	if not bag.visible:
 		await _item_key(KEY_I)
+	_slot_stage = "bag window open (visible=%s) and its consumable tab clickable" % bag.visible
 	if not bag.visible or not await _click(bag.tab_buttons[InventoryWindow.Tab.CONSUMABLE]):
 		return false
 	var player := GameSession.get_local_player()
@@ -753,6 +793,8 @@ func _slot_ui(command: Dictionary) -> bool:
 	var to := int(command.get("to", 4))
 	var world_drop: bool = command.get("world_drop", false)
 	var source := player.inventory.get_slot(from)
+	_slot_stage = "precondition: model slot %d filled=%s, its view filled=%s, model slot %d empty=%s, revision=%d" % [
+		from, source != null, bag.slots[from].stack != null, to, player.inventory.get_slot(to) == null, player.item_state_revision]
 	if source == null or bag.slots[from].stack == null or (not world_drop and player.inventory.get_slot(to) != null):
 		return false
 	var before := _slot_layout(player)
@@ -787,19 +829,31 @@ func _slot_ui(command: Dictionary) -> bool:
 	button.pressed = false
 	get_viewport().push_input(button, true)
 	var sequence := presenter._pending_sequence
+	_slot_stage = "drag gesture became a pending request: sequence=%d pending=%s sort_disabled=%s status='%s' origin=%s destination=%s" % [
+		sequence, bag._pending, bag._sort.disabled, bag._status.text, origin, destination]
 	if sequence <= 0 or not bag._pending or not bag._sort.disabled:
 		return false
+	_slot_stage = "no local prediction while the request is pending"
 	if not offline and (_slot_layout(player) != before or bag.slots[from].stack == null \
 			or (not world_drop and bag.slots[to].stack != null)):
 		return false
 	# A second gesture and an older result must not replace the pending action.
 	bag._request_sort()
 	presenter._on_slot_result(sequence - 1, false, "old response")
+	_slot_stage = "a second gesture and an older result leave the pending request alone: pending=%d expected=%d status='%s' next_local=%d selected=%d" % [
+		presenter._pending_sequence, sequence, bag._status.text, PlayerItemReplicationService._next_local_sequence, bag.selected_slot]
 	if presenter._pending_sequence != sequence or not bag._status.text.begins_with("Waiting") \
 			or PlayerItemReplicationService._next_local_sequence != sequence or bag.selected_slot != from:
 		return false
+	_slot_stage = "the Host's result for sequence %d arrives within 10 s (revision still %d, was %d)" % [
+		sequence, player.item_state_revision, revision]
+	var asked_msec := Time.get_ticks_msec()
 	if not await _wait(func() -> bool: return presenter._pending_sequence == -1):
+		_slot_stage += "; still pending, revision now %d" % player.item_state_revision
 		return false
+	_slot_stage = "state when the result arrived (%d ms): pending=%s status='%s' revision=%d (was %d, a success adds 1) from_filled=%s to_filled=%s" % [
+		Time.get_ticks_msec() - asked_msec, bag._pending, bag._status.text, player.item_state_revision, revision,
+		player.inventory.get_slot(from) != null, player.inventory.get_slot(to) != null]
 	if command.get("reject", false):
 		return not bag._pending and player.item_state_revision == revision and _slot_layout(player) == before \
 			and bag.slots[from].stack != null and bag.slots[to].stack == null and bag.selected_slot == from \
@@ -1166,6 +1220,15 @@ func _record_authoritative_input(actor: PlayerActor) -> void:
 		"position": str(actor.position), "velocity": str(actor.velocity),
 		"hunger": state.survival.hunger, "thirst": state.survival.thirst, "quick_paws": effect.remaining if effect != null else -1.0,
 		"snapshot": actor.network._snapshot_sequence,
+		# Whose sample this is and when it was taken, so two samples can be compared as a rate.
+		"peer": actor.peer_id, "player_id": String(NetworkManager.player_id_for_peer(actor.peer_id)), "actor_instance": actor.get_instance_id(),
+		"world": String(GameSession.get_peer_world_id(actor.peer_id)),
+		"world_revision": NetworkManager.world_revision_for_peer(actor.peer_id),
+		"physics_tick": Engine.get_physics_frames(), "ticks_msec": Time.get_ticks_msec(),
+		"host_ui_blocked": LocalInputContext.is_gameplay_blocked(), "controls_locked": actor.movement.controls_locked,
+		"effect_id": "quick_paws", "effect_present": effect != null,
+		"effect_duration": effect.definition.duration_seconds if effect != null else -1.0,
+		"hunger_at_minimum": state.survival.hunger <= 0.0, "thirst_at_minimum": state.survival.thirst <= 0.0,
 		# The parts of ready_action, so a mismatch names which one was missing.
 		"action_idle": actor.combat_action.is_idle(), "on_floor": actor.is_on_floor(),
 		"movement_mode": MovementComponent.Mode.keys()[actor.movement.mode]}
@@ -1312,13 +1375,21 @@ func _write(status: String, error: String = "") -> void:
 	file.store_string(JSON.stringify(data, "\t"))
 	file.close()
 	var deadline := Time.get_ticks_msec() + 3000
+	var attempts := 0
 	while DirAccess.rename_absolute(result_path + ".tmp", result_path) != OK:
 		# Retry publication only. Gameplay commands have already run exactly once.
+		attempts += 1
 		if Time.get_ticks_msec() >= deadline:
-			push_error("PLAYER ROSTER RESULT publication failed: %s" % result_path)
+			push_error("PLAYER ROSTER RESULT publication failed after %d attempts in 3000 ms: %s" % [attempts, result_path])
 			get_tree().quit(1)
 			return
-		await get_tree().process_frame
+		# Paced by the clock, not by frames. The controller holds the old file for a moment each time it
+		# reads it; when one frame of this process takes seconds (a scene change on a slow runner), a retry
+		# per frame is one or two tries in the whole window. The window itself is unchanged.
+		if attempts % 25 == 0:
+			await get_tree().process_frame
+		else:
+			OS.delay_msec(10)
 
 func _fail(message: String) -> void:
 	_failed = true

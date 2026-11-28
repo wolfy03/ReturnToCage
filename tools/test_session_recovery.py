@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
+import time
 
 import loopback_policy
 from test_multiplayer_roster import Probe as RosterController, publish_command
@@ -16,11 +17,59 @@ from test_windows_export import ERRORS
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# A buff's remaining time and the Host's clock are sampled a frame apart, and the buff ticks once per
+# rendered frame: allow that much disagreement, no more.
+BUFF_CLOCK_TOLERANCE_SECONDS = 1.0
+BUFF_RATE_TOLERANCE = 0.15
+INJECTIONS = ("buff-delay", "stall-observer", "hold-result")
+
+
+def blocked_tick_problem(before: dict, after: dict) -> str:
+    """Why two authoritative samples of one player do *not* show a simulation that kept running.
+
+    Returns "" when they do. ``before`` and ``after`` are ``input_sample`` dictionaries taken while that
+    player's own UI blocked its input. Each quantity is judged by what it can show:
+
+    - snapshots: the sequence must have advanced.
+    - hunger, thirst: must have gone down - unless the value was already at its minimum, which says
+      nothing either way and is reported as such instead of being read as "stopped".
+    - the buff: its remaining time must have gone down by the time that passed on the Host's clock. A
+      buff that is gone is fine exactly when more time passed than it had left (it ran out); gone
+      earlier than that, or unchanged, or draining at another rate, is a failure.
+    """
+    for key in ("actor_instance", "world", "world_revision", "player_id"):
+        if before.get(key) != after.get(key):
+            return f"the two samples are not of the same actor in the same world ({key}: {before.get(key)} -> {after.get(key)})"
+    if not after["snapshot"] > before["snapshot"]:
+        return f"no transform snapshot was produced (sequence {before['snapshot']} -> {after['snapshot']})"
+    for need in ("hunger", "thirst"):
+        if before[need] <= 0.0:
+            return f"{need} was already at its minimum; this window cannot show whether survival ticks ran"
+        if not after[need] < before[need]:
+            return f"{need} did not go down ({before[need]} -> {after[need]}): survival ticks stopped"
+    if "ticks_msec" not in before or "ticks_msec" not in after:
+        return "the samples carry no Host clock, so a buff that ran out cannot be told from one that vanished"
+    elapsed = (after["ticks_msec"] - before["ticks_msec"]) / 1000.0
+    had, has = before["quick_paws"], after["quick_paws"]
+    if had <= 0.0:
+        return "the buff was not active at the first sample; this window cannot show whether its time ran"
+    if has < 0.0:                                     # the effect is gone
+        if elapsed + BUFF_CLOCK_TOLERANCE_SECONDS >= had:
+            return ""                                 # it ran out: {had} s were left and {elapsed} s passed
+        return f"the buff disappeared with {had:.2f} s left after only {elapsed:.2f} s"
+    if not 0.0 < has < had:
+        return f"the buff's time did not go down ({had} -> {has} in {elapsed:.2f} s): buff ticks stopped"
+    drained = had - has
+    if abs(drained - elapsed) > BUFF_CLOCK_TOLERANCE_SECONDS + BUFF_RATE_TOLERANCE * elapsed:
+        return f"the buff lost {drained:.2f} s while {elapsed:.2f} s passed on the Host"
+    return ""
+
 
 class LifecycleChecks(RosterController):
     def __init__(self, godot: str, executable: Path | None, artifacts: Path,
                  rendered: bool = False, rendering_method: str | None = None,
-                 address: str = loopback_policy.IPV4_LOOPBACK, ipv6_mode: str = "auto") -> None:
+                 address: str = loopback_policy.IPV4_LOOPBACK, ipv6_mode: str = "auto",
+                 inject: dict[str, float] | None = None) -> None:
         super().__init__(SimpleNamespace(godot=godot, artifacts=artifacts, rendered=rendered))
         self.loopback = loopback_policy.resolve(address, ipv6_mode)
         print("LOOPBACK", self.loopback.describe(), flush=True)
@@ -28,6 +77,9 @@ class LifecycleChecks(RosterController):
         self.rendering_method = rendering_method
         self.worlds: dict[str, str] = {}
         self.active_step: dict = {}
+        # Reproduction aids (``--inject``). None of them changes what is asserted.
+        self.inject = dict(inject or {})
+        self.tick_checks: list[dict] = []
 
     def launch(self, role: str) -> None:
         if role in self.roles:
@@ -79,6 +131,11 @@ class LifecycleChecks(RosterController):
             raise RuntimeError("Movement/animation checks did not advance GUI rendering frames")
         return data
 
+    def hold_result(self, role: str, seconds: float) -> None:
+        """Reproduction aid: keep ``result.json`` open the way a reader or a scanner would."""
+        with (self.roles[role]["folder"] / "result.json").open("rb"):
+            time.sleep(seconds)
+
     def check(self, label: str) -> None:
         for role, world in self.worlds.items():
             expected = [self.roles[r]["player_id"] for r, w in self.worlds.items() if w == world]
@@ -88,6 +145,11 @@ class LifecycleChecks(RosterController):
         observers = [r for r, w in self.worlds.items() if w == self.worlds.get(role)] if role in self.worlds else [role]
         for observer in observers:
             self.call(observer, "watch", player=self.roles[role]["player_id"], left=left)
+        if self.inject.get("stall-observer"):
+            # A starved observer: it runs no frame while the other player moves.
+            for observer in observers:
+                if observer != role:
+                    self.call(observer, "stall", msec=int(self.inject["stall-observer"]))
         self.call(role, "move", left=left)
         for observer in observers:
             self.call(observer, "assert_motion")
@@ -127,6 +189,10 @@ class LifecycleChecks(RosterController):
         self.input_key("A", "left", False)
 
         self.input_windows("B", bag=True)
+        if third:
+            # The buff's clock starts here, next to the sample it is compared with, instead of
+            # several steps earlier: how long those steps take is the runner's business.
+            self.call("A", "input_effect", player=self.roles["B"]["player_id"])
         neutral = self.authority_input("B", after=moving["sequence"])
         self.call("B", "input_blocked_edges")
         self.input_windows("A", escape=True)
@@ -150,16 +216,17 @@ class LifecycleChecks(RosterController):
 
         self.input_windows("B", bag=True, gear=True)
         self.input_windows("B", gear=True)
+        if third and self.inject.get("buff-delay"):
+            time.sleep(self.inject["buff-delay"])     # a slow runner: the blocked window outlasts the buff
         still_neutral = self.authority_input("B", after=neutral["sequence"])
         if any(still_neutral[edge] != moving[edge] for edge in ("jump", "attack", "dodge")):
             raise RuntimeError("Blocked B reached an authoritative action receiver")
-        if third and not (
-            still_neutral["snapshot"] > neutral["snapshot"]
-            and still_neutral["hunger"] < neutral["hunger"]
-            and still_neutral["thirst"] < neutral["thirst"]
-            and 0 < still_neutral["quick_paws"] < neutral["quick_paws"]
-        ):
-            raise RuntimeError("B's blocked UI stopped authority, survival, or buff ticks")
+        if third:
+            problem = blocked_tick_problem(neutral, still_neutral)
+            self.tick_checks.append({"before": neutral, "after": still_neutral, "problem": problem})
+            (self.directory / "tick_checks.json").write_text(json.dumps(self.tick_checks, indent=2), encoding="utf-8")
+            if problem:
+                raise RuntimeError("B's blocked UI stopped authority, survival, or buff ticks: " + problem)
         self.input_windows("B", escape=True)
         self.authority_input("B", after=still_neutral["sequence"])
         if third:
@@ -275,6 +342,13 @@ class LifecycleChecks(RosterController):
         self.call("B", "join", address=self.loopback.primary)
         self.worlds["B"] = "settlement"
         self.check("two-player join")
+        if self.inject.get("hold-result"):
+            # B answers the next command while its previous result file is held open.
+            item = self.roles["B"]
+            item["sequence"] += 1
+            publish_command(item["folder"], {"sequence": item["sequence"], "action": "noop"})
+            self.hold_result("B", self.inject["hold-result"])
+            self.wait("B", item["sequence"])
         self.call("A", "item_windows")
         self.call("B", "item_windows")
         self.call("B", "slot_rpc", to=4)
@@ -505,14 +579,24 @@ def main() -> int:
     parser.add_argument("--rendered", action="store_true")
     parser.add_argument("--world-drop-only", action="store_true", help="Exercise a Client GUI drop and the Host replica.")
     parser.add_argument("--rendering-method", choices=("gl_compatibility", "forward_plus"))
+    parser.add_argument("--inject", action="append", default=[], metavar="NAME=VALUE",
+                        help="Reproduction aid, repeatable: buff-delay=<seconds> (wait before the second blocked-UI "
+                             "sample), stall-observer=<msec> (the watching process runs no frame while the other "
+                             "player moves), hold-result=<seconds> (hold B's result file open while B publishes).")
     loopback_policy.add_arguments(parser)
     args = parser.parse_args()
     if args.exe and sys.platform != "win32":
         parser.error("Actual Windows EXE execution requires Windows")
+    inject = {}
+    for entry in args.inject:
+        name, _, value = entry.partition("=")
+        if name not in INJECTIONS or not value:
+            parser.error(f"--inject takes one of {', '.join(INJECTIONS)} as NAME=VALUE")
+        inject[name] = float(value)
     artifacts = args.artifacts or Path(tempfile.mkdtemp(prefix="rtc_lifecycle_")) / "checks"
     try:
         checks = LifecycleChecks(args.godot, args.exe, artifacts, args.rendered, args.rendering_method,
-                                 args.address, args.ipv6)
+                                 args.address, args.ipv6, inject)
     except (RuntimeError, ValueError) as error:
         print("Session lifecycle validation failed:", error, file=sys.stderr)
         return 1
